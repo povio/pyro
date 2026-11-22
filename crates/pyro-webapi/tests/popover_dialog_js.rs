@@ -351,6 +351,31 @@ fn command_activation_precedes_popover_applicability_and_preserves_dialog_invoke
 }
 
 #[test]
+fn command_target_reflection_observes_content_attribute_mutations() {
+    let e = env("<body><button id=inv command=--preview></button><div id=a></div><div id=b></div></body>");
+    assert_eq!(e.eval(
+        "const inv=document.getElementById('inv'), a=document.getElementById('a'), b=document.getElementById('b');
+         const result=[], clicks=[];
+         for (const target of [a,b]) target.addEventListener('command', () => clicks.push(target.id));
+         function check() {
+           const count=clicks.length;
+           inv.click();
+           result.push((inv.commandForElement?.id ?? '-') + '/' + (clicks[count] ?? '-'));
+         }
+         inv.commandForElement=a; check();
+         inv.setAttribute('commandfor','b'); check();
+         inv.setAttribute('commandfor',''); check();
+         inv.commandForElement=a; inv.getAttributeNode('commandfor').value=''; check();
+         inv.commandForElement=a; inv.setAttributeNS('urn:other','x:commandfor','b'); check();
+         inv.removeAttributeNS('urn:other','commandfor'); check();
+         inv.removeAttribute('commandfor'); check();
+         inv.setAttribute('commandfor',''); check();
+         result.join()"
+    ), "a/a,b/b,-/-,-/-,a/a,a/a,-/-,-/-");
+    e.page.dispose();
+}
+
+#[test]
 fn command_invokers() {
     let e = env("<body><dialog id=d><button id=cl commandfor=d command=close value=done>x</button>
            <button id=rc commandfor=d command=request-close value=asked>r</button></dialog>

@@ -28,6 +28,8 @@ use pyro_dom::{Dom, NodeId, PopoverStack, PopoverType};
 use pyro_js::{ClassDef, JsClass, JsError, JsResult};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use pyro_dom::dom::InvokerTarget;
+
 use crate::event::{EventCore, EventInterface};
 use crate::node::{node_value, NodeData};
 use crate::page::PageDom;
@@ -54,18 +56,9 @@ pub(crate) struct PopoverState {
     /// HTML "popover pointerdown target" and the dialog one.
     pointerdown_popover: Cell<Option<NodeId>>,
     pointerdown_dialog: Cell<Option<NodeId>>,
-    /// Elements set through `popoverTargetElement` / `commandForElement`
-    /// ("explicitly set attr-element"), by invoker and attribute.
-    explicit: RefCell<FxHashMap<(NodeId, Reflected), NodeId>>,
     /// An element the focusing steps focus although it is not focusable
     /// (a dialog without a focusable descendant).
     forced_focus: Cell<Option<NodeId>>,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-enum Reflected {
-    PopoverTarget,
-    CommandFor,
 }
 
 impl PopoverState {
@@ -261,11 +254,11 @@ fn nearest_open_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
 
 /// HTML "nearest inclusive target popover for invoker": the showing
 /// popover a flat-tree inclusive ancestor of `node` invokes.
-fn nearest_invoked_popover(page: &PageDom, dom: &Dom, node: NodeId) -> Option<NodeId> {
+fn nearest_invoked_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
     let mut cur = Some(node);
     while let Some(n) = cur {
-        let target = popover_target_with(dom, n, explicit_of(page, n, Reflected::PopoverTarget))
-            .or_else(|| command_for_element(page, dom, n));
+        let target = popover_target_with(dom, n)
+            .or_else(|| command_for_element(dom, n));
         if let Some(t) = target.filter(|&t| dom.is_popover_showing(t)) {
             if matches!(popover_type(dom, t), Some(PopoverType::Auto | PopoverType::Hint)) {
                 return Some(t);
@@ -552,7 +545,7 @@ pub(crate) fn source_option<'s>(s: &pyro_js::Scope<'s>, v: pyro_js::Value<'s>) -
 
 /// The auto/hint popover `node` is in or invokes that is highest in the
 /// popover stacks ("topmost clicked popover").
-fn topmost_clicked_popover(page: &PageDom, dom: &Dom, node: NodeId) -> Option<NodeId> {
+fn topmost_clicked_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
     let position = |p: NodeId| {
         let auto = dom.popover_stack(PopoverStack::Auto);
         auto.iter()
@@ -560,7 +553,7 @@ fn topmost_clicked_popover(page: &PageDom, dom: &Dom, node: NodeId) -> Option<No
             .or_else(|| dom.popover_stack(PopoverStack::Hint).iter().position(|&e| e == p).map(|i| i + auto.len()))
     };
     let clicked = nearest_open_popover(dom, node);
-    let invoked = nearest_invoked_popover(page, dom, node);
+    let invoked = nearest_invoked_popover(dom, node);
     match (clicked, invoked) {
         (Some(c), Some(i)) => Some(if position(c) >= position(i) { c } else { i }),
         (c, i) => c.or(i),
@@ -599,7 +592,7 @@ pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, 
         !dom.popover_stack(PopoverStack::Auto).is_empty() || !dom.popover_stack(PopoverStack::Hint).is_empty()
     };
     if has_popovers {
-        let ancestor = topmost_clicked_popover(page, &page.dom.borrow(), target);
+        let ancestor = topmost_clicked_popover(&page.dom.borrow(), target);
         if down {
             page.popover.pointerdown_popover.set(ancestor);
         } else if page.popover.pointerdown_popover.take() == ancestor {
@@ -942,26 +935,8 @@ fn is_submit_button(dom: &Dom, el: NodeId) -> bool {
     matches!(dom.input_type(el), Ok(InputType::Submit | InputType::Image))
 }
 
-/// The element an IDREF attribute of `el` names: the explicitly set one
-/// when the attribute is empty, else the element with that id in `el`'s
-/// tree.
-fn reflected_element(dom: &Dom, el: NodeId, attr: &str, explicit: Option<NodeId>) -> Option<NodeId> {
-    let v = dom.get_attribute(el, attr).ok().flatten()?;
-    if v.is_empty() {
-        return explicit.filter(|&t| {
-            dom.root_node(t, false).is_ok_and(|root| dom.shadow_including_contains(root, el))
-        });
-    }
-    let root = dom.root_node(el, false).ok()?;
-    dom.get_element_by_id(root, v).ok().flatten()
-}
-
-fn explicit_of(page: &PageDom, el: NodeId, which: Reflected) -> Option<NodeId> {
-    page.popover.explicit.borrow().get(&(el, which)).copied()
-}
-
 /// HTML "popover target element" of `node`.
-fn popover_target_with(dom: &Dom, node: NodeId, explicit: Option<NodeId>) -> Option<NodeId> {
+fn popover_target_with(dom: &Dom, node: NodeId) -> Option<NodeId> {
     if !dom.has_attribute(node, "popovertarget").unwrap_or(false) || !is_invoker_type(dom, node) {
         return None;
     }
@@ -971,22 +946,22 @@ fn popover_target_with(dom: &Dom, node: NodeId, explicit: Option<NodeId>) -> Opt
     if dom.form_owner(node).ok().flatten().is_some() && is_submit_button(dom, node) {
         return None;
     }
-    reflected_element(dom, node, "popovertarget", explicit)
+    dom.invoker_target(node, InvokerTarget::PopoverTarget).ok().flatten()
         .and_then(|target| dom.resolve_reference_target(target).ok().flatten())
         .filter(|&t| popover_type(dom, t).is_some())
 }
 
-fn command_for_element(page: &PageDom, dom: &Dom, node: NodeId) -> Option<NodeId> {
+fn command_for_element(dom: &Dom, node: NodeId) -> Option<NodeId> {
     if !is_html(dom, node, "button") || !dom.has_attribute(node, "commandfor").unwrap_or(false) {
         return None;
     }
-    reflected_element(dom, node, "commandfor", explicit_of(page, node, Reflected::CommandFor))
+    dom.invoker_target(node, InvokerTarget::CommandFor).ok().flatten()
         .and_then(|target| dom.resolve_reference_target(target).ok().flatten())
 }
 
 fn popover_target_of(page: &PageDom, node: NodeId) -> Option<NodeId> {
     let dom = page.dom.borrow();
-    popover_target_with(&dom, node, explicit_of(page, node, Reflected::PopoverTarget))
+    popover_target_with(&dom, node)
 }
 
 /// HTML "popover target attribute activation behavior" of `node` for a
@@ -1048,7 +1023,7 @@ fn command_state(v: &str) -> Option<Command> {
 pub(crate) fn button_activation(page: &Rc<PageDom>, button: NodeId, event_target: NodeId) {
     let target = {
         let dom = page.dom.borrow();
-        command_for_element(page, &dom, button)
+        command_for_element(&dom, button)
     };
     let Some(target) = target else {
         popover_target_activation(page, button, event_target);
@@ -1120,7 +1095,7 @@ macro_rules! reflect_element {
                 let page = n.page();
                 let target = {
                     let dom = page.dom.borrow();
-                    reflected_element(&dom, n.id, $attr, explicit_of(page, n.id, $which))
+                    dom.invoker_target(n.id, $which).js()?
                 };
                 node_value(s, page, target)
             },
@@ -1128,44 +1103,24 @@ macro_rules! reflect_element {
                 let target = if v.is_nullish() {
                     None
                 } else {
-                    let el = s.unwrap::<crate::node::Node>(v).filter(|t| t.page().dom.borrow().element(t.id).is_ok());
-                    Some(
-                        el.ok_or_else(|| {
-                            JsError::Type(
-                                concat!(
-                                    "Failed to set the '",
-                                    $prop,
-                                    "' property: Failed to convert value to 'Element'."
-                                )
-                                .into(),
-                            )
-                        })?
-                        .id,
-                    )
+                    let el = s.unwrap::<crate::node::Element>(v).ok_or_else(|| {
+                        JsError::Type(concat!("Expected an Element for ", $prop).into())
+                    })?;
+                    if !Rc::ptr_eq(&el.page().dom, &n.page().dom) {
+                        return n.page().dom.borrow_mut().set_attribute_ns(n.id, None, $attr, "").js();
+                    }
+                    Some(el.id)
                 };
-                set_explicit(n.page(), n.id, $which, $attr, target)
+                n.page().dom.borrow_mut().set_invoker_target(n.id, $which, target).js()
             },
         );
     };
 }
 
-fn set_explicit(page: &PageDom, el: NodeId, which: Reflected, attr: &str, target: Option<NodeId>) -> JsResult<()> {
-    match target {
-        Some(t) => {
-            page.popover.explicit.borrow_mut().insert((el, which), t);
-            page.dom.borrow_mut().set_attribute(el, attr, "").js()
-        }
-        None => {
-            page.popover.explicit.borrow_mut().remove(&(el, which));
-            page.dom.borrow_mut().remove_attribute(el, attr).js().map(|_| ())
-        }
-    }
-}
-
 /// The PopoverInvokerElement mixin: `popoverTargetElement` and
 /// `popoverTargetAction` (button and input).
 pub(crate) fn define_popover_invoker<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    reflect_element!(def, "popoverTargetElement", "popovertarget", Reflected::PopoverTarget);
+    reflect_element!(def, "popoverTargetElement", "popovertarget", InvokerTarget::PopoverTarget);
     def.accessor(
         "popoverTargetAction",
         |s, n| {
@@ -1186,7 +1141,7 @@ pub(crate) fn define_popover_invoker<C: JsClass<Data = NodeData>>(def: &mut Clas
 
 /// `commandForElement` and `command` (button).
 pub(crate) fn define_command_invoker<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    reflect_element!(def, "commandForElement", "commandfor", Reflected::CommandFor);
+    reflect_element!(def, "commandForElement", "commandfor", InvokerTarget::CommandFor);
     def.accessor(
         "command",
         |s, n| {
