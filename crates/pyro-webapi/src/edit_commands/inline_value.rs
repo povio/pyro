@@ -423,17 +423,7 @@ fn format_selected(page: &PageDom, dom: &mut Dom, host: NodeId, node: NodeId, ra
         };
         if carrier {
             let outer = dom.parent_element(parent).ok()??;
-            let inherited = if fmt.kind == Kind::Size {
-                // A coincident pixel size is not an inherited HTML size.
-                // Stylo retains keyword provenance through the cascade.
-                page.layout().style().stylo_style(dom, outer).is_some_and(|style| {
-                    let info = style.get_font().font_size.keyword_info;
-                    let size = info.kw.html_size().checked_sub(1).and_then(|i| SIZES.get(i as usize));
-                    info.factor == 1.0 && info.offset.px() == 0.0 && size == Some(&fmt.css.as_str())
-                })
-            } else {
-                equivalent(fmt, &effective(page, dom, fmt.kind, outer))
-            };
+            let inherited = inherited_format(page, dom, fmt, outer);
             if fmt.kind == Kind::Background && !inherited {
                 // Across paint boundaries each existing background remains
                 // in place. Within one run the selected paint can be replaced.
@@ -458,32 +448,52 @@ fn format_selected(page: &PageDom, dom: &mut Dom, host: NodeId, node: NodeId, ra
     wrap(dom, node, fmt).map(|_| ())
 }
 
-/// A color already rendered by a FONT or SPAN is still an editable
-/// declaration. Reapplying foreColor rewrites that selected run in the
-/// document's current output mode.
-fn foreground_carrier(dom: &Dom, node: NodeId, host: NodeId) -> Option<NodeId> {
+fn inherited_format(page: &PageDom, dom: &Dom, fmt: &Format, node: NodeId) -> bool {
+    if fmt.kind == Kind::Size {
+        // A coincident pixel size is not an inherited HTML size.
+        // Stylo retains keyword provenance through the cascade.
+        page.layout().style().stylo_style(dom, node).is_some_and(|style| {
+            let info = style.get_font().font_size.keyword_info;
+            let size = info.kw.html_size().checked_sub(1).and_then(|i| SIZES.get(i as usize));
+            info.factor == 1.0 && info.offset.px() == 0.0 && size == Some(&fmt.css.as_str())
+        })
+    } else {
+        equivalent(fmt, &effective(page, dom, fmt.kind, node))
+    }
+}
+
+fn value_carrier(dom: &Dom, node: NodeId, host: NodeId, fmt: &Format) -> Option<NodeId> {
     let parent = dom.parent_element(node).ok()??;
     if parent == host || !dom.element(parent).ok()?.is_html() { return None; }
     let name = editing::local(dom, parent);
     if !matches!(name.as_str(), "font" | "span") { return None; }
     let style = DeclarationBlock::parse(dom.get_attribute(parent, "style").ok()?.unwrap_or(""));
-    (name == "font" && dom.get_attribute(parent, "color").ok()?.is_some() || !style.value("color").is_empty())
+    (name == "font" && dom.get_attribute(parent, fmt.kind.html_attr()?).ok()?.is_some() || !style.value(fmt.kind.property()).is_empty())
         .then_some(parent)
 }
 
-fn color_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &Format, previous: Option<NodeId>, single: bool) -> Option<NodeId> {
+fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &Format, previous: Option<NodeId>, single: bool) -> Option<NodeId> {
     let doc = dom.node_document(text).ok()?;
     let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
     let mut run = text;
-    if let Some(carrier) = foreground_carrier(dom, text, host) {
+    if let Some(carrier) = value_carrier(dom, text, host, fmt) {
+        if fmt.kind == Kind::Size && editing::local(dom, carrier) == "font"
+            && dom.get_attribute(carrier, "size").ok()? == fmt.legacy.as_deref()
+            && equivalent(fmt, &effective(page, dom, Kind::Size, text))
+        {
+            // Only a plain legacy FONT at the end of its run can absorb a
+            // following selection without spreading unrelated styling.
+            return (legacy.is_some() && dom.attributes(carrier).ok()?.len() == 1
+                && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
+        }
         let outer = dom.parent_element(carrier).ok()??;
         let mut points = [(text, 0), (text, editing::len(dom, text))];
         let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
         super::alignment::split_edge(dom, outer, text, true, &mut points)?;
         let name = editing::local(dom, middle);
-        if name == "font" { dom.remove_attribute(middle, "color").ok()?; }
+        if name == "font" { dom.remove_attribute(middle, fmt.kind.html_attr()?).ok()?; }
         let mut style = DeclarationBlock::parse(dom.get_attribute(middle, "style").ok()?.unwrap_or(""));
-        if style.remove("color") {
+        if style.remove(fmt.kind.property()) {
             if style.is_empty() { dom.remove_attribute(middle, "style").ok()?; }
             else { dom.set_attribute(middle, "style", &style.css_text()).ok()?; }
         }
@@ -493,6 +503,10 @@ fn color_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &Fo
             run = middle;
         }
     }
+    // Preserve the selected SPAN's paint when legacy sizing needs an inner FONT.
+    if fmt.kind == Kind::Size && legacy.is_some() && run != text && editing::local(dom, run) == "span" {
+        run = text;
+    }
     let parent = dom.parent_element(run).ok()??;
     if let Some(prev) = previous {
         if dom.next_sibling(prev).ok()? == Some(run) {
@@ -500,7 +514,14 @@ fn color_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &Fo
             return Some(prev);
         }
     }
-    if equivalent(fmt, &effective(page, dom, Kind::Foreground, parent)) { return None; }
+    if inherited_format(page, dom, fmt, parent) { return None; }
+    if fmt.kind == Kind::Size && legacy.is_some() && run == text && parent != host
+        && editing::local(dom, parent) == "font" && dom.child_count(parent).ok()? == 1
+        && dom.attributes(parent).ok()?.len() == 1 && dom.get_attribute(parent, "size").ok()?.is_some()
+    {
+        apply_to(dom, parent, fmt, legacy);
+        return Some(parent);
+    }
     if single && run != text && (legacy.is_none() || editing::local(dom, run) == "font") {
         apply_to(dom, run, fmt, legacy);
         // A carrier with other attributes belongs only to its original text.
@@ -529,11 +550,15 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
         let dom = page.dom.borrow();
         nodes.iter().map(|&n| !equivalent(&fmt, &effective(page, &dom, kind, n))).collect()
     };
-    let rewrite_color = kind == Kind::Foreground && {
+    let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size) && {
         let dom = page.dom.borrow();
-        nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| foreground_carrier(&dom, n, host).is_some())
+        nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| {
+            value_carrier(&dom, n, host, &fmt).is_some_and(|carrier| {
+                kind == Kind::Foreground || needs.contains(&true) || editing::local(&dom, carrier) == "span"
+            })
+        })
     };
-    if !rewrite_color && !needs.contains(&true) {
+    if !rewrite_runs && !needs.contains(&true) {
         return true;
     }
     super::record_host_edit(page, host, kind.input_type());
@@ -553,8 +578,8 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     let mut changed = false;
     let mut previous = None;
     for (&n, needs_format) in nodes.iter().zip(needs) {
-        if rewrite_color {
-            previous = color_run(page, &mut dom, host, n, &fmt, previous, nodes.len() == 1);
+        if rewrite_runs {
+            previous = format_run(page, &mut dom, host, n, &fmt, previous, nodes.len() == 1);
             changed = true;
         } else if needs_format {
             if kind == Kind::Background && pyro_dom::color_well::is_fully_transparent(&fmt.css) {
