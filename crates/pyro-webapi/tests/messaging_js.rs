@@ -304,8 +304,8 @@ fn audio_data_clone_aliases_close_independently_and_failed_transfers_preserve_in
 #[test]
 fn audio_data_wire_message_preserves_pcm_identity_and_checks_recipient_and_storage() {
     let sender = env();
-    let same = env();
-    let other = env();
+    let same = Env::with_engine("http://messaging.test/", sender.engine.clone());
+    let other = Env::with_engine("http://messaging.test/", sender.engine.clone());
     let group = pyro_webapi::AgentClusterGroup::default();
     sender.page.set_window_agent_cluster(group, "http://messaging.test".into());
     same.page.set_window_agent_cluster(group, "http://messaging.test".into());
