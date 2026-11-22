@@ -2312,6 +2312,21 @@ impl Node {
                 }
             }
 
+            // pyro: HTML § 15.4.1: an iframe whose `frameborder` parses (rules for parsing
+            // integers) to zero, or not at all, has no border width. Its style stays the UA
+            // sheet's `inset`.
+            if *tag == local_name!("iframe")
+                && &**name == "frameborder"
+                && style::servo::attr::parse_integer(value.chars()).map_or(true, |n| n == 0)
+            {
+                use style::values::specified::BorderSideWidth;
+                let width = BorderSideWidth::from_px(0.0);
+                push_style(PropertyDeclaration::BorderTopWidth(width.clone()));
+                push_style(PropertyDeclaration::BorderRightWidth(width.clone()));
+                push_style(PropertyDeclaration::BorderBottomWidth(width.clone()));
+                push_style(PropertyDeclaration::BorderLeftWidth(width));
+            }
+
             // `body` carries four legacy margin attributes, as pixel lengths:
             // marginwidth and marginheight set both sides of an axis, and
             // leftmargin and topmargin set one side each.

@@ -579,7 +579,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* nested lists have no top/bottom margins */
  :is(ul, ol, dir, menu, dl) ul,
  :is(ul, ol, dir, menu, dl) ol,
-@@ -832,16 +1188,51 @@
+@@ -832,16 +1188,49 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -623,15 +623,13 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      border: 2px inset;
  }
  
-+/* pyro: HTML § 15.4.1 (embedded content): the `frameborder` attribute's "no border". */
-+iframe[frameborder="0"], iframe[frameborder=no i] {
-+    border: none;
-+}
++/* pyro: an iframe's `frameborder` that parses to zero (or not at all) zeroes the border widths:
++   a presentational hint (blitz-dom stylo.rs), the style stays inset. */
 +
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1242,34 @@
+@@ -851,8 +1240,34 @@
      user-select: none;
  }
  
@@ -666,7 +664,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1303,15 @@
+@@ -886,14 +1301,15 @@
      display: none;
  }
  
@@ -685,7 +683,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1340,11 @@
+@@ -922,6 +1338,11 @@
      display: none !important;
  }
  
@@ -697,7 +695,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,11 +1415,18 @@
+@@ -992,11 +1413,18 @@
      height: -moz-fit-content;
  }
  
@@ -717,7 +715,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1017,6 +1447,8 @@
+@@ -1017,6 +1445,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -726,7 +724,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1514,9 @@
+@@ -1082,9 +1512,9 @@
      font-size: unset;
  }
  
@@ -738,7 +736,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1560,68 @@
+@@ -1128,37 +1558,68 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -58266,7 +58264,29 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2363,16 @@
+@@ -1307,6 +2312,21 @@
+                 }
+             }
+ 
++            // pyro: HTML § 15.4.1: an iframe whose `frameborder` parses (rules for parsing
++            // integers) to zero, or not at all, has no border width. Its style stays the UA
++            // sheet's `inset`.
++            if *tag == local_name!("iframe")
++                && &**name == "frameborder"
++                && style::servo::attr::parse_integer(value.chars()).map_or(true, |n| n == 0)
++            {
++                use style::values::specified::BorderSideWidth;
++                let width = BorderSideWidth::from_px(0.0);
++                push_style(PropertyDeclaration::BorderTopWidth(width.clone()));
++                push_style(PropertyDeclaration::BorderRightWidth(width.clone()));
++                push_style(PropertyDeclaration::BorderBottomWidth(width.clone()));
++                push_style(PropertyDeclaration::BorderLeftWidth(width));
++            }
++
+             // `body` carries four legacy margin attributes, as pixel lengths:
+             // marginwidth and marginheight set both sides of an axis, and
+             // leftmargin and topmargin set one side each.
+@@ -1358,6 +2378,16 @@
                  }
              }
  
@@ -58283,7 +58303,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2388,59 @@
+@@ -1373,148 +2403,59 @@
              }
          }
  
@@ -58471,7 +58491,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2453,47 @@
+@@ -1527,6 +2468,47 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -58519,7 +58539,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2501,208 @@
+@@ -1534,11 +2516,208 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -58728,7 +58748,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2710,269 @@
+@@ -1546,14 +2725,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -58998,7 +59018,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3016,12 @@
+@@ -1597,6 +3031,12 @@
      }
  }
  
@@ -59011,7 +59031,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3094,41 @@
+@@ -1669,12 +3109,41 @@
                      .push(pe_node_id);
              }
          }
@@ -59053,7 +59073,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3143,46 @@
+@@ -1689,24 +3158,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -59108,7 +59128,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3213,842 @@
+@@ -1737,3 +3228,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
