@@ -45,6 +45,32 @@ fn an_expando_on_a_collection_shadows_a_named_property_added_later() {
 }
 
 #[test]
+fn deleting_an_index_or_a_visible_name_of_a_collection_fails() {
+    // dom/collections/HTMLCollection-delete.html and the delete steps of
+    // HTMLCollection-supported-property-indices.html.
+    let env = env();
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const c = document.getElementsByTagName("u");
+              const el = add(document.body, "u", { id: "foo" });
+              const out = [delete c[0], delete c.foo, c[0] === el, c.foo === el];
+              out.push(kind(() => { "use strict"; delete c[0]; }), kind(() => { "use strict"; delete c.foo; }));
+              out.push(c[0] === el, c.foo === el, kind(() => { "use strict"; delete c[1]; }),
+                       kind(() => { "use strict"; delete c.item; }), typeof c.item);
+              // Expandos stay deletable; a removed member's index and name are ordinary again.
+              c.extra = 1;
+              out.push(delete c.extra, "extra" in c);
+              el.remove();
+              out.push(kind(() => { "use strict"; delete c[0]; }), kind(() => { "use strict"; delete c.foo; }));
+              return out.join("|");
+            })()"#
+        ),
+        "false|false|true|true|TypeError|TypeError|true|true|no throw|no throw|function|true|false|no throw|no throw"
+    );
+}
+
+#[test]
 fn writes_to_indices_and_named_properties_of_a_collection_are_refused() {
     let env = env();
     assert_eq!(
