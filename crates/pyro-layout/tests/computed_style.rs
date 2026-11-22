@@ -699,6 +699,19 @@ fn a_grid_containers_template_resolves_to_its_used_tracks() {
     assert_eq!(p.layout.computed_style_value(&dom, el, "grid-template-rows"), "20px 20px 20px 20px 20px");
 }
 
+/// A grid container with `grid-template: none` reports the shorthand from its used tracks, as Chromium does;
+/// a set template keeps its computed value (WPT css-grid `grid-layout-properties`).
+#[test]
+fn an_untemplated_grid_reports_grid_template_from_its_used_tracks() {
+    let p = Page::new(
+        r#"<!doctype html><div id=g style="display:grid;width:100px;grid-auto-rows:20px">
+        <div></div><div></div></div><div id=t style="display:grid;width:100px;grid-template:[a] auto / 50px"></div>"#,
+    );
+    let dom = p.dom.borrow();
+    assert_eq!(p.layout.computed_style_value(&dom, p.find("#g"), "grid-template"), "20px 20px / 100px");
+    assert_eq!(p.layout.computed_style_value(&dom, p.find("#t"), "grid-template"), "[a] auto / 50px");
+}
+
 #[test]
 fn svg_presentation_attributes_participate_in_the_cascade() {
     let p = Page::new(
