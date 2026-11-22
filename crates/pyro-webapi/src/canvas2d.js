@@ -774,6 +774,49 @@
   }
   webidl(ImageBitmap, 'ImageBitmap');
   function newBitmap(made) { return new ImageBitmap(secret, made[0], made[1], made[2]); }
+
+  // ---- ImageBitmapRenderingContext -------------------------------------
+  // getContext('bitmaprenderer') of a <canvas> (made through canvas.rs,
+  // which keeps it on the element) or of an OffscreenCanvas. Its output is
+  // the last ImageBitmap transferred to it, at that bitmap's size (`image`:
+  // the bitmap's native handle), or transparent black of the canvas's size
+  // (`image` null).
+  const renderers = new WeakMap();
+  function rc(self) {
+    const r = renderers.get(self);
+    if (!r) throw new TypeErrorC('Illegal invocation');
+    return r;
+  }
+  class ImageBitmapRenderingContext {
+    constructor(token, canvas) {
+      if (token !== secret) throw illegal();
+      renderers.set(this, { canvas, image: null, width: 0, height: 0 });
+    }
+    get canvas() { return rc(this).canvas; }
+    transferFromImageBitmap(bitmap) {
+      const r = rc(this);
+      if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'transferFromImageBitmap' on 'ImageBitmapRenderingContext': 1 argument required, but only 0 present.`);
+      // ImageBitmap? : null (or undefined) resets the output to transparent black.
+      if (bitmap === null || bitmap === undefined) {
+        r.image = null;
+        return;
+      }
+      const b = bitmaps.get(bitmap);
+      if (!b) throw new TypeErrorC(`Failed to execute 'transferFromImageBitmap' on 'ImageBitmapRenderingContext': parameter 1 is not of type 'ImageBitmap'.`);
+      if (!b.image) throw domError('InvalidStateError', 'The input ImageBitmap has been detached');
+      r.image = b.image;
+      r.width = b.width;
+      r.height = b.height;
+      // The bitmap is transferred: detached (width and height read 0).
+      b.image = null;
+    }
+  }
+  webidl(ImageBitmapRenderingContext, 'ImageBitmapRenderingContext');
+  // [handle, width, height] of what a renderer shows, or null (transparent black).
+  function rendererImage(ctx) {
+    const r = renderers.get(ctx);
+    return r && r.image ? [r.image, r.width, r.height] : null;
+  }
   const PromiseC = Promise;
   // HTML: createImageBitmap snapshots its source now and resolves (or, for
   // a Blob that does not decode, rejects) in a later task.
@@ -829,6 +872,9 @@
     const o = offscreens.get(image);
     if (o) {
       if (o.detached) throw domError('InvalidStateError', 'The image source is detached.');
+      // A bitmaprenderer canvas is its bitmap (at the bitmap's size), or transparent black.
+      const shown = o.renderer ? rendererImage(o.renderer) : null;
+      if (shown) return [0, shown[0]];
       return [1, o.context, o.width, o.height];
     }
     // pyro: a CSSImageValue (Typed OM) draws the image its url() names, once loaded.
@@ -869,7 +915,7 @@
   class OffscreenCanvas {
     constructor(width, height) {
       if (arguments.length < 2) throw new TypeErrorC(`Failed to construct 'OffscreenCanvas': 2 arguments required, but only ${arguments.length} present.`);
-      offscreens.set(this, { width: offscreenSize(width, 'width'), height: offscreenSize(height, 'height'), context: null, detached: false, placeholder: null });
+      offscreens.set(this, { width: offscreenSize(width, 'width'), height: offscreenSize(height, 'height'), context: null, renderer: null, detached: false, placeholder: null });
     }
     get width() { return oc(this).width; }
     set width(v) { const o = live(this); o.width = offscreenSize(v, 'width'); if (o.context) natives.resizeContext(o.context, o.width, o.height); }
@@ -883,7 +929,13 @@
         throw new TypeErrorC(`Failed to execute 'getContext' on 'OffscreenCanvas': The provided value '${type}' is not a valid enum value of type OffscreenRenderingContextType.`);
       }
       if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
-      if (type !== '2d') return null;
+      // One context per canvas: another type than the first one asked for is null.
+      if (type === 'bitmaprenderer') {
+        if (o.context) return null;
+        if (!o.renderer) o.renderer = new ImageBitmapRenderingContext(secret, this);
+        return o.renderer;
+      }
+      if (type !== '2d' || o.renderer) return null;
       // CanvasRenderingContext2DSettings, converted on every call (the
       // argument of a cached context is converted and then ignored).
       const space = contextSettings(options);
@@ -895,6 +947,13 @@
     transferToImageBitmap() {
       const o = oc(this);
       if (o.detached) throw domError('InvalidStateError', 'Cannot transfer an ImageBitmap from a detached OffscreenCanvas');
+      // A bitmaprenderer gives its bitmap away and shows transparent black after.
+      if (o.renderer) {
+        const r = renderers.get(o.renderer);
+        const made = r.image ? [r.image, r.width, r.height] : natives.blankBitmap(o.width, o.height);
+        r.image = null;
+        return newBitmap(made);
+      }
       if (!o.context) throw domError('InvalidStateError', 'Cannot transfer an ImageBitmap from an OffscreenCanvas with no context');
       return newBitmap(natives.transferContext(o.context));
     }
@@ -906,6 +965,10 @@
         const d = dict(options);
         const type = d.type === undefined ? 'image/png' : String(d.type);
         const quality = d.quality === undefined ? undefined : +d.quality;
+        if (o.renderer) {
+          const shown = rendererImage(o.renderer);
+          return PromiseC.resolve(natives.encodeImage(shown ? shown[0] : null, o.width, o.height, type, quality));
+        }
         return PromiseC.resolve(natives.encodeContext(o.context, o.width, o.height, type, quality));
       } catch (e) {
         return PromiseC.reject(e);
@@ -968,8 +1031,11 @@
     rectList(rects) { return new DOMRectList(secret, rects); },
     rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
-    ImageBitmap, OffscreenCanvas, createImageBitmap,
+    ImageBitmap, ImageBitmapRenderingContext, OffscreenCanvas, createImageBitmap,
     // Helpers for canvas.rs.
+    // A <canvas>'s bitmaprenderer context, and what one shows ([handle, width, height] or null).
+    bitmapRenderer(canvas) { return new ImageBitmapRenderingContext(secret, canvas); },
+    rendererImage,
     gradient(kind, args) { return new CanvasGradient(secret, kind, args); },
     pattern(repetition, image) { return new CanvasPattern(secret, repetition, image); },
     textMetrics(values) { return new TextMetrics(secret, values); },
@@ -1014,7 +1080,7 @@
       const o = offscreens.get(value);
       if (!o || !transfer) return undefined;
       if (o.detached) throw domError('DataCloneError', 'An OffscreenCanvas is detached and could not be transferred.');
-      if (o.context) throw domError('InvalidStateError', 'An OffscreenCanvas could not be transferred because it had a rendering context.');
+      if (o.context || o.renderer) throw domError('InvalidStateError', 'An OffscreenCanvas could not be transferred because it had a rendering context.');
       return [1, o.width, o.height, o.placeholder];
     },
     // A transferred ImageBitmap or OffscreenCanvas: detached here.

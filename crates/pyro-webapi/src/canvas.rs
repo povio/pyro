@@ -53,6 +53,8 @@ use crate::util::*;
 use crate::window::WindowHost;
 
 const CONTEXT_2D: &str = "__lpCanvas2d";
+/// The hidden slot of a `<canvas>` wrapper holding its `ImageBitmapRenderingContext`.
+const BITMAP_RENDERER: &str = "__lpCanvasBitmapRenderer";
 /// The OffscreenCanvas of an offscreen context (hidden on its wrapper).
 const OFFSCREEN: &str = "__lpOffscreen";
 
@@ -114,6 +116,7 @@ where
         "CanvasPattern",
         "TextMetrics",
         "ImageBitmap",
+        "ImageBitmapRenderingContext",
         "OffscreenCanvas",
         "createImageBitmap",
     );
@@ -141,6 +144,7 @@ where
         "CanvasPattern",
         "TextMetrics",
         "ImageBitmap",
+        "ImageBitmapRenderingContext",
         "OffscreenCanvas",
         "createImageBitmap",
     );
@@ -238,7 +242,58 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         crate::file::make_blob(s, bytes.into(), mime.into(), None)
     })?;
     natives.set_atom("encodeContext", encode.value())?;
+    // blankBitmap(width, height): a transparent black ImageBitmap of that size (what a
+    // bitmaprenderer OffscreenCanvas without a bitmap gives transferToImageBitmap).
+    let blank = s.function("blankBitmap", |s, _this, a| {
+        let (w, h) = (size_u32(a.get(0).to_number()?), size_u32(a.get(1).to_number()?));
+        bitmap_triple(s, ImageHandle { pixmap: None, width: w, height: h, clean: true, space: Space::Srgb })
+    })?;
+    natives.set_atom("blankBitmap", blank.value())?;
+    // encodeImage(handle or null, width, height, type, quality): a bitmaprenderer OffscreenCanvas
+    // as a Blob (convertToBlob): its bitmap, or transparent black of the canvas size.
+    let encode_image = s.function("encodeImage", |s, _this, a| {
+        let mime = dom_string(a.get(3))?;
+        let quality = if a.get(4).is_undefined() { None } else { Some(a.get(4).to_number()?) };
+        let (encoding, mime) = pyro_canvas::codec::encoding_for(&mime, quality);
+        let handle = if a.get(0).is_null() { None } else { handle_of(a.get(0))? };
+        let size = (size_u32(a.get(1).to_number()?), size_u32(a.get(2).to_number()?));
+        let bytes = encode_handle(handle, size, encoding)?
+            .ok_or_else(|| JsError::dom("EncodingError", "The canvas could not be encoded."))?;
+        crate::file::make_blob(s, bytes.into(), mime.into(), None)
+    })?;
+    natives.set_atom("encodeImage", encode_image.value())?;
     Ok(natives)
+}
+
+/// A bitmaprenderer canvas's output encoded: `handle`'s pixels at its size, or transparent black
+/// of `canvas` size without one. SecurityError for a bitmap that is not origin-clean.
+fn encode_handle(
+    handle: Option<ImageHandle>,
+    canvas: (u32, u32),
+    encoding: pyro_canvas::Encoding,
+) -> JsResult<Option<Vec<u8>>> {
+    let Some(handle) = handle else { return Ok(Surface::new(canvas.0, canvas.1).encode(encoding)) };
+    if !handle.clean {
+        return Err(security_error());
+    }
+    let handle = handle_in(handle, Space::Srgb);
+    let mut surface = Surface::new(handle.width, handle.height);
+    if let Some(image) = &handle.pixmap {
+        let src = Rect::new(0.0, 0.0, f64::from(image.width()), f64::from(image.height()));
+        let dst = Rect::new(0.0, 0.0, f64::from(handle.width), f64::from(handle.height));
+        surface.draw_image(image, src, dst, &State::new().draw_state());
+    }
+    Ok(surface.encode(encoding))
+}
+
+/// What a `<canvas>`'s bitmaprenderer context shows (`element`: its wrapper): `None` without
+/// such a context, `Some(None)` for transparent black of the canvas size (no bitmap, or null
+/// transferred), else the bitmap at its own size.
+fn renderer_output(s: &Scope<'_>, page: &Rc<PageDom>, element: Object<'_>) -> JsResult<Option<Option<ImageHandle>>> {
+    let Some(context) = s.get_hidden(element, BITMAP_RENDERER)? else { return Ok(None) };
+    let shown = MODULE.helper(s, page, "rendererImage", &[context])?;
+    let Some(shown) = shown.as_object() else { return Ok(Some(None)) };
+    Ok(Some(handle_of(shown.get_index(0)?)?))
 }
 
 fn size_u32(v: f64) -> u32 {
@@ -607,6 +662,21 @@ pub fn get_context<'s>(
             "Failed to execute 'getContext' on 'HTMLCanvasElement': Cannot get context from a canvas that has transferred its control to offscreen.",
         ));
     }
+    // One context per canvas: a type other than the first one asked for is null.
+    if kind == "bitmaprenderer" {
+        let element = node_value(s, page, Some(canvas))?;
+        let element = element.as_object().ok_or(JsError::ContextDestroyed)?;
+        if s.get_hidden(element, CONTEXT_2D)?.is_some() {
+            return Ok(s.null());
+        }
+        if let Some(existing) = s.get_hidden(element, BITMAP_RENDERER)? {
+            return Ok(existing);
+        }
+        let context = MODULE.helper(s, page, "bitmapRenderer", &[element.value()])?;
+        page.canvas_used.set(true);
+        s.set_hidden(element, BITMAP_RENDERER, context)?;
+        return Ok(context);
+    }
     if kind != "2d" {
         return Ok(s.null());
     }
@@ -619,6 +689,9 @@ pub fn get_context<'s>(
     let element = element.as_object().ok_or(JsError::ContextDestroyed)?;
     if let Some(existing) = s.get_hidden(element, CONTEXT_2D)? {
         return Ok(existing);
+    }
+    if s.get_hidden(element, BITMAP_RENDERER)?.is_some() {
+        return Ok(s.null());
     }
     let (w, h) = canvas_size(page, canvas);
     let context = new_context(s, page, Target::Element(canvas), w, h, space)?;
@@ -703,13 +776,24 @@ fn encode_canvas(
             c.sync_size();
             c.surface.borrow_mut().encode(encoding)
         }
-        None => match placeholder_frame(page, canvas) {
-            Some(frame) => frame.surface().encode(encoding),
-            None => {
-                let (w, h) = canvas_size(page, canvas);
-                Surface::new(w, h).encode(encoding)
+        None => {
+            let element = node_value(s, page, Some(canvas))?;
+            let renderer = match element.as_object() {
+                Some(o) => renderer_output(s, page, o)?,
+                None => None,
+            };
+            match renderer {
+                // A bitmaprenderer canvas encodes its bitmap (transparent black without one).
+                Some(bitmap) => encode_handle(bitmap, canvas_size(page, canvas), encoding)?,
+                None => match placeholder_frame(page, canvas) {
+                    Some(frame) => frame.surface().encode(encoding),
+                    None => {
+                        let (w, h) = canvas_size(page, canvas);
+                        Surface::new(w, h).encode(encoding)
+                    }
+                },
             }
-        },
+        }
     };
     Ok(bytes.map(|b| (b, mime)))
 }
@@ -984,17 +1068,32 @@ fn image_source(
                         let pixmap = c.surface.borrow_mut().snapshot();
                         ImageHandle { pixmap, width: w, height: h, clean: c.clean.get(), space: c.space }
                     }
-                    // A placeholder shows its OffscreenCanvas's last frame.
-                    None => match placeholder_frame(&source_page, n.id) {
-                        Some(frame) => ImageHandle {
-                            pixmap: frame.bitmap,
-                            width: frame.width,
-                            height: frame.height,
-                            clean: frame.clean,
-                            space: Space::Srgb,
-                        },
-                        None => ImageHandle { pixmap: None, width: w, height: h, clean: true, space: Space::Srgb },
-                    },
+                    None => {
+                        let renderer = match value.as_object() {
+                            Some(o) => renderer_output(s, page, o)?,
+                            None => None,
+                        };
+                        match renderer {
+                            // A bitmaprenderer canvas is its bitmap, at the bitmap's size.
+                            Some(Some(bitmap)) => bitmap,
+                            Some(None) => {
+                                ImageHandle { pixmap: None, width: w, height: h, clean: true, space: Space::Srgb }
+                            }
+                            // A placeholder shows its OffscreenCanvas's last frame.
+                            None => match placeholder_frame(&source_page, n.id) {
+                                Some(frame) => ImageHandle {
+                                    pixmap: frame.bitmap,
+                                    width: frame.width,
+                                    height: frame.height,
+                                    clean: frame.clean,
+                                    space: Space::Srgb,
+                                },
+                                None => {
+                                    ImageHandle { pixmap: None, width: w, height: h, clean: true, space: Space::Srgb }
+                                }
+                            },
+                        }
+                    }
                 };
                 Ok(Some(handle))
             }
