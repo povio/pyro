@@ -1323,6 +1323,35 @@ impl FrameHost {
     pub(crate) fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
     }
+    /// HTML "allowed by sandboxing to navigate" for frame `source` navigating frame `target` of
+    /// this page, with or without transient activation: a sandbox navigates only its own frame
+    /// and its descendants (the sandboxed navigation browsing context flag), and the top-level
+    /// one only with `allow-top-navigation`, or with `allow-top-navigation-by-user-activation`
+    /// and activation.
+    pub(crate) fn allowed_by_sandboxing(&self, source: FrameKey, target: FrameKey, activation: bool) -> bool {
+        if source == target {
+            return true;
+        }
+        let Some(sandbox) = self.with_frame(source, |f| f.sandbox) else { return true };
+        let top = FrameKey::from(self.page);
+        let mut descendant = false;
+        let mut current = target;
+        loop {
+            let parent = self.parent_key(current);
+            if parent == current {
+                break;
+            }
+            if parent == source {
+                descendant = true;
+                break;
+            }
+            current = parent;
+        }
+        if target == top {
+            return !sandbox.top_navigation_blocked && (!sandbox.top_navigation_needs_activation || activation);
+        }
+        descendant || !sandbox.navigation_blocked
+    }
     pub fn child_keys(&self, key: FrameKey) -> FrameKeys {
         if !self.has_children() {
             return FrameKeys::new();
@@ -1724,10 +1753,30 @@ pub(crate) struct CrossLocationData {
     target: FrameKey,
     /// Base URL of the accessing document, which relative URLs resolve against.
     base: String,
+    /// The accessing window's frame, whose sandbox may forbid the navigation.
+    source: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
 }
 impl CrossLocationData {
     fn navigate(&self, value: pyro_js::Value<'_>, replace: bool) -> pyro_js::JsResult<()> {
-        let nav = self.host.upgrade().and_then(|h| h.nav(self.target)).ok_or(JsError::ContextDestroyed)?;
+        let target_host = self.host.upgrade().ok_or(JsError::ContextDestroyed)?;
+        // HTML "navigate": a source not allowed by sandboxing to navigate the target throws.
+        if let Some((source_host, source)) = self.source.as_ref().and_then(|(h, k)| Some((h.upgrade()?, *k))) {
+            let allowed = if Rc::ptr_eq(&source_host, &target_host) {
+                let activation =
+                    source_host.frame(source).and_then(|f| f.page_dom).is_some_and(|d| d.has_transient_activation());
+                source_host.allowed_by_sandboxing(source, self.target, activation)
+            } else {
+                // Another page's navigable (a popup): neither an ancestor nor the source's top.
+                !source_host.with_frame(source, |f| f.sandbox.navigation_blocked).unwrap_or(false)
+            };
+            if !allowed {
+                return Err(JsError::dom(
+                    "SecurityError",
+                    "The frame attempting navigation is sandboxed and is not allowed to navigate this frame.",
+                ));
+            }
+        }
+        let nav = target_host.nav(self.target).ok_or(JsError::ContextDestroyed)?;
         crate::nav::navigate_cross_origin(&nav, &self.base, value, replace)
     }
 }
@@ -1745,7 +1794,12 @@ impl pyro_js::JsClass for CrossLocation {
                     "Blocked a frame from accessing a cross-origin frame's location.",
                 ));
             }
-            let data = CrossLocationData { host: d.host.clone(), target: d.target, base: d.base.clone() };
+            let data = CrossLocationData {
+                host: d.host.clone(),
+                target: d.target,
+                base: d.base.clone(),
+                source: d.source.clone(),
+            };
             let replace = s.function("replace", move |s, _, a| {
                 a.require(1, "replace")?;
                 data.navigate(a.get(0), true)?;
@@ -1767,11 +1821,13 @@ fn cross_location<'s>(
     w: &CrossWindowData,
     host: &Rc<FrameHost>,
 ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
-    let base = w
-        .accessor(host)
-        .and_then(|(h, key)| h.with_frame(key, |f| f.base_url.clone()))
+    let accessor = w.accessor(host);
+    let base = accessor
+        .as_ref()
+        .and_then(|(h, key)| h.with_frame(*key, |f| f.base_url.clone()))
         .unwrap_or_else(|| "about:blank".into());
-    let data = CrossLocationData { host: Rc::downgrade(host), target: w.target, base };
+    let source = accessor.map(|(h, key)| (Rc::downgrade(&h), key));
+    let data = CrossLocationData { host: Rc::downgrade(host), target: w.target, base, source };
     Ok(s.wrap::<CrossLocation>(data, None)?.value())
 }
 impl pyro_js::JsClass for CrossWindow {
