@@ -90,11 +90,14 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
             unsafe {
                 let len = sys::JSObjectGetTypedArrayByteLength(ctx, obj.as_raw(), &mut exc);
                 check_exc(s, exc)?;
+                if len == 0 {
+                    return Ok(Some(Vec::new()));
+                }
                 let offset = sys::JSObjectGetTypedArrayByteOffset(ctx, obj.as_raw(), &mut exc);
                 check_exc(s, exc)?;
                 let ptr = sys::JSObjectGetTypedArrayBytesPtr(ctx, obj.as_raw(), &mut exc) as *const u8;
                 check_exc(s, exc)?;
-                if ptr.is_null() || len == 0 {
+                if ptr.is_null() {
                     return Ok(Some(Vec::new()));
                 }
                 Ok(Some(std::slice::from_raw_parts(ptr.add(offset), len).to_vec()))
@@ -214,16 +217,21 @@ impl JsClass for TextDecoder {
         def.getter("fatal", |s, d| Ok(s.boolean(d.fatal)));
         def.getter("ignoreBOM", |s, d| Ok(s.boolean(d.ignore_bom)));
         def.method("decode", 0, |s, d, a| {
-            let bytes = if a.get(0).is_undefined() {
-                Vec::new()
+            // Web IDL converts the BufferSource before the options dictionary.
+            // Keep the view live until the stream getter has finished: it can
+            // change the bytes or detach the input before decoding starts.
+            let view = if a.get(0).is_undefined() {
+                None
             } else {
-                buffer_source_bytes(s, a.get(0))?.ok_or_else(|| {
-                    JsError::Type("The provided value is not of type '(ArrayBuffer or ArrayBufferView)'.".into())
-                })?
+                Some(encoding_helper(s, "fixedByteView")?.call(None, &[a.get(0), s.boolean(true)])?)
             };
             let last = match a.get(1).as_object() {
                 Some(o) => !o.get_atom("stream")?.to_bool(),
                 None => true,
+            };
+            let bytes = match view {
+                Some(view) => buffer_source_bytes(s, view)?.expect("fixedByteView returns a Uint8Array"),
+                None => Vec::new(),
             };
             let mut slot = d.decoder.borrow_mut();
             let decoder = slot.get_or_insert_with(|| {
