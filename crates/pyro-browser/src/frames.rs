@@ -1329,6 +1329,12 @@ impl FrameHost {
         if ["", "_blank", "_self", "_parent", "_top"].iter().any(|k| name.eq_ignore_ascii_case(k)) {
             return None;
         }
+        // HTML "choose a navigable": the current navigable itself when its target name is
+        // `name` (WPT scroll-to-fragid-from-link-is-synchronous: `<a target>` naming the
+        // window's own name navigates it, a fragment at once).
+        if self.with_frame(source, |f| f.name == name) == Some(true) {
+            return Some(source);
+        }
         let named: Vec<_> = self
             .children
             .borrow()
@@ -1354,6 +1360,12 @@ impl FrameHost {
             .find(|&&key| in_subtree(key))
             .or_else(|| named.iter().find(|&&key| self.same_origin(source, key)))
             .copied()
+            // The page's root frame (the top-level window) by its name, which every frame of
+            // the page may target as its ancestor.
+            .or_else(|| {
+                let root = FrameKey::from(self.page);
+                (root != source && self.with_frame(root, |f| f.name == name) == Some(true)).then_some(root)
+            })
     }
     /// HTML "ancestor origins list" of the document frame `key` just committed, kept for its
     /// `location.ancestorOrigins`: its parent document's origin, then the parent document's own
