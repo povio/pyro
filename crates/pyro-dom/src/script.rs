@@ -87,8 +87,8 @@ pub enum ResourceKind {
     /// `<embed src>`: fetched for its `load` event and, by its response's Content-Type, whether it
     /// shows a document (a child navigable).
     Embed,
-    /// `<link rel=modulepreload>` / `<link rel=preload>`: fetched ahead, with
-    /// `load`/`error` on the link (bundlers' preload helpers await them).
+    /// `<link rel=modulepreload>` / `<link rel=preload>` / `<link rel=prefetch>`: fetched
+    /// ahead, with `load`/`error` on the link (bundlers' preload helpers await them).
     Preload,
     /// `<meta http-equiv=refresh>`: its insertion schedules a declarative
     /// refresh (the loader handles `Connected` events only).
@@ -223,7 +223,11 @@ impl Dom {
             local_name!("link")
                 if e.attr_local(&local_name!("rel")).is_some_and(|r| {
                     r.split_ascii_whitespace()
-                        .any(|t| t.eq_ignore_ascii_case("modulepreload") || t.eq_ignore_ascii_case("preload"))
+                        .any(|t| {
+                            t.eq_ignore_ascii_case("modulepreload")
+                                || t.eq_ignore_ascii_case("preload")
+                                || t.eq_ignore_ascii_case("prefetch")
+                        })
                 }) =>
             {
                 ResourceKind::Preload

@@ -219,6 +219,25 @@ pub fn effective_directive(dest: RequestDest) -> Option<&'static str> {
     })
 }
 
+/// The fetch directives that also allow a `<link rel=prefetch>` (Chrome), besides
+/// `default-src`: those that govern URLs (not the `-attr` ones, which govern inline code).
+const PREFETCH_DIRECTIVES: &[&str] = &[
+    "child-src",
+    "connect-src",
+    "fenced-frame-src",
+    "font-src",
+    "frame-src",
+    "img-src",
+    "manifest-src",
+    "media-src",
+    "object-src",
+    "script-src",
+    "script-src-elem",
+    "style-src",
+    "style-src-elem",
+    "worker-src",
+];
+
 /// CSP3 §6.8.3 "Get the fallback list": the directives that stand in for `effective`, in order.
 pub fn fallback_list(effective: &str) -> &'static [&'static str] {
     match effective {
@@ -474,6 +493,9 @@ impl PolicyList {
             if self.request_allowed_by(directive, request, url) {
                 continue;
             }
+            if request.dest == RequestDest::Prefetch && self.prefetch_allowed_by_any(policy, request, url) {
+                continue;
+            }
             // Chrome reports a redirected request by the URL it started with.
             let blocked = if request.redirected { &request.original_url } else { url };
             outcome.violations.push(self.violation(policy, directive, effective, blocked.as_str(), url.as_str(), ""));
@@ -491,7 +513,9 @@ impl PolicyList {
     /// ([`ScriptInitiator::nonce`]).
     fn request_allowed_by(&self, directive: &Directive, request: &CspRequest, url: &Url) -> bool {
         let list = &directive.value;
-        let nonce_applies = request.dest.is_script_like() || request.dest == RequestDest::Style;
+        // A `<link rel=prefetch>` matches its own nonce too (Chrome).
+        let nonce_applies =
+            request.dest.is_script_like() || matches!(request.dest, RequestDest::Style | RequestDest::Prefetch);
         if nonce_applies && request.initiator.nonce().is_some_and(|nonce| nonce_matches(list, nonce)) {
             return true;
         }
@@ -504,6 +528,18 @@ impl PolicyList {
             }
         }
         url_matches_source_list(list, url, self.self_origin.as_ref(), request.redirected)
+    }
+
+    /// A `<link rel=prefetch>` that the policy's `default-src` does not allow: Chrome allows it
+    /// when any other fetch directive the policy has allows the URL. Each directive is checked
+    /// on its own, with no fallback, so a permissive `script-src` allows it even when
+    /// `script-src-elem` is stricter. `prefetch-src` is not a directive (CSP3 dropped it). A
+    /// nonce-source matches the link's nonce.
+    fn prefetch_allowed_by_any(&self, policy: &Policy, request: &CspRequest, url: &Url) -> bool {
+        PREFETCH_DIRECTIVES.iter().filter_map(|name| policy.directive(name)).any(|directive| {
+            request.initiator.nonce().is_some_and(|nonce| nonce_matches(&directive.value, nonce))
+                || url_matches_source_list(&directive.value, url, self.self_origin.as_ref(), request.redirected)
+        })
     }
 
     /// CSP3 §4.2.3 "Should element's inline type behavior be blocked?": an inline script or
@@ -1035,6 +1071,26 @@ mod tests {
         assert!(allowed("default-src 'none'; img-src 'self'", "https://a.test/i.png", RequestDest::Image));
         assert!(!allowed("default-src 'none'", "https://a.test/i.png", RequestDest::Image));
         assert!(allowed("connect-src 'self'", "wss://a.test/s", RequestDest::WebSocket));
+    }
+
+    #[test]
+    fn prefetch_is_allowed_by_default_src_or_any_fetch_directive() {
+        let p = RequestDest::Prefetch;
+        assert!(allowed("default-src 'self'", "https://a.test/d.xml", p));
+        assert!(!allowed("default-src 'none'; script-src 'unsafe-inline'", "https://a.test/d.xml", p));
+        // No default-src: nothing governs it.
+        assert!(allowed("script-src 'self'; img-src 'self'", "https://b.test/d.xml", p));
+        // Any other fetch directive of the policy allows it, each without its fallback.
+        assert!(allowed("default-src 'none'; img-src https://b.test", "https://b.test/d.xml", p));
+        assert!(!allowed("default-src 'none'; img-src https://b.test", "https://c.test/d.xml", p));
+        assert!(allowed("default-src 'none'; script-src-elem 'unsafe-inline'; script-src *", "https://b.test/d.xml", p));
+        assert!(allowed("default-src 'none'; manifest-src *", "https://b.test/d.xml", p));
+        // Not base-uri, nor the dropped prefetch-src.
+        assert!(!allowed("default-src 'none'; base-uri *", "https://b.test/d.xml", p));
+        assert!(!allowed("default-src 'none'; prefetch-src *", "https://b.test/d.xml", p));
+        // Each policy on its own: the first one's default-src blocks whatever the second allows.
+        assert!(!allowed("default-src 'unsafe-inline', default-src 'self'; script-src 'unsafe-inline'", "https://a.test/d.xml", p));
+        assert!(allowed("default-src 'none'; img-src *; connect-src 'none', default-src 'none'; img-src 'none'; connect-src *", "https://a.test/d.xml", p));
     }
 
     #[test]
