@@ -2383,7 +2383,7 @@ fn listify_bare_text(
     let (last, to) = editing::deep_backward(dom, end);
     let container = dom.parent_element(text).ok()??;
     let quoted = local_html(dom, container, "blockquote") ||
-        (matches!(editing::local(dom, container).as_str(), "p" | "div")
+        (local_html(dom, container, "p")
             && dom.parent_element(container).ok()?.is_some_and(|p| local_html(dom, p, "blockquote")));
     if !editing::is_text(dom, text) || !editing::is_text(dom, last)
         || dom.parent(last).ok()? != Some(container) || (container != host && !quoted)
@@ -2606,7 +2606,8 @@ fn unlist_paragraph_lines(
 ) -> Option<(Point, Point)> {
     let parent = dom.parent_element(list).ok()??;
     let next = dom.next_sibling(list).ok()?;
-    let quoted = local_html(dom, parent, "blockquote") || dom.parent_element(parent).ok()?.is_some_and(|n| local_html(dom, n, "blockquote"));
+    let quoted = local_html(dom, parent, "blockquote") || (local_html(dom, parent, "p")
+        && dom.parent_element(parent).ok()?.is_some_and(|n| local_html(dom, n, "blockquote")));
     let beside_quote = parent == host && [dom.prev_sibling(list).ok()?, next].into_iter().flatten().any(|n| local_html(dom, n, "blockquote"));
     let directional = parent != host && local_html(dom, parent, "div") && dom.child_count(parent).ok()? == 1
         && (dom.get_attribute(parent, "dir").ok()?.is_some() || page.layout().computed_style_value(dom, parent, "direction") == "rtl");
@@ -2991,10 +2992,57 @@ impl TableSelection {
     }
 }
 
+/// The HTML parser closes a P before a list. Retain the location and
+/// actual markup of quoted paragraphs that contain a list in the live DOM.
+struct QuotedListParagraph {
+    path: Vec<u32>,
+    html: String,
+}
+
+impl QuotedListParagraph {
+    fn capture(dom: &Dom, host: NodeId, html: &str) -> Vec<Self> {
+        if !html.contains("<blockquote") || !html.contains("<p") || !(html.contains("<ol") || html.contains("<ul")) {
+            return Vec::new();
+        }
+        dom.descendants(host).into_iter().flatten().filter_map(|node| {
+            if !local_html(dom, node, "p") || dom.child_count(node).ok()? != 1
+                || !local_html(dom, dom.parent_element(node).ok()??, "blockquote") { return None; }
+            let list = dom.first_child(node).ok()??;
+            if !local_html(dom, list, "ol") && !local_html(dom, list, "ul") { return None; }
+            let mut path = Vec::new();
+            let mut current = node;
+            while current != host {
+                path.push(dom.index_in_parent(current).ok()?);
+                current = dom.parent(current).ok()??;
+            }
+            path.reverse();
+            Some(Self { path, html: dom.outer_html(node).ok()? })
+        }).collect()
+    }
+
+    fn restore(self, dom: &mut Dom, host: NodeId) -> Option<()> {
+        let mut p = host;
+        for index in self.path { p = dom.child_at(p, index).ok()??; }
+        if !local_html(dom, p, "p") || !local_html(dom, dom.parent_element(p).ok()??, "blockquote")
+            || dom.child_count(p).ok()? != 0 { return None; }
+        let list = dom.next_sibling(p).ok()??;
+        let tail = dom.next_sibling(list).ok()??;
+        if !(local_html(dom, list, "ol") || local_html(dom, list, "ul")) || !local_html(dom, tail, "p")
+            || dom.child_count(tail).ok()? != 0 || !dom.attributes(tail).ok()?.is_empty() { return None; }
+        // Repair only the precise empty-P/list/empty-P sequence corresponding
+        // to the saved element. Leave other parser normalizations untouched.
+        let empty = dom.outer_html(p).ok()?;
+        let contents = self.html.strip_prefix(empty.strip_suffix("</p>")?)?.strip_suffix("</p>")?;
+        if contents != dom.outer_html(list).ok()? { return None; }
+        dom.append_child(p, list).ok()?;
+        dom.remove_node(tail).ok()
+    }
+}
+
 enum Saved {
     Control { value: String, selection: ControlSelection, opposite: Option<ControlSelection> },
     /// Saved anchor and focus offsets, in selection direction.
-    Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection> },
+    Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection>, quoted_lists: Vec<QuotedListParagraph> },
 }
 
 struct Step {
@@ -3011,7 +3059,9 @@ impl Saved {
     fn bytes(&self) -> usize {
         match self {
             Saved::Control { value, .. } => value.len(),
-            Saved::Host { html, table_selection, .. } => html.len() + table_selection.as_ref().map_or(0, |s| s.path.len() * size_of::<u32>()),
+            Saved::Host { html, table_selection, quoted_lists, .. } => html.len()
+                + table_selection.as_ref().map_or(0, |s| s.path.len() * size_of::<u32>())
+                + quoted_lists.iter().map(|q| q.html.len() + q.path.len() * size_of::<u32>()).sum::<usize>(),
         }
     }
 }
@@ -3046,6 +3096,7 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
         });
     }
     let html = dom.inner_html(target).ok()?;
+    let quoted_lists = QuotedListParagraph::capture(&dom, target, &html);
     drop(dom);
     let mut table_selection = None;
     let selection = editing::selection(page).and_then(|(anchor, focus)| {
@@ -3060,7 +3111,7 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
             (flat.pos_of(&dom, anchor), flat.pos_of(&dom, focus))
         })
     });
-    Some(Saved::Host { html, selection, table_selection })
+    Some(Saved::Host { html, selection, table_selection, quoted_lists })
 }
 
 fn caret(page: &PageDom, target: NodeId, control: bool) -> Option<Caret> {
@@ -3141,11 +3192,12 @@ fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
             }
             editing::queue_control_selectionchange(page, target);
         }
-        Saved::Host { html, selection, table_selection } => {
+        Saved::Host { html, selection, table_selection, quoted_lists } => {
             let ok = pyro_dom::parse::set_inner_html(&mut page.dom.borrow_mut(), target, &html).is_ok();
             if !ok {
                 return;
             }
+            for paragraph in quoted_lists { paragraph.restore(&mut page.dom.borrow_mut(), target); }
             if let Some((anchor, focus)) = table_selection.and_then(|s| s.resolve(&page.dom.borrow(), target)) {
                 editing::set_selection(page, anchor, focus);
                 return;
