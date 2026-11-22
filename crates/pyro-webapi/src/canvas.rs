@@ -1389,13 +1389,17 @@ fn doubles(a: &Args<'_>, n: usize, what: &str) -> JsResult<Vec<f64>> {
     Ok(v)
 }
 
-/// Web IDL `long`: ToInt32.
+/// Web IDL `[EnforceRange] long`.
 fn long(v: Value<'_>) -> JsResult<i64> {
+    // pyro: every caller's argument is `[EnforceRange] long` (createImageData, getImageData,
+    // putImageData): NaN, infinities and values out of the long range throw a TypeError (WPT
+    // 2d.imageData.{create2,get,put}.nonfinite).
     let n = v.to_number()?;
-    if !n.is_finite() {
-        return Ok(0);
+    let t = n.trunc();
+    if !n.is_finite() || !(-2_147_483_648.0..=2_147_483_647.0).contains(&t) {
+        return Err(JsError::Type("Value is outside the 'long' value range.".into()));
     }
-    Ok(i64::from((n.trunc() % 4_294_967_296.0) as i64 as u32 as i32))
+    Ok(t as i64)
 }
 
 fn module_helper<'s>(s: &Scope<'s>, c: &ContextData, name: &str, args: &[Value<'s>]) -> JsResult<Value<'s>> {
