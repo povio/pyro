@@ -171,6 +171,35 @@ pub(super) fn reselect(page: &Rc<PageDom>, original: (Point, Point), points: [Po
 }
 
 /// A paragraph or soft break continues typing at the new caret.
+/// Fully selected text may lose its formatting element on Enter. Preserve
+/// its color and font emphasis for the next insertion at the break caret.
+pub(crate) fn retain_replacement_style(
+    page: &PageDom, dom: &Dom, range: (Point, Point), text: NodeId, wrapper: NodeId,
+) {
+    let Some(parent) = dom.parent_element(wrapper).ok().flatten() else { return };
+    let Some(element) = dom.parent_element(text).ok().flatten() else { return };
+    let color = effective(page, dom, Kind::Foreground, text);
+    if color != effective(page, dom, Kind::Foreground, parent) {
+        if let Some(format) = Format::parse(Kind::Foreground, &color) {
+            let mut slot = page.typing_values.borrow_mut();
+            let pending = pending_at(&mut slot, range);
+            if !pending.values.iter().any(|f| f.kind == Kind::Foreground) { pending.values.push(format); }
+        }
+    }
+    let layout = page.layout();
+    for (tag, property) in [("b", "font-weight"), ("i", "font-style")] {
+        let enabled = |node| {
+            let value = layout.computed_style_value(dom, node, property);
+            if tag == "b" { super::numeric_bold_weight(&value) }
+            else { value.starts_with("italic") || value.starts_with("oblique") }
+        };
+        let active = enabled(element);
+        if active != enabled(parent) && toggle_state(page, range, tag).is_none() {
+            set_toggle(page, range, tag, active);
+        }
+    }
+}
+
 pub(crate) fn set_break_caret(page: &Rc<PageDom>, original: (Point, Point), caret: Point) {
     let pending = page.typing_values.take().filter(|v| v.range == original);
     editing::set_selection(page, caret, caret);
