@@ -45,7 +45,9 @@ struct PendingToggle {
 /// Per-page state of popovers, dialogs and invokers.
 #[derive(Default)]
 pub(crate) struct PopoverState {
-    toggles: RefCell<FxHashMap<NodeId, PendingToggle>>,
+    /// Pending `toggle` events by element and kind: a dialog's (`true`) are coalesced apart from
+    /// its popover's (HTML gives each its own toggle task tracker).
+    toggles: RefCell<FxHashMap<(NodeId, bool), PendingToggle>>,
     /// The element focused when a dialog or an auto/hint popover was shown.
     previously_focused: RefCell<FxHashMap<NodeId, NodeId>>,
     /// Popovers being shown or hidden ("popover showing or hiding").
@@ -139,19 +141,35 @@ fn fire_toggle(
 /// ones): a later change before the task ran keeps the first old state and
 /// takes the new one.
 pub(crate) fn queue_toggle(page: &Rc<PageDom>, el: NodeId, old_open: bool, new_open: bool, source: Option<NodeId>) {
+    queue_toggle_of(page, el, false, old_open, new_open, source);
+}
+
+/// [`queue_toggle`] for a dialog's open state (its dialog toggle task tracker).
+fn queue_dialog_toggle(page: &Rc<PageDom>, el: NodeId, old_open: bool, new_open: bool, source: Option<NodeId>) {
+    queue_toggle_of(page, el, true, old_open, new_open, source);
+}
+
+fn queue_toggle_of(
+    page: &Rc<PageDom>,
+    el: NodeId,
+    dialog: bool,
+    old_open: bool,
+    new_open: bool,
+    source: Option<NodeId>,
+) {
     {
         let mut toggles = page.popover.toggles.borrow_mut();
-        if let Some(t) = toggles.get_mut(&el) {
+        if let Some(t) = toggles.get_mut(&(el, dialog)) {
             t.new_open = new_open;
             t.source = source;
             return;
         }
-        toggles.insert(el, PendingToggle { old_open, new_open, source });
+        toggles.insert((el, dialog), PendingToggle { old_open, new_open, source });
     }
     let weak = Rc::downgrade(page);
     page.post_task(Box::new(move || {
         let Some(page) = weak.upgrade() else { return };
-        let Some(t) = page.popover.toggles.borrow_mut().remove(&el) else { return };
+        let Some(t) = page.popover.toggles.borrow_mut().remove(&(el, dialog)) else { return };
         fire_toggle(&page, el, "toggle", t.old_open, t.new_open, false, t.source);
     }));
 }
@@ -917,7 +935,7 @@ fn show_dialog(page: &Rc<PageDom>, el: NodeId) -> JsResult<()> {
     if !fire_toggle(page, el, "beforetoggle", false, true, true, None) || is_open(&page.dom.borrow(), el) {
         return Ok(());
     }
-    queue_toggle(page, el, false, true, None);
+    queue_dialog_toggle(page, el, false, true, None);
     let previous = focused(page);
     page.dom.borrow_mut().set_attribute(el, "open", "").js()?;
     // Popovers that do not contain the dialog close, as for showModal().
@@ -964,7 +982,7 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool, source: Option
             return Ok(());
         }
     }
-    queue_toggle(page, el, false, true, source);
+    queue_dialog_toggle(page, el, false, true, source);
     let previous = focused(page);
     overlay_style_flush(page, el);
     {
@@ -990,7 +1008,7 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
     if !is_open(&page.dom.borrow(), el) {
         return;
     }
-    queue_toggle(page, el, true, false, source);
+    queue_dialog_toggle(page, el, true, false, source);
     let keep = overlay_style_flush(page, el);
     {
         let mut dom = page.dom.borrow_mut();
