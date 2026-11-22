@@ -263,6 +263,10 @@ pub(crate) struct NavigateSource {
     pub form_entries: Option<pyro_webapi::formdata::FormEntries>,
     /// History handling "replace" (a form submitted while its document loads).
     pub replace: bool,
+    /// The initiator is not same origin with the navigated document: a navigation to that
+    /// document's own URL is not made a "replace" (HTML navigate: the URL comparison is only
+    /// for a same-origin initiator, which can see it).
+    pub cross_origin: bool,
 }
 
 impl PageNav {
@@ -982,8 +986,11 @@ impl PageNav {
             return false;
         }
         self.take_fragment_directive(&mut target);
-        let kind =
-            if current == target || source.replace { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+        let kind = if (current == target && !source.cross_origin) || source.replace {
+            SameDocumentKind::Replace
+        } else {
+            SameDocumentKind::Fragment
+        };
         let navigation_type = if kind == SameDocumentKind::Replace { "replace" } else { "push" };
         match self.navigate_event_from(navigation_type, target.as_str(), source) {
             NavigateDecision::Cancel => return true,

@@ -2271,10 +2271,13 @@ impl Browser {
                     }
                 });
                 Ok(())
-            } else if host
-                .nav(key)
-                .is_some_and(|nav| nav.navigate_to_fragment_from(&url, &crate::nav::NavigateSource::default()))
-            {
+            } else if host.nav(key).is_some_and(|nav| {
+                // The container's document initiates: one of another origin than the frame's
+                // document does not make the frame's own URL a replace.
+                let source =
+                    crate::nav::NavigateSource { cross_origin: parent.origin != frame.origin, ..Default::default() };
+                nav.navigate_to_fragment_from(&url, &source)
+            }) {
                 // HTML "navigate an iframe or frame": the document's own URL with another fragment
                 // is a fragment navigation of it (`src="about:blank#1"` on an initial about:blank).
                 Ok(())

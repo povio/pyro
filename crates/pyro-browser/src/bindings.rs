@@ -403,6 +403,7 @@ impl PageHooks for Hooks {
                 .and_then(|el| Some((self.frames.upgrade()?.frame(page)?.page_dom.clone()?, el))),
             form_entries: request.form_entries.take(),
             replace: request.replace,
+            cross_origin: cross_origin_target,
         };
         if get && nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment_from(&request.url, &source)) {
             return;
