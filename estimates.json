@@ -3,22 +3,22 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 1163,
+    "macbook_in_scope": 1164,
     "studio_in_scope": 504,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 220,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1528,
+   "distinct_census_pages": 1529,
    "owner_reported_unlisted": 14,
-   "selector_union": 1756,
+   "selector_union": 1757,
    "owner_estimate_reduction": 242,
-   "of_which_tentative": 213,
+   "of_which_tentative": 214,
    "studio_css_reported_pages_not_deduped": 355,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 475,
-    "html/semantics": 472,
+    "html/semantics": 473,
     "html/browsers": 125,
     "html/interaction": 117,
     "referrer-policy": 114,
@@ -29,8 +29,8 @@
     "fetch/fetch-later": 32,
     "html/dom": 27,
     "fetch/content-encoding": 21,
-    "scheduler": 19,
     "html/infrastructure": 19,
+    "scheduler": 19,
     "html/rendering": 18,
     "html/syntax": 15,
     "imagebitmap-renderingcontext": 14,
@@ -38,20 +38,20 @@
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/range": 6,
     "fetch/corb": 6,
+    "fetch/range": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "html/obsolete": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "fetch/orb": 2,
     "xhr": 2,
-    "quirks": 1,
-    "IndexedDB": 1,
+    "fetch/orb": 2,
     "fetch/redirect-navigate": 1,
     "svg/styling": 1,
     "fetch/redirects": 1,
+    "IndexedDB": 1,
+    "quirks": 1,
     "fetch/security": 1,
     "fetch/content-type": 1
    }
@@ -79,10 +79,10 @@
     "html/webappapis": 35,
     "html/dom": 13,
     "fetch/compression-dictionary": 8,
-    "fetch/api": 5,
     "html/interaction": 5,
-    "html/obsolete": 1,
-    "html/infrastructure": 1
+    "fetch/api": 5,
+    "html/infrastructure": 1,
+    "html/obsolete": 1
    }
   },
   "queued": {
@@ -2386,10 +2386,10 @@
   },
   "R-HTML-SANDBOX": {
    "state": "deferred",
-   "in_scope_pages": 10,
+   "in_scope_pages": 9,
    "out_of_scope_pages": 0,
-   "pages": 10,
-   "tentative": 4
+   "pages": 9,
+   "tentative": 3
   },
   "R-HTML-SANDBOX-landed": {
    "state": "implemented-unbuilt",
@@ -2727,6 +2727,13 @@
    "pages": 7,
    "tentative": 0
   },
+  "BUCKET-embedded-frames-2-landed": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
+   "tentative": 1
+  },
   "BUCKET-embedded-frames-covered": {
    "state": "implemented-unbuilt",
    "in_scope_pages": 3,
@@ -3036,14 +3043,14 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1923,
+ "implemented_total_estimate": 1924,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 1163,
+ "macbook_in_scope_implemented": 1164,
  "macbook_in_scope_milestones": [
   100,
   200,
