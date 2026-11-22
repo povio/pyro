@@ -424,7 +424,19 @@ impl ResourceLoader for NetLoader {
         }
         req.credentials = request.effective_credentials();
         if req.url.scheme() == "blob" {
-            req.blob = blob_body(browser, request.page, req.url.as_str());
+            // HTML "resolve a blob URL": outside a navigation, only a document
+            // of the blob URL's own origin resolves it (a cross-origin frame's
+            // blob URL fails as a revoked one).
+            let navigation = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe);
+            let resolvable = navigation
+                || request
+                    .frame_id
+                    .as_deref()
+                    .and_then(|id| frame_origin(browser, request.page, id))
+                    .is_some_and(|origin| origin == origin_of(req.url.as_str()));
+            if resolvable {
+                req.blob = blob_body(browser, request.page, req.url.as_str());
+            }
         }
         if !matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe) {
             req.origin = Some(
