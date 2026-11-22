@@ -15,6 +15,10 @@
 //! - Revalidation with `ETag`/`Last-Modified` and a 304 header merge (§4.3).
 //! - `stale-while-revalidate` (RFC 5861): a stale entry inside the window is
 //!   served while the client revalidates it in the background.
+//! - Redirects (301, 302, 303, 307, 308 with a `Location`) with an explicit
+//!   lifetime: served while fresh, or to `force-cache`/`only-if-cached`, and
+//!   the client follows them as it would a network redirect; a stale one is
+//!   refetched, never revalidated.
 //! - Invalidation by unsafe methods (§4.4).
 //! - Byte-bounded with LRU eviction.
 //!
@@ -24,7 +28,7 @@
 //!   are validators, otherwise do not store;
 //! - serving stale content otherwise (`max-stale`, `stale-if-error`);
 //! - partial content and `Range`;
-//! - storing redirects;
+//! - redirects without an explicit lifetime;
 //! - `Vary: *`;
 //! - responses carrying `Set-Cookie`;
 //! - partitioning within a context by top-level site;
@@ -282,6 +286,7 @@ impl HttpCache {
         if matches!(mode, CacheMode::ForceCache | CacheMode::OnlyIfCached) {
             return Lookup::Hit(entry.cached(age));
         }
+        let redirect = entry.status.is_redirection();
         let response = Directives::parse(&entry.headers, false);
         let response_no_cache = response.no_cache;
         let fresh_enough = lifetime > age
@@ -302,6 +307,9 @@ impl HttpCache {
             && response.stale_while_revalidate.is_some_and(|window| age < lifetime + window as f64);
         if fresh_enough {
             Lookup::Hit(entry.cached(age))
+        } else if redirect {
+            // A 304 to a redirect would be served as the final response.
+            Lookup::Miss
         } else if stale_while_revalidate {
             Lookup::StaleWhileRevalidate(entry.cached(age))
         } else if entry.has_validators() {
@@ -320,9 +328,11 @@ impl HttpCache {
             return shared_storable(status, response, request);
         }
         // RFC 9111 §3: any final status the cache understands, partial content
-        // (`Range` is unsupported) and redirects (not stored) aside.
+        // (`Range` is unsupported) aside; a redirect only with a `Location` it
+        // can be followed to (and, below, an explicit lifetime).
+        let followable = matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) && response.contains_key(header::LOCATION);
         if status.is_informational()
-            || status.is_redirection()
+            || (status.is_redirection() && !followable)
             || status == StatusCode::PARTIAL_CONTENT
             || !(200..600).contains(&status.as_u16())
         {
@@ -915,6 +925,9 @@ mod tests {
         assert!(status(299, &[("expires", "Thu, 01 Dec 2094 16:00:00 GMT")]));
         assert!(!status(500, &[("etag", "\"v\"")]), "not heuristically cacheable: nothing to revalidate");
         assert!(!status(304, &[("cache-control", "max-age=60")]));
+        assert!(status(302, &[("location", "/b"), ("expires", "Thu, 01 Dec 2094 16:00:00 GMT")]), "a followable redirect");
+        assert!(!status(302, &[("location", "/b"), ("etag", "\"v\"")]), "a redirect is never revalidated");
+        assert!(!status(300, &[("location", "/b"), ("cache-control", "max-age=60")]));
         assert!(!HttpCache::new(0, 0).storable(
             StatusCode::OK,
             &h(&[("cache-control", "max-age=60")]),

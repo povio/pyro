@@ -2192,10 +2192,15 @@ impl Io {
             let credentialed =
                 includes_credentials(req.credentials, basic_tainting) || headers.contains_key(header::AUTHORIZATION);
             let mut revalidating = None;
+            // A stored redirect: followed below as a network one would be.
+            let mut cached_redirect = None;
             if cacheable {
                 let lookup =
                     self.shared.cache.lock().unwrap().lookup(&url, &headers, credentialed, cache_mode, request_time);
                 match lookup {
+                    crate::cache::Lookup::Hit(cached) if cached.status.is_redirection() => {
+                        cached_redirect = Some(cached);
+                    }
                     crate::cache::Lookup::Hit(cached) => {
                         // A stored response passes the TAO check a network one would.
                         crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
@@ -2218,6 +2223,76 @@ impl Io {
                     }
                     _ => {}
                 }
+            }
+            if let Some(cached) = cached_redirect {
+                let (status, resp_headers) = (cached.status, cached.headers);
+                if cors::corp_blocks(&req, &url, &resp_headers) {
+                    return Err(corp_blocked());
+                }
+                if cors_cross {
+                    cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
+                        .map_err(NetError::Cors)?;
+                }
+                match req.redirect {
+                    RedirectMode::Error => return Err(NetError::RedirectNotAllowed),
+                    RedirectMode::Manual => {
+                        crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
+                        let head = self
+                            .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0)
+                            .over(cached.protocol);
+                        return self.finish_empty(id, &req, sink, head);
+                    }
+                    RedirectMode::Follow => {}
+                }
+                // Only redirects with a `Location` are stored (`HttpCache::storable`).
+                let loc = resp_headers
+                    .get(header::LOCATION)
+                    .map(|v| location_text(v.as_bytes()))
+                    .ok_or_else(|| NetError::Other("cached redirect without a Location".into()))?;
+                let target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
+                if !matches!(target.scheme(), "http" | "https") {
+                    return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                }
+                let has_credentials = !target.username().is_empty() || target.password().is_some();
+                if has_credentials
+                    && self.shared.config.enforce_cors
+                    && req.mode == RequestMode::Cors
+                    && (cors_cross || tainted || origin_url.as_ref().is_some_and(|o| !cors::same_origin(o, &target)))
+                {
+                    return Err(NetError::Cors("Redirect to a URL with credentials".into()));
+                }
+                crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
+                redirects += 1;
+                if redirects > self.shared.config.max_redirects {
+                    return Err(NetError::TooManyRedirects);
+                }
+                let cross_origin = !cors::same_origin(&url, &target);
+                crate::timing::note(|t| {
+                    t.redirect_end = Some(Instant::now());
+                    t.redirect_count = t.redirect_count.saturating_add(1);
+                    t.cross_origin_redirect |= cross_origin;
+                });
+                let mut head = self
+                    .head(&url, status, resp_headers.clone(), ResponseKind::Basic, redirects > 1)
+                    .over(cached.protocol);
+                head.from_cache = true;
+                deliver(sink, ResponseEvent::Redirect { from: url.clone(), to: target.clone(), status, headers: resp_headers });
+                // Only GET requests are cached: no method or body change applies.
+                if cross_origin {
+                    if timing_origin.as_ref().is_some_and(|origin| *origin != url.origin().ascii_serialization()) {
+                        timing_origin = Some("null".into());
+                    }
+                    req.headers.remove(header::AUTHORIZATION);
+                    req.headers.remove(header::COOKIE);
+                    if cors_cross {
+                        tainted = true;
+                    }
+                }
+                referrer.redirect(&url, &head.headers);
+                req.referrer_policy = referrer.policy;
+                req.url = target;
+                redirect_response = Some(head);
+                continue;
             }
             // Opt-in shared public assets: only after a private miss, only for
             // credential-free requests, fresh entries only (never revalidated).
@@ -2417,6 +2492,13 @@ impl Io {
                 if cors_cross {
                     cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                         .map_err(NetError::Cors)?;
+                }
+                // A redirect with an explicit lifetime is stored (its body is not).
+                if let Some(sent) = sent.as_ref() {
+                    let mut cache = self.shared.cache.lock().unwrap();
+                    if cache.storable(status, &resp_headers, sent, cache_mode) {
+                        cache.insert(&url, sent, credentialed, status, &resp_headers, Bytes::new(), request_time, response_time, protocol);
+                    }
                 }
                 // The redirect mode decides with or without a `Location`: only "follow" needs one.
                 match req.redirect {
