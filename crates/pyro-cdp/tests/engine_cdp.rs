@@ -11454,8 +11454,8 @@ fn an_opener_adding_a_style_sheet_to_its_popup_loads_it() {
 }
 
 /// A server answering a few paths (a thread that stops once the test ends): `/` an empty page,
-/// `/worklet.js` a redirect to `/final/worklet.js`, a module that imports `./dep.js` and checks its
-/// own URL, and `/final/dep.js`, which registers a painter.
+/// `/worklet.js` a redirect to `/final/worklet.js`, a module that imports `./dep.js`, and
+/// `/final/dep.js`, which registers a painter (`/dep.js`, what the wrong base resolves to, is a 404).
 fn serve_worklet_modules() -> std::net::SocketAddr {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -11476,13 +11476,11 @@ fn serve_worklet_modules() -> std::net::SocketAddr {
             let path = line.split_whitespace().nth(1).unwrap_or("/").to_owned();
             let (status, ty, body, location) = match path.as_str() {
                 "/worklet.js" => ("302 Found", "text/plain", String::new(), Some("/final/worklet.js")),
-                "/final/worklet.js" => (
-                    "200 OK",
-                    "text/javascript",
-                    "import './dep.js'; if (!import.meta.url.endsWith('/final/worklet.js')) throw new Error('evaluated at ' + import.meta.url);".to_owned(),
-                    None,
-                ),
+                // (No `throw` on a wrong `import.meta.url`: an evaluation error no longer rejects
+                // addModule(). A wrong base fetches `/dep.js`, whose 404 fails the graph's load.)
+                "/final/worklet.js" => ("200 OK", "text/javascript", "import './dep.js';".to_owned(), None),
                 "/final/dep.js" => ("200 OK", "text/javascript", "registerPaint('dep', class { paint() {} });".to_owned(), None),
+                "/dep.js" => ("404 Not Found", "text/plain", "wrong base".to_owned(), None),
                 _ => ("200 OK", "text/html", "<!doctype html><p>page</p>".to_owned(), None),
             };
             let location = location.map(|l| format!("Location: {l}\r\n")).unwrap_or_default();
@@ -11803,6 +11801,112 @@ fn add_module_of_an_import_settles_with_its_graph() {
     value(&mut h, "add('b', '/s/b.js'); 1");
     h.run_for(500);
     assert_eq!(value(&mut h, "st.b"), json!("rejected"));
+}
+
+/// Serves `/e/` worklet modules for `add_module_settles_by_failure_kind`: modules whose evaluation
+/// throws (the WPT security-features payload calls `postMessage`, which a worklet global lacks),
+/// graphs that fail to load or link, and a module that loads; anything else under `/e/` is a 404.
+fn serve_worklet_failure_kinds() -> std::net::SocketAddr {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+            let js = |body: &'static str| ("200 OK", "text/javascript", body);
+            let (status, ty, body) = match path.as_str() {
+                // common/security-features/subresource/template/worker.js.template.
+                "/e/post-message.js" | "/e/post-message-data.js" => js("postMessage({ \"headers\": {} });"),
+                "/e/imports-throwing.js" => js("import './throwing.js';"),
+                "/e/throwing.js" => js("throw new Error('evaluation threw');"),
+                "/e/imports-missing.js" => js("import './missing.js';"),
+                "/e/syntax.js" => js("export let = ;"),
+                "/e/link.js" => js("import { nope } from './empty.js';"),
+                "/e/empty.js" => js("export {};"),
+                "/e/ok.js" => js("registerPaint('ok', class { paint() {} });"),
+                p if p.starts_with("/e/") => ("404 Not Found", "text/plain", "missing"),
+                _ => ("200 OK", "text/html", "<!doctype html><p>page</p>"),
+            };
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    addr
+}
+
+/// HTML's addModule() rejects only when "fetch a worklet script graph" fails: a failed fetch (an
+/// import's included), a parse error or a link error (the script's error to rethrow). A module
+/// whose evaluation throws ran: the error is reported and the promise fulfills (WPT
+/// worklets/resources/import-tests.js "Importing a script which throws should still resolve the
+/// given promise"; Chrome 158). The WPT content-security-policy/gen worklet-paint pages rely on it:
+/// their module's `postMessage` throws a ReferenceError in the worklet global. This holds for an
+/// entry, an entry imported from a `data:` module, an import that threw, and that import added later
+/// on its own. A worklet that ran a throwing module still loads the next one.
+#[test]
+fn paint_worklet_add_module_rejects_only_when_the_graph_fails_to_load() {
+    add_module_settles_by_failure_kind();
+}
+
+/// The same where addModule() of another graph's import waits for the graph that fetched it (forced:
+/// see `force_graph_fallback_for_tests`).
+#[test]
+fn paint_worklet_add_module_rejects_only_when_the_graph_fails_to_load_without_graph_phases() {
+    pyro_webapi::test_hooks::force_graph_fallback_for_tests(true);
+    add_module_settles_by_failure_kind();
+    pyro_webapi::test_hooks::force_graph_fallback_for_tests(false);
+}
+
+fn add_module_settles_by_failure_kind() {
+    // Without the engine's two steps one promise covers load and evaluation (paint_worklet.rs).
+    if !pyro_js::Scope::has_module_phases() {
+        return;
+    }
+    let addr = serve_worklet_failure_kinds();
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"(async () => {
+            const add = (u) => CSS.paintWorklet.addModule(u).then((v) => v === undefined ? 'loaded' : 'value', (e) => 'rejected:' + e.name);
+            const out = [];
+            // Evaluation throws: fulfilled.
+            out.push(await add('/e/post-message.js'));
+            out.push(await add(`data:text/javascript,import '${location.origin}/e/post-message-data.js';`));
+            out.push(await add('/e/imports-throwing.js'));
+            out.push(await add('/e/throwing.js'));
+            // The graph fails to load or link: rejected.
+            out.push((await add('/e/imports-missing.js')).startsWith('rejected:') ? 'rejected' : 'settled');
+            out.push(await add('/e/syntax.js'));
+            out.push(await add('/e/link.js'));
+            // Still loads modules.
+            out.push(await add('/e/ok.js'));
+            return out.join();
+          })()"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(
+        r["result"]["result"]["value"],
+        json!("loaded,loaded,loaded,loaded,rejected,rejected:SyntaxError,rejected:SyntaxError,loaded"),
+        "{r}"
+    );
 }
 
 /// A `<frameset>` is the viewport's size wherever it is and whatever its author size (Chrome 158:
