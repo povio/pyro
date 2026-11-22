@@ -107,14 +107,24 @@ impl Builder<'_> {
         end: f64,
         ccw: bool,
     ) {
+        // HTML: the whole circumference when the angles are 2π or more apart
+        // in the drawing direction; otherwise from start to end that way.
+        // pyro: as Blink (AdjustEndAngle), angles apart by a multiple of 2π
+        // against the drawing direction (`ellipse(..., 2π, 0)` clockwise)
+        // also draw the whole circumference, not nothing (WPT
+        // 2d.line.join.round, 2d.path.isPointInStroke.scaleddashes).
         let sweep = if !ccw && end - start >= TAU {
             TAU
         } else if ccw && start - end >= TAU {
             -TAU
+        } else if !ccw && start > end {
+            TAU - (start - end).rem_euclid(TAU)
+        } else if ccw && start < end {
+            -(TAU - (end - start).rem_euclid(TAU))
         } else if ccw {
-            -(start - end).rem_euclid(TAU)
+            -(start - end)
         } else {
-            (end - start).rem_euclid(TAU)
+            end - start
         };
         let center = Point::new(cx, cy);
         let radii = Vec2::new(rx, ry);
