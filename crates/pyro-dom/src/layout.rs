@@ -164,6 +164,22 @@ fn round_layout_unit(v: f64) -> f64 {
 /// container at an index (`::column` snap areas).
 type SnapBox = (NodeId, Option<usize>);
 
+/// pyro: a snap event's snap target for the box `target` of `scroller`: retargeted against it
+/// (CSS Scroll Snap 2 § 5.1), so an area in a shadow tree reports its host.
+fn snap_event_target(dom: &Dom, scroller: NodeId, mut target: NodeId) -> NodeId {
+    let Ok(home) = dom.root_node(scroller, false) else { return target };
+    while let Ok(root) = dom.root_node(target, false) {
+        if root == home || !dom.is_shadow_root(root).unwrap_or(false) {
+            break;
+        }
+        match dom.fragment_host(root) {
+            Ok(Some(host)) => target = host,
+            _ => break,
+        }
+    }
+    target
+}
+
 fn snap_axes(axis: &str, mode: style::logical_geometry::WritingMode) -> (bool, bool) {
     match axis {
         "x" => (true, false),
@@ -310,6 +326,10 @@ pub struct Layout {
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<SnapBox>; 2]>,
+    /// pyro: the elements each scroller's snap events last reported it snapped to on each axis
+    /// (x, y), to fire `scrollsnapchanging` / `scrollsnapchange` when they change
+    /// ([`Self::take_snap_changes`]).
+    reported_snaps: FxHashMap<Option<NodeId>, [Option<NodeId>; 2]>,
     /// pyro: the mandatory snap containers whose initial scroll position snapped
     /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
     initially_snapped: rustc_hash::FxHashSet<NodeId>,
@@ -610,6 +630,7 @@ impl Layout {
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
+            reported_snaps: FxHashMap::default(),
             initially_snapped: Default::default(),
             pseudo_scroll: FxHashMap::default(),
             viewport_initially_snapped: false,
@@ -3591,6 +3612,44 @@ impl Layout {
                 }
             }
         }
+    }
+
+    /// pyro: CSS Scroll Snap 2 § 5.1: the scrollers (`None`: the viewport) whose snap targets
+    /// changed since their snap events last reported them, with their new targets (block,
+    /// inline; `None`: not snapped on that axis), in element order, the viewport first. Each is
+    /// taken as reported. A disconnected scroller is dropped unreported.
+    pub fn take_snap_changes(&mut self, dom: &Dom) -> Vec<(Option<NodeId>, [Option<NodeId>; 2])> {
+        if self.snapped.is_empty() && self.reported_snaps.is_empty() {
+            return Vec::new();
+        }
+        let mut scrollers: Vec<Option<NodeId>> =
+            self.snapped.keys().chain(self.reported_snaps.keys()).copied().collect();
+        scrollers.sort_by_key(|k| k.map(|k| (k.idx, k.gen)));
+        scrollers.dedup();
+        let doc = self.style.document();
+        let mut changes = Vec::new();
+        for scroller in scrollers {
+            let now = self.snapped.get(&scroller).map_or([None, None], |t| t.map(|b| b.map(|(id, _)| id)));
+            let before = self.reported_snaps.get(&scroller).copied().unwrap_or([None, None]);
+            if now == before {
+                continue;
+            }
+            if now == [None, None] {
+                self.reported_snaps.remove(&scroller);
+            } else {
+                self.reported_snaps.insert(scroller, now);
+            }
+            if scroller.is_some_and(|el| !dom.is_connected(el).unwrap_or(false)) {
+                continue;
+            }
+            let styled = scroller.or_else(|| dom.document_element(doc).ok().flatten());
+            let mode = styled
+                .and_then(|el| self.style.stylo_style(dom, el).map(|style| style.writing_mode))
+                .unwrap_or_else(style::logical_geometry::WritingMode::horizontal_tb);
+            let [x, y] = now.map(|t| t.map(|id| snap_event_target(dom, scroller.unwrap_or(doc), id)));
+            changes.push((scroller, if mode.is_vertical() { [x, y] } else { [y, x] }));
+        }
+        changes
     }
 
     /// Whether any element or the window is scrolled away from the origin.
