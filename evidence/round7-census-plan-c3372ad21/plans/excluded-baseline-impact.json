@@ -1,0 +1,407 @@
+{
+ "source": "01f49f43da24a20ecb20d99c967fc5de54272120",
+ "observedFinalHead": false,
+ "counts": {
+  "priorLPStrict": 4,
+  "priorLPPassing": 4,
+  "priorLPObserved": 14,
+  "signedChrome158Strict": 5,
+  "signedChrome158Passing": 14,
+  "signedChrome158Observed": 14,
+  "bothPass": 4,
+  "priorLPOnly": 0,
+  "signedChromeOnly": 10
+ },
+ "pages": [
+  [
+   "dom/nodes/remove-and-adopt-thcrash.html",
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "ordinary-228",
+    "chrome/ordinary-228",
+    "remaining/ordinary-228"
+   ],
+   null
+  ],
+  [
+   "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.lowlatency.nocrash.html",
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "ordinary-240",
+    "chrome/ordinary-240",
+    "remaining/ordinary-240"
+   ],
+   null
+  ],
+  [
+   "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.to.imagebitmap.nocrash.html",
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "ordinary-101",
+    "chrome/ordinary-101",
+    "remaining/ordinary-101"
+   ],
+   null
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   [
+    "complete",
+    "OK",
+    false,
+    0,
+    10
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ],
+   [
+    "complete",
+    "OK",
+    false,
+    0,
+    10
+   ],
+   [
+    "ordinary-117",
+    "chrome/ordinary-117",
+    "remaining/ordinary-117"
+   ],
+   null
+  ],
+  [
+   "svg/pservers/pattern-with-invalid-base-cloned-thcrash.html",
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   [
+    "guard-main-017",
+    "chrome/guard-main-017",
+    "guard/guard-main-017"
+   ],
+   null
+  ]
+ ],
+ "named": [
+  [
+   "dom/nodes/remove-and-adopt-thcrash.html",
+   "Check that removing a node and then adopting its parent into a different window/document doesn't crash.",
+   1,
+   [
+    "Pass",
+    "Check that removing a node and then adopting its parent into a different window/document doesn't crash."
+   ],
+   [
+    "Pass",
+    "Check that removing a node and then adopting its parent into a different window/document doesn't crash."
+   ],
+   [
+    "Pass",
+    "Check that removing a node and then adopting its parent into a different window/document doesn't crash."
+   ]
+  ],
+  [
+   "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.lowlatency.nocrash.html",
+   "Tests that transferring a low latency canvas does not cause a crash. See crbug.com/1255153",
+   1,
+   [
+    "Pass",
+    "Tests that transferring a low latency canvas does not cause a crash. See crbug.com/1255153"
+   ],
+   [
+    "Pass",
+    "Tests that transferring a low latency canvas does not cause a crash. See crbug.com/1255153"
+   ],
+   [
+    "Pass",
+    "Tests that transferring a low latency canvas does not cause a crash. See crbug.com/1255153"
+   ]
+  ],
+  [
+   "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.to.imagebitmap.nocrash.html",
+   "offscreencanvas",
+   1,
+   [
+    "Pass",
+    "offscreencanvas"
+   ],
+   [
+    "Pass",
+    "offscreencanvas"
+   ],
+   [
+    "Pass",
+    "offscreencanvas"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if PaymentDetailsInit.total.label is an abusive length",
+   1,
+   [
+    "Fail",
+    "Don't crash if PaymentDetailsInit.total.label is an abusive length"
+   ],
+   [
+    "Pass",
+    "Don't crash if PaymentDetailsInit.total.label is an abusive length"
+   ],
+   [
+    "Fail",
+    "Don't crash if PaymentDetailsInit.total.label is an abusive length"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if PaymentItem.label is an abusive length",
+   1,
+   [
+    "Fail",
+    "Don't crash if PaymentItem.label is an abusive length"
+   ],
+   [
+    "Pass",
+    "Don't crash if PaymentItem.label is an abusive length"
+   ],
+   [
+    "Fail",
+    "Don't crash if PaymentItem.label is an abusive length"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if PaymentMethodData.supportedMethods is an abusive length",
+   1,
+   [
+    "Fail",
+    "Don't crash if PaymentMethodData.supportedMethods is an abusive length"
+   ],
+   [
+    "Pass",
+    "Don't crash if PaymentMethodData.supportedMethods is an abusive length"
+   ],
+   [
+    "Fail",
+    "Don't crash if PaymentMethodData.supportedMethods is an abusive length"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if PaymentShippingOptions.label is an abusive length",
+   1,
+   [
+    "Fail",
+    "Don't crash if PaymentShippingOptions.label is an abusive length"
+   ],
+   [
+    "Pass",
+    "Don't crash if PaymentShippingOptions.label is an abusive length"
+   ],
+   [
+    "Fail",
+    "Don't crash if PaymentShippingOptions.label is an abusive length"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if details.displayItems has an abusive number of items",
+   1,
+   [
+    "Fail",
+    "Don't crash if details.displayItems has an abusive number of items"
+   ],
+   [
+    "Pass",
+    "Don't crash if details.displayItems has an abusive number of items"
+   ],
+   [
+    "Fail",
+    "Don't crash if details.displayItems has an abusive number of items"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if details.shippingOptions has an abusive number of items",
+   1,
+   [
+    "Fail",
+    "Don't crash if details.shippingOptions has an abusive number of items"
+   ],
+   [
+    "Pass",
+    "Don't crash if details.shippingOptions has an abusive number of items"
+   ],
+   [
+    "Fail",
+    "Don't crash if details.shippingOptions has an abusive number of items"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if the PaymentShippingOptions.amount.value is an abusive length",
+   1,
+   [
+    "Fail",
+    "Don't crash if the PaymentShippingOptions.amount.value is an abusive length"
+   ],
+   [
+    "Pass",
+    "Don't crash if the PaymentShippingOptions.amount.value is an abusive length"
+   ],
+   [
+    "Fail",
+    "Don't crash if the PaymentShippingOptions.amount.value is an abusive length"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if the request id has an abusive length",
+   1,
+   [
+    "Fail",
+    "Don't crash if the request id has an abusive length"
+   ],
+   [
+    "Pass",
+    "Don't crash if the request id has an abusive length"
+   ],
+   [
+    "Fail",
+    "Don't crash if the request id has an abusive length"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if there is an abusive number of payment methods in the methodData sequence",
+   1,
+   [
+    "Fail",
+    "Don't crash if there is an abusive number of payment methods in the methodData sequence"
+   ],
+   [
+    "Pass",
+    "Don't crash if there is an abusive number of payment methods in the methodData sequence"
+   ],
+   [
+    "Fail",
+    "Don't crash if there is an abusive number of payment methods in the methodData sequence"
+   ]
+  ],
+  [
+   "payment-request/payment-request-constructor-thcrash.https.html",
+   "Don't crash if total.amount.value is an abusive length",
+   1,
+   [
+    "Fail",
+    "Don't crash if total.amount.value is an abusive length"
+   ],
+   [
+    "Pass",
+    "Don't crash if total.amount.value is an abusive length"
+   ],
+   [
+    "Fail",
+    "Don't crash if total.amount.value is an abusive length"
+   ]
+  ],
+  [
+   "svg/pservers/pattern-with-invalid-base-cloned-thcrash.html",
+   "pattern-with-invalid-base-cloned-thcrash",
+   1,
+   [
+    "Pass",
+    "pattern-with-invalid-base-cloned-thcrash"
+   ],
+   [
+    "Pass",
+    "pattern-with-invalid-base-cloned-thcrash"
+   ],
+   [
+    "Pass",
+    "pattern-with-invalid-base-cloned-thcrash"
+   ]
+  ]
+ ]
+}

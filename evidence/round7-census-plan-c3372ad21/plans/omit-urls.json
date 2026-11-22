@@ -1,0 +1,7 @@
+[
+ "dom/nodes/remove-and-adopt-thcrash.html",
+ "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.lowlatency.nocrash.html",
+ "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.to.imagebitmap.nocrash.html",
+ "payment-request/payment-request-constructor-thcrash.https.html",
+ "svg/pservers/pattern-with-invalid-base-cloned-thcrash.html"
+]

@@ -1,0 +1,80 @@
+{
+ "originalPublication": "01f49f43da24a20ecb20d99c967fc5de54272120",
+ "source": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+ "taskOrderSHA256": "db88ec59be1a3dd7395c14d4e6c08d5d1d88918d38959811c242d76a4437eadd",
+ "originalOfficialNonCss": 31827,
+ "originalEligible": 30359,
+ "frozenUrls": 30358,
+ "duplicateUrls": 0,
+ "originallyWithheld": 1469,
+ "holdsChecked": {
+  "round7-local/census-1f1be0324/evidence/holds.json": {
+   "sha256": "6ac78c45b02dc2f5b20bbdbfedf1b5d1289f2ef17057920615c8554ae6d114b7",
+   "records": 1,
+   "overlap": 0
+  },
+  "round7-local/census-1f1be0324/evidence/observed-native-events.json": {
+   "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+   "records": 0,
+   "overlap": 0
+  },
+  "round6-reference-158/census/export-final/studio-native-markers.json": {
+   "sha256": "716a51ad9e5f153c72277c6103623376e21ca6386a7057d2f9c20432985cf07c",
+   "records": 2,
+   "overlap": 0
+  },
+  "round6-reference-158/census/plans/native-observed.json": {
+   "sha256": "3bf2f104d5aac869c0a614d53e4b9a93a1d1a7d31a9824d1d40b0e16a881c9dc",
+   "records": 55,
+   "overlap": 0
+  },
+  "round6-single-head-evidence/evidence/round6-single-head-158/supplement/additional-holds.json": {
+   "sha256": "bb839a76fb7ffa989a45cf0cf8740ba766d7c591e1301f591bb9154067fc24e3",
+   "records": 34,
+   "overlap": 0
+  },
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/new-holds.json": {
+   "sha256": "6ac78c45b02dc2f5b20bbdbfedf1b5d1289f2ef17057920615c8554ae6d114b7",
+   "records": 1,
+   "overlap": 0
+  },
+  "round6-noncss-measure/deferred-classification/union-hold.json": {
+   "sha256": "bcb481f0e8e5f502e7de6cf99baec5b5bb5195bb05faf093382d3e5ab9b956f4",
+   "records": 56,
+   "overlap": 0
+  }
+ },
+ "laterReceipts": 1009,
+ "unreadable": [],
+ "omissions": {
+  "svg/pservers/pattern-with-invalid-base-cloned-thcrash.html": [
+   "explicitly named crash/reproduction test"
+  ],
+  "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.to.imagebitmap.nocrash.html": [
+   "explicitly named crash/reproduction test"
+  ],
+  "payment-request/payment-request-constructor-thcrash.https.html": [
+   "explicitly named crash/reproduction test"
+  ],
+  "dom/nodes/remove-and-adopt-thcrash.html": [
+   "explicitly named crash/reproduction test"
+  ],
+  "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.lowlatency.nocrash.html": [
+   "explicitly named crash/reproduction test"
+  ]
+ },
+ "omitSHA256": "4b9e83d3dc9b8a857dcc0f280a0dcb244185b71028b34fa9e1bbde2b78e5c861",
+ "effectiveManifestSHA256": "e70789247f5523a3d8659f37bd3d1726ba529dbba7847c598c7231c9a855ff62",
+ "ownership": {
+  "local": {
+   "shards": 160,
+   "original": 15152,
+   "effective": 15150
+  },
+  "studio": {
+   "shards": 160,
+   "original": 15206,
+   "effective": 15203
+  }
+ }
+}
