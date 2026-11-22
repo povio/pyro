@@ -1087,6 +1087,14 @@ fn is_submit_button(dom: &Dom, el: NodeId) -> bool {
     matches!(dom.input_type(el), Ok(InputType::Submit | InputType::Image))
 }
 
+/// A reset button: `<input type=reset>` or `<button type=reset>`.
+fn is_reset_button(dom: &Dom, el: NodeId) -> bool {
+    if is_html(dom, el, "button") {
+        return dom.get_attribute(el, "type").ok().flatten().is_some_and(|t| t.eq_ignore_ascii_case("reset"));
+    }
+    matches!(dom.input_type(el), Ok(InputType::Reset))
+}
+
 /// HTML "popover target element" of `node`.
 fn popover_target_with(dom: &Dom, node: NodeId) -> Option<NodeId> {
     if !dom.has_attribute(node, "popovertarget").unwrap_or(false) || !is_invoker_type(dom, node) {
@@ -1095,7 +1103,9 @@ fn popover_target_with(dom: &Dom, node: NodeId) -> Option<NodeId> {
     if dom.is_disabled(node).unwrap_or(false) {
         return None;
     }
-    if dom.form_owner(node).ok().flatten().is_some() && is_submit_button(dom, node) {
+    // A submit or reset button with a form owner submits or resets the form instead (as
+    // Chromium: a reset button of a form does not toggle its popover either).
+    if dom.form_owner(node).ok().flatten().is_some() && (is_submit_button(dom, node) || is_reset_button(dom, node)) {
         return None;
     }
     dom.invoker_target(node, InvokerTarget::PopoverTarget).ok().flatten()
