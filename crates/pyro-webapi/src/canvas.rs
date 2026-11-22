@@ -766,11 +766,39 @@ fn image_source(
                 if !source_page.image_complete(n.id) {
                     return Ok(None);
                 }
-                if source_page.dom.borrow().natural_size(n.id).is_none_or(|(w, h)| w == 0.0 || h == 0.0) {
-                    return Err(JsError::dom(
-                        "InvalidStateError",
-                        "The HTMLImageElement provided is in the 'broken' state.",
-                    ));
+                // pyro: HTML "check the usability of the image argument", as Chromium applies it:
+                // only an image whose source failed to load or decode is broken (an error); one
+                // without a source (no, empty or removed src) or with a zero natural dimension is
+                // not usable and draws nothing (WPT 2d.drawImage.incomplete.*,
+                // 2d.pattern.image.{nosrc,zeroheight,incomplete.*}, 2d.drawImage.zerosource.image).
+                // An image whose source was emptied or removed keeps no data, even when the
+                // element still holds what it showed before.
+                let has_source = {
+                    let dom = source_page.dom.borrow();
+                    let in_picture = dom
+                        .parent(n.id)
+                        .ok()
+                        .flatten()
+                        .and_then(|p| dom.element(p).ok())
+                        .is_some_and(|e| e.is_html() && &*e.name.local == "picture");
+                    in_picture
+                        || ["src", "srcset"].iter().any(|name| {
+                            dom.get_attribute(n.id, name).ok().flatten().is_some_and(|v| !v.trim().is_empty())
+                        })
+                };
+                if !has_source {
+                    return Ok(None);
+                }
+                let natural = source_page.dom.borrow().natural_size(n.id);
+                match natural {
+                    Some((w, h)) if w > 0.0 && h > 0.0 => {}
+                    Some(_) => return Ok(None),
+                    None => {
+                        return Err(JsError::dom(
+                            "InvalidStateError",
+                            "The HTMLImageElement provided is in the 'broken' state.",
+                        ));
+                    }
                 }
                 // pyro: drawn as the image element's `image-orientation` shows it (Blink; the
                 // source of the preference is not specified, w3c/csswg-drafts#4666).
