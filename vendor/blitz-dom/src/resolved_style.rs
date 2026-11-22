@@ -365,11 +365,15 @@ impl BaseDocument {
         let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
             (Size::CalcSizeAny(_) | Size::CalcSizePercentage(_), Size::CalcSizeAny(value) | Size::CalcSizePercentage(value)) => value,
             (Size::CalcSizeAny(_), Size::CalcSizeAuto(value)) => {
-                basis = self.auto_basis_in_block_flow(node_id, width, percent);
+                basis = self.sampled_basis_in_block_flow(node_id, width, percent, false);
+                value
+            }
+            (Size::CalcSizeAny(_), Size::CalcSizeStretch(value)) => {
+                basis = self.sampled_basis_in_block_flow(node_id, width, percent, true);
                 value
             }
             (Size::CalcSizeAny(_), Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeFitContent(value)) if !width => {
-                basis = self.auto_basis_in_block_flow(node_id, false, percent);
+                basis = self.sampled_basis_in_block_flow(node_id, false, percent, false);
                 value
             }
             (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
@@ -383,7 +387,7 @@ impl BaseDocument {
         Some(calculation.0.resolve_size(CSSPixelLength::new(reference), CSSPixelLength::new(percent.unwrap_or_default())).px().min(max.unwrap_or(f32::INFINITY)).max(min))
     }
 
-    fn auto_basis_in_block_flow(&self, id: NodeId, width: bool, percent: Option<f32>) -> Option<f32> {
+    fn sampled_basis_in_block_flow(&self, id: NodeId, width: bool, percent: Option<f32>, stretch: bool) -> Option<f32> {
         use style::values::computed::{Margin, MaxSize, Overflow, Size};
         let block = |values: &ComputedValues| {
             let display = values.clone_display();
@@ -411,12 +415,21 @@ impl BaseDocument {
         };
         let layout = self.physical_unrounded_layout(id);
         let border_box = position.box_sizing == BoxSizing::BorderBox;
-        if width {
-            if !fixed(&container.get_position().width) || !position.min_width.is_auto() || !matches!(position.max_width, MaxSize::None) { return None; }
+        if width || stretch {
+            let axis_is_definite = if width {
+                fixed(&container.get_position().width) && position.min_width.is_auto() && matches!(position.max_width, MaxSize::None)
+            } else {
+                fixed(&container.get_position().height) && position.min_height.is_auto() && matches!(position.max_height, MaxSize::None)
+            };
+            if !axis_is_definite { return None; }
             let reference = percent?;
             let margins = live.get_margin();
-            let inset = layout.padding.left + layout.padding.right + layout.border.left + layout.border.right;
-            let content = (reference - margin(&margins.margin_left, reference)? - margin(&margins.margin_right, reference)? - inset).max(0.0);
+            let (start, end, inset, margin_reference) = if width {
+                (&margins.margin_left, &margins.margin_right, layout.padding.left + layout.padding.right + layout.border.left + layout.border.right, reference)
+            } else {
+                (&margins.margin_top, &margins.margin_bottom, layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom, self.physical_unrounded_layout(parent.id).content_box_width())
+            };
+            let content = (reference - margin(start, margin_reference)? - margin(end, margin_reference)? - inset).max(0.0);
             return Some(content + if border_box { inset } else { 0.0 });
         }
         if node.flags.is_inline_root() || !position.min_height.is_auto() || !matches!(position.max_height, MaxSize::None) { return None; }

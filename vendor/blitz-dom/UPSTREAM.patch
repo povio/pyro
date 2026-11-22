@@ -53681,7 +53681,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          format!(
              "matrix3d({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
              c(m.m11),
-@@ -342,6 +345,102 @@
+@@ -342,6 +345,115 @@
      /// `transform-origin`, `grid-template-rows`/`columns`) resolve to *used* values, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
      pub fn resolved_style_value(&self, node_id: NodeId, property_name: &str) -> String {
@@ -53705,11 +53705,15 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +        let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
 +            (Size::CalcSizeAny(_) | Size::CalcSizePercentage(_), Size::CalcSizeAny(value) | Size::CalcSizePercentage(value)) => value,
 +            (Size::CalcSizeAny(_), Size::CalcSizeAuto(value)) => {
-+                basis = self.auto_basis_in_block_flow(node_id, width, percent);
++                basis = self.sampled_basis_in_block_flow(node_id, width, percent, false);
++                value
++            }
++            (Size::CalcSizeAny(_), Size::CalcSizeStretch(value)) => {
++                basis = self.sampled_basis_in_block_flow(node_id, width, percent, true);
 +                value
 +            }
 +            (Size::CalcSizeAny(_), Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeFitContent(value)) if !width => {
-+                basis = self.auto_basis_in_block_flow(node_id, false, percent);
++                basis = self.sampled_basis_in_block_flow(node_id, false, percent, false);
 +                value
 +            }
 +            (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
@@ -53723,7 +53727,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +        Some(calculation.0.resolve_size(CSSPixelLength::new(reference), CSSPixelLength::new(percent.unwrap_or_default())).px().min(max.unwrap_or(f32::INFINITY)).max(min))
 +    }
 +
-+    fn auto_basis_in_block_flow(&self, id: NodeId, width: bool, percent: Option<f32>) -> Option<f32> {
++    fn sampled_basis_in_block_flow(&self, id: NodeId, width: bool, percent: Option<f32>, stretch: bool) -> Option<f32> {
 +        use style::values::computed::{Margin, MaxSize, Overflow, Size};
 +        let block = |values: &ComputedValues| {
 +            let display = values.clone_display();
@@ -53751,12 +53755,21 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +        };
 +        let layout = self.physical_unrounded_layout(id);
 +        let border_box = position.box_sizing == BoxSizing::BorderBox;
-+        if width {
-+            if !fixed(&container.get_position().width) || !position.min_width.is_auto() || !matches!(position.max_width, MaxSize::None) { return None; }
++        if width || stretch {
++            let axis_is_definite = if width {
++                fixed(&container.get_position().width) && position.min_width.is_auto() && matches!(position.max_width, MaxSize::None)
++            } else {
++                fixed(&container.get_position().height) && position.min_height.is_auto() && matches!(position.max_height, MaxSize::None)
++            };
++            if !axis_is_definite { return None; }
 +            let reference = percent?;
 +            let margins = live.get_margin();
-+            let inset = layout.padding.left + layout.padding.right + layout.border.left + layout.border.right;
-+            let content = (reference - margin(&margins.margin_left, reference)? - margin(&margins.margin_right, reference)? - inset).max(0.0);
++            let (start, end, inset, margin_reference) = if width {
++                (&margins.margin_left, &margins.margin_right, layout.padding.left + layout.padding.right + layout.border.left + layout.border.right, reference)
++            } else {
++                (&margins.margin_top, &margins.margin_bottom, layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom, self.physical_unrounded_layout(parent.id).content_box_width())
++            };
++            let content = (reference - margin(start, margin_reference)? - margin(end, margin_reference)? - inset).max(0.0);
 +            return Some(content + if border_box { inset } else { 0.0 });
 +        }
 +        if node.flags.is_inline_root() || !position.min_height.is_auto() || !matches!(position.max_height, MaxSize::None) { return None; }
@@ -53784,7 +53797,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          let Some(node) = self.get_node(node_id) else {
              return String::new();
          };
-@@ -364,6 +463,7 @@
+@@ -364,6 +476,7 @@
              },
          };
  
@@ -53792,7 +53805,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          let display = styles.clone_display();
          // Non-atomic inline elements are laid out as style spans within their
          // inline root's text layout rather than as boxes of their own, so their
-@@ -398,6 +498,36 @@
+@@ -398,6 +511,36 @@
          let format_used_px = |px: f32| format_px(px / zoom);
  
          // Layout-dependent "used value" special cases
@@ -53829,7 +53842,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          match property_name {
              // Shorthands of longhands that resolve to used values
              "margin" | "margin-block" | "margin-inline" | "padding" | "padding-block"
-@@ -466,7 +596,7 @@
+@@ -466,7 +609,7 @@
              "width" | "height" if has_layout_box => {
                  // Used value: the layout size interpreted according to `box-sizing`
                  // (border-box size for `border-box`, content-box size for `content-box`)
@@ -53838,7 +53851,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
                  let border_box = styles.get_position().box_sizing == BoxSizing::BorderBox;
                  let size = if property_name == "width" {
                      if border_box {
-@@ -682,14 +812,21 @@
+@@ -682,14 +825,21 @@
                      let reference_box = euclid::Rect::new(
                          euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
                          euclid::Size2D::new(
