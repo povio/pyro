@@ -523,6 +523,7 @@ pub fn fetch_resource_type(destination: pyro_net::Destination) -> ResourceType {
         D::Style => ResourceType::Stylesheet,
         D::Image => ResourceType::Image,
         D::Audio | D::Video => ResourceType::Media,
+        D::Track => ResourceType::TextTrack,
         D::Font => ResourceType::Font,
         D::Xhr | D::Fetch | D::EventSource => ResourceType::XHR,
         D::WebSocket => ResourceType::WebSocket,
