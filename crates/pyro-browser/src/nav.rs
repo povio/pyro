@@ -659,12 +659,13 @@ impl PageNav {
             // update steps"); a replace keeps the slot's key.
             let current = st.entries.get(st.index);
             let nav_state = current.and_then(|e| e.nav_state.clone());
-            let key = match current {
-                Some(e) if kind == SameDocumentKind::Replace => e.key,
-                _ => st.next_entry_id(),
-            };
+            let replace_key = current.filter(|_| kind == SameDocumentKind::Replace).map(|e| e.key);
             let step = current.map_or(self.joint.current.get(), |e| e.step);
             let scroll_manual = current.is_some_and(|e| e.scroll_manual);
+            let key = match replace_key {
+                Some(key) => key,
+                None => st.next_entry_id(),
+            };
             let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step, scroll_manual };
             if kind != SameDocumentKind::Replace {
                 st.initial = false;
