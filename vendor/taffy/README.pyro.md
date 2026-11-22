@@ -702,3 +702,13 @@ dimensions, but its height is definite (`LayoutInput::known_dimensions_are_defin
 its content was measured (its `height`, both insets, a ratio); one its content gives leaves its children's percentage
 heights `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`). Covered by
 `crates/pyro-render/tests/abspos_percentage_heights.rs`.
+
+## Boxes empty in one axis count for scrollable overflow (WPT round 7, css-overflow)
+
+`src/compute/common/scrollable_overflow.rs` (`compute_scrollable_overflow_contribution`): upstream dropped a box
+empty in either axis from its parent's scrollable overflow. Only a box empty in both axes is dropped now: one empty
+in a single axis contributes its extent in the other axis and, in a scroll container, its end margin and the
+parent's end padding, as in Chromium (WPT `scrollable-overflow-zero-one-axis`, a flex item shrunk to zero width
+keeping its `margin-inline-end` in `scrollable-overflow-*-flex-item-margin-inline-end*`). Such a box sitting exactly
+on the scroll origin is not wholly unreachable (the start edge is compared strictly). Covered by pyro-layout
+`flow::a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium`.
