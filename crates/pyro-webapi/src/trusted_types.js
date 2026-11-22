@@ -248,6 +248,13 @@
       originalPolicy: policy.text, sample: String_(sample),
       disposition: policy.reportOnly ? 'report' : 'enforce', statusCode: 0,
     };
+    // Where the violating operation ran (the page script on the stack now), none without one.
+    const location = native.sourceLocation();
+    if (location !== null) {
+      init.sourceFile = location[0];
+      init.lineNumber = location[1];
+      init.columnNumber = location[2];
+    }
     // The event, then (same task) the policy's report-uri / report-to delivery.
     apply(setTimeoutFn, global, [() => {
       target.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', init));
