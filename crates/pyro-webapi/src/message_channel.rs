@@ -655,25 +655,25 @@ pub(crate) fn fire_wire_message(
     page: &Rc<PageDom>,
     target: TargetKey,
     message: &crate::structured_clone::WireMessage,
-    origin: String,
+    origin: Option<String>,
 ) {
-    match crate::structured_clone::decode_with_ports(s, message) {
-        Ok((value, ports)) => {
-            let ev = EventCore::trusted(page, EventInterface::MessageEvent, "message", false, false);
-            {
-                let mut fields = ev.fields.borrow_mut();
-                fields.message_data = Some(Persistent::new(s, value));
-                fields.message_ports = ports.map(|p| Persistent::new(s, p.value()));
-                fields.origin = origin;
-            }
-            fire(page, target, &ev);
+    let (ty, payload) = match crate::structured_clone::decode_with_ports(s, message) {
+        Ok(payload) => ("message", Some(payload)),
+        Err(JsError::Terminated) => return,
+        Err(_) => ("messageerror", None),
+    };
+    let ev = EventCore::trusted(page, EventInterface::MessageEvent, ty, false, false);
+    {
+        let mut f = ev.fields.borrow_mut();
+        if let Some((value, ports)) = payload {
+            f.message_data = Some(Persistent::new(s, value));
+            f.message_ports = ports.map(|p| Persistent::new(s, p.value()));
         }
-        Err(JsError::Terminated) => {}
-        Err(_) => {
-            let ev = EventCore::trusted(page, EventInterface::MessageEvent, "messageerror", false, false);
-            fire(page, target, &ev);
+        if let Some(origin) = origin {
+            f.set_sender_origin(origin);
         }
     }
+    fire(page, target, &ev);
 }
 
 /// Closes a port [`import_port`] made that will never be reachable.
@@ -787,7 +787,7 @@ impl ChannelInner {
         {
             let mut f = ev.fields.borrow_mut();
             f.message_data = data;
-            f.origin = origin.to_owned();
+            f.set_sender_origin(origin.to_owned());
         }
         fire(self.page(), self.target.key, &ev);
     }

@@ -145,17 +145,38 @@ fn call(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
 pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster, shared: Arc<Shared>) -> JsResult<()> {
     let version = start.version;
     let native = s.object();
+    let self_post = s.function("postToSelf", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let options = crate::structured_clone::transfer_options(s, a.opt(1))?;
+        let payload = crate::structured_clone::encode_message(s, a.get(0), options)?;
+        let origin = page.origin_key();
+        let realm = s.realm().downgrade();
+        let receiver = Rc::downgrade(&page);
+        page.post_task(Box::new(move || {
+            let (Some(realm), Some(page)) = (realm.upgrade(), receiver.upgrade()) else { return };
+            if page.is_disposed() { return }
+            if let Ok(s) = realm.scope() {
+                message(&s, &payload, None, &origin);
+            }
+        }));
+        Ok(s.undefined())
+    })?;
+    native.set_atom("postToSelf", self_post.value())?;
     let subscriptions = start.cookies.clone();
     let script_url = pyro_net::Url::parse(&start.script_url).map_err(|_| JsError::ContextDestroyed)?;
     let manager = s.function("cookieManager", move |s, _, _| {
         crate::cookie_store::subscriptions::manager(s, &crate::target::page_of(s)?, subscriptions.clone(), Some(script_url.clone()))
     })?;
     native.set_atom("cookieManager", manager.value())?;
-    let trusted = s.function("dispatchTrustedCookieChange", |s, _, a| {
+    let trusted = s.function("dispatchTrustedEvent", |s, _, a| {
+        if let Some(origin) = a.opt(1).filter(|origin| !origin.is_undefined()) {
+            let event = s.unwrap::<crate::event::Event>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
+            event.fields.borrow_mut().set_sender_origin(origin.to_string()?);
+        }
         crate::cookie_store::events::dispatch_trusted(s, s.global().value(), a.get(0))?;
         Ok(s.undefined())
     })?;
-    native.set_atom("dispatchTrustedCookieChange", trusted.value())?;
+    native.set_atom("dispatchTrustedEvent", trusted.value())?;
     let up = move |poster: &RemotePoster, message: SwUp| {
         poster(Box::new(move || deliver(version, message)));
     };
@@ -380,25 +401,25 @@ pub(crate) fn reply(s: &Scope<'_>, id: u64, result: Result<String, (String, Stri
     }
 }
 
-/// A message from a client (`ServiceWorker.postMessage`); `source` is the
-/// client's JSON description.
+/// A message to this worker. An absent client description denotes a
+/// message posted by the service worker to itself.
 pub(crate) fn message(
     s: &Scope<'_>,
-    page: &Rc<PageDom>,
     message: &crate::structured_clone::WireMessage,
-    source: &str,
-    origin: &str,
+    client: Option<&str>,
+    origin_key: &str,
 ) {
-    let source = s.parse_json(source).unwrap_or_else(|| s.null());
-    let _ = page;
+    let source = client.and_then(|json| s.parse_json(json).ok()).unwrap_or_else(|| s.null());
+    let origin = s.string(crate::event::serialize_message_origin(origin_key));
+    let key = s.string(origin_key);
     match crate::structured_clone::decode_with_ports(s, message) {
         Ok((data, ports)) => call(
             s,
             "dispatchMessage",
-            &[data, ports.map_or_else(|| s.undefined(), |p| p.value()), source, s.string(origin)],
+            &[data, ports.map_or_else(|| s.undefined(), |p| p.value()), source, origin, key],
         ),
         Err(JsError::Terminated) => {}
-        Err(_) => call(s, "dispatchMessageError", &[source, s.string(origin)]),
+        Err(_) => call(s, "dispatchMessageError", &[source, origin, key]),
     }
 }
 

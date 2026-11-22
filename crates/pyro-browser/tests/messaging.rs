@@ -305,3 +305,30 @@ fn geometry_serialization_preserves_quad_point_aliases_and_mutability() {
          result[2].is2D, result[2].e===3].every(Boolean)
     "#), "true");
 }
+
+#[test]
+fn popup_message_origin_uses_the_sender_at_post_time() {
+    let (mut t, events) = loaded(&["https://a.test/main", "https://a.test/receiver"]);
+    let a = open_page(&mut t, "https://a.test/main");
+    let sender = main_realm(&t, a);
+    eval(&sender, "globalThis.receiver = open('/receiver', 'receiver')");
+    settle(&mut t);
+    let (opener, url, ticket) = events.last_popup();
+    let b = t.browser.create_page_in(DEFAULT_CONTEXT).unwrap();
+    t.browser.adopt_popup(b, opener, ticket);
+    t.browser.navigate(b, NavigateOpts::address_bar(&url)).unwrap();
+    settle(&mut t);
+    let receiver = main_realm(&t, b);
+    eval(&receiver, "let received; onmessage = e => { received = e; }");
+    eval(&sender, "receiver.postMessage('hello', '*')");
+    settle(&mut t);
+    assert_eq!(eval(&receiver, r#"
+        const real = Origin.from(received);
+        Object.defineProperty(received, 'origin', {value:'https://b.test'});
+        const synthetic = new MessageEvent('message', {origin:'https://a.test'});
+        let syntheticError;
+        try { Origin.from(synthetic); } catch (e) { syntheticError = e.name; }
+        [received.data, real.isSameOrigin(Origin.from('https://a.test')),
+         Origin.from(received).isSameOrigin(real), syntheticError].join(',')
+    "#), "hello,true,true,TypeError");
+}

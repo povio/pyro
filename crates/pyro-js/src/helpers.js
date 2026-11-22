@@ -342,6 +342,9 @@
   // read of an interface without any, after page script, meets no getter
   // a page put on Array.prototype or Object.prototype.
   const factoryTargets = { __proto__: null };
+  // Only proxies issued by windowProxy have a native, access-checked target.
+  // The weak keys do not retain closed windows.
+  let popupWindowTargets;
 
   const H = {
     freeze: O.freeze,
@@ -858,7 +861,14 @@
         },
       };
       proxy = new ProxyC(objectCreate(null), handler);
+      if (!popupWindowTargets) popupWindowTargets = new WeakMapC();
+      apply(wmSet, popupWindowTargets, [proxy, window]);
       return proxy;
+    },
+    accessiblePopupWindow(proxy) {
+      if (!popupWindowTargets) return null;
+      const get = apply(wmGet, popupWindowTargets, [proxy]);
+      return get === undefined ? null : get();
     },
     // The current stack (JSC format), for console stack traces.
     stack() {

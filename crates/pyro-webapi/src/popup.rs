@@ -320,10 +320,10 @@ impl PopupData {
     /// `popup.postMessage(message, targetOrigin, transfer)`: structured
     /// clone in the opener, delivered as a task in the popup's document.
     fn post_message<'s>(&self, s: &Scope<'s>, a: &Args<'s>) -> JsResult<()> {
-        let sender = self.opener_origin().unwrap_or_else(|| "null".into());
+        let sender = self.page.origin_key();
         // Matched by origin key: an opaque opener's "/" reaches only a popup of that same opaque
         // origin (its initial about:blank), not one that navigated to another opaque origin.
-        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &self.page.origin_key())?;
+        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &sender)?;
         // Clone even when the message will be dropped (errors are reported
         // regardless of the target).
         let message = crate::structured_clone::encode_message(s, message, options)?;
@@ -346,7 +346,7 @@ pub(crate) fn deliver_message(page: &Rc<PageDom>, message: crate::structured_clo
         }
         let (Some(window), Some(realm)) = (page.window_target(), page.main_world_realm()) else { return };
         let Ok(scope) = realm.scope() else { return };
-        crate::message_channel::fire_wire_message(&scope, &page, window, &message, origin);
+        crate::message_channel::fire_wire_message(&scope, &page, window, &message, Some(origin));
     }));
 }
 

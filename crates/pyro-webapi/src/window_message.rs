@@ -90,7 +90,7 @@ pub fn post_message_args<'s>(
 
 /// Serializes `message` with `options` (`{transfer}`) into `realm`, the
 /// target window's, and queues the `message` event at `page`'s window.
-/// `origin` is the source's serialized origin; `source` resolves the
+/// `origin_key` is the source's origin identity at send time; `source` resolves the
 /// source window in the realm reading `event.source` (`None`: the target
 /// window itself). Errors (DataCloneError, a getter's exception) propagate
 /// in the realm of `s`, the poster's scope (see `structured_clone::clone_into`).
@@ -102,7 +102,7 @@ pub fn send_window_message<'s>(
     options: Value<'s>,
     page: &Rc<PageDom>,
     realm: &Realm,
-    origin: String,
+    origin_key: Option<String>,
     source: Option<MessageSource>,
     deliver: bool,
 ) -> JsResult<()> {
@@ -135,7 +135,11 @@ pub fn send_window_message<'s>(
             let mut f = ev.fields.borrow_mut();
             f.message_data = data;
             f.message_ports = ports;
-            f.origin = origin;
+            if let Some(key) = origin_key {
+                f.set_sender_origin(key);
+            } else {
+                f.origin = "null".into();
+            }
             match source {
                 Some(source) => f.message_source_window = Some(source),
                 None => f.message_source = Some(window),

@@ -331,12 +331,11 @@ where
 /// `postMessage` of a window outside a frame tree, which only reaches
 /// itself (the embedder's Window class replaces it with a frame-aware one).
 pub fn post_message_to_self<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<()> {
-    let origin = crate::storage::document_origin(page).unwrap_or_else(|| "null".into());
     let key = page.origin_key();
     let (message, target_origin, options) = crate::window_message::post_message_args(s, a, &key)?;
     let realm = page.main_world_realm().unwrap_or_else(|| s.realm());
     let deliver = target_origin.allows(&key);
-    crate::window_message::send_window_message(s, message, options, page, &realm, origin, None, deliver)
+    crate::window_message::send_window_message(s, message, options, page, &realm, Some(key), None, deliver)
 }
 
 /// A Window [SameObject] attribute value for this realm: looked up by

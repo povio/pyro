@@ -824,15 +824,24 @@ fn post_to_client(
     let (json, origin) = (version.json(), registration.origin.clone());
     post_to_module(&page, true, move |s, glue| {
         drop(queued);
-        match crate::structured_clone::decode_with_ports(s, &message) {
-            Ok((data, ports)) => call(
-                s,
-                glue,
-                "message",
-                &[s.string(&json), data, ports.map_or_else(|| s.undefined(), |p| p.value()), s.string(&origin)],
-            ),
-            Err(JsError::Terminated) => {}
-            Err(_) => call(s, glue, "messageError", &[s.string(&json), s.string(&origin)]),
+        let (ty, payload) = match crate::structured_clone::decode_with_ports(s, &message) {
+            Ok(payload) => ("message", Some(payload)),
+            Err(JsError::Terminated) => return,
+            Err(_) => ("messageerror", None),
+        };
+        let Ok(page) = crate::target::page_of(s) else { return };
+        let event = crate::event::EventCore::trusted(&page, crate::event::EventInterface::MessageEvent, ty, false, false);
+        {
+            let mut fields = event.fields.borrow_mut();
+            fields.set_sender_origin(origin);
+            if let Some((data, ports)) = payload {
+                fields.message_data = Some(Persistent::new(s, data));
+                fields.message_ports = ports.map(|p| Persistent::new(s, p.value()));
+            }
+        }
+        match crate::event::wrap_event(s, &event) {
+            Ok(object) => call(s, glue, "message", &[s.string(&json), object.value()]),
+            Err(error) => s.report_exception(&error),
         }
     });
 }
@@ -1511,6 +1520,10 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     let holder = crate::worker_scope::module_holder(s, page)?;
     let client = client_of(page);
     let native = s.object();
+    native.set_atom("deliverMessage", s.function("deliverMessage", |s, _, args| {
+        crate::cookie_store::events::dispatch_trusted(s, args.get(0), args.get(1))?;
+        Ok(s.undefined())
+    })?.value())?;
     let f = s.function("cookieManager", |s, _, a| {
         let page = crate::target::page_of(s)?;
         let id = a.get(0).to_number()? as u64;
@@ -1651,10 +1664,10 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
             return Err(JsError::dom("DataCloneError", "The service worker's message queue is full"));
         }
         version.queued.fetch_add(size, Ordering::AcqRel);
-        let (source, origin, counter) = (client_json(&client), client.origin.clone(), version.queued.clone());
-        version.run(move |s, page| {
+        let (source, origin_key, counter) = (client_json(&client), page.origin_key(), version.queued.clone());
+        version.run(move |s, _page| {
             counter.fetch_sub(size, Ordering::AcqRel);
-            crate::service_worker_scope::message(s, page, &message, &source, &origin);
+            crate::service_worker_scope::message(s, &message, Some(&source), &origin_key);
         });
         Ok(s.undefined())
     })?;

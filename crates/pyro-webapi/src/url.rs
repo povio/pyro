@@ -11,10 +11,18 @@ use pyro_js::{
 };
 
 pub struct UrlData {
+    blob_origin: std::cell::RefCell<Option<String>>,
     params: ParamsData,
     realm: WeakRealm,
     identity: IdentityKey,
 }
+impl UrlData {
+    pub(crate) fn origin_url(&self) -> Option<(Url, Option<String>)> {
+        let url = self.params.0.url.borrow().clone()?;
+        Some((url, self.blob_origin.borrow().clone()))
+    }
+}
+
 pub struct URL;
 impl JsClass for URL {
     const NAME: &'static str = "URL";
@@ -81,10 +89,14 @@ impl JsClass for URL {
         def.accessor(
             "href",
             |s, data| Ok(s.string(data.params.0.url.borrow().as_ref().unwrap().as_str())),
-            |_, data, value| {
+            |s, data, value| {
                 let value = dom_string(value)?;
-                quirks::set_href(data.params.0.url.borrow_mut().as_mut().unwrap(), &value)
-                    .map_err(|_| JsError::Type("Invalid URL".into()))?;
+                {
+                    let mut current = data.params.0.url.borrow_mut();
+                    let url = current.as_mut().unwrap();
+                    quirks::set_href(url, &value).map_err(|_| JsError::Type("Invalid URL".into()))?;
+                    *data.blob_origin.borrow_mut() = crate::origin_urls::blob_origin(s, url);
+                }
                 data.params.refresh_pairs();
                 Ok(())
             },
@@ -153,8 +165,9 @@ fn parse(args: &Args<'_>) -> JsResult<Option<Url>> {
 fn wrap<'s>(s: &Scope<'s>, url: Url, new_target: Option<Object<'s>>) -> JsResult<Object<'s>> {
     let page = page_of(s)?;
     let identity = page.event_identity(page.next_event_id());
+    let blob_origin = crate::origin_urls::blob_origin(s, &url).into();
     let params = ParamsData::from_url(url);
-    let data = UrlData { params: params.clone(), realm: s.realm().downgrade(), identity };
+    let data = UrlData { blob_origin, params: params.clone(), realm: s.realm().downgrade(), identity };
     let object = match new_target {
         Some(nt) => s.wrap_new::<URL>(data, nt, Some(identity))?,
         None => s.wrap::<URL>(data, Some(identity))?,

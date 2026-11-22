@@ -1971,6 +1971,14 @@ simple_class!(HtmlHeadingElement, "HTMLHeadingElement", HtmlElement, |def| {
 });
 
 /// URL decomposition shared by `<a>` and `<area>` (HTMLHyperlinkElementUtils).
+pub(crate) fn hyperlink_url(dom: &Dom, n: &NodeData, svg: bool) -> JsResult<Option<pyro_net::Url>> {
+    let mut href = dom.get_attribute_ns(n.id, None, "href").js()?;
+    if svg && href.is_none() {
+        href = dom.get_attribute_ns(n.id, Some("http://www.w3.org/1999/xlink"), "href").js()?;
+    }
+    Ok(href.and_then(|h| pyro_net::Url::parse(&resolve_url(dom, n.id, h)).ok()))
+}
+
 fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     reflect_url!(def, "href", "href");
     reflect_str!(def, "target", "target");
@@ -1985,12 +1993,8 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         let dom = n.page().dom.borrow();
         Ok(s.string(&dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(&dom, n.id, h)).unwrap_or_default()))
     });
-    fn link_url(dom: &Dom, n: &NodeData) -> JsResult<Option<pyro_net::Url>> {
-        let href = dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(dom, n.id, h));
-        Ok(href.and_then(|h| pyro_net::Url::parse(&h).ok()))
-    }
     def.getter("origin", |s, n| {
-        let url = link_url(&n.page().dom.borrow(), n)?;
+        let url = hyperlink_url(&n.page().dom.borrow(), n, false)?;
         Ok(s.string(&url.map(|u| quirks::origin(&u)).unwrap_or_default()))
     });
     // A null URL reads as ":" for protocol and "" otherwise, and ignores writes.
@@ -1999,13 +2003,13 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             def.accessor(
                 $prop,
                 |s, n| {
-                    let url = link_url(&n.page().dom.borrow(), n)?;
+                    let url = hyperlink_url(&n.page().dom.borrow(), n, false)?;
                     Ok(s.string(url.as_ref().map_or($null, |u| quirks::$get(u))))
                 },
                 |_s, n, v| {
                     let value = dom_string(v)?;
                     let mut dom = n.page().dom.borrow_mut();
-                    let Some(mut url) = link_url(&dom, n)? else { return Ok(()) };
+                    let Some(mut url) = hyperlink_url(&dom, n, false)? else { return Ok(()) };
                     let _ = quirks::$set(&mut url, &value);
                     dom.set_attribute(n.id, "href", url.as_str()).js()
                 },
