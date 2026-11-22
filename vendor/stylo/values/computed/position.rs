@@ -144,6 +144,48 @@ impl<Percentage: TryTacticAdjustment, Fallback: TryTacticAdjustment> TryTacticAd
 
 /// A computed type for `inset` properties.
 pub type Inset = GenericInset<Percentage, LengthPercentage>;
+
+/// pyro: as the derived interpolation, but `anchor()` and `anchor-size()` values that do not
+/// interpolate as functions (other anchors or sides, or a length at the other end) interpolate
+/// through a `calc()` of both, which layout resolves (Chrome interpolates their px).
+impl crate::values::animated::Animate for Inset {
+    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
+        use crate::values::animated::Animate;
+        use crate::values::computed::length_percentage::anchor_interpolation as anchor;
+        match (self, other) {
+            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => {
+                return Ok(Self::LengthPercentage(from.animate(to, procedure)?))
+            },
+            (Self::Auto, Self::Auto) => return Ok(Self::Auto),
+            (Self::AnchorFunction(from), Self::AnchorFunction(to)) => {
+                if let Ok(value) = from.animate(to, procedure) {
+                    return Ok(Self::AnchorFunction(value));
+                }
+            },
+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => {
+                if let Ok(value) = from.animate(to, procedure) {
+                    return Ok(Self::AnchorSizeFunction(value));
+                }
+            },
+            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => {
+                return Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?))
+            },
+            _ => {},
+        }
+        let queries = |value: &Self| !matches!(value, Self::LengthPercentage(_) | Self::Auto);
+        if !queries(self) && !queries(other) {
+            return Err(());
+        }
+        let from = anchor::inset_node(self).ok_or(())?;
+        let to = anchor::inset_node(other).ok_or(())?;
+        Ok(Self::AnchorContainingCalcFunction(anchor::mix(
+            from,
+            to,
+            procedure,
+            style_traits::values::specified::AllowedNumericType::All,
+        )))
+    }
+}
 impl TryTacticAdjustment for Inset {
     // https://drafts.csswg.org/css-anchor-position-1/#swap-due-to-a-try-tactic:
     //

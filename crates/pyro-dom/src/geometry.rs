@@ -930,6 +930,19 @@ pub trait GeometrySource {
     fn take_scroll_group_moves(&self) -> Vec<u64> {
         Vec::new()
     }
+    /// pyro: the elements whose used `anchor()`/`anchor-size()` values changed since the last
+    /// call, by key, with their px then and now, by slot: `left`, `right`, `top`, `bottom`,
+    /// `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height` (`None`: not an
+    /// anchor value, or not resolved). CSS transitions of those values start from them, as
+    /// Chrome computes `anchor()` to px before it transitions.
+    fn take_anchor_evals(&self) -> Vec<(u64, [Option<f32>; 10], [Option<f32>; 10])> {
+        Vec::new()
+    }
+    /// pyro: the used px of the `anchor()`/`anchor-size()` values of the element keyed `key` as
+    /// of the last sync, by slot ([`Self::take_anchor_evals`]).
+    fn anchor_used(&self, _key: u64) -> Option<[Option<f32>; 10]> {
+        None
+    }
     /// The elements whose style was replaced since the last call, by key,
     /// with the style before and after (and 1 or 2 for a change of its `::before` or `::after`, 0
     /// of its own); recorded while the engine's

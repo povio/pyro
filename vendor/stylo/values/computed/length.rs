@@ -527,7 +527,16 @@ impl Size {
             (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
             (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
             (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
-            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) if from.animate(to, procedure).is_ok() => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
+            // pyro: other `anchor-size()` values, or a length at the other end: through a
+            // `calc()` of both, which layout resolves (Chrome interpolates their px).
+            (Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_) | Self::LengthPercentage(_)) |
+            (Self::LengthPercentage(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_)) => {
+                use crate::values::computed::length_percentage::anchor_interpolation as anchor;
+                let from = anchor::size_node(self).ok_or(())?;
+                let to = anchor::size_node(other).ok_or(())?;
+                Ok(Self::AnchorContainingCalcFunction(NonNegative(anchor::mix(from, to, procedure, style_traits::values::specified::AllowedNumericType::NonNegative))))
+            },
             _ => {
                 let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_)) ||
                     (allow_keywords && (matches!(self, Self::LengthPercentage(_)) || matches!(other, Self::LengthPercentage(_))));
@@ -585,7 +594,15 @@ impl MaxSize {
             (Self::None, Self::None) => Ok(Self::None),
             (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
             (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
-            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) if from.animate(to, procedure).is_ok() => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
+            // pyro: as `Size::animate_size`.
+            (Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_) | Self::LengthPercentage(_)) |
+            (Self::LengthPercentage(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_)) => {
+                use crate::values::computed::length_percentage::anchor_interpolation as anchor;
+                let from = anchor::max_size_node(self).ok_or(())?;
+                let to = anchor::max_size_node(other).ok_or(())?;
+                Ok(Self::AnchorContainingCalcFunction(NonNegative(anchor::mix(from, to, procedure, style_traits::values::specified::AllowedNumericType::NonNegative))))
+            },
             _ => Ok(Self::Calculation(Box::new(operand(self)?.animate_size(operand(other)?.as_ref(), procedure, allow_keywords)?))),
         }
     }

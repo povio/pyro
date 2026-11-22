@@ -1143,3 +1143,98 @@ impl TryTacticAdjustment for CalcNode {
         });
     }
 }
+
+/// pyro: interpolation of `anchor()` and `anchor-size()` values that do not interpolate as
+/// functions (other anchors, sides or sizes, or a length at the other end). The result is a
+/// `calc()` that weighs both ends, its anchor functions left for layout to resolve as it resolves
+/// any other: what Chrome gets by computing them to px before it interpolates.
+pub(crate) mod anchor_interpolation {
+    use super::{CalcNode, CalcPercentageLeaf, ComputedLeaf, LengthPercentage, Percentage};
+    use crate::typed_om::NumericBaseType;
+    use crate::values::animated::Procedure;
+    use crate::values::computed::length::{MaxSize, Size};
+    use crate::values::computed::position::{AnchorSide, Inset};
+    use crate::values::generics::calc::{CalcNodeLeaf, GenericAnchorFunctionFallback};
+    use crate::values::generics::length::GenericAnchorSizeFunction;
+    use crate::values::generics::position::{GenericAnchorFunction, GenericAnchorSide};
+    use crate::values::generics::Optional;
+    use style_traits::values::specified::AllowedNumericType;
+
+    type Fallback = Optional<Box<GenericAnchorFunctionFallback<ComputedLeaf>>>;
+
+    fn fallback<T>(value: Option<&T>, node: impl Fn(&T) -> Option<CalcNode>) -> Option<Fallback> {
+        Some(match value {
+            None => Optional::None,
+            Some(value) => Optional::Some(Box::new(GenericAnchorFunctionFallback::new(false, node(value)?))),
+        })
+    }
+
+    fn side(side: &AnchorSide) -> GenericAnchorSide<Box<CalcNode>> {
+        match side {
+            GenericAnchorSide::Keyword(keyword) => GenericAnchorSide::Keyword(*keyword),
+            GenericAnchorSide::Percentage(Percentage(p)) => GenericAnchorSide::Percentage(Box::new(CalcNode::Leaf(
+                ComputedLeaf::Percentage(CalcPercentageLeaf::new(*p, Optional::Some(NumericBaseType::Length))),
+            ))),
+        }
+    }
+
+    fn anchor_size<T>(
+        f: &GenericAnchorSizeFunction<T>,
+        node: impl Fn(&T) -> Option<CalcNode>,
+    ) -> Option<CalcNode> {
+        Some(CalcNode::AnchorSize(Box::new(GenericAnchorSizeFunction {
+            target_element: f.target_element.clone(),
+            size: f.size,
+            fallback: fallback(f.fallback.as_ref(), node)?,
+        })))
+    }
+
+    /// An inset as a calc node (`None`: `auto`).
+    pub fn inset_node(value: &Inset) -> Option<CalcNode> {
+        Some(match value {
+            Inset::LengthPercentage(lp) | Inset::AnchorContainingCalcFunction(lp) => lp.to_calc_node(),
+            Inset::Auto => return None,
+            Inset::AnchorFunction(f) => CalcNode::Anchor(Box::new(GenericAnchorFunction {
+                target_element: f.target_element.clone(),
+                side: side(&f.side),
+                fallback: fallback(f.fallback.as_ref(), inset_node)?,
+            })),
+            Inset::AnchorSizeFunction(f) => return anchor_size(&**f, inset_node),
+        })
+    }
+
+    /// A size as a calc node (`None`: a keyword).
+    pub fn size_node(value: &Size) -> Option<CalcNode> {
+        match value {
+            Size::LengthPercentage(lp) | Size::AnchorContainingCalcFunction(lp) => Some(lp.0.to_calc_node()),
+            Size::AnchorSizeFunction(f) => anchor_size(&**f, size_node),
+            _ => None,
+        }
+    }
+
+    /// A max size as a calc node (`None`: `none` or a keyword).
+    pub fn max_size_node(value: &MaxSize) -> Option<CalcNode> {
+        match value {
+            MaxSize::LengthPercentage(lp) | MaxSize::AnchorContainingCalcFunction(lp) => Some(lp.0.to_calc_node()),
+            MaxSize::AnchorSizeFunction(f) => anchor_size(&**f, max_size_node),
+            _ => None,
+        }
+    }
+
+    /// `from` and `to` weighed by `procedure`, as one calc.
+    pub fn mix(from: CalcNode, to: CalcNode, procedure: Procedure, clamping: AllowedNumericType) -> LengthPercentage {
+        fn product_with(mut node: CalcNode, product: f32) -> CalcNode {
+            let mut number = CalcNode::Leaf(ComputedLeaf::new_number(product));
+            if !node.try_product_in_place(&mut number) {
+                CalcNode::Product(vec![node, number].into())
+            } else {
+                node
+            }
+        }
+        let (l, r) = procedure.weights();
+        LengthPercentage::new_calc(
+            CalcNode::Sum(vec![product_with(from, l as f32), product_with(to, r as f32)].into()),
+            clamping,
+        )
+    }
+}

@@ -362,6 +362,19 @@ pub(crate) fn note_style_changes(
     }
 }
 
+/// pyro: the slots of [`BaseDocument::take_anchor_evals`]: `left`, `right`, `top`, `bottom`,
+/// `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height`.
+pub const ANCHOR_USED_SLOTS: usize = 10;
+
+/// pyro: an element whose used `anchor()`/`anchor-size()` values changed, by slot
+/// ([`ANCHOR_USED_SLOTS`]; `None`: not an anchor value, or not resolved).
+#[derive(Clone, Debug)]
+pub struct AnchorEval {
+    pub node: NodeId,
+    pub before: [Option<f32>; ANCHOR_USED_SLOTS],
+    pub after: [Option<f32>; ANCHOR_USED_SLOTS],
+}
+
 /// pyro: an element whose primary style a style traversal replaced
 /// ([`BaseDocument::take_style_changes`]).
 #[derive(Clone)]
@@ -701,6 +714,13 @@ pub struct BaseDocument {
     pub(crate) anchor_rendered_options: HashMap<NodeId, usize>,
     pub(crate) anchor_area_snapshots: RefCell<HashMap<NodeId, ((NodeId, NodeId, style::values::specified::position::PositionArea, Option<usize>), taffy::Point<f32>)>>,
     pub(crate) anchor_pending_options: HashSet<NodeId>,
+    /// pyro: the used px of each anchored element's `anchor()`/`anchor-size()` insets and sizes
+    /// as its last layout resolved them ([`ANCHOR_USED_SLOTS`]), and, for the ones whose values
+    /// changed since the last [`Self::take_anchor_evals`], their values as of that call: a CSS
+    /// transition's before-change and after-change values (Chrome computes `anchor()` to px
+    /// before it transitions).
+    pub(crate) anchor_used: RefCell<HashMap<NodeId, [Option<f32>; ANCHOR_USED_SLOTS]>>,
+    pub(crate) anchor_used_changed: RefCell<HashMap<NodeId, [Option<f32>; ANCHOR_USED_SLOTS]>>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
     pub(crate) scroll_marker_groups: bool,
@@ -1050,6 +1070,8 @@ impl BaseDocument {
             anchor_rendered_options: Default::default(),
             anchor_area_snapshots: Default::default(),
             anchor_pending_options: Default::default(),
+            anchor_used: Default::default(),
+            anchor_used_changed: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
             transition_trees: None,
@@ -1532,6 +1554,8 @@ impl BaseDocument {
         self.anchor_transform_dirty.remove(&node_id);
         self.anchor_last_option.remove(&node_id);
         self.anchor_area_snapshots.get_mut().remove(&node_id);
+        self.anchor_used.get_mut().remove(&node_id);
+        self.anchor_used_changed.get_mut().remove(&node_id);
         self.anchor_rendered_options.remove(&node_id);
         self.anchor_pending_options.remove(&node_id);
         self.anchor_scroll_dirty.remove(&node_id);
@@ -2627,6 +2651,38 @@ impl BaseDocument {
     /// pyro: see [`Self::scroll_group_moves`].
     pub fn take_scroll_group_moves(&mut self) -> Vec<NodeId> {
         std::mem::take(&mut self.scroll_group_moves)
+    }
+
+    /// pyro: the elements whose used `anchor()`/`anchor-size()` values ([`ANCHOR_USED_SLOTS`])
+    /// changed since the last call, with their values then and now.
+    pub fn take_anchor_evals(&mut self) -> Vec<AnchorEval> {
+        let changed = std::mem::take(self.anchor_used_changed.get_mut());
+        let used = self.anchor_used.get_mut();
+        changed
+            .into_iter()
+            .filter_map(|(node, before)| {
+                let after = *used.get(&node)?;
+                (before != after).then_some(AnchorEval { node, before, after })
+            })
+            .collect()
+    }
+
+    /// pyro: the used px of `node`'s `anchor()`/`anchor-size()` values as its last layout
+    /// resolved them ([`ANCHOR_USED_SLOTS`]).
+    pub fn anchor_used(&self, node: NodeId) -> Option<[Option<f32>; ANCHOR_USED_SLOTS]> {
+        self.anchor_used.borrow().get(&node).copied()
+    }
+
+    /// pyro: records the used px of an anchored element's `anchor()`/`anchor-size()` value in
+    /// slot `slot` ([`ANCHOR_USED_SLOTS`]), as its layout resolved it.
+    pub(crate) fn record_anchor_used(&self, node: NodeId, slot: usize, px: f32) {
+        let mut used = self.anchor_used.borrow_mut();
+        let values = used.entry(node).or_insert([None; ANCHOR_USED_SLOTS]);
+        if values[slot] == Some(px) {
+            return;
+        }
+        self.anchor_used_changed.borrow_mut().entry(node).or_insert(*values);
+        values[slot] = Some(px);
     }
 
     pub fn take_style_changes(&mut self) -> Vec<StyleChange> {

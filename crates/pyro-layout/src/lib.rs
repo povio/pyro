@@ -1276,6 +1276,21 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn anchor_used(&self, key: u64) -> Option<[Option<f32>; 10]> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.anchor_used(self.page, key))
+    }
+
+    fn take_anchor_evals(&self) -> Vec<(u64, [Option<f32>; 10], [Option<f32>; 10])> {
+        RENDERER.with(|r| {
+            r.try_borrow_mut()
+                .ok()
+                .as_deref_mut()
+                .and_then(Option::as_mut)
+                .map(|r| r.take_anchor_evals(self.page))
+                .unwrap_or_default()
+        })
+    }
+
     fn take_style_changes(
         &self,
     ) -> Vec<(u64, u8, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>

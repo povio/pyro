@@ -132,7 +132,7 @@ pub use config::{
     same_secret, MediaEnvironment,
 };
 pub use document::{SvgImageDocument, 
-    StyleChange,
+    AnchorEval, StyleChange, ANCHOR_USED_SLOTS,
     BaseDocument, BoundingRect, DocGuard, DocGuardMut, Document, PlainDocument, UserAgentStylesheet,
     ViewportScrollbars,
 };

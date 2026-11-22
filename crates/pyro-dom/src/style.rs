@@ -1197,6 +1197,31 @@ impl StyleEngine {
             .collect()
     }
 
+    /// pyro: the elements of this document whose used `anchor()`/`anchor-size()` px changed since
+    /// the last call, with their px then and now
+    /// ([`crate::geometry::GeometrySource::take_anchor_evals`]). Elements gone from `dom` are left
+    /// out.
+    /// pyro: the used px of `el`'s `anchor()`/`anchor-size()` values as of the last sync
+    /// ([`crate::geometry::GeometrySource::anchor_used`]).
+    pub fn anchor_used(&self, el: NodeId) -> Option<[Option<f32>; 10]> {
+        let external = self.external.borrow();
+        external.as_ref()?.0.anchor_used(crate::snapshot::render_key(el))
+    }
+
+    pub fn take_anchor_evals(&self, dom: &Dom) -> Vec<(NodeId, [Option<f32>; 10], [Option<f32>; 10])> {
+        let external = self.external.borrow();
+        let Some((source, _)) = &*external else { return Vec::new() };
+        source
+            .take_anchor_evals()
+            .into_iter()
+            .filter_map(|(key, before, after)| {
+                let el = crate::geometry::node_of(dom, key)?;
+                self.owns(dom, el)?;
+                Some((el, before, after))
+            })
+            .collect()
+    }
+
     pub fn take_style_changes(
         &self,
         dom: &Dom,

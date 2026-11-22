@@ -2786,11 +2786,19 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
         let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
         let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,inline_basis), _ => None };
-        Some(([
+        let sizes = [
             taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },
             taffy::Size { width:size(&pos.min_width,true),height:size(&pos.min_height,false) },
             taffy::Size { width:max(&pos.max_width,true),height:max(&pos.max_height,false) }
-        ].map(|size| wm.logical_size(size)),wm.logical_rect(taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) })))
+        ];
+        // pyro: the used px, for CSS transitions of the values (`BaseDocument::take_anchor_evals`).
+        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) {
+            for (i, s) in sizes.iter().enumerate() {
+                if let Some(px) = s.width { self.record_anchor_used(node.id, 4 + 2 * i, px); }
+                if let Some(px) = s.height { self.record_anchor_used(node.id, 5 + 2 * i, px); }
+            }
+        }
+        Some((sizes.map(|size| wm.logical_size(size)),wm.logical_rect(taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) })))
     }
 
     fn oof_anchor_insets(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> taffy::Rect<Option<f32>> {
@@ -2865,7 +2873,14 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             }
             None
         };
-        wm.logical_rect(taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) })
+        let insets = taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) };
+        // pyro: the used px, for CSS transitions of the values (`BaseDocument::take_anchor_evals`).
+        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) {
+            for (slot, px) in [insets.left, insets.right, insets.top, insets.bottom].into_iter().enumerate() {
+                if let Some(px) = px { self.record_anchor_used(node.id, slot, px); }
+            }
+        }
+        wm.logical_rect(insets)
     }
 
     fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>, trial: bool) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
