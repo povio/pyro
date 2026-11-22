@@ -15,10 +15,12 @@ const offlineClose = batch === 'offline-close';
 const offlineQuantum = batch === 'offline-quantum';
 const compressor = batch === 'compressor';
 const reverse = batch === 'reverse-loop';
+const detuning = batch === 'osc-detune';
 const resampling = batch === 'resampling';
-const batchDirectory = reverse ? '/webaudio/the-audio-api/the-oscillatornode-interface/' : compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
+const batchDirectory = reverse || detuning ? '/webaudio/the-audio-api/the-oscillatornode-interface/' : compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
 const batchPages = compressor ? ['the-dynamicscompressornode-interface/dynamicscompressor-basic.html', 'the-dynamicscompressornode-interface/ctor-dynamicscompressor.html', 'the-audioparam-interface/k-rate-dynamics-compressor-connections.html'] : offlineQuantum ? ['offlineaudiocontext-rendersizehint.html', 'offlineaudiocontext-suspend-rendersizehint.https.html', 'offlineaudiocontext-close.html'] : offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
 if (reverse) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html');
+if (detuning) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html', 'detune-limiting.html');
 if (resampling) batchPages.splice(0, batchPages.length, 'buffer-resampling.html', 'sub-sample-buffer-stitching.html');
 const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
@@ -45,6 +47,7 @@ try {
     if (modulePath && periodic) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.OscillatorNode === OscillatorNode && installedAudio.PeriodicWave === globalThis.PeriodicWave));
     if (modulePath && realtime) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext));
     if (modulePath && resampling) assert.ok(await page.evaluate(() => installedAudio.OscillatorNode === OscillatorNode && installedAudio.AudioBuffer === AudioBuffer && installedAudio.ChannelMergerNode === ChannelMergerNode));
+    if (modulePath && detuning) assert.ok(await page.evaluate(() => installedAudio.OscillatorNode === OscillatorNode && installedAudio.PeriodicWave === PeriodicWave && installedAudio.ChannelMergerNode === ChannelMergerNode));
     if (modulePath && compressor) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.DynamicsCompressorNode === globalThis.DynamicsCompressorNode));
     if (modulePath && retro) assert.ok(await page.evaluate(() => installedAudio.AudioParam === AudioParam && new OfflineAudioContext(1, 128, 44100).createGain().gain instanceof AudioParam));
     await page.waitForFunction(() => globalThis.results);
@@ -137,6 +140,24 @@ try {
         const angle = 2 * Math.PI * frame / 128;
         return Math.abs(sample - (normalize ? 1 : 2) * (0.75 * Math.cos(angle) + 0.25 * Math.cos(3 * angle))) < 0.002;
       }) ? 0 : 1]);
+    }
+    return {status: 0, tests};
+  });
+  if (detuning) outcomes['detuned-waveforms'] = await page.evaluate(async () => {
+    const tests = [];
+    for (const type of ['sine', 'triangle', 'sawtooth', 'square']) {
+      for (const sign of [-1, 1]) {
+        const rate = 32768, context = new OfflineAudioContext(1, 32, rate);
+        const osc = new OscillatorNode(context, {frequency: sign * 2048, type});
+        osc.detune.setValueAtTime(4200, 3 / rate);
+        osc.detune.setValueAtTime(0, 8 / rate);
+        osc.connect(context.destination);
+        osc.start();
+        const data = (await context.startRendering()).getChannelData(0);
+        const pass = data.subarray(0, 3).some(value => value !== 0) &&
+          data.subarray(3, 8).every(value => value === 0) && data.subarray(8).some(value => value !== 0);
+        tests.push([`${type}, frequency sign ${sign}: audible, silent, audible`, pass ? 0 : 1]);
+      }
     }
     return {status: 0, tests};
   });

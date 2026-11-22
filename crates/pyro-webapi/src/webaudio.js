@@ -1973,8 +1973,10 @@
         let phase = n.phase;
         for (let i = from; i < to; i++) {
           const f = fr[i] * pow(2, dt[i] / 1200);
-          out[i] = n.type === 'custom' ? customSample(n.periodicWave, phase, f, rate) : wave(n.type, phase);
-          phase += f / rate;
+          if (abs(f) < nyquist) {
+            out[i] = n.type === 'custom' ? customSample(n.periodicWave, phase, f, rate) : wave(n.type, phase);
+          }
+          phase += (f / rate) % 1;
           phase -= floor(phase);
         }
         n.phase = phase;
