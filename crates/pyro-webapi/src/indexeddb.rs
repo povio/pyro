@@ -779,6 +779,8 @@ fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'
 /// EventTarget lets a borrowed same-origin accessor reach the owner's state.
 fn binding_natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
+    natives.set_atom("storeOperations", s.agent_value("IndexedDB.storeOperations", "new WeakMap()")?)?;
+    natives.set_atom("indexOperations", s.agent_value("IndexedDB.indexOperations", "new WeakMap()")?)?;
     let array_key = s.function("isArrayKeyObject", |s, _, args| Ok(s.boolean(args.get(0).is_array())))?;
     natives.set_atom("isArrayKeyObject", array_key.value())?;
     let state = s.function("handlerState", |s, _, args| {
