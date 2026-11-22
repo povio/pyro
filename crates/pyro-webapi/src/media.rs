@@ -875,6 +875,8 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
 /// for the rest (after "await a stable state").
 fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
     if defer_lazy(page, node) {
+        // A deferred element does not delay the load event (a previous load may have set it).
+        set_delaying(page, node, false);
         return;
     }
     let generation = with(page, node, |st| {
