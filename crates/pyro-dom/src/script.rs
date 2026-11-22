@@ -499,12 +499,17 @@ impl Dom {
         let lang = if e.is_html() { e.attr_local(&local_name!("language")) } else { None };
         let kind = match ty {
             Some(t) if !t.is_empty() => {
-                let t = t.trim().to_ascii_lowercase();
-                if JS_MIME.contains(&t.as_str()) {
+                // JavaScript MIME types match with surrounding ASCII
+                // whitespace stripped; "module" and "importmap" must match
+                // the whole attribute value (HTML "prepare the script
+                // element" step 8: `type="module "` is a data block).
+                let raw = t.to_ascii_lowercase();
+                let t = raw.trim_matches(|c: char| c.is_ascii_whitespace());
+                if JS_MIME.contains(&t) {
                     ScriptKind::Classic
-                } else if t == "module" {
+                } else if raw == "module" {
                     ScriptKind::Module
-                } else if t == "importmap" {
+                } else if raw == "importmap" {
                     ScriptKind::ImportMap
                 } else {
                     ScriptKind::Data

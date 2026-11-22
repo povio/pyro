@@ -395,10 +395,10 @@ impl Prescan {
         let Some(src) = attr(attrs, "src").filter(|v| !v.is_empty()) else { return };
         let module = match attr(attrs, "type") {
             Some(t) if !t.is_empty() => {
-                let t = t.trim().to_ascii_lowercase();
-                if t == "module" {
+                let raw = t.to_ascii_lowercase();
+                if raw == "module" {
                     true
-                } else if crate::script::is_javascript_mime(&t) {
+                } else if crate::script::is_javascript_mime(raw.trim_matches(|c: char| c.is_ascii_whitespace())) {
                     false
                 } else {
                     return;
