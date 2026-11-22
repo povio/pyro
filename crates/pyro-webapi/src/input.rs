@@ -612,13 +612,15 @@ fn svg_link_href(dom: &Dom, el: NodeId) -> Option<&str> {
         .or_else(|| dom.get_attribute_ns(el, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
 }
 
-/// HTML elements that have activation behavior: every `input` and `button`
-/// (whatever their type or state: a disabled control is still the
+/// HTML elements that have activation behavior: every `input` but a hidden
+/// one (as Chrome: a click on it inside a label activates the label) and
+/// every `button` (whatever their state: a disabled control is still the
 /// activation target and merely does nothing), `label`, and, as in
 /// browsers, `a`/`area` with an `href` and a `details`' own `summary`.
 fn has_activation_behavior(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
-        Some("input" | "button") => true,
+        Some("input") => dom.input_type(el).ok() != Some(InputType::Hidden),
+        Some("button") => true,
         // A label without a labeled control does nothing (as Chromium): a click in it activates
         // what is around it, such as a button it is in.
         Some("label") => dom.labeled_control(el).ok().flatten().is_some(),
