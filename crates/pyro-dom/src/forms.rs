@@ -722,7 +722,7 @@ impl Dom {
         )
     }
 
-    /// Whether `required` applies to element `idx`, which `:required` and `:optional` match
+    /// Whether `required` applies to element `idx`, where `:required` can match
     /// (HTML §4.16.3): a `select`, a `textarea`, or an `input` of a type it applies to (not
     /// Hidden, Range, Color or the buttons).
     pub(crate) fn required_applies_idx(&self, idx: u32) -> bool {

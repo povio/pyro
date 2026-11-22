@@ -875,7 +875,12 @@ impl Dom {
             Enabled => (self.is_form_control_idx(idx) || self.is_face_idx(idx)) && !self.is_disabled_idx(idx),
             State(s) => self.has_custom_state_idx(idx, s),
             Required => self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
-            Optional => self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
+            // HTML: every `input`, `select` and `textarea` that is not required, also one `required`
+            // does not apply to (a hidden input; WPT required-optional-hidden).
+            Optional => {
+                matches!(self.html_local(idx).map(|l| &**l), Some("input" | "select" | "textarea"))
+                    && !(self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_some())
+            }
             ReadWrite => self.matches_read_write_idx(idx),
             ReadOnly => !self.matches_read_write_idx(idx),
             PlaceholderShown => {
