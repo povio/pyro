@@ -1538,6 +1538,53 @@ fn clone_split_shell(dom: &mut Dom, source: NodeId) -> Option<NodeId> {
     Some(clone)
 }
 
+/// Keep earlier BR-delimited lines directly in the editing host. Only the
+/// suffix starting at the caret belongs to the new paragraph.
+fn split_after_host_break(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Option<Point> {
+    let (text, offset) = caret;
+    if !is_text(dom, text) || dom.parent_element(text).ok()? != Some(host) { return None; }
+    let previous = dom.prev_sibling(text).ok()??;
+    if local(dom, previous) != "br" || editing_host(dom, previous) != Some(host)
+        || !target_range::rendered(page, dom, previous) { return None; }
+
+    let doc = dom.node_document(host).ok()?;
+    let tag = dom.document_data(doc).ok()?.default_paragraph_separator;
+    let paragraph = dom.create_element(doc, tag).ok()?;
+    let following = dom.next_sibling(text).ok()?;
+    let first = if offset == 0 {
+        Some(text)
+    } else if offset < len(dom, text) {
+        // The original text moves to the new line with the caret.
+        let prefix = dom.substring_data(text, 0, offset).ok()?;
+        let left = dom.create_text(doc, &prefix).ok()?;
+        dom.insert_before(host, left, Some(text)).ok()?;
+        dom.replace_data(text, 0, offset, "").ok()?;
+        Some(text)
+    } else if following.is_some_and(|n| local(dom, n) == "br" && dom.next_sibling(n).ok() == Some(None)) {
+        None
+    } else {
+        following
+    };
+    dom.insert_before(host, paragraph, first).ok()?;
+    if offset == 0 {
+        let br = dom.create_element(doc, "br").ok()?;
+        dom.insert_before(host, br, Some(paragraph)).ok()?;
+    }
+    let mut next = first;
+    while let Some(child) = next {
+        if is_block(dom, child) { break; }
+        next = dom.next_sibling(child).ok()?;
+        dom.append_child(paragraph, child).ok()?;
+    }
+    let child = dom.first_child(paragraph).ok()?;
+    if child.is_none_or(|n| editing_host(dom, n) != Some(host)) {
+        let br = dom.create_element(doc, "br").ok()?;
+        dom.insert_before(paragraph, br, child).ok()?;
+        return Some((paragraph, 0));
+    }
+    Some(initial_caret(page, dom, paragraph).unwrap_or((paragraph, 0)))
+}
+
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     // A DOM caret inside an inline void has no child insertion position.
     // Split at the rendered object's edge so it travels with the right line.
@@ -1599,6 +1646,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
                 line_break_at(dom, host, caret)
             };
         }
+        if let Some(point) = split_after_host_break(page, dom, host, caret) { return point; }
         // Make the anonymous paragraph containing the caret explicit before
         // splitting it. Neighbouring block elements remain outside it.
         let separator = dom.document_data(doc).map(|d| d.default_paragraph_separator).unwrap_or("div");
