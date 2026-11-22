@@ -3,27 +3,27 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 1222,
+    "macbook_in_scope": 1224,
     "studio_in_scope": 504,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 220,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1587,
+   "distinct_census_pages": 1589,
    "owner_reported_unlisted": 14,
-   "selector_union": 1834,
+   "selector_union": 1836,
    "owner_estimate_reduction": 261,
-   "of_which_tentative": 224,
+   "of_which_tentative": 225,
    "studio_css_reported_pages_not_deduped": 355,
    "studio_css_listed_distinct": 40,
    "by_dir": {
-    "html/semantics": 497,
+    "html/semantics": 498,
     "html/canvas": 477,
     "html/browsers": 138,
     "html/interaction": 117,
     "referrer-policy": 114,
     "fetch/api": 76,
-    "html/editing": 58,
+    "html/editing": 59,
     "content-security-policy": 52,
     "html/webappapis": 45,
     "fetch/fetch-later": 32,
@@ -38,25 +38,25 @@
     "workers": 9,
     "fetch/compression-dictionary": 8,
     "encoding": 7,
+    "fetch/data-urls": 6,
     "fetch/range": 6,
     "fetch/corb": 6,
-    "fetch/data-urls": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "html/obsolete": 4,
-    "fetch/http-cache": 3,
     "fetch/nosniff": 3,
+    "fetch/http-cache": 3,
     "fetch/orb": 2,
     "html/user-activation": 2,
     "xhr": 2,
-    "fetch/content-type": 1,
-    "fetch/redirects": 1,
-    "IndexedDB": 1,
     "fetch/redirect-navigate": 1,
     "quirks": 1,
-    "fetch/security": 1,
+    "fetch/redirects": 1,
+    "fetch/content-type": 1,
+    "svg/styling": 1,
+    "IndexedDB": 1,
     "html/select": 1,
-    "svg/styling": 1
+    "fetch/security": 1
    }
   },
   "in_progress": {
@@ -79,8 +79,8 @@
     "html/semantics": 38,
     "html/browsers": 32,
     "html/syntax": 30,
-    "fetch/api": 5,
-    "html/dom": 5
+    "html/dom": 5,
+    "fetch/api": 5
    }
   },
   "queued": {
@@ -2846,17 +2846,17 @@
   },
   "BUCKET-interactive-focus-sel-landed": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 20,
+   "in_scope_pages": 22,
    "out_of_scope_pages": 0,
-   "pages": 20,
-   "tentative": 0
+   "pages": 22,
+   "tentative": 1
   },
   "BUCKET-interactive-focus-sel": {
    "state": "deferred",
-   "in_scope_pages": 5,
+   "in_scope_pages": 3,
    "out_of_scope_pages": 0,
-   "pages": 5,
-   "tentative": 1
+   "pages": 3,
+   "tentative": 0
   },
   "BUCKET-popovers": {
    "state": "deferred",
@@ -3153,14 +3153,14 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1982,
+ "implemented_total_estimate": 1984,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 1222,
+ "macbook_in_scope_implemented": 1224,
  "macbook_in_scope_milestones": [
   100,
   200,
