@@ -2470,6 +2470,25 @@ fn fire_mouse(
     fire(page, target, &ev)
 }
 
+/// Whether `node` is a disabled form control or inside one (a button, input, select or
+/// textarea, or a form-associated custom element; not a fieldset, option or optgroup): Chromium
+/// dispatches no trusted `mousedown`, `mouseup`, `click`, `auxclick` or `dblclick` there, while the
+/// pointer events and `mousemove` still fire (WPT html/semantics/disabled-elements).
+fn in_disabled_control(page: &PageDom, node: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    let mut cur = Some(node);
+    while let Some(n) = cur {
+        let control = dom
+            .element(n)
+            .is_ok_and(|e| !(e.is_html() && matches!(&*e.name.local, "fieldset" | "option" | "optgroup")));
+        if control && dom.is_disabled(n).unwrap_or(false) {
+            return true;
+        }
+        cur = flat_parent_element(&dom, n);
+    }
+    false
+}
+
 /// The hit-test target at a viewport point. With `root_fallback`, empty
 /// viewport space targets the root element, as Chrome hit-tests it; the
 /// synthetic layout leaves such gaps (e.g. at Playwright's initial mouse
@@ -2877,7 +2896,9 @@ fn dispatch_mouse_inner(
             // `active-observable`: right and middle presses too).
             set_active(page, page.document(), Some(target));
             let pd = touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true, pseudo);
-            let md = !pd || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
+            let md = !pd
+                || in_disabled_control(page, target)
+                || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
             page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));
             page.pressed_pseudo.set(pseudo);
@@ -2978,7 +2999,8 @@ fn dispatch_mouse_inner(
             // pointerup handler that calls preventDefault does not).
             // (No mouseup, no mouseup default handling: nor a pick.)
             let mouseup_ok = !page.compat_mouse_suppressed.replace(false)
-                && fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo);
+                && (in_disabled_control(page, target)
+                    || fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo));
             // A release on an option of a customizable select's open picker picks it.
             if mouseup_ok && m.button == MouseButton::Left && !page.is_disposed() {
                 select_picker_option_release(page, target);
@@ -2993,6 +3015,8 @@ fn dispatch_mouse_inner(
                 Some(p) => common_ancestor(&page.dom.borrow(), p, target),
                 None => None,
             };
+            // No click (nor auxclick, dblclick) at a disabled form control or inside one.
+            let click_target = click_target.filter(|&ct| !in_disabled_control(page, ct));
             if let Some(ct) = click_target {
                 let name = match m.button {
                     MouseButton::Left | MouseButton::None => "click",
