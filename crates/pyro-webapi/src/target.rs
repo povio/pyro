@@ -817,10 +817,11 @@ fn dispatch_at(
         let mut state = event.state.borrow_mut();
         state.target = Some(target);
         let fields = event.fields.borrow();
-        // An interest event uses its source as the related target for dispatch.
-        // Keep the original source for the IDL getter and subsequent dispatches.
+        // Use the source visible to the initial target when trimming an
+        // interest event's path. A host can itself receive interest from its
+        // shadow tree. The IDL getter retains the original source.
         state.related_target = if event.iface == crate::event::EventInterface::InterestEvent {
-            fields.submitter
+            fields.submitter.map(|key| page.dom.borrow().retarget_live(key, target))
         } else {
             fields.related_target
         };
