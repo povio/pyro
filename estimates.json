@@ -4,23 +4,25 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 511,
-    "studio_in_scope": 29,
-    "other_dirs_out_of_scope": 16,
+    "studio_in_scope": 168,
+    "other_dirs_out_of_scope": -36,
     "macbook_worker_variants_if_enabled": 183,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 721,
+   "distinct_census_pages": 799,
    "owner_reported_unlisted": 5,
-   "selector_union": 771,
-   "owner_estimate_reduction": 55,
+   "selector_union": 910,
+   "owner_estimate_reduction": 116,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
-   "studio_css_listed_distinct": 29,
+   "studio_css_listed_distinct": 38,
    "by_dir": {
     "html/canvas": 342,
     "html/semantics": 121,
     "html/interaction": 100,
+    "referrer-policy": 78,
     "fetch/api": 54,
+    "content-security-policy": 52,
     "fetch/fetch-later": 29,
     "fetch/content-encoding": 21,
     "scheduler": 19,
@@ -28,18 +30,19 @@
     "html/syntax": 12,
     "html/browsers": 11,
     "fetch/cross-origin-resource-policy": 10,
+    "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
     "xhr": 2,
-    "svg/styling": 1,
-    "quirks": 1,
     "IndexedDB": 1,
-    "html/rendering": 1
+    "html/rendering": 1,
+    "svg/styling": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -62,8 +65,8 @@
     "html/semantics": 127,
     "html/browsers": 78,
     "html/syntax": 30,
-    "html/webappapis": 23,
     "fetch/api": 23,
+    "html/webappapis": 23,
     "html/infrastructure": 3
    }
   },
@@ -71,13 +74,13 @@
    "scope": {
     "macbook_in_scope": 196,
     "studio_in_scope": 178,
-    "other_dirs_out_of_scope": 26,
+    "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 8,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 282,
+   "distinct_census_pages": 279,
    "owner_reported_unlisted": 0,
-   "selector_union": 377,
+   "selector_union": 374,
    "owner_estimate_reduction": 95,
    "of_which_tentative": 96,
    "studio_css_reported_pages_not_deduped": 122,
@@ -89,9 +92,9 @@
     "content-security-policy": 20,
     "webidl": 19,
     "html/dom": 16,
-    "workers": 6,
     "html/browsers": 5,
     "svg/path": 4,
+    "workers": 3,
     "dom/nodes": 1
    }
   }
@@ -308,7 +311,7 @@
    "tentative": null
   },
   "SC-Q09-contain-intrinsic-size-auto-remembered": {
-   "state": "held",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 9,
    "out_of_scope_pages": 0,
    "pages": 0,
@@ -756,7 +759,7 @@
    "tentative": 0
   },
   "F01": {
-   "state": "held",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 130,
    "out_of_scope_pages": 9,
    "pages": 139,
@@ -1638,7 +1641,7 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 750,
+ "implemented_total_estimate": 837,
  "milestones_reached": [
   250,
   500,
