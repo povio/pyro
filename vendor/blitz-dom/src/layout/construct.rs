@@ -720,7 +720,7 @@ fn run_in_into(doc: &BaseDocument, target: NodeId) -> Option<NodeId> {
 /// box that is a `legend` (looking through `display: contents`), unless that is floated or
 /// absolutely positioned (HTML § 15.3.13). WPT css-display
 /// `display-contents-dynamic-fieldset-legend-001`.
-fn place_rendered_legend(doc: &BaseDocument, container: NodeId, out: &mut LayoutChildren) {
+fn place_rendered_legend(doc: &mut BaseDocument, container: NodeId, out: &mut LayoutChildren) {
     let node = &doc.nodes[container];
     if !node.is_fieldset() || node.flags.is_inline_root() {
         return;
@@ -741,6 +741,22 @@ fn place_rendered_legend(doc: &BaseDocument, container: NodeId, out: &mut Layout
     if index > 0 {
         let id = out.children.remove(index);
         out.children.insert(0, id);
+        // pyro: the legend is outside the fieldset's anonymous content box, so the inline content
+        // on either side of it is one run (a `::before` and the text after the legend share a
+        // line): the anonymous blocks it separated become one (WPT `fieldset-generated-content`).
+        let before = out.children[index];
+        if let Some(&after) = out.children.get(index + 1) {
+            if out.anonymous_blocks.contains(&before) && out.anonymous_blocks.contains(&after) {
+                let moved = std::mem::take(&mut doc.nodes[after].children);
+                doc.nodes[before].children.extend(moved);
+                out.children.remove(index + 1);
+                out.anonymous_blocks.retain(|&block| block != after);
+                if out.anonymous_block_id == Some(after) {
+                    out.anonymous_block_id = Some(before);
+                }
+                doc.remove_node_from_tree(after);
+            }
+        }
     }
 }
 
