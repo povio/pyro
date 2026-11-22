@@ -1,0 +1,48 @@
+{
+  "after": {
+    "events": 48,
+    "html": 48,
+    "glyphs": 52,
+    "anchor": 48,
+    "focus": 48,
+    "direction": 48,
+    "text": 48,
+    "hrefs": 48,
+    "undoable": 48,
+    "connected": 48
+  },
+  "twice": {
+    "events": 48,
+    "html": 48,
+    "glyphs": 52,
+    "anchor": 48,
+    "focus": 48,
+    "direction": 48,
+    "text": 48,
+    "hrefs": 48,
+    "undoable": 48,
+    "connected": 48
+  },
+  "onceUndo": {
+    "events": 48,
+    "html": 48,
+    "glyphs": 52,
+    "anchor": 42,
+    "focus": 42,
+    "direction": 48,
+    "text": 48,
+    "hrefs": 48,
+    "undoable": 48
+  },
+  "restored": {
+    "events": 48,
+    "html": 60,
+    "glyphs": 64,
+    "anchor": 64,
+    "focus": 64,
+    "direction": 64,
+    "text": 64,
+    "hrefs": 64,
+    "undoable": 64
+  }
+}

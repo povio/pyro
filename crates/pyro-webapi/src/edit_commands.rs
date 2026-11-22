@@ -1677,6 +1677,59 @@ fn link_style_shell(dom: &mut Dom, doc: NodeId, mut child: NodeId, style: &str) 
     Some(child)
 }
 
+/// Strip link semantics from the selected fragment, preserving the anchor's
+/// authored presentation around its original children.
+fn unlink_styled_fragment(dom: &mut Dom, anchor: NodeId, text: NodeId, whole: bool, style: &str) -> Option<()> {
+    let parent = dom.parent_element(anchor).ok()??;
+    let selected = if whole { anchor } else {
+        let selected = alignment::split_edge(dom, parent, text, false, &mut [])?;
+        let following = dom.next_sibling(selected).ok()?;
+        alignment::split_edge(dom, parent, text, true, &mut [])?;
+        // split_edge keeps the ID on the first fragment. When that fragment
+        // is the selected prefix, move the ID to the newly created suffix.
+        if selected == anchor {
+            if let Some(suffix) = dom.next_sibling(selected).ok()?.filter(|&n| Some(n) != following) {
+                if let Some(id) = dom.get_attribute(selected, "id").ok()?.map(str::to_owned) {
+                    dom.remove_attribute(selected, "id").ok()?;
+                    dom.set_attribute(suffix, "id", &id).ok()?;
+                }
+            }
+        }
+        selected
+    };
+    let doc = dom.node_document(selected).ok()?;
+    // Keep an existing inline child at the same depth when the link only
+    // contributed inherited font/color declarations. Its own declarations
+    // take precedence over inherited values, including their priorities.
+    if dom.child_count(selected).ok()? == 1 {
+        let child = dom.first_child(selected).ok()??;
+        if dom.element(child).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "span" | "i" | "em" | "b" | "strong" | "u"))
+            && rich_node(dom, child) && !dom.has_attribute(child, "class").ok()?
+        {
+            use pyro_dom::stylo::declarations::DeclarationBlock;
+            let mut inherited = DeclarationBlock::parse(style);
+            if inherited.names().iter().all(|p| matches!(p.as_str(), "font-weight" | "font-style" | "color")) {
+                let own = DeclarationBlock::parse(dom.get_attribute(child, "style").ok()?.unwrap_or(""));
+                for name in own.names() {
+                    inherited.set(&name, &own.value(&name), own.important(&name))?;
+                }
+                dom.set_attribute(child, "style", &inherited.css_text()).ok()?;
+                dom.insert_before(parent, child, Some(selected)).ok()?;
+                dom.remove_child(parent, selected).ok()?;
+                return Some(());
+            }
+        }
+    }
+    let contents = dom.create_fragment(doc).ok()?;
+    while let Some(child) = dom.first_child(selected).ok()? {
+        dom.append_child(contents, child).ok()?;
+    }
+    let shell = link_style_shell(dom, doc, contents, style)?;
+    dom.insert_before(parent, shell, Some(selected)).ok()?;
+    dom.remove_child(parent, selected).ok()?;
+    Some(())
+}
+
 /// Replace the selected part of an existing link. The original anchor
 /// retains its suffix, while an unselected prefix keeps the ID.
 fn relink_text(dom: &mut Dom, host: NodeId, text: NodeId, href: &str, entire_run: Option<NodeId>) -> Option<NodeId> {
@@ -2161,6 +2214,7 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
     if start == end && !names.contains(&"a") {
         return;
     }
+    let unlink_range = start != end && names == ["a"];
     let (start, end) = if start == end {
         let dom = page.dom.borrow();
         let Some(a) = ancestor_named(&dom, start.0, host, &["a"]) else { return };
@@ -2250,6 +2304,12 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                         if alignment::split_edge(&mut dom, parent, last.0, true, &mut points).is_none() { break; }
                         a = middle;
                         whole = true;
+                    }
+                    if unlink_range {
+                        if let Some(style) = dom.get_attribute(a, "style").ok().flatten().filter(|s| !s.is_empty()).map(str::to_owned) {
+                            if unlink_styled_fragment(&mut dom, a, t, whole, &style).is_none() { break; }
+                            continue;
+                        }
                     }
                     // Toggling strike removes the presentation but preserves
                     // independent attributes on the selected fragment.

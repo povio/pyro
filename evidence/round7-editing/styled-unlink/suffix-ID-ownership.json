@@ -1,0 +1,1970 @@
+[
+  {
+    "fixture": {
+      "css": false,
+      "reverse": false,
+      "shape": "one",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a id=\"origin\" data-k=\"keep\" href=\"/old\">cd</a></span>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": false,
+      "shape": "two",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span><i>tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span><i>tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cdtail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a data-k=\"keep\" href=\"/old\">cd</a></span><a id=\"origin\" data-k=\"keep\" href=\"/old\"><i style=\"font-weight: bold; color: red;\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": false,
+      "shape": "locked-tail",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cdtail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a data-k=\"keep\" href=\"/old\">cd</a></span><a id=\"origin\" data-k=\"keep\" href=\"/old\"></a><i contenteditable=\"false\" style=\"font-weight: bold; color: red;\">tail</i>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": false,
+      "shape": "named",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" name=\"mark\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" name=\"mark\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": null,
+        "originName": "mark",
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a id=\"origin\" data-k=\"keep\" name=\"mark\">cd</a></span>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": null,
+        "originName": "mark",
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": false,
+      "shape": "two",
+      "selection": "whole"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><i>tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><i>tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a id=\"origin\" data-k=\"keep\" href=\"/old\"><i style=\"font-weight: bold; color: red;\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": false,
+      "shape": "locked-tail",
+      "selection": "whole"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a id=\"origin\" data-k=\"keep\" href=\"/old\"></a><i contenteditable=\"false\" style=\"font-weight: bold; color: red;\">tail</i>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": true,
+      "shape": "one",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a id=\"origin\" data-k=\"keep\" href=\"/old\">cd</a></span>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": true,
+      "shape": "two",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span><i>tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span><i>tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cdtail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a data-k=\"keep\" href=\"/old\">cd</a></span><a id=\"origin\" data-k=\"keep\" href=\"/old\"><i style=\"font-weight: bold; color: red;\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": true,
+      "shape": "locked-tail",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cdtail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a data-k=\"keep\" href=\"/old\">cd</a></span><a id=\"origin\" data-k=\"keep\" href=\"/old\"></a><i contenteditable=\"false\" style=\"font-weight: bold; color: red;\">tail</i>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": true,
+      "shape": "named",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" name=\"mark\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" name=\"mark\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": null,
+        "originName": "mark",
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a id=\"origin\" data-k=\"keep\" name=\"mark\">cd</a></span>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": null,
+        "originName": "mark",
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": true,
+      "shape": "two",
+      "selection": "whole"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><i>tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><i>tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a id=\"origin\" data-k=\"keep\" href=\"/old\"><i style=\"font-weight: bold; color: red;\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "reverse": true,
+      "shape": "locked-tail",
+      "selection": "whole"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a id=\"origin\" data-k=\"keep\" href=\"/old\"></a><i contenteditable=\"false\" style=\"font-weight: bold; color: red;\">tail</i>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": false,
+      "shape": "one",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a id=\"origin\" data-k=\"keep\" href=\"/old\">cd</a></span>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": false,
+      "shape": "two",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span><i>tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span><i>tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cdtail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a data-k=\"keep\" href=\"/old\">cd</a></span><a id=\"origin\" data-k=\"keep\" href=\"/old\"><i style=\"font-weight: bold; color: red;\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": false,
+      "shape": "locked-tail",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cdtail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a data-k=\"keep\" href=\"/old\">cd</a></span><a id=\"origin\" data-k=\"keep\" href=\"/old\"></a><i contenteditable=\"false\" style=\"font-weight: bold; color: red;\">tail</i>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": false,
+      "shape": "named",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" name=\"mark\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" name=\"mark\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": null,
+        "originName": "mark",
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a id=\"origin\" data-k=\"keep\" name=\"mark\">cd</a></span>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": null,
+        "originName": "mark",
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          2
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": false,
+      "shape": "two",
+      "selection": "whole"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><i>tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><i>tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a id=\"origin\" data-k=\"keep\" href=\"/old\"><i style=\"font-weight: bold; color: red;\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": false,
+      "shape": "locked-tail",
+      "selection": "whole"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a id=\"origin\" data-k=\"keep\" href=\"/old\"></a><i contenteditable=\"false\" style=\"font-weight: bold; color: red;\">tail</i>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          4
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": true,
+      "shape": "one",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a id=\"origin\" data-k=\"keep\" href=\"/old\">cd</a></span>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": true,
+      "shape": "two",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span><i>tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span><i>tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cdtail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a data-k=\"keep\" href=\"/old\">cd</a></span><a id=\"origin\" data-k=\"keep\" href=\"/old\"><i style=\"font-weight: bold; color: red;\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": true,
+      "shape": "locked-tail",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cdtail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a data-k=\"keep\" href=\"/old\">cd</a></span><a id=\"origin\" data-k=\"keep\" href=\"/old\"></a><i contenteditable=\"false\" style=\"font-weight: bold; color: red;\">tail</i>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": true,
+      "shape": "named",
+      "selection": "prefix"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" name=\"mark\" style=\"font-weight:bold;color:red\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab</span><a data-k=\"keep\" name=\"mark\" style=\"font-weight:bold;color:red\" id=\"origin\"><span style=\"color:green\">cd</span></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": null,
+        "originName": "mark",
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">ab<a id=\"origin\" data-k=\"keep\" name=\"mark\">cd</a></span>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "cd",
+        "originHref": null,
+        "originName": "mark",
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          2
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": true,
+      "shape": "two",
+      "selection": "whole"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><i>tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><i>tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a id=\"origin\" data-k=\"keep\" href=\"/old\"><i style=\"font-weight: bold; color: red;\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "reverse": true,
+      "shape": "locked-tail",
+      "selection": "whole"
+    },
+    "arms": {
+      "firstCorrection": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\"><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 0,
+        "originIsOriginal": false,
+        "originText": null,
+        "originHref": null,
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "candidate": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a data-k=\"keep\" href=\"/old\" style=\"font-weight:bold;color:red\" id=\"origin\"><i contenteditable=\"false\">tail</i></a>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "tail",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      },
+      "signed": {
+        "html": "L<span id=\"child\" style=\"font-weight: bold; color: green;\">abcd</span><a id=\"origin\" data-k=\"keep\" href=\"/old\"></a><i contenteditable=\"false\" style=\"font-weight: bold; color: red;\">tail</i>R",
+        "originCount": 1,
+        "originIsOriginal": false,
+        "originText": "",
+        "originHref": "/old",
+        "originName": null,
+        "childCount": 1,
+        "childIsOriginal": true,
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          4
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          0
+        ]
+      }
+    }
+  }
+]

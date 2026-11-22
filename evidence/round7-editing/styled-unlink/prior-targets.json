@@ -1,0 +1,42 @@
+[
+  [
+    "editing/run/unlink.html",
+    "[[\"stylewithcss\",\"false\"],[\"unlink\",\"\"]] \"[foo<a href=https://example.com style=font-weight:bold>bar</a>baz]\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/unlink.html",
+    "[[\"stylewithcss\",\"false\"],[\"unlink\",\"\"]] \"foo<a href=https://example.com style=font-weight:bold>[bar]</a>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/unlink.html",
+    "[[\"stylewithcss\",\"true\"],[\"unlink\",\"\"]] \"[foo<a href=https://example.com style=font-weight:bold>bar</a>baz]\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/unlink.html",
+    "[[\"stylewithcss\",\"true\"],[\"unlink\",\"\"]] \"foo<a href=https://example.com style=font-weight:bold>[bar]</a>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/unlink.html",
+    "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]
