@@ -500,6 +500,21 @@ fn sampled_intrinsic_block_height_uses_fixed_child_not_endpoint() {
 }
 
 #[test]
+fn sampled_stretch_uses_containing_block_margin_box_on_both_axes() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=content style="width:calc-size(any,50px);height:calc-size(any,50px);margin:5%;padding:5px"></div><div id=border style="width:calc-size(any,50px);height:calc-size(any,50px);margin:5%;padding:5px;box-sizing:border-box"></div></div><div id=sample style="width:calc-size(stretch,size * 0.25 + 37.5px);height:calc-size(stretch,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let style = page.layout.style();
+    for (selector, property, expected) in [("#content", "width", "80px"), ("#content", "height", "105px"), ("#border", "width", "82.5px"), ("#border", "height", "107.5px")] {
+        let live = page.find(selector);
+        let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+        let used = || page.layout.computed_style_value(&dom, live, property);
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample, used).unwrap(), expected);
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
 fn percentage_endpoint_interpolates_with_intrinsic_size() {
     use ::style::values::animated::{Animate, Procedure};
     use ::style::values::computed::{length::CSSPixelLength, Size};
