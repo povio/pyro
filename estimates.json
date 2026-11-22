@@ -18,16 +18,16 @@
     "fetch/data-urls": 3,
     "encoding": 2,
     "xhr": 2,
-    "quirks": 1,
-    "svg/styling": 1,
     "html/rendering": 1,
-    "dom/collections": 1
+    "dom/collections": 1,
+    "svg/styling": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 573,
+   "distinct_census_pages": 574,
    "owner_reported_unlisted": 0,
-   "selector_union": 618,
+   "selector_union": 619,
    "owner_estimate_reduction": 45,
    "of_which_tentative": 196,
    "studio_css_reported_pages_not_deduped": 4,
@@ -51,25 +51,26 @@
     "html/editing": 5,
     "svg/types": 4,
     "close-watcher": 3,
-    "inert": 3,
-    "event-timing": 3,
     "mathml": 3,
+    "event-timing": 3,
+    "inert": 3,
+    "soft-navigation-heuristics": 2,
+    "fetch/fetch-later": 2,
+    "dom/nodes": 2,
     "svg/animations": 2,
     "html/rendering": 2,
-    "dom/nodes": 2,
-    "fetch/fetch-later": 2,
     "resource-timing": 2,
-    "soft-navigation-heuristics": 2,
-    "editing": 1,
     "pointerlock": 1,
+    "editing": 1,
     "document-picture-in-picture": 1,
+    "custom-elements": 1,
     "html/browsers": 1
    }
   },
   "queued": {
-   "distinct_census_pages": 601,
+   "distinct_census_pages": 600,
    "owner_reported_unlisted": 75,
-   "selector_union": 566,
+   "selector_union": 565,
    "owner_estimate_reduction": 40,
    "of_which_tentative": 22,
    "studio_css_reported_pages_not_deduped": 122,
@@ -85,7 +86,6 @@
     "fetch/api": 5,
     "svg/path": 4,
     "html/browsers": 2,
-    "custom-elements": 1,
     "dom/nodes": 1
    }
   }
@@ -157,7 +157,7 @@
    "tentative": 0
   },
   "Q08": {
-   "state": "proposed",
+   "state": "claimed",
    "pages": 1,
    "tentative": 0
   },
