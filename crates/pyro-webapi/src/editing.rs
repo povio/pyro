@@ -912,7 +912,10 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
     edit(page, host, "insertText", Some(text), |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
-            let caret = if start == end {
+            let empty_inline = crate::edit_commands::empty_bold_typing_point(page, &dom, start, end);
+            let caret = if let Some(point) = empty_inline {
+                point
+            } else if start == end {
                 start
             } else if let Some(plan) = child_line::Deletion::plan(page, &dom, host, start, end, false) {
                 plan.apply(page, &mut dom, host)
@@ -931,7 +934,10 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
                     caret = split_block(page, &mut dom, host, caret);
                 }
                 if !part.is_empty() {
-                    let Some(point) = typing_point(page, &dom, host, caret) else { return };
+                    let point = if index == 0 && empty_inline.is_some() { caret } else {
+                        let Some(point) = typing_point(page, &dom, host, caret) else { return };
+                        point
+                    };
                     let point = if index == 0 && !keep_link { link_typing_point(page, &dom, host, point) } else { point };
                     whitespace::consume_padding_lf(page, &mut dom, host, point);
                     let point = whitespace::trim_leading_space_for_typing(page, &mut dom, point);
