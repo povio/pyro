@@ -1136,7 +1136,17 @@ fn image_source(
                         source_page.layout.borrow().computed_style_value(&dom, n.id, "image-orientation") != "none";
                     (crate::html::resolve_url(&dom, n.id, href.trim()), cors, from_image)
                 };
-                let Some(image) = source_page.available_image(&url, cors) else { return Ok(None) };
+                let Some(image) = source_page.available_image(&url, cors) else {
+                    // An image whose request gave no image is broken: InvalidStateError (WPT
+                    // 2d.pattern.svgimage.nonexistent); one still loading draws nothing.
+                    if source_page.svg_image_broken(n.id, &url) {
+                        return Err(JsError::dom(
+                            "InvalidStateError",
+                            "The SVGImageElement provided is in the 'broken' state.",
+                        ));
+                    }
+                    return Ok(None);
+                };
                 let Some((bytes, clean)) = image.bytes else { return Ok(None) };
                 let oriented = from_image || !clean;
                 let Some(budget) = source_page.raster_budget() else { return Ok(None) };

@@ -331,6 +331,9 @@ pub struct PageDom {
     /// pyro: HTML's list of available images, by (absolute URL, CORS state: 0 none, 1 anonymous,
     /// 2 use-credentials), oldest first.
     available_images: RefCell<Vec<((String, u8), AvailableImage)>>,
+    /// pyro: SVG `<image>` elements whose last request gave no image, with its URL
+    /// ([`PageDom::set_svg_image_broken`]).
+    svg_images_broken: RefCell<FxHashMap<NodeId, String>>,
     /// `images` size at which entries of collected elements are dropped.
     images_sweep_at: Cell<usize>,
     /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
@@ -1075,6 +1078,7 @@ impl PageDom {
             hovered: Cell::new(None),
             images: RefCell::new(FxHashMap::default()),
             available_images: RefCell::new(Vec::new()),
+            svg_images_broken: RefCell::new(FxHashMap::default()),
             images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
             autofocus_candidates: RefCell::new(Vec::new()),
@@ -2947,6 +2951,26 @@ impl PageDom {
                 }
             }
         }
+    }
+
+    /// Embedder: SVG `<image>` `el`'s request for `url` gave no image (`Some(url)`: a network
+    /// error, a status outside 2xx or bytes that are no image), or it did (`None`). A canvas
+    /// treats such an element as broken (`HTML` "check the usability of the image argument").
+    pub fn set_svg_image_broken(&self, el: NodeId, url: Option<&str>) {
+        let mut broken = self.svg_images_broken.borrow_mut();
+        match url {
+            Some(url) => {
+                broken.insert(el, url.to_owned());
+            }
+            None => {
+                broken.remove(&el);
+            }
+        }
+    }
+
+    /// pyro: whether SVG `<image>` `el`'s request for `url` gave no image.
+    pub(crate) fn svg_image_broken(&self, el: NodeId, url: &str) -> bool {
+        self.svg_images_broken.borrow().get(&el).is_some_and(|u| u == url)
     }
 
     /// pyro: the URLs in the list of available images (any CORS state).
