@@ -268,9 +268,8 @@ fn parse_numbers(text: &str) -> Option<Vec<f32>> {
 // SVG text's rotate attribute uses CSS value syntax: [ <number>+ ]#.
 // Adjacent number tokens need no whitespace when tokenization is unambiguous.
 fn parse_rotate(text: &str) -> Option<Vec<f32>> {
-    use cssparser::{Parser, ParserInput, Token};
-    let mut input = ParserInput::new(text);
-    let mut parser = Parser::new(&mut input);
+    use cssparser::{Parser, Token};
+    let mut parser = Parser::new(text);
     let mut values = Vec::new();
     let mut need_number = true;
     while !parser.is_exhausted() {
