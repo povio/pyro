@@ -1,0 +1,9 @@
+aa1a137c9dd75f31852dde0cc8388bc36b35a808
+baseline:crates/pyro-webapi/src/webaudio.js
+candidate:/private/tmp/pyro-r7-param/crates/pyro-webapi/src/webaudio.js
+d469cea2ffaa03dd96281474ac1ec7ab9d77ac02b11ae40f4e6f250b97873b7d  baseline.js
+8906ebab6f5a2ca68db94da0dc0d7a1698f259446ad9f6dc768c05087fced93d  candidate.js
+05ed1e682c818ad63febe5798f3346eb6dc11941c36fa21decd409c3594013b3  probe.cjs
+9e333625b6b3ec85be9a57975a777bc506540005f370dee9a5e56a689fa6dbf8  baseline.json
+0c3f728cf48f996d0dea0bbbcde86c4dee3f5896e1e3c6608cd69f6d8e759d1a  candidate.json
+b324b7dbf30824e77153022007d30914866f117ff70b796ff44ae40883ffad14  native.json
