@@ -101,8 +101,26 @@
     defineProperty(proto, symbolIterator, { __proto__: null, value: entries, writable: true, configurable: true });
     defineProperty(proto, 'forEach', { __proto__: null, value: forEachOf(entries), writable: true, enumerable: true, configurable: true });
   };
+  // WebIDL default iterator objects: one "Headers Iterator" prototype per
+  // realm inheriting %IteratorPrototype%, whose `next` runs the iterator's
+  // own native step (kept out of reach of page script).
+  const weakMapGet = WeakMap.prototype.get, weakMapSet = WeakMap.prototype.set;
+  const headersIteratorSteps = new WeakMap();
+  const headersIteratorPrototype = create(iteratorPrototypeOfArrays);
+  defineProperty(headersIteratorPrototype, 'next', { __proto__: null, value: {
+    next() {
+      const step = apply(weakMapGet, headersIteratorSteps, [this]);
+      if (step === undefined) throw new TypeError_('next called on an object that is not a Headers Iterator');
+      return step();
+    },
+  }.next, writable: true, enumerable: true, configurable: true });
+  defineProperty(headersIteratorPrototype, toStringTag, { __proto__: null, value: 'Headers Iterator', configurable: true });
   const headersHelpers = {
-    iterator(next) { return { next, [symbolIterator]() { return this; } }; },
+    iterator(next) {
+      const iterator = create(headersIteratorPrototype);
+      apply(weakMapSet, headersIteratorSteps, [iterator, next]);
+      return iterator;
+    },
     fill(init, convert) {
       const result = [];
       if ((typeof init !== 'object' && typeof init !== 'function') || init === null)

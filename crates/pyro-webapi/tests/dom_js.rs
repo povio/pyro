@@ -1173,6 +1173,36 @@ fn headers_records_sequences_validation_and_cookie_order() {
     );
 }
 
+/// WebIDL default iterator objects (fetch/api/headers/headers-basic): keys,
+/// values and entries share one "Headers Iterator" prototype that inherits
+/// %IteratorPrototype% and holds `next` (writable, enumerable, configurable).
+#[test]
+fn headers_iterators_share_a_prototype_inheriting_iterator_prototype() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"(() => {
+        const iteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+        const h = new Headers({b: '2', a: '1'});
+        const its = [h.keys(), h.values(), h.entries(), h[Symbol.iterator]()];
+        const proto = Object.getPrototypeOf(its[0]);
+        const d = Object.getOwnPropertyDescriptor(proto, 'next');
+        let foreign;
+        try { proto.next.call({}); } catch (e) { foreign = e.constructor.name; }
+        return [
+            its.every((it) => Object.getPrototypeOf(it) === proto),
+            Object.getPrototypeOf(proto) === iteratorPrototype,
+            d.writable, d.enumerable, d.configurable, typeof d.value, d.value.name, d.value.length,
+            Object.prototype.toString.call(its[0]), Object.keys(its[0]).length, its[0][Symbol.iterator]() === its[0],
+            [...its[0]].join(), [...its[1]].join(), [...its[2]].join(';'), its[3].next().value.join(':'), foreign,
+        ].join();
+    })()"#
+        ),
+        "true,true,true,true,true,function,next,0,[object Headers Iterator],0,true,a,b,1,2,a,1;b,2,a:1,TypeError"
+    );
+}
+
 #[test]
 fn headers_live_iteration_reentry_and_iterator_close() {
     let e = env("");
