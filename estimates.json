@@ -28,14 +28,14 @@
     "fetch/cross-origin-resource-policy": 10,
     "encoding": 7,
     "FileAPI": 4,
-    "fetch/data-urls": 3,
     "fetch/nosniff": 3,
+    "fetch/data-urls": 3,
     "fetch/http-cache": 3,
     "xhr": 2,
-    "IndexedDB": 1,
     "svg/styling": 1,
-    "quirks": 1,
-    "html/rendering": 1
+    "html/rendering": 1,
+    "IndexedDB": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -64,14 +64,14 @@
   "queued": {
    "scope": {
     "macbook_in_scope": 208,
-    "studio_in_scope": 308,
-    "other_dirs_out_of_scope": 297,
+    "studio_in_scope": 178,
+    "other_dirs_out_of_scope": 291,
     "macbook_worker_variants_if_enabled": 15,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 702,
+   "distinct_census_pages": 566,
    "owner_reported_unlisted": 0,
-   "selector_union": 833,
+   "selector_union": 697,
    "owner_estimate_reduction": 131,
    "of_which_tentative": 187,
    "studio_css_reported_pages_not_deduped": 122,
@@ -79,18 +79,18 @@
    "by_dir": {
     "svg/animations": 229,
     "html/canvas": 160,
-    "referrer-policy": 114,
-    "content-security-policy": 72,
     "html/browsers": 71,
     "html/semantics": 58,
     "intersection-observer": 36,
+    "referrer-policy": 36,
     "html/webappapis": 23,
+    "content-security-policy": 20,
     "webidl": 19,
     "html/dom": 13,
-    "workers": 12,
-    "fetch/range": 5,
+    "workers": 6,
     "html/interaction": 5,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "svg/path": 4,
     "fetch/data-urls": 3,
     "html/infrastructure": 3,
@@ -737,7 +737,7 @@
    "tentative": 0
   },
   "F01": {
-   "state": "proposed",
+   "state": "held",
    "in_scope_pages": 130,
    "out_of_scope_pages": 9,
    "pages": 139,
