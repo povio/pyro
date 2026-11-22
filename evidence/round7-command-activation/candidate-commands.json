@@ -1,0 +1,42 @@
+{
+  "parsed": [
+    "object",
+    true
+  ],
+  "bare": "object",
+  "windowNamed": true,
+  "association": true,
+  "custom": [
+    [
+      "command",
+      "--preview",
+      true,
+      true,
+      false
+    ]
+  ],
+  "dialogOpen": true,
+  "dialogClosed": true,
+  "details": {
+    "open": [
+      "",
+      false
+    ],
+    "close": [
+      "close",
+      false
+    ],
+    "toggle": [
+      "",
+      false
+    ]
+  },
+  "canceled": true,
+  "shown": true,
+  "hidden": true,
+  "dynamic": [
+    "object",
+    true
+  ],
+  "afterRemoval": "undefined"
+}

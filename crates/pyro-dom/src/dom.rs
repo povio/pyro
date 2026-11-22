@@ -176,6 +176,24 @@ impl Default for NameCache {
     }
 }
 
+/// HTML attributes reflecting a single invoker target.
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub enum InvokerTarget {
+    InterestFor,
+    CommandFor,
+    PopoverTarget,
+}
+
+impl InvokerTarget {
+    fn name(self) -> &'static str {
+        match self {
+            Self::InterestFor => "interestfor",
+            Self::CommandFor => "commandfor",
+            Self::PopoverTarget => "popovertarget",
+        }
+    }
+}
+
 pub struct Dom {
     pub(crate) blob_hyperlinks: Option<Box<crate::blob_hyperlinks::BlobHyperlinks>>,
     /// Process-unique id (caches keyed by DOM identity and `version`).
@@ -300,8 +318,8 @@ pub struct Dom {
     pub(crate) reactions: crate::custom::ReactionQueue,
     /// `ElementInternals` state (`internals`).
     pub(crate) internals: crate::internals::InternalsStore,
-    /// Explicit interestfor element references. Generation-checked handles are weak.
-    pub(crate) interest_for_elements: rustc_hash::FxHashMap<u32, NodeId>,
+    /// Explicitly reflected invoker targets. Generation-checked handles are weak.
+    invoker_targets: rustc_hash::FxHashMap<(u32, InvokerTarget), NodeId>,
     /// Modal dialogs and showing popovers (`top_layer`).
     pub(crate) top_layer: crate::top_layer::TopLayer,
     /// Queued `<details>` toggles and whether accordions are in use.
@@ -398,7 +416,7 @@ impl Dom {
             iframes: Default::default(),
             reactions: Default::default(),
             internals: Default::default(),
-            interest_for_elements: Default::default(),
+            invoker_targets: Default::default(),
             top_layer: Default::default(),
             details: Default::default(),
             nonces: Default::default(),
@@ -1870,21 +1888,20 @@ impl Dom {
 
     /// The reflected element, before interest activation resolves its shadow reference target.
     pub fn interest_for_element(&self, invoker: NodeId) -> DomResult<Option<NodeId>> {
+        self.invoker_target(invoker, InvokerTarget::InterestFor)
+    }
+
+    pub fn set_interest_for_element(&mut self, invoker: NodeId, target: Option<NodeId>) -> DomResult<()> {
+        self.set_invoker_target(invoker, InvokerTarget::InterestFor, target)
+    }
+
+    pub fn invoker_target(&self, invoker: NodeId, attr: InvokerTarget) -> DomResult<Option<NodeId>> {
         let element = self.element(invoker)?;
-        if let Some(&target) = self.interest_for_elements.get(&invoker.idx) {
-            let Ok(target_root) = self.root_node(target, false) else { return Ok(None) };
-            let mut root = self.root_idx(invoker.idx);
-            loop {
-                if root == target_root.idx {
-                    return Ok(Some(target));
-                }
-                match &self.n(root).kind {
-                    NodeKind::Fragment(f) if f.shadow.is_some() => root = self.root_idx(f.host),
-                    _ => return Ok(None),
-                }
-            }
+        if let Some(&target) = self.invoker_targets.get(&(invoker.idx, attr)) {
+            return Ok(self.root_node(target, false).ok()
+                .filter(|root| self.shadow_including_contains(*root, invoker)).map(|_| target));
         }
-        let Some(id) = element.attr("interestfor").filter(|id| !id.is_empty()) else { return Ok(None) };
+        let Some(id) = element.attr(attr.name()).filter(|id| !id.is_empty()) else { return Ok(None) };
         let root = self.root_idx(invoker.idx);
         if self.n(root).element().and_then(|el| el.id()) == Some(id) {
             return Ok(Some(self.id_of(root)));
@@ -1892,13 +1909,15 @@ impl Dom {
         Ok(self.opt_id(self.first_by_id(root, id)))
     }
 
-    pub fn set_interest_for_element(&mut self, invoker: NodeId, target: Option<NodeId>) -> DomResult<()> {
+    pub fn set_invoker_target(&mut self, invoker: NodeId, attr: InvokerTarget, target: Option<NodeId>) -> DomResult<()> {
         if let Some(target) = target {
             self.element(target)?;
-            self.set_attribute_ns(invoker, None, "interestfor", "")?;
-            self.interest_for_elements.insert(invoker.idx, target);
+            self.set_attribute_ns(invoker, None, attr.name(), "")?;
+            // Setting the content attribute clears its explicit target, even
+            // on a same-value write. Install the new reference after that step.
+            self.invoker_targets.insert((invoker.idx, attr), target);
         } else {
-            self.remove_attribute_ns(invoker, None, "interestfor")?;
+            self.remove_attribute_ns(invoker, None, attr.name())?;
         }
         Ok(())
     }
@@ -3714,8 +3733,14 @@ impl Dom {
     /// follows.
     pub(crate) fn edit_attrs<R>(&mut self, i: u32, name: &QualName, f: impl FnOnce(&mut ElementData) -> R) -> R {
         let plain = name.ns == ns!();
-        if plain && !self.interest_for_elements.is_empty() && &*name.local == "interestfor" {
-            self.interest_for_elements.remove(&i);
+        if plain && !self.invoker_targets.is_empty() {
+            let attr = match &*name.local {
+                "interestfor" => Some(InvokerTarget::InterestFor),
+                "commandfor" => Some(InvokerTarget::CommandFor),
+                "popovertarget" => Some(InvokerTarget::PopoverTarget),
+                _ => None,
+            };
+            if let Some(attr) = attr { self.invoker_targets.remove(&(i, attr)); }
         }
         if plain && !self.svg_strings.is_empty() {
             if let Some(kind) = crate::svg_string_list::StringListAttribute::from_name(&name.local) {
@@ -4672,7 +4697,11 @@ impl Dom {
     fn free_slot(&mut self, i: u32, component_root: u32) {
         self.forget_hyperlink_blob(i);
         if !self.value_ranges.is_empty() { self.disconnect_value_ranges(i); }
-        if !self.interest_for_elements.is_empty() { self.interest_for_elements.remove(&i); }
+        if !self.invoker_targets.is_empty() {
+            for attr in [InvokerTarget::InterestFor, InvokerTarget::CommandFor, InvokerTarget::PopoverTarget] {
+                self.invoker_targets.remove(&(i, attr));
+            }
+        }
         let owner = self.n(i).owner_doc;
         if !self.svg_points.is_empty() { self.svg_points.remove(&i); }
         if !self.svg_numbers.is_empty() { self.svg_numbers.remove(&i); }

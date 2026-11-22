@@ -549,8 +549,11 @@ pub(crate) fn construct<'s, C: JsClass<Data = EventData>>(
     let ty = arg_string(&a, 0, C::NAME)?;
     let page = page_of(s)?;
     let dictionary = a.get(1);
-    if iface == EventInterface::InterestEvent && !dictionary.is_nullish() && !dictionary.is_object() {
-        return Err(JsError::Type("InterestEventInit must be an object, null, or undefined".into()));
+    if matches!(iface, EventInterface::InterestEvent | EventInterface::CommandEvent | EventInterface::ToggleEvent)
+        && !dictionary.is_nullish()
+        && !dictionary.is_object()
+    {
+        return Err(JsError::Type(format!("{}Init must be an object, null, or undefined", C::NAME).into()));
     }
     let init = dictionary.as_object();
     let core = EventCore::new(
@@ -1767,7 +1770,7 @@ fn fill_formdata<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>
 }
 
 /// `source` of a ToggleEventInit or CommandEventInit: an Element or null.
-fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>, iface: &str, owner: Option<&PageDom>) -> JsResult<()> {
+fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>, iface: &str) -> JsResult<()> {
     let Some(o) = init else { return Ok(()) };
     let v = o.get_atom("source")?;
     if v.is_undefined() || v.is_null() {
@@ -1778,7 +1781,7 @@ fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>,
         Some(n) => {
             // TargetKey is local to a DOM store. Documents in a browsing
             // context group share one, including ordinary same-origin frames.
-            if owner.is_some_and(|page| !Rc::ptr_eq(&page.dom, &n.page().dom)) {
+            if !Rc::ptr_eq(&page_of(s)?.dom, &n.page().dom) {
                 return Err(JsError::Type("node belongs to another page".into()));
             }
             f.submitter = Some(n.target.key);
@@ -1791,14 +1794,23 @@ fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>,
 }
 
 fn fill_toggle<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
-    f.old_state = get_str(init, "oldState")?;
     f.new_state = get_str(init, "newState")?;
-    fill_source(s, f, init, "ToggleEvent", None)
+    f.old_state = get_str(init, "oldState")?;
+    fill_source(s, f, init, "ToggleEvent")
 }
 
 fn fill_command<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.command = get_str(init, "command")?;
-    fill_source(s, f, init, "CommandEvent", None)
+    fill_source(s, f, init, "CommandEvent")
+}
+
+/// Outside dispatch, retargeting against null crosses every shadow root, as
+/// does retargeting against the document. During dispatch use the listener's
+/// current target, including capture listeners on non-bubbling events.
+fn retargeted_source<'s>(s: &Scope<'s>, e: &EventData) -> JsResult<Value<'s>> {
+    let observer = e.state.borrow().current_target.unwrap_or(TargetKey::Node(e.page.document().index()));
+    let source = e.fields.borrow().submitter.map(|key| e.page.dom.borrow().retarget_live(key, observer));
+    target_value(s, &e.page, source)
 }
 
 /// `ToggleEvent` (HTML): details, popover and dialog `beforetoggle` /
@@ -1812,10 +1824,7 @@ impl JsClass for ToggleEvent {
         def.constructor(1, |s, nt, a| construct::<ToggleEvent>(s, nt, a, EventInterface::ToggleEvent, fill_toggle));
         def.getter("oldState", |s, e| Ok(s.string(&e.fields.borrow().old_state)));
         def.getter("newState", |s, e| Ok(s.string(&e.fields.borrow().new_state)));
-        def.getter("source", |s, e| {
-            let k = e.fields.borrow().submitter;
-            target_value(s, &e.page, k)
-        });
+        def.getter("source", retargeted_source);
     }
 }
 
@@ -1829,10 +1838,7 @@ impl JsClass for CommandEvent {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| construct::<CommandEvent>(s, nt, a, EventInterface::CommandEvent, fill_command));
         def.getter("command", |s, e| Ok(s.string(&e.fields.borrow().command)));
-        def.getter("source", |s, e| {
-            let k = e.fields.borrow().submitter;
-            target_value(s, &e.page, k)
-        });
+        def.getter("source", retargeted_source);
     }
 }
 
@@ -1845,14 +1851,10 @@ impl JsClass for InterestEvent {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| {
             construct::<InterestEvent>(s, nt, a, EventInterface::InterestEvent, |s, fields, init| {
-                fill_source(s, fields, init, "InterestEvent", Some(page_of(s)?.as_ref()))
+                fill_source(s, fields, init, "InterestEvent")
             })
         });
-        def.getter("source", |s, e| {
-            let observer = e.state.borrow().current_target.unwrap_or(TargetKey::Node(e.page.document().index()));
-            let source = e.fields.borrow().submitter.map(|key| e.page.dom.borrow().retarget_live(key, observer));
-            target_value(s, &e.page, source)
-        });
+        def.getter("source", retargeted_source);
     }
 }
 

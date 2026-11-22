@@ -1,0 +1,53 @@
+{
+  "scores": {
+    "baseFull": 13,
+    "candidateFull": 22,
+    "chrome158Full": 22,
+    "baseNamed": 673,
+    "candidateNamed": 718,
+    "chrome158Named": 718,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 0,
+    "lpOnly": 0,
+    "gained": 45
+  },
+  "gainsByPage": {
+    "html/semantics/the-button-element/command-and-commandfor/button-event-dispatch.html": 22,
+    "html/semantics/the-button-element/command-and-commandfor/event-interface.html": 1,
+    "html/semantics/the-button-element/command-and-commandfor/interface.html": 1,
+    "html/semantics/the-button-element/command-and-commandfor/on-dialog-behavior.html": 2,
+    "html/semantics/the-button-element/command-and-commandfor/on-dialog-invalid-behavior.html": 9,
+    "html/semantics/the-button-element/command-and-commandfor/commandfor-shadow-host.html": 5,
+    "html/semantics/the-button-element/command-and-commandfor/event-dispatch-shadow.html": 1,
+    "html/semantics/the-button-element/command-and-commandfor/source-attribute-retargeting.html": 2,
+    "html/semantics/the-button-element/command-and-commandfor/toggleevent-source-attribute-retargeting.html": 2
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 24
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "ec21830ff886a5a041606d0c22e5d474a42c726b2f14f414eb43537a73278d6b"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 24
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "ed17b94fd32b8e15b172545f41d19a01d9360b28cc656c953ff287a805f9fd42"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 24
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "1e51da20e9c755a60cbd9e260f17641e9c97a0f26cfdcbae3cbb819983dbd89c"
+    }
+  }
+}
