@@ -1,0 +1,199 @@
+{
+  "parentRelativeFinalConnectivityLosses": [
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-large"
+    },
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-px"
+    },
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-large"
+    },
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-px"
+    },
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-large"
+    },
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-px"
+    },
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-large"
+    },
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-px"
+    },
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-large"
+    },
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-px"
+    },
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-large"
+    },
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-px"
+    },
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-large"
+    },
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-px"
+    },
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-large"
+    },
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-px"
+    }
+  ],
+  "unchangedDomNoUndoEntry": [
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-large"
+    },
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-large"
+    },
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-large"
+    },
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-large"
+    },
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-large"
+    },
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-large"
+    },
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-large"
+    },
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-large"
+    },
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-styled"
+    }
+  ],
+  "overlap": []
+}
