@@ -1967,12 +1967,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     // inline content (CSS 2.1 Appendix E, step 3 before step 7).
                     cx.register_negative_inline_spans(content_position);
                     cx.draw_neg_z_children(scene, cx.transform, child_clip_rect);
-                    if !hidden {
+                    // pyro: HTML-in-Canvas: a canvas with content=drawable whose children are all
+                    // inline is an inline root; that content is laid out, not painted in place.
+                    let drawable_canvas = cx.element.is_drawable_canvas();
+                    if !hidden && !drawable_canvas {
                         cx.draw_marker(scene, content_position);
                     }
-                    cx.draw_inline_layout(scene, content_position);
+                    if !drawable_canvas {
+                        cx.draw_inline_layout(scene, content_position);
+                    }
                     cx.draw_children_above(scene, cx.transform, child_clip_rect);
-                    if !cx.has_positioned_level_children() {
+                    if !cx.has_positioned_level_children() && !drawable_canvas {
                         cx.draw_inline_boxes_over_atomics(scene, content_position);
                     }
                 }
