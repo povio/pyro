@@ -2396,8 +2396,8 @@ impl Io {
                     }
                     RedirectMode::Follow => {}
                 }
-                if let Some(loc) = resp_headers.get(header::LOCATION).and_then(|v| v.to_str().ok()) {
-                    let target = url.join(loc).map_err(|_| NetError::InvalidUrl)?;
+                if let Some(loc) = resp_headers.get(header::LOCATION).map(|v| location_text(v.as_bytes())) {
+                    let target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
                     // Fetch "HTTP-redirect fetch": only HTTP(S) survives a redirect.
                     if !matches!(target.scheme(), "http" | "https") {
                         return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
@@ -2874,6 +2874,20 @@ impl Io {
     }
 }
 
+/// A `Location` value as URL text: its bytes past ASCII percent-encoded one by one, as the
+/// URL parser would encode them were they UTF-8, and as browsers keep invalid UTF-8 (`%FF`).
+fn location_text(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    for &b in bytes {
+        if b.is_ascii() {
+            text.push(char::from(b));
+        } else {
+            text.push_str(&format!("%{b:02X}"));
+        }
+    }
+    text
+}
+
 /// The response's `Content-Encoding`, its header lines joined by commas
 /// (borrowed when there is one line, as there nearly always is).
 fn content_encoding(headers: &HeaderMap) -> Option<Cow<'_, str>> {
@@ -3273,5 +3287,20 @@ mod cookie_tests {
                 &url, "b=none; Secure; SameSite=None; Partitioned", Access::Http, now_secs(), partition.as_deref(), site
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    #[test]
+    fn location_bytes_past_ascii_are_percent_encoded_one_by_one() {
+        let base = Url::parse("http://a.test/dir/redirect.py").unwrap();
+        let join = |bytes: &[u8]| base.join(&location_text(bytes)).unwrap().to_string();
+        assert_eq!(join("top.txt?\u{2603}".as_bytes()), "http://a.test/dir/top.txt?%E2%98%83");
+        assert_eq!(join("top.txt?%\u{2603}".as_bytes()), "http://a.test/dir/top.txt?%%E2%98%83");
+        assert_eq!(join(b"top.txt?\xFF"), "http://a.test/dir/top.txt?%FF");
+        assert_eq!(join(b"/plain"), "http://a.test/plain");
     }
 }
