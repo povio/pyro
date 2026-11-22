@@ -2,7 +2,7 @@
 // `Element.startViewTransition`): per-scope lifecycle and native capture.
 (function (native) {
   'use strict';
-  const {captureValid, transitionAnimations} = native;
+  const {captureValid, transitionAnimations, callbackGone} = native;
   const global = globalThis;
   const rafFn = global.requestAnimationFrame, setTimeoutFn = global.setTimeout;
   const clearTimeoutFn = global.clearTimeout;
@@ -158,7 +158,10 @@
   Object.defineProperty(ViewTransition, 'prototype', { writable: false });
 
   // "Skip the view transition": `ready` rejects with `reason` unless it has
-  // settled, the update callback still runs, `finished` follows it.
+  // settled, the update callback still runs, `finished` follows it. `ready`
+  // is not marked handled: an unobserved rejection reaches `unhandledrejection`
+  // (Chrome). `finished` follows an internal copy of the callback's outcome so
+  // `updateCallbackDone` stays unhandled too.
   function skip(st, reason) {
     if (st.phase === 'done') return;
     const before = st.phase === 'pending-capture';
@@ -169,8 +172,13 @@
     if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
     if (active.get(st.scope) === st.self) active.delete(st.scope);
     if (!st.readySettled) { st.readySettled = true; st.ready.reject(reason); }
-    if (before) setTimeout_(() => callUpdate(st), 0);
-    promiseThen.call(st.updateCallbackDone.promise, () => st.finished.resolve(), (e) => st.finished.reject(e));
+    // A document that is not fully active runs no tasks: its callback runs
+    // from a microtask so `finished` still settles.
+    if (before) {
+      if (st.inactive) promiseThen.call(PromiseCtor.resolve(), () => callUpdate(st));
+      else setTimeout_(() => callUpdate(st), 0);
+    }
+    promiseThen.call(st.updateDone.promise, () => st.finished.resolve(), (e) => st.finished.reject(e));
   }
 
   function callUpdate(st) {
@@ -179,13 +187,17 @@
     if (st.phase !== 'done') st.timer = setTimeout_(() => skip(st, new DOMException('Update callback timed out', 'TimeoutError')), 4000);
     let result;
     try {
-      result = isFunction(st.update) ? PromiseCtor.resolve(st.update.call(undefined)) : PromiseCtor.resolve();
+      if (!isFunction(st.update)) result = PromiseCtor.resolve();
+      // A callback of a destroyed realm (a removed iframe's) is not run.
+      else if (callbackGone(st.update)) result = PromiseCtor.reject(abortError('The update callback belongs to a detached document'));
+      else result = PromiseCtor.resolve(st.update.call(undefined));
     } catch (e) {
       result = PromiseCtor.reject(e);
     }
     promiseThen.call(result, () => {
       if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
       st.updateCallbackDone.resolve();
+      st.updateDone.resolve();
       if (st.phase === 'done' || !capture(st)) return;
       try { st.runs = transitionAnimations(st.root); } catch (_) { st.runs = null; }
       if (!st.runs) { skip(st, new DOMException('Cannot animate transition boxes', 'InvalidStateError')); return; }
@@ -206,11 +218,12 @@
       });
     }, (e) => {
       st.updateCallbackDone.reject(e);
+      st.updateDone.reject(e);
       if (st.phase !== 'done') skip(st, e);
     });
   }
 
-  function start(scope, root, arg, hidden) {
+  function start(scope, root, arg, hidden, inactive) {
     let update = null;
     let types = [];
     if (isFunction(arg)) {
@@ -227,12 +240,18 @@
     }
     const self = Object.create(ViewTransition.prototype);
     const st = {
-      self, scope, root, update, phase: 'pending-capture', called: false, readySettled: false,
+      self, scope, root, update, phase: 'pending-capture', called: false, readySettled: false, inactive,
       types: typeSet(types), timer: null, waiting: 0, animationDone: false,
-      updateCallbackDone: deferred(), ready: deferred(), finished: deferred(),
+      updateCallbackDone: deferred(), ready: deferred(), finished: deferred(), updateDone: deferred(),
     };
-    handled(st.ready.promise);
+    handled(st.updateDone.promise);
     states.set(self, st);
+    // A document that is not fully active skips with AbortError and never
+    // becomes the scope's active transition (Chrome).
+    if (inactive) {
+      skip(st, abortError('The document is not fully active'));
+      return self;
+    }
     const prior = active.get(scope);
     if (prior !== undefined) skip(states.get(prior), abortError('Old view transition aborted by new view transition.'));
     active.set(scope, self);

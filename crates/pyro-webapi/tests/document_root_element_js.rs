@@ -357,3 +357,56 @@ fn view_transition_idl_accessors_and_type_set_setlike() {
                 types.has('2'), seen.join('|')].join();
     })()"#), "true,true,3,a|b|2,true,x|x|x");
 }
+
+#[test]
+fn view_transition_in_detached_frame_skips_with_abort_error_and_finishes_without_tasks() {
+    let parent = env("<!doctype html><body></body>");
+    let child = realm_env(parent.engine.clone(), "<!doctype html><body></body>");
+    child.page.set_hooks(Some(Rc::new(Child(parent.page.clone()))));
+    child.page.detach();
+    // The detached document runs no frames or timers: `finished` still settles.
+    assert_eq!(eval(&child.main, r#"globalThis.requestAnimationFrame = () => 1; globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
+        let calls = 0, ready = 'pending', finished = 'pending';
+        const transition = document.startViewTransition({update: () => ++calls, types: ['a', 'b']});
+        transition.ready.then(() => ready = 'resolved', error => ready = error.name);
+        transition.finished.then(() => finished = 'resolved', error => finished = error.name);
+        [document.activeViewTransition, transition.types.size].join()"#), ",2");
+    assert_eq!(eval(&child.main, "[calls, ready, finished].join()"), "1,AbortError,resolved");
+}
+
+#[test]
+fn view_transition_callback_of_disposed_realm_aborts_finished() {
+    let parent = env("<!doctype html><body></body>");
+    let other = realm_env(parent.engine.clone(), "<!doctype html><body></body>");
+    {
+        let s = other.main.scope().unwrap();
+        let callback = s.eval("Function('')", None, 1).unwrap();
+        parent.main.scope().unwrap().global().set("foreign", callback).unwrap();
+    }
+    other.main.dispose();
+    assert_eq!(eval(&parent.main, r#"const timers = []; globalThis.requestAnimationFrame = () => 1; globalThis.setTimeout = fn => timers.push(fn); globalThis.clearTimeout = () => {};
+        const outcome = {};
+        const transition = document.startViewTransition(foreign);
+        transition.skipTransition();
+        for (const name of ['ready', 'updateCallbackDone', 'finished']) transition[name].then(() => outcome[name] = 'resolved', error => outcome[name] = error.name);
+        timers.splice(0).forEach(fn => fn()); 'ok'"#), "ok");
+    assert_eq!(eval(&parent.main, "[outcome.ready, outcome.updateCallbackDone, outcome.finished].join()"), "AbortError,AbortError,AbortError");
+}
+
+#[test]
+fn view_transition_rejections_are_not_pre_handled() {
+    let environment = env("<!doctype html><body></body>");
+    // A skipped transition's `ready`, and a rejected callback's
+    // `updateCallbackDone`, have no handler of pyro's own: page script sees them
+    // through `unhandledrejection` (Chrome). `finished` still follows the callback.
+    assert_eq!(eval(&environment.main, r#"const timers = []; globalThis.requestAnimationFrame = () => 1; globalThis.setTimeout = fn => timers.push(fn); globalThis.clearTimeout = () => {};
+        const thens = new Set(), then = Promise.prototype.then;
+        Promise.prototype.then = function (...args) { thens.add(this); return then.apply(this, args); };
+        const first = document.startViewTransition(() => Promise.reject('no'));
+        document.startViewTransition();
+        timers.splice(0).forEach(fn => fn());
+        Promise.prototype.then = then;
+        let finished; first.finished.then(() => finished = 'resolved', reason => finished = reason);
+        [thens.has(first.ready), thens.has(first.updateCallbackDone)].join()"#), "false,false");
+    assert_eq!(eval(&environment.main, "finished"), "no");
+}
