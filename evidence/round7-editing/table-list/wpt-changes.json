@@ -1,0 +1,82 @@
+[
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"<table><tbody><tr><td>fo[o<td>b]ar<td>baz</table>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"<table><tbody><tr><td>fo[o<td>b]ar<td>baz</table>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"<table><tbody><tr><td>foo<td>b[a]r<td>baz</table>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"{<table><tr><td>foo<td>bar<td>baz</table>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"{<table><tr><td>foo<td>bar<td>baz</table>}\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<table><tbody><tr><td>fo[o<td>b]ar<td>baz</table>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<table><tbody><tr><td>fo[o<td>b]ar<td>baz</table>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<table><tbody><tr><td>foo<td>b[a]r<td>baz</table>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"{<table><tr><td>foo<td>bar<td>baz</table>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"{<table><tr><td>foo<td>bar<td>baz</table>}\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]
