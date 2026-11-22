@@ -452,6 +452,35 @@ pub(crate) fn read_for_cache<'s>(s: &Scope<'s>, response: Value<'_>) -> JsResult
     consume(s, &data, ReadKind::Chunks)
 }
 
+/// The checks WebAssembly's "compile a potential WebAssembly response" makes of `response`
+/// before its bytes compile (WebAssembly Web API, for `compileStreaming` and
+/// `instantiateStreaming`, named by `method`): a Response, whose `Content-Type` is
+/// `application/wasm`, CORS-same-origin and of an ok status, else a TypeError. A promise of its
+/// body as an ArrayBuffer, as `arrayBuffer()` gives it (rejected when the body was used).
+pub(crate) fn read_for_wasm<'s>(s: &Scope<'s>, response: Value<'_>, method: Value<'_>) -> JsResult<Value<'s>> {
+    let method = method.to_string()?;
+    let fail = |reason: &str| JsError::Type(format!("Failed to execute '{method}' on 'WebAssembly': {reason}").into());
+    let data = s.unwrap::<Response>(response).ok_or_else(|| fail("Argument 0 must be a Response or a promise of one"))?;
+    let headers = hidden(s, &data, HEADERS).ok().and_then(|v| s.unwrap::<Headers>(v).map(|h| h.clone()));
+    let content_type = headers
+        .and_then(|h| h.pairs().into_iter().find(|(name, _)| name == "content-type"))
+        .map(|(_, value)| value);
+    // The header value with HTTP tabs and spaces trimmed, no parameters allowed.
+    let wasm = content_type
+        .as_deref()
+        .is_some_and(|v| v.trim_matches(|c| c == ' ' || c == '\t').eq_ignore_ascii_case("application/wasm"));
+    if !wasm {
+        return Err(fail("Incorrect response MIME type. Expected 'application/wasm'."));
+    }
+    if data.origin == Origin::Network && opaque(data.head.kind) {
+        return Err(fail("The response is not CORS-same-origin"));
+    }
+    if !(200..300).contains(&status_of(&data)) {
+        return Err(fail("HTTP status code is not ok"));
+    }
+    consume(s, &data, ReadKind::ArrayBuffer)
+}
+
 /// A response read back from a cache (`cache_storage`): its stored type
 /// ("default" for a script's, "error", or a network one's), URL, status,
 /// status text, headers (as script saw them) and body, in a new object.

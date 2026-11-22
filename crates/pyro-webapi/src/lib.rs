@@ -416,6 +416,7 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     url_search_params::install(scope, helpers.get_atom("urlSearchParams")?)?;
     form_data::install(scope, helpers.get_atom("formData")?)?;
     fetch::install(scope)?;
+    fetch::install_wasm_streaming(scope, helpers.get_atom("wasmStreaming")?)?;
     structured_clone::install(scope, &page, helpers.get_atom("structuredClone")?)?;
     secure_context::hide_if_insecure(scope, &page)?;
     if let Some(define) =
