@@ -5,22 +5,23 @@
    "scope": {
     "macbook_in_scope": 355,
     "studio_in_scope": 38,
-    "other_dirs_out_of_scope": 9
+    "other_dirs_out_of_scope": 28
    },
-   "distinct_census_pages": 364,
+   "distinct_census_pages": 383,
    "owner_reported_unlisted": 0,
-   "selector_union": 394,
+   "selector_union": 413,
    "owner_estimate_reduction": 30,
-   "of_which_tentative": 98,
+   "of_which_tentative": 117,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
     "html/canvas": 263,
     "html/interaction": 94,
+    "scheduler": 19,
     "html/syntax": 12,
     "html/semantics": 6,
-    "FileAPI": 4,
     "fetch/api": 4,
+    "FileAPI": 4,
     "fetch/data-urls": 3,
     "encoding": 2,
     "xhr": 2,
@@ -34,13 +35,13 @@
    "scope": {
     "macbook_in_scope": 453,
     "studio_in_scope": 4,
-    "other_dirs_out_of_scope": 126
+    "other_dirs_out_of_scope": 107
    },
-   "distinct_census_pages": 579,
+   "distinct_census_pages": 560,
    "owner_reported_unlisted": 0,
-   "selector_union": 638,
+   "selector_union": 619,
    "owner_estimate_reduction": 59,
-   "of_which_tentative": 103,
+   "of_which_tentative": 84,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
@@ -49,34 +50,33 @@
     "fetch/fetch-later": 39,
     "html/syntax": 34,
     "dom/events": 21,
-    "scheduler": 19,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
     "html/interaction": 14,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
     "selection": 7,
     "shadow-dom": 7,
     "navigation-api": 6,
-    "html/editing": 5,
-    "uievents": 5,
-    "fetch/api": 5,
     "intersection-observer": 5,
+    "fetch/api": 5,
+    "uievents": 5,
+    "html/editing": 5,
     "svg/types": 4,
     "inert": 3,
-    "event-timing": 3,
-    "mathml": 3,
     "close-watcher": 3,
-    "html/rendering": 2,
-    "resource-timing": 2,
-    "soft-navigation-heuristics": 2,
+    "mathml": 3,
+    "event-timing": 3,
     "svg/animations": 2,
+    "soft-navigation-heuristics": 2,
+    "html/rendering": 2,
     "dom/nodes": 2,
+    "resource-timing": 2,
     "document-picture-in-picture": 1,
-    "editing": 1,
     "custom-elements": 1,
-    "pointerlock": 1,
-    "html/browsers": 1
+    "html/browsers": 1,
+    "editing": 1,
+    "pointerlock": 1
    }
   },
   "queued": {
@@ -124,12 +124,12 @@
    "tentative": 0
   },
   "OWN-studio-anim-display": {
-   "state": "frozen",
+   "state": "implemented-unbuilt",
    "pages": 0,
    "tentative": 0
   },
   "OWN-studio-margin-trim": {
-   "state": "frozen",
+   "state": "implemented-unbuilt",
    "pages": 0,
    "tentative": 0
   },
@@ -139,7 +139,7 @@
    "tentative": 30
   },
   "Q02": {
-   "state": "frozen",
+   "state": "implemented-unbuilt",
    "pages": 1,
    "tentative": 0
   },
@@ -179,7 +179,7 @@
    "tentative": 0
   },
   "Q09": {
-   "state": "frozen",
+   "state": "implemented-unbuilt",
    "pages": 0,
    "tentative": 0
   },
@@ -514,7 +514,7 @@
    "tentative": 0
   },
   "P06": {
-   "state": "active",
+   "state": "implemented-unbuilt",
    "pages": 19,
    "tentative": 19
   },
@@ -739,7 +739,7 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 402,
+ "implemented_total_estimate": 421,
  "milestones_reached": [
   250
  ],
