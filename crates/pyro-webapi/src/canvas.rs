@@ -1216,13 +1216,68 @@ fn align_of(state: &State) -> Align {
     }
 }
 
+/// pyro: a CSS <length> as its number and lowercase unit (unitless zero is `px`), `None` for
+/// anything else (other units, percentages, keywords, non-finite numbers).
+fn spacing_parts(value: &str) -> Option<(f64, String)> {
+    let v = value.trim_matches(|c: char| c.is_ascii_whitespace()).as_bytes();
+    // A CSS number: sign, digits, fraction, then an exponent only when `e` is followed by
+    // digits (so `1em` and `1ex` keep their unit).
+    let digits = |from: usize| from + v[from..].iter().take_while(|b| b.is_ascii_digit()).count();
+    let mut i = usize::from(matches!(v.first(), Some(b'+' | b'-')));
+    let mut end = digits(i);
+    if v.get(end) == Some(&b'.') && digits(end + 1) > end + 1 {
+        end = digits(end + 1);
+    }
+    if end == i {
+        return None;
+    }
+    if matches!(v.get(end), Some(b'e' | b'E')) {
+        i = end + 1 + usize::from(matches!(v.get(end + 1), Some(b'+' | b'-')));
+        if digits(i) > i {
+            end = digits(i);
+        }
+    }
+    let number = std::str::from_utf8(&v[..end]).ok()?;
+    let unit = std::str::from_utf8(&v[end..]).ok()?;
+    let n: f64 = number.parse().ok().filter(|n: &f64| n.is_finite())?;
+    // -0 serializes as 0.
+    let n = if n == 0.0 { 0.0 } else { n };
+    let unit = unit.to_ascii_lowercase();
+    if unit.is_empty() {
+        return (n == 0.0).then(|| (0.0, "px".to_string()));
+    }
+    const UNITS: &[&str] = &[
+        "px", "cm", "mm", "q", "in", "pt", "pc", "em", "rem", "ex", "rex", "ch", "rch", "ic", "ric", "cap", "rcap",
+        "lh", "rlh",
+    ];
+    UNITS.contains(&unit.as_str()).then_some((n, unit))
+}
+
+/// The value `letterSpacing`/`wordSpacing` keep for `value`, `None` to ignore it.
+fn spacing_length(value: &str) -> Option<String> {
+    spacing_parts(value).map(|(n, unit)| format!("{n}{unit}"))
+}
+
 fn spacing_px(value: &str, font_size: f64) -> f32 {
-    let v = value.trim();
-    let (number, unit) = v.find(|ch: char| ch.is_ascii_alphabetic()).map_or((v, ""), |i| v.split_at(i));
-    let n: f64 = number.trim().parse().unwrap_or(0.0);
-    (match unit {
-        "em" => n * font_size,
-        _ => n,
+    let Some((n, unit)) = spacing_parts(value) else { return 0.0 };
+    // Font-relative units against the canvas font (16px for the root's), as approximations of
+    // the font's own metrics where they differ (ex, cap, ch: half or 0.7 of the em).
+    (n * match unit.as_str() {
+        "cm" => 96.0 / 2.54,
+        "mm" => 96.0 / 25.4,
+        "q" => 96.0 / 101.6,
+        "in" => 96.0,
+        "pt" => 96.0 / 72.0,
+        "pc" => 16.0,
+        "em" | "ic" => font_size,
+        "ex" | "ch" => font_size / 2.0,
+        "cap" => font_size * 0.7,
+        "lh" => font_size * 1.2,
+        "rem" | "ric" => 16.0,
+        "rex" | "rch" => 8.0,
+        "rcap" => 16.0 * 0.7,
+        "rlh" => 16.0 * 1.2,
+        _ => 1.0,
     }) as f32
 }
 
@@ -1489,6 +1544,23 @@ macro_rules! string_state {
     };
 }
 
+/// pyro: `letterSpacing`/`wordSpacing`: a value that is not a CSS <length> is ignored, one that
+/// is is kept serialized (WPT 2d.text.drawing.style.*.spacing).
+macro_rules! spacing_state {
+    ($def:ident, $name:literal, $field:ident) => {
+        $def.accessor(
+            $name,
+            |s, c| Ok(s.string(&c.state.borrow().$field)),
+            |_s, c, v| {
+                if let Some(value) = spacing_length(&dom_string(v)?) {
+                    c.state.borrow_mut().$field = value;
+                }
+                Ok(())
+            },
+        );
+    };
+}
+
 /// The path argument of `fill`/`stroke`/`clip`/`isPointIn*`: a Path2D at
 /// `a[0]`, or None.
 fn path2d_arg<'s>(s: &Scope<'s>, c: &ContextData, a: &Args<'s>) -> JsResult<Option<Object<'s>>> {
@@ -1665,8 +1737,8 @@ impl ContextData {
                 Ok(())
             },
         );
-        string_state!(def, "letterSpacing", letter_spacing);
-        string_state!(def, "wordSpacing", word_spacing);
+        spacing_state!(def, "letterSpacing", letter_spacing);
+        spacing_state!(def, "wordSpacing", word_spacing);
         def.accessor(
             "globalCompositeOperation",
             |s, c| Ok(s.string(c.state.borrow().composite)),
