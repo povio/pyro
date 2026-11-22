@@ -188,6 +188,7 @@ pub struct PageDom {
     pub(crate) sw_controlled: Cell<bool>,
     /// The document is shown in a child frame (a client's `frameType`).
     nested_frame: Cell<bool>,
+    window_chrome: Cell<(bool, i32, i32)>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
     pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
     /// MessagePorts whose peer was collected; their pins are reconciled at
@@ -405,6 +406,7 @@ pub struct PageDom {
     completely_loaded: Cell<bool>,
     /// When trusted input last reached the document (transient activation).
     input_activation: Cell<Option<std::time::Instant>>,
+    debugger_gesture: Cell<bool>,
     /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
@@ -553,6 +555,7 @@ pub struct NavigationRequest {
     pub opener: bool,
     /// `window.open`'s returned object watches this popup.
     pub popup: Option<Rc<crate::popup::PopupTicket>>,
+    pub window_features: crate::window_features::WindowFeatures,
     /// The request's own referrer policy: a link's `referrerpolicy` state,
     /// no-referrer for `rel=noreferrer` (`None`: the document's policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
@@ -854,6 +857,7 @@ impl PageDom {
             sw_client: RefCell::new(None),
             sw_controlled: Cell::new(false),
             nested_frame: Cell::new(false),
+            window_chrome: Cell::default(),
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
@@ -998,6 +1002,7 @@ impl PageDom {
             web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
+            debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_allowed: Cell::new(true),
             paint_worklet: RefCell::new(None),
@@ -1128,6 +1133,20 @@ impl PageDom {
     pub fn blob_url_count(&self) -> usize {
         self.blob_urls.borrow().len()
     }
+    pub fn set_window_chrome(&self, is_popup: bool, left: i32, top: i32) {
+        self.window_chrome.set((is_popup, left, top));
+    }
+
+    pub fn screen_position(&self) -> (i32, i32) {
+        let (_, left, top) = self.window_chrome.get();
+        (left, top)
+    }
+
+    pub(crate) fn bars_visible(&self) -> bool {
+        // HTML BarProp.visible returns true when the browsing context is null.
+        !self.is_fully_active() || !self.window_chrome.get().0
+    }
+
     pub fn is_disposed(&self) -> bool {
         self.disposed.get()
     }
@@ -1323,6 +1342,24 @@ impl PageDom {
             peer.sticky_activation.set(true);
         }
     }
+    /// CDP reports an evaluation with userGesture as a gesture source when
+    /// that evaluation opens a window. Keep automation separate from trusted
+    /// input used by navigation and the DOM user-activation APIs.
+    pub fn with_debugger_gesture<R>(&self, run: impl FnOnce() -> R) -> R {
+        struct Restore<'a>(&'a Cell<bool>, bool);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) { self.0.set(self.1); }
+        }
+
+        self.notify_user_activation();
+        let _restore = Restore(&self.debugger_gesture, self.debugger_gesture.replace(true));
+        run()
+    }
+
+    pub fn window_open_user_gesture(&self) -> bool {
+        self.has_transient_activation() || self.debugger_gesture.get()
+    }
+
     /// HTML "sticky activation".
     pub fn has_sticky_activation(&self) -> bool {
         self.sticky_activation.get()

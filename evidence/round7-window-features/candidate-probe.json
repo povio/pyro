@@ -1,0 +1,707 @@
+{
+  "root": {
+    "visible": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "distinct": 6,
+    "brand": "BarProp",
+    "replaceable": true,
+    "restored": false
+  },
+  "rows": [
+    {
+      "features": "",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=0",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=yes,width=310,height=207,left=33,top=22",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          310,
+          207
+        ],
+        "position": [
+          33,
+          22
+        ]
+      }
+    },
+    {
+      "features": "toolbar=yes,location=yes,menubar=yes,resizable=yes,scrollbars=yes,status=yes",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "noopener=0,noreferrer=0",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "noopener=1",
+      "returnedHandle": false,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": false,
+        "hasReferrer": true,
+        "visible": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "noreferrer=yes",
+      "returnedHandle": false,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "",
+        "hasOpener": false,
+        "hasReferrer": false,
+        "visible": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=yes,popup=no",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=1junk",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=\"yes\"",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "width=0,height=0",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "width=-404,height=405",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1,
+          405
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "width=405.5,height=204",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          405,
+          204
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "height=204",
+      "returnedHandle": true,
+      "child": {
+        "name": "",
+        "print": false,
+        "referrer": "http://127.0.0.1:58766/page",
+        "hasOpener": true,
+        "hasReferrer": true,
+        "visible": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "brand": "BarProp",
+        "identity": true,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    }
+  ],
+  "frame": {
+    "before": [
+      true,
+      true
+    ],
+    "after": [
+      true,
+      true
+    ]
+  },
+  "reuse": {
+    "openerPrint": true,
+    "results": [
+      {
+        "sameHandle": true,
+        "child": {
+          "name": "normal-d4d3ef73-536c-40da-afa2-874052abc050",
+          "print": false,
+          "referrer": "http://127.0.0.1:58766/page",
+          "hasOpener": true,
+          "hasReferrer": true,
+          "visible": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "brand": "BarProp",
+          "identity": true,
+          "size": [
+            1280,
+            720
+          ],
+          "position": [
+            0,
+            0
+          ]
+        }
+      },
+      {
+        "sameHandle": true,
+        "child": {
+          "name": "normal-d4d3ef73-536c-40da-afa2-874052abc050",
+          "print": false,
+          "referrer": "http://127.0.0.1:58766/page",
+          "hasOpener": true,
+          "hasReferrer": true,
+          "visible": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "brand": "BarProp",
+          "identity": true,
+          "size": [
+            1280,
+            720
+          ],
+          "position": [
+            0,
+            0
+          ]
+        }
+      }
+    ]
+  },
+  "events": [
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "left=33",
+        "top=22",
+        "width=310",
+        "height=207",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable",
+        "noopener"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable",
+        "noopener"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "width=0",
+        "height=0",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "width=-404",
+        "height=405",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "width=405",
+        "height=204",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "_blank",
+      "windowFeatures": [
+        "height=204",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "normal-d4d3ef73-536c-40da-afa2-874052abc050",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable"
+      ],
+      "userGesture": true
+    },
+    {
+      "path": "/child",
+      "windowName": "report-window",
+      "windowFeatures": [
+        "menubar",
+        "toolbar",
+        "status",
+        "scrollbars",
+        "resizable",
+        "noopener"
+      ],
+      "userGesture": true
+    }
+  ],
+  "namedNoOpener": {
+    "returnedNull": true,
+    "child": {
+      "name": "report-window",
+      "print": false,
+      "referrer": "http://127.0.0.1:58766/page",
+      "hasOpener": false,
+      "hasReferrer": true,
+      "visible": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "brand": "BarProp",
+      "identity": true,
+      "size": [
+        1280,
+        720
+      ],
+      "position": [
+        0,
+        0
+      ]
+    }
+  }
+}

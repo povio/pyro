@@ -307,7 +307,7 @@ impl PageHooks for Hooks {
                 })
                 && host.frame(page).is_some_and(|f| !f.sandbox.popups_blocked);
             if new_context {
-                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned()) {
+                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned(), request.window_features) {
                     Ok(prebuilt) => {
                         if let Some(dom) = &prebuilt.frame.page_dom {
                             ticket.attach_page(dom);
@@ -318,6 +318,7 @@ impl PageHooks for Hooks {
                 }
             }
         }
+        let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
         // HTML "navigate": a GET of the document's own URL with a fragment is
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
@@ -326,12 +327,15 @@ impl PageHooks for Hooks {
         // the target names (`<a target>`, `<form target>`). Its `navigate`
         // event fires and its fragment navigations stay in its document, as
         // HTML "navigate" runs on the target navigable.
+        // With noopener, HTML skips named navigable lookup but still gives the
+        // newly created top-level traversable the requested target name.
+        let lookup_target = request.target.as_deref().filter(|_| !request.window_features.noopener);
         let mut cross_origin_target = false;
         let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| {
             let key = if own_frame {
                 Some(page)
             } else {
-                request.target.as_deref().and_then(|t| host.named_frame(page, t))
+                lookup_target.and_then(|t| host.named_frame(page, t))
             };
             cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
             key.and_then(|key| host.nav(key))
@@ -374,7 +378,8 @@ impl PageHooks for Hooks {
             }) {
                 return;
             }
-            let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
+            let named = request.target.as_deref().filter(|_| !request.window_features.noopener)
+                .and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
             // HTML "navigate to a javascript: URL": the script runs in the
             // target document, which stays (replacing it with a string result
             // is not supported).
@@ -404,6 +409,11 @@ impl PageHooks for Hooks {
                             url: request.url,
                             opener: request.opener,
                             ticket: request.popup,
+                            window_features: request.window_features,
+                            window_name: request.target.unwrap_or_default(),
+                            user_gesture,
+                            referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
+                            referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
                         },
                     );
                 }
@@ -460,7 +470,7 @@ impl PageHooks for Hooks {
         self.sched.post(TaskSource::Navigation, move |b| {
             // Only a popup is script-closable (Chrome: "Scripts may close
             // only the windows that were opened by them").
-            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.popup.is_some()) {
+            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.script_closable) {
                 return;
             }
             let Some(frame_id) =
@@ -770,6 +780,7 @@ impl Browser {
             session: state.session_storage.clone(),
             net: self.context_net(state.context).cloned(),
             viewport: state.viewport.clone(),
+            window_chrome: state.frames.settings.borrow().window_chrome,
             user_agent: state.user_agent_override.clone(),
             extra_headers: state.extra_http_headers.clone(),
             cache_disabled: state.cache_disabled,
@@ -1029,6 +1040,8 @@ pub(crate) fn create(
         bodies: host.layout_bodies.clone(),
         asked_fonts: Default::default(),
     }));
+    let (is_popup, left, top) = settings.window_chrome;
+    bindings.set_window_chrome(is_popup, left, top);
     bindings.set_storage_namespaces(settings.local, settings.session);
     let mut viewport = settings.viewport;
     // Only the main frame lays out as a phone; frames take their iframe's box.

@@ -1,0 +1,367 @@
+{
+  "root": {
+    "visible": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "distinct": 1,
+    "brand": null,
+    "replaceable": true,
+    "restored": true
+  },
+  "rows": [
+    {
+      "features": "",
+      "returnedHandle": true,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": true,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=0",
+      "returnedHandle": true,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": true,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=yes,width=310,height=207,left=33,top=22",
+      "returnedHandle": true,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": true,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "toolbar=yes,location=yes,menubar=yes,resizable=yes,scrollbars=yes,status=yes",
+      "returnedHandle": true,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": true,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "noopener=0,noreferrer=0",
+      "returnedHandle": false,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": false,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "noopener=1",
+      "returnedHandle": false,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": false,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "noreferrer=yes",
+      "returnedHandle": false,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": false,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=yes,popup=no",
+      "returnedHandle": true,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": true,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=1junk",
+      "returnedHandle": true,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": true,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "features": "popup=\"yes\"",
+      "returnedHandle": true,
+      "child": {
+        "print": false,
+        "referrer": "",
+        "hasOpener": true,
+        "hasReferrer": false,
+        "visible": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "brand": null,
+        "identity": false,
+        "size": [
+          1280,
+          720
+        ],
+        "position": [
+          0,
+          0
+        ]
+      }
+    }
+  ],
+  "frame": {
+    "before": [
+      null,
+      null
+    ],
+    "after": [
+      null,
+      null
+    ]
+  },
+  "reuse": {
+    "openerPrint": true,
+    "results": [
+      {
+        "sameHandle": true,
+        "child": {
+          "print": false,
+          "referrer": "",
+          "hasOpener": true,
+          "hasReferrer": false,
+          "visible": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "brand": null,
+          "identity": false,
+          "size": [
+            1280,
+            720
+          ],
+          "position": [
+            0,
+            0
+          ]
+        }
+      },
+      {
+        "sameHandle": true,
+        "child": {
+          "print": false,
+          "referrer": "",
+          "hasOpener": true,
+          "hasReferrer": false,
+          "visible": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "brand": null,
+          "identity": false,
+          "size": [
+            1280,
+            720
+          ],
+          "position": [
+            0,
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

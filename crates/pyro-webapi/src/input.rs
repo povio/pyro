@@ -975,6 +975,7 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         content_type: None,
         opener,
         popup: None,
+        window_features: Default::default(),
         referrer_policy,
         source: Some(el),
         form_entries: None,

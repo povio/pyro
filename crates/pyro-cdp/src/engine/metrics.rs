@@ -8,7 +8,7 @@
 //! offset and the document scroll size.
 use std::collections::BTreeMap;
 
-use pyro_dom::media::{self, ScreenOrientation, Viewport};
+use pyro_dom::media::{self, ScreenOrientation};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -103,9 +103,9 @@ impl EngineHost {
 
     pub(super) fn device_metrics(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
         let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
-        let mut viewport =
-            self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?.viewport().clone();
-        let defaults = Viewport::default();
+        let page = self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?;
+        let mut viewport = page.viewport().clone();
+        let defaults = page.native_viewport();
         if action == "clearDeviceMetricsOverride" {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]

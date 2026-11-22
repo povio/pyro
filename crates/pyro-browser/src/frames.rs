@@ -91,6 +91,44 @@ pub struct FrameInfo {
     pub unreachable_url: Option<String>,
 }
 
+/// A new top-level context starts with fresh target emulation settings; only
+/// the opener's window and screen geometry supplies its initial dimensions.
+pub(crate) fn popup_viewport(opener: &pyro_dom::media::Viewport) -> pyro_dom::media::Viewport {
+    pyro_dom::media::Viewport {
+        width: opener.width,
+        height: opener.height,
+        screen_width: opener.screen_width,
+        screen_height: opener.screen_height,
+        ..Default::default()
+    }
+}
+
+/// Fit the requested desktop window to its screen's available area. Keep the
+/// emulated screen independent of the smaller layout viewport of a popup.
+pub(crate) fn apply_window_features(
+    viewport: &mut pyro_dom::media::Viewport,
+    features: pyro_webapi::window_features::WindowFeatures,
+) -> (bool, i32, i32) {
+    let screen_width = viewport.screen_width.unwrap_or(viewport.width);
+    let screen_height = viewport.screen_height.unwrap_or(viewport.height);
+    // A headless surface has no native window decoration. Its smallest
+    // visible viewport is one CSS pixel, including under device emulation.
+    let dimension = |requested: i32, available: u32| (requested.max(1) as u32).min(available);
+    if let Some(width) = features.width {
+        viewport.screen_width = Some(screen_width);
+        viewport.width = dimension(width, screen_width);
+    }
+    if let Some(height) = features.height {
+        viewport.screen_height = Some(screen_height);
+        viewport.height = dimension(height, screen_height);
+    }
+    let position = |requested: Option<i32>, available: u32| {
+        (requested.unwrap_or(0).max(0) as u32).min(available) as i32
+    };
+    (features.is_popup, position(features.left, screen_width.saturating_sub(viewport.width)),
+        position(features.top, screen_height.saturating_sub(viewport.height)))
+}
+
 #[derive(Clone)]
 pub(crate) struct Settings {
     pub local: pyro_webapi::StorageNamespace,
@@ -99,6 +137,7 @@ pub(crate) struct Settings {
     pub session: pyro_webapi::StorageNamespace,
     pub net: Option<pyro_net::NetClient>,
     pub viewport: pyro_dom::media::Viewport,
+    pub window_chrome: (bool, i32, i32),
     pub user_agent: Option<pyro_webapi::UserAgentOverride>,
     pub extra_headers: pyro_net::http::HeaderMap,
     pub cache_disabled: bool,
@@ -239,6 +278,7 @@ impl FrameHost {
         opener: FrameKey,
         session: pyro_webapi::StorageNamespace,
         name: String,
+        features: pyro_webapi::window_features::WindowFeatures,
     ) -> Result<PrebuiltPopup, JsError> {
         let from = self.frame(opener).ok_or(JsError::ContextDestroyed)?;
         let creator_secure = crate::window::frame_chain_secure(self, opener, &from.url);
@@ -267,7 +307,8 @@ impl FrameHost {
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         let mut settings = self.settings.borrow().clone();
         settings.session = session;
-        settings.viewport = Default::default();
+        settings.viewport = popup_viewport(&settings.viewport);
+        settings.window_chrome = apply_window_features(&mut settings.viewport, features);
         settings.user_agent = None;
         settings.extra_headers = Default::default();
         let host = Rc::new(Self {
@@ -349,6 +390,7 @@ impl FrameHost {
                 session: Default::default(),
                 net: browser.context_net(context).cloned(),
                 viewport: Default::default(),
+                window_chrome: Default::default(),
                 user_agent: None,
                 extra_headers: Default::default(),
                 cache_disabled: false,

@@ -146,6 +146,9 @@ pub trait Host {
     }
     /// Starts a navigation (used by `Target.createTarget` with a URL).
     fn navigate(&mut self, page: PageKey, url: &str) -> CdpResult<()>;
+    /// Set the initiator of a popup navigation. A paused popup may have
+    /// several competing navigation requests before its first load starts.
+    fn set_popup_navigation_referrer(&mut self, _page: PageKey, _referrer: Option<(Option<String>, pyro_net::ReferrerPolicy)>) {}
     /// Reports again the commit of `page`'s initial about:blank document
     /// (a popup that keeps the one `window.open` made). False when the page
     /// shows another document: the caller navigates instead.
@@ -512,7 +515,7 @@ pub struct PopupRequest {
 #[derive(Debug, Clone)]
 pub enum PopupAction {
     Close(PageKey),
-    Navigate(PageKey, String),
+    Navigate(PageKey, String, Option<(Option<String>, pyro_net::ReferrerPolicy)>),
 }
 
 struct TargetEntry {
@@ -2097,8 +2100,9 @@ impl<H: Host> Browser<H> {
                         self.close_target(&id, out);
                     }
                 }
-                PopupAction::Navigate(page, url) => {
+                PopupAction::Navigate(page, url, referrer) => {
                     let Some(target) = self.targets.iter_mut().find(|t| t.page == page) else { continue };
+                    self.host.set_popup_navigation_referrer(page, referrer);
                     // A paused popup has not started: this replaces what it will load.
                     match target.pending_url.as_mut() {
                         Some(pending) => {
