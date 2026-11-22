@@ -3024,7 +3024,7 @@ impl PageDom {
     pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
         self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
     }
-    /// `el`'s [[CryptographicNonce]] slot, as the `nonce` IDL attribute reads it: what the IDL
+    /// `el`'s \[\[CryptographicNonce\]\] slot, as the `nonce` IDL attribute reads it: what the IDL
     /// attribute set (while the content attribute is what it was then), else the nonce that
     /// nonce hiding kept when it emptied the attribute, else the attribute (empty: none).
     pub(crate) fn cryptographic_nonce(&self, el: NodeId) -> String {

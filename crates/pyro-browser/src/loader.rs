@@ -370,6 +370,7 @@ impl ResourceLoader for NetLoader {
         request: FetchRequest,
         done: FetchDone,
     ) -> Option<ResourceCancellation> {
+        let (request, done) = csp_precheck(browser, request, done)?;
         let id = browser.register_completion(done);
         let handle = browser.loop_handle();
         let url = match url::Url::parse(&request.url) {
@@ -740,6 +741,99 @@ fn service_worker_route(
 /// The document whose timeline gets the Resource Timing entry of `request`:
 /// the requesting frame's current document, or for an iframe's navigation
 /// the document of the frame's parent.
+/// The CSP destination of a browser-loader request (`None`: a top-level navigation or a
+/// download, which no fetch directive governs).
+pub(crate) fn csp_dest(request: &FetchRequest) -> Option<pyro_net::csp::RequestDest> {
+    use pyro_net::csp::RequestDest;
+    Some(match request.kind {
+        ResourceKind::Script => RequestDest::Script,
+        ResourceKind::ModuleScript => request.module.map_or(RequestDest::Script, pyro_webapi::csp::module_dest),
+        ResourceKind::Stylesheet => RequestDest::Style,
+        ResourceKind::Iframe => RequestDest::Frame,
+        ResourceKind::Image => RequestDest::Image,
+        ResourceKind::Font => RequestDest::Font,
+        ResourceKind::Audio | ResourceKind::Video | ResourceKind::Track => RequestDest::Media,
+        ResourceKind::Object => RequestDest::Object,
+        ResourceKind::Document | ResourceKind::Download => return None,
+    })
+}
+
+impl Browser {
+    /// CSP for `request` made by the element `el` (a `<link>`'s style sheet or preload): the
+    /// pre-request check with `el`'s nonce (style sheets and script preloads match
+    /// nonce-sources; a link is never parser-inserted for `'strict-dynamic'`), violations at
+    /// the document. On `Ok` the request carries the guard (so the loader does not check it
+    /// again as unattributed) and `done` reports what the guard's redirect and response checks
+    /// found; on `Err` (blocked) `done` gets the network error in a later task.
+    pub(crate) fn element_csp_check(
+        &mut self,
+        page: FrameKey,
+        request: &mut FetchRequest,
+        el: NodeId,
+        done: FetchDone,
+    ) -> Option<FetchDone> {
+        let Some(dest) = csp_dest(request) else { return Some(done) };
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return Some(done) };
+        let Ok(url) = url::Url::parse(&request.url) else { return Some(done) };
+        let mut check = pyro_net::csp::CspRequest::new(url, dest);
+        check.initiator = pyro_webapi::csp::element_initiator(&bindings, el, false);
+        match pyro_webapi::csp::check_request(&bindings, check, None) {
+            Ok(None) => Some(done),
+            Ok(Some(guard)) => {
+                request.csp = Some(guard.clone());
+                Some(Box::new(move |b: &mut Browser, result| {
+                    pyro_webapi::csp::report_guard(&bindings, Some(&guard), None);
+                    done(b, result)
+                }))
+            }
+            Err(_) => {
+                let error = format!("{} {}", pyro_net::csp::BLOCKED_BY_CSP, request.url);
+                self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+                None
+            }
+        }
+    }
+}
+
+/// CSP for a request its initiator did not check (`request.csp` unset): the requesting
+/// document's pre-request check (`img-src`, `style-src-elem`, `font-src`, `media-src`,
+/// `frame-src` against the parent, `object-src`), its violations at the document, and a guard
+/// for the redirects whose findings are reported when the fetch completes. The engine's script
+/// requests are checked by their initiators (`script_csp_check`), and speculation skips what a
+/// policy governs; a script request that still arrives unchecked is checked unattributed and
+/// silently (its element, if any, reports for itself), and blocked when a policy blocks it.
+/// `None` when blocked: `done` then gets a network error in a later task.
+fn csp_precheck(browser: &mut Browser, mut request: FetchRequest, done: FetchDone) -> Option<(FetchRequest, FetchDone)> {
+    if request.csp.is_some() {
+        return Some((request, done));
+    }
+    let Some(dest) = csp_dest(&request) else { return Some((request, done)) };
+    let Some(document) = requesting_document(browser, &request) else { return Some((request, done)) };
+    let Some(list) = pyro_webapi::csp::policy_list(&document) else { return Some((request, done)) };
+    let Ok(url) = url::Url::parse(&request.url) else { return Some((request, done)) };
+    let silent = matches!(request.kind, ResourceKind::Script | ResourceKind::ModuleScript);
+    let check = pyro_net::csp::CspRequest::new(url, dest);
+    let outcome = list.pre_request(&check);
+    if !silent {
+        pyro_webapi::csp::report(&document, outcome.violations, None);
+    }
+    if outcome.blocked {
+        let error = format!("{} {}", pyro_net::csp::BLOCKED_BY_CSP, request.url);
+        browser.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+        return None;
+    }
+    if silent {
+        return Some((request, done));
+    }
+    let guard = pyro_net::csp::RequestCsp::new(list, check);
+    request.csp = Some(guard.clone());
+    let done: FetchDone = Box::new(move |b, result| {
+        pyro_webapi::csp::report_guard(&document, Some(&guard), None);
+        done(b, result)
+    });
+    Some((request, done))
+}
+
 fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<pyro_webapi::PageDom>> {
     let frames = &browser.page(request.page)?.frames;
     let key = frames.key_of(request.frame_id.as_deref()?)?;
@@ -2119,6 +2213,11 @@ impl Browser {
             }
             None => None,
         };
+        // CSP: an inline script runs only if `script-src-elem` allows it (its nonce, a hash of
+        // its text, 'unsafe-inline'); a blocked one is skipped, with no event.
+        if src_url.is_none() && !self.inline_script_allowed(page, &info) {
+            return;
+        }
         if src_url.is_some() {
             // A parser-blocking script is implicitly render-blocking.
             self.block_rendering_on_script(page, node, ty == ScriptType::Classic && !info.async_ && !info.defer);
@@ -2424,6 +2523,15 @@ impl Browser {
         }
     }
 
+    /// CSP for an inline `<script>` of `page` (`script-src-elem`: its nonce, a hash of its
+    /// text, 'unsafe-inline'): whether it may run. Violations at the element.
+    fn inline_script_allowed(&self, page: FrameKey, info: &pyro_dom::script::ScriptInfo) -> bool {
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return true };
+        let kind = pyro_webapi::csp::InlineKind::Script;
+        let nonce = pyro_webapi::csp::element_nonce(&bindings, info.node);
+        pyro_webapi::csp::inline_allowed(&bindings, kind, &nonce, &info.inline_text, Some(info.node))
+    }
+
     fn fetch_deferred(
         &mut self,
         page: FrameKey,
@@ -2721,6 +2829,9 @@ impl Browser {
                 }
             }
         };
+        if src_url.is_none() && !self.inline_script_allowed(page, &info) {
+            return;
+        }
         match (ty, src_url) {
             // Spec: runs immediately, at insertion; here once the inserting
             // script (or task) returns. While the parser is parsing (not
@@ -3189,6 +3300,11 @@ impl Browser {
             None => None,
         };
         let Some(url) = url else { self.script_loaded(page, &element, false); ready(empty()); return };
+        // CSP: an inline module runs only if `script-src-elem` allows it; skipped, with no event.
+        if !external && !self.inline_script_allowed(page, &info) {
+            ready(empty());
+            return;
+        }
         let source = url.clone();
         let on_fetched = move |browser: &mut Browser, result: Result<String, String>| {
             let scheduler = browser.scheduler();

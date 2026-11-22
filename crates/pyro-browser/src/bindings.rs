@@ -341,6 +341,15 @@ impl PageHooks for Hooks {
             }
         }
         let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
+        // CSP: a `javascript:` URL is checked against the policies of the document that made
+        // the request (the link's, the form's, `window.open`'s caller's), snapshotted now.
+        let initiator = request
+            .url
+            .get(..11)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:"))
+            .then(|| self.frames.upgrade().and_then(|host| host.page_dom(page)))
+            .flatten()
+            .map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
         // HTML "navigate": a GET of the document's own URL with a fragment is
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
@@ -429,6 +438,8 @@ impl PageHooks for Hooks {
             let mut popup_script = None;
             if opens_context && request.method == "GET" {
                 if let Some(source) = javascript_url_source(&request.url) {
+                    // A blocked script does not run; the popup still opens, on about:blank.
+                    let allowed = initiator.as_ref().is_none_or(|i| i.allows_javascript_url(&request.url));
                     let realm = request.popup.as_ref().and_then(|ticket| {
                         let prebuilt = ticket.take_prebuilt()?;
                         let realm = prebuilt.downcast_ref::<crate::frames::PrebuiltPopup>().and_then(|p| {
@@ -442,9 +453,15 @@ impl PageHooks for Hooks {
                     // Without a popup made ahead (a noopener link), the new
                     // page is asked for the javascript: URL itself, which
                     // its initial about:blank document runs
-                    // (`Browser::navigate_frame_with_handling`).
+                    // (`Browser::navigate_frame_with_handling`). One the
+                    // initiator's CSP blocks runs nowhere: the popup opens on
+                    // about:blank.
                     if let Some(realm) = realm {
-                        popup_script = Some((realm, source));
+                        if allowed {
+                            popup_script = Some((realm, source));
+                        }
+                        request.url = "about:blank".into();
+                    } else if !allowed {
                         request.url = "about:blank".into();
                     }
                 }
@@ -455,6 +472,10 @@ impl PageHooks for Hooks {
                 // Only for a target same origin(-domain) with the initiator: a cross-origin
                 // iframe's `_top`/`_parent` or named target runs no script in that document.
                 if named.is_some_and(|t| !b.page(page.page).is_some_and(|p| p.frames.same_origin(page, t))) {
+                    return;
+                }
+                // CSP `script-src-elem` of the initiator: blocked, nothing runs.
+                if initiator.as_ref().is_some_and(|i| !i.allows_javascript_url(&request.url)) {
                     return;
                 }
                 let target = named.unwrap_or(page);

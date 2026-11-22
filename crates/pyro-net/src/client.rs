@@ -855,6 +855,13 @@ impl NetClient {
             Some(loader) => self.track(id, loader, sink),
             None => sink,
         };
+        // A request its initiator's CSP check blocked (`RequestCsp::blocked`): a network
+        // error, never sent.
+        if req.csp.as_ref().is_some_and(|csp| csp.blocks_request()) {
+            let mut sink = sink;
+            sink(ResponseEvent::Failed(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into())));
+            return;
+        }
         // CSP: the response's URL (a cache's, an interceptor's) is checked as well as each hop.
         let sink = match &req.csp {
             Some(csp) => crate::csp::guard_sink(csp.clone(), sink),

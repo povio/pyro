@@ -637,10 +637,15 @@ impl LoadRoute {
     pub fn dispatch(self, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
         // CSP: the response, the worker's included (`respondWith` of another URL's response),
         // is checked against the request's policy by its URL.
-        let sink = match &request.csp {
+        let mut sink = match &request.csp {
             Some(csp) => pyro_net::csp::guard_sink(csp.clone(), sink),
             None => sink,
         };
+        // A request its initiator's check blocked never reaches the worker.
+        if request.csp.as_ref().is_some_and(|csp| csp.blocks_request()) {
+            sink(ResponseEvent::Failed(pyro_net::NetError::Blocked(pyro_net::csp::BLOCKED_BY_CSP.into())));
+            return;
+        }
         let job = FetchJob {
             id,
             request: Some(request),

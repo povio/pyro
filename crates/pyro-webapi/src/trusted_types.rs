@@ -143,12 +143,32 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("installCompileHooks", install.value())?;
+    // ttLevel() -> Trusted Types' own eval level (the hooks also run for CSP's).
+    let tt = s.function("ttLevel", |s, _this, _a| {
+        let level = crate::target::page_of(s).map_or(0, |page| tt_level(&page));
+        Ok(s.number(f64::from(level)))
+    })?;
+    natives.set_atom("ttLevel", tt.value())?;
+    // cspEval(code) -> whether the realm's CSP lets `code` compile (`'unsafe-eval'`); a
+    // violation is reported otherwise.
+    let csp_eval = s.function("cspEval", |s, _this, a| {
+        let code = crate::util::dom_string(a.get(0))?;
+        let allowed = crate::target::page_of(s).map_or(true, |page| crate::csp::eval_allowed(&page, &code));
+        Ok(s.boolean(allowed))
+    })?;
+    natives.set_atom("cspEval", csp_eval.value())?;
     Ok(natives)
 }
 
-/// The eval/Function enforcement the document's policies ask for: 2 when an enforced policy
-/// has `require-trusted-types-for 'script'`, 1 when only report-only ones do, else 0.
+/// The eval/Function enforcement the document's policies ask for: Trusted Types' level
+/// ([`tt_level`]) or CSP's (`'unsafe-eval'` missing, `crate::csp::eval_level`), the higher.
 fn eval_level(page: &PageDom) -> u8 {
+    tt_level(page).max(crate::csp::eval_level(page))
+}
+
+/// Trusted Types' part of [`eval_level`]: 2 when an enforced policy has
+/// `require-trusted-types-for 'script'`, 1 when only report-only ones do, else 0.
+fn tt_level(page: &PageDom) -> u8 {
     let dom = page.dom.borrow();
     let mut level = 0;
     for policy in dom.trusted_types_policies(page.document()) {
@@ -168,7 +188,7 @@ fn eval_level(page: &PageDom) -> u8 {
 /// document's `require-trusted-types-for` (a `<meta>` CSP can add it while the document parses).
 /// Makes the Trusted Types module (which installs the hooks) when a policy first asks.
 pub fn sync_compile_strings(s: &Scope<'_>, page: &Rc<PageDom>) {
-    if page.dom.borrow().trusted_types_policies(page.document()).is_empty() && page.tt_eval_level.get() == 0 {
+    if page.dom.borrow().csp_policies(page.document()).is_empty() && page.tt_eval_level.get() == 0 {
         return;
     }
     let level = eval_level(page);

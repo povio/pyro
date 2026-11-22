@@ -250,6 +250,20 @@ pub(crate) fn compile_handler<'s>(
     ty: &str,
     body: &str,
 ) -> JsResult<Value<'s>> {
+    // CSP `script-src-attr` (a listed hash of the body counts with 'unsafe-hashes'): a blocked
+    // handler's value is null. The violation is at the element, reported when the bindings can
+    // name the page that owns it (the realm's).
+    if let Some(list) = crate::csp::policy_list(page) {
+        let element = page.dom.borrow().key_node(key);
+        let outcome = list.inline_check(crate::csp::InlineKind::ScriptAttribute, "", body);
+        let owner = crate::target::page_of(s).ok().filter(|p| std::ptr::eq(std::rc::Rc::as_ptr(p), page));
+        if let Some(owner) = owner {
+            crate::csp::report(&owner, outcome.violations, element);
+        }
+        if outcome.blocked {
+            return Ok(s.null());
+        }
+    }
     let ctor = s.global().get_atom("Function")?;
     // An SVG element's handler names its argument `evt` (SVG 2, as browsers do).
     let svg = {

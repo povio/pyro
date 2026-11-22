@@ -459,6 +459,14 @@ pub(crate) fn form_submission(
     // HTML "get an element's noopener" with the form's rel: a named target keeps its opener.
     let rel = dom.get_attribute(form, "rel").ok().flatten().unwrap_or_default().to_owned();
     drop(dom);
+    // CSP `form-action` (no fallback): a blocked submission does not navigate.
+    if let Some(list) = crate::csp::policy_list(page) {
+        let outcome = list.form_action_check(&url, false);
+        crate::csp::report(page, outcome.violations, Some(form));
+        if outcome.blocked {
+            return None;
+        }
+    }
     // HTML "submit": a form that navigates its own document before it has
     // completely loaded replaces the document's entry.
     let replace = target.is_none() && page.navigates_by_replacing();

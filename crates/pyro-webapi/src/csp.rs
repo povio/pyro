@@ -13,6 +13,21 @@
 //! request, else the document (a worker's global in a worker), each in a task of its own,
 //! bubbling and composed. The violation records go to [`report`] unchanged, for a reporting step
 //! (`report-uri`, `report-to`) to send.
+//!
+//! Provenance: a request carries a nonce only from its initiating element's own
+//! \[\[CryptographicNonce\]\] slot ([`element_initiator`]), or, for a module import, from the
+//! nonce its referring script's element passed down (the browser loader's module options,
+//! keyed by the referring script the engine names); everything else is unattributed and
+//! matches no nonce-source.
+//!
+//! Not covered (explicitly): WebAssembly compilation (`wasm_eval_check` exists, nothing calls
+//! it); `report-uri` / `report-to` delivery (violation records only); local-scheme documents
+//! (`about:blank`, `about:srcdoc`, `data:` frames) do not inherit their creator's policies;
+//! `frame-src` is checked against the parent's policies (a `javascript:` navigation against its
+//! initiator's, [`NavigationInitiator`]); `Page.setBypassCSP` applies from
+//! the next document committed; a blocked `sendBeacon` still returns true (it is queued and
+//! fails, as Chrome); inline `<style>` and `style` attributes (CSS code) and `setTimeout`
+//! strings are not checked.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -23,13 +38,13 @@ use pyro_net::csp::{CspRequest, Disposition, PolicyList, PolicySource, RequestCs
 
 use crate::page::PageDom;
 
-pub use pyro_net::csp::{ScriptInitiator, BLOCKED_BY_CSP};
+pub use pyro_net::csp::{InlineKind, ScriptInitiator, BLOCKED_BY_CSP};
 
 /// An enforced policy blocked the request (its violations were reported).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Blocked;
 
-/// The nonce CSP may match for `el`: its [[CryptographicNonce]] slot when `el` is nonceable
+/// The nonce CSP may match for `el`: its \[\[CryptographicNonce\]\] slot when `el` is nonceable
 /// (HTML "is element nonceable": no attribute name or value holds `<script` or `<style`, the
 /// dangling-markup case), else empty.
 pub fn element_nonce(page: &PageDom, el: NodeId) -> String {
@@ -109,6 +124,88 @@ pub fn check_request_with(
     Ok(Some(RequestCsp::new(list, request)))
 }
 
+/// [`check_request`] for an initiator that hands a blocked request to the client anyway, to
+/// fail through its own network-error path: the guard to set as `Request::csp` (one that blocks
+/// the request when an enforced policy did), `None` without a policy.
+pub fn guard_request(page: &Rc<PageDom>, request: CspRequest, target: Option<NodeId>) -> Option<Arc<RequestCsp>> {
+    let list = policy_list(page)?;
+    let outcome = list.pre_request(&request);
+    report(page, outcome.violations, target);
+    Some(if outcome.blocked { RequestCsp::blocked(list, request) } else { RequestCsp::new(list, request) })
+}
+
+/// CSP3 "Should element's inline type behavior be blocked?" for `page`: an inline `<script>`
+/// (its `nonce`), an event handler attribute, a `javascript:` URL (`source`: the text whose
+/// hash may be listed). Violations at `target`, else the document. Whether it may run.
+pub fn inline_allowed(page: &Rc<PageDom>, kind: InlineKind, nonce: &str, source: &str, target: Option<NodeId>) -> bool {
+    inline_allowed_in(page, policy_list(page).as_deref(), kind, nonce, source, target)
+}
+
+/// [`inline_allowed`] against `list`: another context's policies, as a navigation's initiator's
+/// snapshotted when the navigation started (a `javascript:` URL is checked against the
+/// document that navigated, not the one it runs in). Violations are reported at `page` (that
+/// initiator). `None`: no policy, allowed.
+pub fn inline_allowed_in(
+    page: &Rc<PageDom>,
+    list: Option<&PolicyList>,
+    kind: InlineKind,
+    nonce: &str,
+    source: &str,
+    target: Option<NodeId>,
+) -> bool {
+    let Some(list) = list else { return true };
+    let outcome = list.inline_check(kind, nonce, source);
+    report(page, outcome.violations, target);
+    !outcome.blocked
+}
+
+/// A navigation initiator's CSP, snapshotted when it starts a navigation: its document (where
+/// violations go) and its policy list (`None`: no policy).
+#[derive(Clone)]
+pub struct NavigationInitiator {
+    pub page: Rc<PageDom>,
+    pub list: Option<Arc<PolicyList>>,
+}
+
+impl NavigationInitiator {
+    /// `page`'s policies, now.
+    pub fn of(page: &Rc<PageDom>) -> NavigationInitiator {
+        NavigationInitiator { page: page.clone(), list: policy_list(page) }
+    }
+
+    /// CSP3 for a `javascript:` navigation (`url`, the whole URL, is what a hash-source with
+    /// 'unsafe-hashes' matches): `script-src-elem` of the initiator's policies. Whether its
+    /// script may run.
+    pub fn allows_javascript_url(&self, url: &str) -> bool {
+        inline_allowed_in(&self.page, self.list.as_deref(), InlineKind::Navigation, "", url, None)
+    }
+}
+
+/// CSP3 "EnsureCSPDoesNotBlockStringCompilation" for `page`: `eval`, `Function` (`source`: the
+/// compiled string). Violations at the document. Whether it may compile.
+pub fn eval_allowed(page: &Rc<PageDom>, source: &str) -> bool {
+    let Some(list) = policy_list(page) else { return true };
+    let outcome = list.eval_check(source);
+    report(page, outcome.violations, None);
+    !outcome.blocked
+}
+
+/// Whether `page`'s policies make string compilation need a check: 2 when an enforced policy
+/// lacks `'unsafe-eval'` for `script-src` (or `default-src`), 1 when only report-only ones do,
+/// else 0 (the Trusted Types compile hooks' levels).
+pub(crate) fn eval_level(page: &PageDom) -> u8 {
+    let Some(list) = policy_list(page) else { return 0 };
+    let mut level = 0;
+    for policy in &list.policies {
+        let Some(directive) = policy.directive_for("script-src") else { continue };
+        if directive.value.iter().any(|v| v.eq_ignore_ascii_case("'unsafe-eval'")) {
+            continue;
+        }
+        level = level.max(if policy.disposition == Disposition::Report { 1 } else { 2 });
+    }
+    level
+}
+
 /// After a request that carried `guard` ended (or failed): reports the violations its redirect
 /// checks found.
 pub fn report_guard(page: &Rc<PageDom>, guard: Option<&Arc<RequestCsp>>, target: Option<NodeId>) {
@@ -168,7 +265,8 @@ pub fn dispatch(s: &Scope<'_>, page: &Rc<PageDom>, violation: &Violation, target
 /// The CSP destination of a script fetch made by the engine for a module of `ty`.
 pub fn module_dest(ty: pyro_js::ModuleType) -> RequestDest {
     match ty {
-        pyro_js::ModuleType::Json => RequestDest::Json,
+        // JSON and text modules: connect-src.
+        pyro_js::ModuleType::Json | pyro_js::ModuleType::Text => RequestDest::Json,
         pyro_js::ModuleType::Css => RequestDest::Style,
         _ => RequestDest::Script,
     }

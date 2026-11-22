@@ -799,8 +799,13 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: pyro_net::Url,
         extract_body(s, data)?
     };
     let Some(net) = page.net.borrow().clone() else { return Ok(false) };
+    // CSP `connect-src`: a blocked beacon is queued and then fails, as a network error (the
+    // call still returns true, as Chrome).
+    let check = pyro_net::csp::CspRequest::new(url.clone(), pyro_net::csp::RequestDest::Empty);
+    let Ok(csp) = crate::csp::check_request(page, check, None) else { return Ok(true) };
     let Some(guard) = reserve_keepalive(&page.fetch_state.keepalive_bytes, body.len()) else { return Ok(false) };
     let mut request = Request::get(url, Destination::Beacon);
+    request.csp = csp;
     request.method = Method::POST;
     request.credentials = Credentials::Include;
     request.mode = RequestMode::NoCors;
@@ -961,13 +966,13 @@ fn fetch_call<'s>(
         if page.is_disposed() {
             return Err(JsError::ContextDestroyed);
         }
-        // CSP: a request the engine makes through `fetch` for another destination (a worklet's
-        // module: `script-src-elem`) is checked as one; blocked, a network error.
-        if let Some(dest) = csp_dest {
-            let check = pyro_net::csp::CspRequest::new(request.url.clone(), dest);
-            request.csp = crate::csp::check_request(&page, check, None)
-                .map_err(|_| JsError::Type("Failed to fetch".into()))?;
-        }
+        // CSP `connect-src` (a request the engine makes through `fetch` for another destination
+        // is checked as one: a worklet's module, `script-src-elem`; a FontFace's source,
+        // `font-src`); blocked, a network error.
+        let dest = csp_dest.unwrap_or(pyro_net::csp::RequestDest::Empty);
+        let check = pyro_net::csp::CspRequest::new(request.url.clone(), dest);
+        request.csp = crate::csp::check_request(&page, check, None)
+            .map_err(|_| JsError::Type("Failed to fetch".into()))?;
         if let Some(signal) = &signal {
             let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
             if signal.aborted() {
