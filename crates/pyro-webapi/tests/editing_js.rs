@@ -420,6 +420,16 @@ fn format_block_keeps_custom_blocks_and_joins_selected_lines() {
 }
 
 #[test]
+fn changing_list_type_keeps_the_unselected_items_and_selected_content() {
+    let e = env("<body><div id=ed contenteditable><ul id=source><li>a</li><li>bravo</li><li>z</li></ul></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, list=ed.firstChild, item=list.children[1], t=item.firstChild; getSelection().setBaseAndExtent(t,1,t,4)");
+    assert_eq!(eval(r, "document.execCommand('insertOrderedList'); ed.innerHTML"), "<ul id=\"source\"><li>a</li></ul><ol><li>bravo</li></ol><ul><li>z</li></ul>");
+    assert_eq!(eval(r, "[ed.firstChild===list,item.parentElement.localName,getSelection().focusNode===t,getSelection().toString()].join()"), "true,ol,true,rav");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn exec_command_formatting_and_structure() {
     let e = env("<body><div id=ed contenteditable><p id=p>one two three</p></div></body>");
     let r = &e.main;
