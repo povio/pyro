@@ -652,6 +652,10 @@ pub mod spi {
         callback: Option<JSPromiseRejectionTrackerCallback>,
         operations: std::os::raw::c_uint,
     ) -> bool;
+    /// Patch 0042: called inside a class's `deleteProperty` callback that then
+    /// returns `false`, makes the delete fail (`false`, a `TypeError` in strict
+    /// mode code) instead of running the ordinary `[[Delete]]`.
+    pub type JSObjectRefuseDeletePropertyFn = unsafe extern "C" fn(ctx: JSContextRef);
 
     /// Patch 0040: called whenever a VM's deferred work (the settling of WebAssembly.compile,
     /// instantiate and their streaming forms) is scheduled, from any thread and with JavaScriptCore
@@ -1047,6 +1051,8 @@ pub mod spi {
         /// Patch 0040: the VM's deferred work, which settles WebAssembly promises.
         pub set_deferred_work_callback: Option<JSContextGroupSetDeferredWorkCallbackFn>,
         pub run_deferred_work: Option<JSContextGroupRunDeferredWorkFn>,
+        /// Patch 0042: a `deleteProperty` callback refuses the delete.
+        pub refuse_delete_property: Option<JSObjectRefuseDeletePropertyFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
         pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
@@ -1267,6 +1273,10 @@ pub mod spi {
             run_deferred_work: resolve!("JSContextGroupRunDeferredWork"),
             #[cfg(not(any(pyro_jsc_deferred_work, not(pyro_jsc_static))))]
             run_deferred_work: None,
+            #[cfg(any(pyro_jsc_refuse_delete, not(pyro_jsc_static)))]
+            refuse_delete_property: resolve!("JSObjectRefuseDeleteProperty"),
+            #[cfg(not(any(pyro_jsc_refuse_delete, not(pyro_jsc_static))))]
+            refuse_delete_property: None,
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
             set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),

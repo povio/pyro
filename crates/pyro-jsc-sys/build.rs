@@ -49,6 +49,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_rejection_tracker)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_deferred_work)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_named_properties_chain)");
+    println!("cargo::rustc-check-cfg=cfg(pyro_jsc_refuse_delete)");
 
     if target_os == "linux" {
         let Some(dir) = source_jsc(&inputs, &["libJavaScriptCore.a"], &linux_cache, false) else {
@@ -167,6 +168,10 @@ fn link_static(lib: &Path) {
     // Patch 0041 (JSGlobalContextSetNamedPropertiesChain), the same way.
     if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0041-named-properties-chain.patch").is_file()) {
         println!("cargo:rustc-cfg=pyro_jsc_named_properties_chain");
+    }
+    // Patch 0042 (JSObjectRefuseDeleteProperty), the same way.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0042-refused-deletes.patch").is_file()) {
+        println!("cargo:rustc-cfg=pyro_jsc_refuse_delete");
     }
 }
 
