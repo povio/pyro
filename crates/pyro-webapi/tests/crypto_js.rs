@@ -429,7 +429,7 @@ fn navigator_storage_reports_usage_and_no_persistence() {
     );
     assert_eq!(
         out,
-        "true|true|quota,usage,usageDetails|8|true|false|false|TypeError|TypeError|estimate,persisted,persist|0"
+        "true|true|quota,usage,usageDetails|8|true|false|false|TypeError|TypeError|estimate,persisted,getDirectory,persist|0"
     );
 }
 
