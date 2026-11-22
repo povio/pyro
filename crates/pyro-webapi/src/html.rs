@@ -245,9 +245,12 @@ fn svg_document<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
         Some(document) => document,
         None => node_value(s, n.page(), n.page().frame_document(n.id))?,
     };
-    let Some(object) = document.as_object() else { return Ok(s.null()) };
-    let content_type = object.get_atom("contentType")?;
-    if content_type.is_string() && content_type.to_string()? == "image/svg+xml" {
+    // The document's content type from the DOM: a script-overridden `contentType` property
+    // does not decide it.
+    let svg = s.unwrap::<crate::node::Node>(document).is_some_and(|d| {
+        d.page().dom.borrow().document_data(d.id).is_ok_and(|data| &*data.content_type == "image/svg+xml")
+    });
+    if svg {
         Ok(document)
     } else {
         Ok(s.null())
