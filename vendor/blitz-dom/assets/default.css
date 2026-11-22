@@ -80,6 +80,14 @@ a[href] {
     cursor: pointer;
 }
 
+/* pyro: the other links take the link cursor too, as in Chromium: an image map's `<area href>`
+   (not one without href) and an SVG `<a href>` (WPT html/rendering presentational-hints
+   mouse-cursor-imagemap, no-help-cursor-on-links-wrapped-in-svg). */
+area:any-link,
+svg|a:any-link {
+    cursor: pointer;
+}
+
 /* pyro: CSS Overflow 5 scroll markers, as Chromium styles them: a group is a block box (its
    layout and size containment are forced, `StyleAdjuster`), a marker is styled as a link
    (`a[href]` above). A `::scroll-button()` takes the rules for `button`. */
