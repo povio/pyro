@@ -1478,32 +1478,53 @@ fn neutralize_bold(dom: &mut Dom, element: NodeId, points: &mut [Point; 2]) -> O
 fn remove_reset_child_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId) -> Option<()> {
     use pyro_dom::stylo::declarations::DeclarationBlock;
     let inner = dom.parent_element(text).ok()??;
-    let reset = dom.parent_element(inner).ok()??;
+    let inner_style = DeclarationBlock::parse(dom.get_attribute(inner, "style").ok()?.unwrap_or(""));
+    let direct = editing::local(dom, inner) == "span" && dom.has_attribute(inner, "class").ok()?
+        && inner_style.value("font-weight") == "bold";
+    let reset = if direct { inner } else { dom.parent_element(inner).ok()?? };
     let outer = dom.parent_element(reset).ok()??;
     if outer == host || !matches!(editing::local(dom, outer).as_str(), "b" | "strong")
-        || dom.child_count(outer).ok()? != 1 || editing::local(dom, reset) != "span"
-        || !dom.has_attribute(reset, "class").ok()? || dom.child_count(inner).ok()? != 1
-    { return None; }
-    let inner_tag = editing::local(dom, inner);
-    let inner_style = DeclarationBlock::parse(dom.get_attribute(inner, "style").ok()?.unwrap_or(""));
-    let simple = inner_tag == "b" && dom.attributes(inner).ok()?.is_empty()
-        || inner_tag == "span" && dom.attributes(inner).ok()?.len() == 1
-            && inner_style.names().len() == 1 && inner_style.value("font-weight") == "bold";
-    if !simple || FontToggle::Bold.active(&page.layout().computed_style_value(dom, reset, "font-weight")) { return None; }
-    let siblings: Vec<_> = dom.children(reset).ok()?.filter(|&n| n != inner).collect();
+        || editing::local(dom, reset) != "span" || !dom.has_attribute(reset, "class").ok()?
+        || dom.child_count(inner).ok()? != 1 { return None; }
+    if !direct {
+        let inner_tag = editing::local(dom, inner);
+        let simple = inner_tag == "b" && dom.attributes(inner).ok()?.is_empty()
+            || inner_tag == "span" && dom.attributes(inner).ok()?.len() == 1
+                && inner_style.names().len() == 1 && inner_style.value("font-weight") == "bold";
+        if !simple || FontToggle::Bold.active(&page.layout().computed_style_value(dom, reset, "font-weight")) { return None; }
+    }
+    let selected = if direct { text } else { inner };
+    let siblings: Vec<_> = dom.children(reset).ok()?.filter(|&n| n != selected).collect();
     if !siblings.iter().all(|&n| editing::is_text(dom, n)) { return None; }
+    let outside: Vec<_> = dom.children(outer).ok()?.filter(|&n| n != reset).collect();
+    if !outside.iter().all(|&n| editing::is_text(dom, n) || !editing::is_editable(dom, n)) { return None; }
+    // Only the affected outer siblings lose inherited weight when B is
+    // neutralized. Preserve a locked element and its children in place.
+    let layout = page.layout();
+    let affected: Vec<_> = outside.into_iter().filter(|&n| {
+        let element = if editing::is_text(dom, n) { outer } else { n };
+        FontToggle::Bold.active(&layout.computed_style_value(dom, element, "font-weight"))
+    }).collect();
     let doc = dom.node_document(text).ok()?;
     let css = dom.document_data(doc).ok()?.style_with_css;
     let mut points = [(text, 0), (text, editing::len(dom, text))];
     neutralize_bold(dom, outer, &mut points)?;
-    indentation::unwrap(dom, inner, &mut points)?;
-    let retained = DeclarationBlock::parse(dom.get_attribute(reset, "style").ok()?.unwrap_or(""));
+    if !direct { indentation::unwrap(dom, inner, &mut points)?; }
+    let mut retained = DeclarationBlock::parse(dom.get_attribute(reset, "style").ok()?.unwrap_or(""));
+    retained.remove("font-weight");
     dom.set_attribute(reset, "style", &retained.css_text()).ok()?;
-    for sibling in siblings {
-        let wrapper = dom.create_element(doc, if css { "span" } else { "b" }).ok()?;
-        if css { dom.set_attribute(wrapper, "style", "font-weight: bold;").ok()?; }
-        dom.insert_before(reset, wrapper, Some(sibling)).ok()?;
-        dom.append_child(wrapper, sibling).ok()?;
+    for sibling in siblings.into_iter().chain(affected) {
+        let parent = dom.parent_element(sibling).ok()??;
+        if editing::is_text(dom, sibling) {
+            let wrapper = dom.create_element(doc, if css { "span" } else { "b" }).ok()?;
+            if css { dom.set_attribute(wrapper, "style", "font-weight: bold;").ok()?; }
+            dom.insert_before(parent, wrapper, Some(sibling)).ok()?;
+            dom.append_child(wrapper, sibling).ok()?;
+        } else if !FontToggle::Bold.active(&layout.computed_style_value(dom, sibling, "font-weight")) {
+            let mut style = DeclarationBlock::parse(dom.get_attribute(sibling, "style").ok()?.unwrap_or(""));
+            style.set("font-weight", "bold", false)?;
+            dom.set_attribute(sibling, "style", &style.css_text()).ok()?;
+        }
     }
     Some(())
 }
@@ -1516,10 +1537,14 @@ fn prepare_overridden_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: No
     if span == host || !dom.element(span).is_ok_and(|e| e.is_html() && &**e.local_name() == "span") {
         return None;
     }
-    ancestor_named(dom, span, host, &["b", "strong"])?;
     let layout = page.layout();
     if FontToggle::Bold.active(&layout.computed_style_value(dom, span, "font-weight")) { return None; }
     let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()?.unwrap_or(""));
+    // A class rule with higher priority can defeat a normal inline bold
+    // declaration. Reapplying the same declaration leaves that cascade intact.
+    if css && dom.child_count(span).ok()? == 1 && dom.has_attribute(span, "class").ok()?
+        && style.value("font-weight") == "bold" { return Some(true); }
+    ancestor_named(dom, span, host, &["b", "strong"])?;
     match style.value("font-weight").as_str() {
         "normal" => {
             let parent = dom.parent_element(span).ok()??;
