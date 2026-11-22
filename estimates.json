@@ -3,26 +3,27 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 777,
+    "macbook_in_scope": 826,
     "studio_in_scope": 111,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 189,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1071,
+   "distinct_census_pages": 1120,
    "owner_reported_unlisted": 5,
-   "selector_union": 1236,
-   "owner_estimate_reduction": 170,
+   "selector_union": 1295,
+   "owner_estimate_reduction": 180,
    "of_which_tentative": 186,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
     "html/canvas": 345,
-    "html/semantics": 337,
+    "html/semantics": 339,
     "html/interaction": 115,
     "referrer-policy": 78,
     "html/browsers": 63,
     "fetch/api": 62,
+    "html/editing": 55,
     "content-security-policy": 52,
     "fetch/fetch-later": 29,
     "html/webappapis": 23,
@@ -37,13 +38,13 @@
     "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "fetch/nosniff": 3,
+    "html/rendering": 3,
     "xhr": 2,
-    "html/rendering": 1,
     "IndexedDB": 1,
-    "quirks": 1,
-    "svg/styling": 1
+    "svg/styling": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -1666,16 +1667,44 @@
    "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
+  },
+  "R-HTML-22": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 20,
+   "out_of_scope_pages": 0,
+   "pages": 20,
+   "tentative": 0
+  },
+  "R-HTML-23": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 23,
+   "out_of_scope_pages": 0,
+   "pages": 23,
+   "tentative": 0
+  },
+  "R-HTML-24": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 6,
+   "out_of_scope_pages": 0,
+   "pages": 6,
+   "tentative": 0
+  },
+  "R-HTML-25": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 10,
+   "out_of_scope_pages": 0,
+   "pages": 10,
+   "tentative": 0
   }
  },
- "implemented_total_estimate": 1109,
+ "implemented_total_estimate": 1158,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 777,
+ "macbook_in_scope_implemented": 826,
  "macbook_in_scope_milestones": [
   100,
   200,
@@ -1683,6 +1712,7 @@
   400,
   500,
   600,
-  700
+  700,
+  800
  ]
 }
