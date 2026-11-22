@@ -747,6 +747,23 @@ fn call_module<'s>(_s: &Scope<'s>, module: Object<'s>, name: &str, args: &[Value
     module.get(name)?.as_object().ok_or_else(unavailable)?.call(None, args)
 }
 
+/// Settles a `databases()` promise with the origin's database names and versions.
+fn resolve_databases(s: &Scope<'_>, promise: &pyro_js::Deferred, namespace: &Namespace, origin: &str) -> JsResult<()> {
+    if let Err(error) = namespace.check_live() {
+        return promise.reject(s, error.to_value(s));
+    }
+    let mut rows = RootedVec::new();
+    // Snapshot native metadata before invoking JS setters or resolving
+    // promises; no namespace borrow crosses JS entry.
+    for info in namespace.databases(origin) {
+        let row = s.object();
+        row.set_atom("name", s.string(&info.name))?;
+        row.set_atom("version", s.number(info.version as f64))?;
+        rows.push(s, row.value());
+    }
+    promise.resolve(s, s.array(&rows.iter(s).collect::<Vec<_>>())?.value())
+}
+
 pub struct IdbFactory;
 impl JsClass for IdbFactory {
     const NAME: &'static str = "IDBFactory";
@@ -755,22 +772,25 @@ impl JsClass for IdbFactory {
     fn define(def: &mut ClassDef<Self>) {
         def.promise_method("databases", 0, |s, data, _| {
             let promise = s.deferred()?;
+            let result = promise.promise.get(s);
             match data.origin().and_then(|o| data.namespace.check_live().map(|()| o)) {
                 Ok(origin) => {
-                    let mut rows = RootedVec::new();
-                    // Snapshot native metadata before invoking JS setters or
-                    // resolving promises; no namespace borrow crosses JS entry.
-                    for info in data.namespace.databases(origin) {
-                        let row = s.object();
-                        row.set_atom("name", s.string(&info.name))?;
-                        row.set_atom("version", s.number(info.version as f64))?;
-                        rows.push(s, row.value());
-                    }
-                    promise.resolve(s, s.array(&rows.iter(s).collect::<Vec<_>>())?.value())?;
+                    // The list comes from the in-parallel steps through a queued
+                    // task, never at the microtask checkpoint after the calling
+                    // script: the parser and tasks queued before go first.
+                    let page = data.page.upgrade().ok_or(JsError::ContextDestroyed)?;
+                    let (realm, namespace, origin) = (s.realm().downgrade(), data.namespace.clone(), origin.to_owned());
+                    page.post_task(Box::new(move || {
+                        let Some(realm) = realm.upgrade() else { return };
+                        let Ok(s) = realm.scope() else { return };
+                        if let Err(error) = resolve_databases(&s, &promise, &namespace, &origin) {
+                            s.report_exception(&error);
+                        }
+                    }));
                 }
                 Err(error) => promise.reject(s, error.to_value(s))?,
             }
-            Ok(promise.promise.get(s))
+            Ok(result)
         });
         def.method_this("open", 1, |s, data, this, args| {
             args.require(1, "IDBFactory.open")?;
