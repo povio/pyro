@@ -739,7 +739,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,11 +1439,18 @@
+@@ -992,12 +1439,23 @@
      height: -moz-fit-content;
  }
  
@@ -757,9 +757,14 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +   Chromium's :-internal-dialog-in-top-layer). */
 +dialog:modal, dialog:-moz-topmost-modal {
      -moz-top-layer: top !important;
++    /* pyro: the servo engine's top-layer flag (`-moz-top-layer` is Gecko's): the style adjuster
++       computes a position other than absolute or fixed to absolute in the top layer (WPT
++       the-dialog-element/top-layer-position). */
++    -servo-top-layer: auto !important;
      position: fixed;
      overflow: auto;
-@@ -1017,6 +1471,8 @@
+     visibility: visible;
+@@ -1017,6 +1475,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -768,7 +773,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1538,9 @@
+@@ -1082,9 +1542,9 @@
      font-size: unset;
  }
  
@@ -780,7 +785,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1584,68 @@
+@@ -1128,37 +1588,68 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */

@@ -1452,6 +1452,10 @@ dialog:not([open]) {
    Chromium's :-internal-dialog-in-top-layer). */
 dialog:modal, dialog:-moz-topmost-modal {
     -moz-top-layer: top !important;
+    /* pyro: the servo engine's top-layer flag (`-moz-top-layer` is Gecko's): the style adjuster
+       computes a position other than absolute or fixed to absolute in the top layer (WPT
+       the-dialog-element/top-layer-position). */
+    -servo-top-layer: auto !important;
     position: fixed;
     overflow: auto;
     visibility: visible;
