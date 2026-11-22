@@ -73,7 +73,8 @@
     defineProperty(object, name, { __proto__: null, value: fn, writable: true, enumerable: true, configurable: true });
     return fn;
   };
-  const forEachOf = (entries) => function (callback, thisArg) {
+  // WebIDL forEach(callback, optional thisArg): length 1.
+  const forEachOf = (entries) => function (callback, thisArg = undefined) {
     const iterator = apply(entries, this, []);
     if (typeof callback !== 'function') throw new TypeError_('callback must be callable');
     for (const pair of iterator) apply(callback, thisArg, [pair[1], pair[0], this]);
@@ -83,7 +84,7 @@
     shim(proto, 'keys');
     shim(proto, 'values');
     defineProperty(proto, symbolIterator, { __proto__: null, value: entries, writable: true, configurable: true });
-    defineProperty(proto, 'forEach', { __proto__: null, value: function (callback, thisArg) {
+    defineProperty(proto, 'forEach', { __proto__: null, value: function (callback, thisArg = undefined) {
       if (typeof callback !== 'function') throw new TypeError_('callback must be callable');
       for (const pair of apply(entries, this, [])) apply(callback, thisArg, [pair[1], pair[0], this]);
     }, writable: true, enumerable: true, configurable: true });

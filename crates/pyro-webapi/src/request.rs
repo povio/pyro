@@ -169,12 +169,12 @@ impl JsClass for Request {
         def.getter("duplex", |s, _d| Ok(s.string("half")));
         def.getter("body", |s, d| body_stream(s, d));
         def.getter("bodyUsed", |s, d| Ok(s.boolean(d.used.get() || stream_state(s, d)?.1)));
-        def.method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
-        def.method("json", 0, |s, d, _| consume(s, d, ReadKind::Json));
-        def.method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
-        def.method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
-        def.method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
-        def.method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
+        def.promise_method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
+        def.promise_method("json", 0, |s, d, _| consume(s, d, ReadKind::Json));
+        def.promise_method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
+        def.promise_method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
+        def.promise_method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
+        def.promise_method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
         def.method("textStream", 0, |s, d, _| {
             let (locked, disturbed) = stream_state(s, d)?;
             if d.used.get() || locked || disturbed {

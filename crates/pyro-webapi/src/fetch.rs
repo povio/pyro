@@ -907,6 +907,8 @@ pub(crate) fn send_pings(
 
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let function = s.function("fetch", |s, _this, args| fetch_call(s, &args, None, None))?;
+    // WebIDL `fetch(input, optional init)`: length 1.
+    function.set_atom("length", s.number(1.0))?;
     s.global().set_atom("fetch", function.value())
 }
 
