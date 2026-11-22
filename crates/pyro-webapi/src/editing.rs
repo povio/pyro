@@ -1406,16 +1406,20 @@ fn paragraph_for_split(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId, co
     host
 }
 
-/// At a plaintext paragraph edge, a BR inside the inline formatting
+/// At a paragraph edge, a BR inside the inline formatting
 /// keeps the empty line's typing style even after the selection moves away.
 fn formatted_split_edge(dom: &Dom, block: NodeId, point: Point) -> Option<bool> {
+    formatted_split_edge_before(dom, block, point, None)
+}
+
+fn formatted_split_edge_before(dom: &Dom, block: NodeId, point: Point, padding_break: Option<NodeId>) -> Option<bool> {
     let (mut node, offset) = point;
     if !is_text(dom, node) || len(dom, node) == 0 { return None; }
     let trailing = offset == len(dom, node);
     if (!trailing && offset != 0) || dom.parent(node).ok()? == Some(block) { return None; }
     loop {
         let neighbor = if trailing { dom.next_sibling(node) } else { dom.prev_sibling(node) };
-        if neighbor.ok()?.is_some() { return None; }
+        if neighbor.ok()?.is_some_and(|sibling| !trailing || Some(sibling) != padding_break) { return None; }
         node = dom.parent_element(node).ok()??;
         if node == block { return Some(trailing); }
         if !dom.element(node).ok()?.is_html() || !matches!(local(dom, node).as_str(),
@@ -1585,7 +1589,8 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     let mut caret = caret;
     let display = page.layout().computed_style_value(dom, block, "display");
     let inline_box = display == "inline" || display.starts_with("inline-");
-    if block == host {
+    let anonymous = block == host;
+    if anonymous {
         if inline_box || constrained {
             return if crate::edit_commands::newlines_significant_in(page, dom, caret.0) {
                 preserved_break_at(page, dom, host, caret)
@@ -1703,7 +1708,14 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     // Reconstruct the inline ancestor chain on the right side of the split.
     // The original nodes and their IDs stay in the first paragraph.
     let mut container = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
-    let formatted_edge = if list_item.is_some() || at_heading_end || plaintext_at(dom, host) { formatted_split_edge(dom, block, caret) } else { None };
+    let rich_paragraph = !anonymous && !inline_box && matches!(tag.as_str(), "p" | "div" | "li");
+    let padding_break = if rich_paragraph && is_text(dom, n) && off == len(dom, n) {
+        next_in_block(dom, block, n).filter(|&br| local(dom, br) == "br"
+            && next_in_block(dom, block, br).is_none() && editing_host(dom, br) == Some(host))
+    } else { None };
+    let formatted_edge = if rich_paragraph || list_item.is_some() || at_heading_end || plaintext_at(dom, host) {
+        formatted_split_edge_before(dom, block, caret, padding_break)
+    } else { None };
     let text_parent = container;
     let mut empty_caret = None;
     let mut right_child = None;
@@ -1720,7 +1732,9 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         if let Some(child) = right_child {
             let _ = dom.append_child(dest, child);
         }
-        let mut next = split_from;
+        // Keep the old padding break on its original line. The empty
+        // formatting chain on the new line receives its own placeholder.
+        let mut next = split_from.filter(|&child| formatted_edge != Some(true) || Some(child) != padding_break);
         while let Some(child) = next {
             next = dom.next_sibling(child).ok().flatten();
             let _ = dom.append_child(dest, child);
