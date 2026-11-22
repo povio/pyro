@@ -758,12 +758,17 @@
     return state;
   }
   function assignShaperCurve(state, curve) {
-    if (curve != null && !(curve instanceof F32)) throw new TypeErrorC('Expected a Float32Array.');
-    if (curve != null && (state.assigned || curve.length < 2)) {
-      throw new DE('Cannot assign this shaping curve.', 'InvalidStateError');
+    if (curve != null) {
+      if (apply(arrayKind, curve, []) !== 'Float32Array') throw new TypeErrorC('Expected a Float32Array.');
+      const buffer = apply(arrayBufferOf, curve, []);
+      apply(bufferLength, buffer, []);
+      if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC('Expected a fixed-length ArrayBuffer.');
+      if (state.assigned || apply(arrayLength, curve, []) < 2) throw new DE('Cannot assign this shaping curve.', 'InvalidStateError');
+      state.curve = new F32(curve);
+      state.assigned = true;
+    } else {
+      state.curve = null;
     }
-    if (curve != null) state.assigned = true;
-    state.curve = curve == null ? null : new F32(curve);
     state.history = [];
   }
   const oversamplingModes = ['none', '2x', '4x'];
