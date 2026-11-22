@@ -3121,12 +3121,20 @@ impl PageDom {
     /// finished loading (successfully or not). A `src` set since the last
     /// load started is not complete yet, as in Chromium.
     pub(crate) fn image_complete(&self, el: NodeId) -> bool {
-        let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
-        let Some(src) = src else { return true };
+        let (src, srcset) = {
+            let dom = self.dom.borrow();
+            let srcset = dom.get_attribute(el, "srcset").ok().flatten().is_some_and(|v| !v.trim().is_empty());
+            (dom.get_attribute(el, "src").ok().flatten().map(str::to_owned), srcset)
+        };
+        // HTML: complete without `src` and `srcset`; a `srcset` alone is a request (the loader
+        // keys it by the empty `src`).
+        let Some(src) = src.or_else(|| srcset.then(String::new)) else { return true };
         let complete = match self.images.borrow().get(&el) {
             Some((loading, pending, _)) if *loading == src => Some(!pending),
             // Empty or unresolvable sources are complete (broken).
-            _ if src.trim().is_empty() => Some(true),
+            _ if src.trim().is_empty() && !srcset => Some(true),
+            // A `srcset` whose request the loader has not started yet.
+            _ if srcset => Some(false),
             _ => None,
         };
         // pyro: a source the embedder has not seen yet: complete when it is an available image.
