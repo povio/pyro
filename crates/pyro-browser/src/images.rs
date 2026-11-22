@@ -848,6 +848,58 @@ impl Browser {
         }
     }
 
+    /// pyro: deferred lazy images and iframes of `page`'s documents start loading before a
+    /// capture: every one for printing (Chrome loads lazy content to print), those near the
+    /// viewport for a screenshot (one taken right at `load` precedes the lazy load check).
+    /// Whether any started.
+    pub fn approve_lazy_content(&mut self, page: crate::PageId, all: bool) -> bool {
+        let Some(host) = self.page(page).map(|p| p.frames.clone()) else { return false };
+        let mut started = false;
+        for key in host.keys() {
+            let Some((bindings, nodes)) = self.doc(key).and_then(|d| {
+                Some((d.main_frame.page_dom.clone()?, d.images.deferred.keys().copied().collect::<Vec<NodeId>>()))
+            }) else {
+                continue;
+            };
+            for node in nodes {
+                let connected = bindings.dom.borrow().is_connected(node).unwrap_or(false);
+                if !connected || !(all || pyro_webapi::intersection_observer::lazy_load_intersects(&bindings, node)) {
+                    continue;
+                }
+                if let Some(mut p) = self.doc_mut(key) {
+                    p.images.approved.insert(node);
+                }
+                self.image_event_with(key, node, false);
+                started = true;
+            }
+        }
+        let frames: Vec<FrameKey> = host.lazy_frames.borrow().iter().map(|(k, _)| *k).collect();
+        for key in frames {
+            let Some(frame) = host.frame(key) else { continue };
+            let Some(owner) = frame.owner else { continue };
+            let parent = self.doc(host.parent_key(key)).and_then(|d| d.main_frame.page_dom.clone());
+            if !(all || parent.is_some_and(|p| pyro_webapi::intersection_observer::lazy_load_intersects(&p, owner))) {
+                continue;
+            }
+            host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+            host.lazy_approved.borrow_mut().push(key);
+            host.queue_attributes(key, frame.loader_id.clone());
+            started = true;
+        }
+        started
+    }
+
+    /// pyro: whether a document of `page` still loads an image, or a frame's navigation or
+    /// attribute processing is pending (what a print of lazy content waits for).
+    pub fn content_loading(&self, page: crate::PageId) -> bool {
+        let Some(host) = self.page(page).map(|p| p.frames.clone()) else { return false };
+        host.keys().into_iter().any(|key| {
+            self.doc(key).is_some_and(|d| {
+                d.images.entries.values().any(|i| i.pending) || d.pending_loader.is_some() || d.pending_frame_attributes > 0
+            })
+        })
+    }
+
     /// Remembers the `<object>`/`<embed>` `node`, not fetched while not being rendered.
     fn note_hidden_object(&self, page: FrameKey, node: NodeId) {
         if let Some(p) = self.page(page.page) {

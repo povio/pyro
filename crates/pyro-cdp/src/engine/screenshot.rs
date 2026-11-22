@@ -715,6 +715,8 @@ impl EngineHost {
             path => path.map(std::path::PathBuf::from),
         };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        // Lazy images and iframes near the viewport that the lazy load check has not let go yet.
+        self.thread.browser.approve_lazy_content(pid, false);
         let area = match (p.clip, p.capture_beyond_viewport) {
             (Some(clip), beyond_viewport) => clip.area(beyond_viewport)?,
             (None, true) => Area::FullPage,
@@ -879,6 +881,8 @@ impl EngineHost {
         // from (one Blitz document per page document), once the fonts and
         // images its layout started fetching are in. The browser thread
         // keeps running meanwhile.
+        // Chrome loads lazy content to print: all of it starts now, and the print waits for it.
+        self.thread.browser.approve_lazy_content(pid, true);
         let page_dom = self.thread.browser.page(pid).and_then(|p| p.main_frame.page_dom.clone());
         if page_dom.is_some_and(|d| super::blitz_geometry::sync_for_pdf(&d).is_some()) {
             let capture = CaptureWait {
@@ -926,6 +930,14 @@ impl EngineHost {
         super::blitz_geometry::park_until_fetched(&document, Box::new(move || deliver(Finished::Fetched)));
         if !self.pdf_fetching(pid) {
             super::blitz_geometry::wake_parked(&document);
+        } else if self.thread.browser.content_loading(pid) {
+            // The page's own loads (lazy content the print started) end without waking the
+            // geometry: checked again shortly.
+            let poll = self.renders.deliver(self.thread.handle());
+            let _ = std::thread::Builder::new().name("pyro-pdf-poll".into()).spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                poll(Finished::Fetched);
+            });
         }
         if first {
             // The deadline of the first parked wait; later ones get theirs
@@ -962,7 +974,7 @@ impl EngineHost {
     /// fetch of the page's documents (a frame's too) pending in their layout bodies, whichever
     /// geometry made it (a frame's own one may have, and the page's then only waits on it).
     fn pdf_fetching(&self, pid: PageId) -> bool {
-        if super::blitz_geometry::fetching(&self.pdf_document(pid)) {
+        if super::blitz_geometry::fetching(&self.pdf_document(pid)) || self.thread.browser.content_loading(pid) {
             return true;
         }
         let browser = &self.thread.browser;
