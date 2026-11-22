@@ -356,7 +356,7 @@ pub fn wasm_allowed(page: &Rc<PageDom>) -> bool {
     !outcome.blocked
 }
 
-/// The hidden slot on a realm's global holding install.js `wasmStreaming`'s `arm` until it ran.
+/// The hidden slot on a realm's module holder (its navigator) holding install.js `wasmStreaming`'s `arm` until it ran.
 pub(crate) const WASM_GATE: &str = "lpWasmGateArm";
 
 /// Before `page`'s scripts run in its realm `s` (a window's classic scripts, a worker's main
@@ -370,14 +370,16 @@ pub fn sync_wasm_gate(s: &Scope<'_>, page: &PageDom) {
     if page.dom.borrow().csp_policies(page.document()).is_empty() {
         return;
     }
-    let global = s.global();
-    let Ok(Some(arm)) = s.get_hidden(global, WASM_GATE) else { return };
+    let Ok(holder) = crate::target::page_of(s).and_then(|page| crate::worker_scope::module_holder(s, &page)) else {
+        return;
+    };
+    let Ok(Some(arm)) = s.get_hidden(holder, WASM_GATE) else { return };
     let Some(arm) = arm.as_object() else { return };
     let checked = policy_list(page).is_some_and(|list| !list.wasm_eval_check().violations.is_empty());
     if !checked {
         return;
     }
-    let _ = s.set_hidden(global, WASM_GATE, s.undefined());
+    let _ = s.set_hidden(holder, WASM_GATE, s.undefined());
     if let Err(e) = arm.call(None, &[]) {
         s.report_exception(&e);
     }

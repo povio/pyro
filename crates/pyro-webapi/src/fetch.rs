@@ -1092,9 +1092,12 @@ pub(crate) fn install_wasm_streaming(s: &Scope<'_>, factory: Value<'_>) -> JsRes
     })?;
     let factory = factory.as_object().ok_or_else(|| JsError::Type("install.js wasmStreaming".into()))?;
     let arm = factory.call(None, &[read.value(), allowed.value()])?;
+    // Kept on the realm's module holder (its navigator): the global is a JSAPIGlobalObject,
+    // which takes no hidden properties.
     if arm.as_object().is_some() {
-        s.set_hidden(s.global(), crate::csp::WASM_GATE, arm)?;
         if let Ok(page) = crate::target::page_of(s) {
+            let holder = crate::worker_scope::module_holder(s, &page)?;
+            s.set_hidden(holder, crate::csp::WASM_GATE, arm)?;
             crate::csp::sync_wasm_gate(s, &page);
         }
     }
