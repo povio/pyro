@@ -1023,6 +1023,15 @@ impl DocumentParser {
         })
     }
 
+    /// Declarative partial updates (WICG): a parsed `<template for=name>`
+    /// patches its contents into the document in place of what lies between
+    /// `<?start name=name>` and `<?end>`, or at `<?marker name=name>`, instead
+    /// of being inserted. The document's own parser does this (the loader's
+    /// and `document.open()`'s); script-created templates never patch.
+    pub fn enable_template_patches(&mut self) {
+        enable_inline_patches(&mut self.tok.sink, true);
+    }
+
     /// An XML document (`is_xml_mime`): validated whole once the response
     /// has arrived, then built up to each XHTML script's end tag in turn
     /// (`ParseStep::Script`, as for HTML), so content after a script is not

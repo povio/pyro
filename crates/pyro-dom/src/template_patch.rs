@@ -95,8 +95,9 @@ fn owned_scope(dom: &Dom, mut scope: u32, doc: u32) -> bool {
 }
 
 fn remove_if_parented(dom: &mut Dom, node: NodeId) {
+    // In a live document a script may have moved or removed it since.
     if let Ok(Some(parent)) = dom.parent(node) {
-        dom.remove_child(parent, node).expect("checked parent in detached parser output");
+        let _ = dom.remove_child(parent, node);
     }
 }
 

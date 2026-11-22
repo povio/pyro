@@ -4720,7 +4720,8 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
         dom.replace_all(doc, None).js()?;
     }
     page.set_ready_state(doc, "loading");
-    let parser = pyro_dom::parse::DocumentParser::new(page.dom.clone(), doc, !page.scripting_disabled()).js()?;
+    let mut parser = pyro_dom::parse::DocumentParser::new(page.dom.clone(), doc, !page.scripting_disabled()).js()?;
+    parser.enable_template_patches();
     *page.script_parser.borrow_mut() = Some(parser);
     page.script_parser_active.set(true);
     page.script_parser_close.set(false);

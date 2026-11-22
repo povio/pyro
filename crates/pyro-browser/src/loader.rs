@@ -1693,7 +1693,10 @@ impl Browser {
         } else if pyro_dom::parse::is_xml_mime(&resource.mime) {
             DocumentParser::new_xml(dom.clone(), doc, &resource.mime)
         } else {
-            DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled())
+            DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled()).map(|mut parser| {
+                parser.enable_template_patches();
+                parser
+            })
         }
         .map_err(|e| JsError::type_error(format!("{e:?}")))?;
         parser.set_transport_charset(resource.charset.as_deref());
