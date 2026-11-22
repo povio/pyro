@@ -2381,25 +2381,35 @@ fn listify_bare_text(
 ) -> Option<(Point, Point)> {
     let (text, from) = editing::deep_forward(dom, start);
     let (last, to) = editing::deep_backward(dom, end);
-    if text != last || !editing::is_text(dom, text) || dom.parent(text).ok()? != Some(host)
-        || editing::editing_host(dom, text) != Some(host) { return None; }
+    let container = dom.parent_element(text).ok()??;
+    let quoted = local_html(dom, container, "blockquote") ||
+        (matches!(editing::local(dom, container).as_str(), "p" | "div")
+            && dom.parent_element(container).ok()?.is_some_and(|p| local_html(dom, p, "blockquote")));
+    if !editing::is_text(dom, text) || !editing::is_text(dom, last)
+        || dom.parent(last).ok()? != Some(container) || (container != host && !quoted)
+        || (text != last && !quoted) || editing::editing_host(dom, text) != Some(host)
+        || editing::editing_host(dom, last) != Some(host) { return None; }
 
     let line_boundary = |n| {
         if editing::is_text(dom, n) { return false; }
         let display = page.layout().computed_style_value(dom, n, "display");
         editing::local(dom, n) == "br" || !(display == "contents" || display.starts_with("inline"))
     };
-    let children: Vec<_> = dom.children(host).ok()?.collect();
+    let children: Vec<_> = dom.children(container).ok()?.collect();
     let index = dom.index_in_parent(text).ok()? as usize;
+    let last_index = dom.index_in_parent(last).ok()? as usize;
+    if last_index < index || children[index..=last_index].iter().any(|&n|
+        line_boundary(n) && !local_html(dom, n, "br")) { return None; }
     let begin = children[..index].iter().rposition(|&n| line_boundary(n)).map_or(0, |i| i + 1);
-    let end = children[index + 1..].iter().position(|&n| line_boundary(n)).map_or(children.len(), |i| index + 1 + i);
+    let end = children[last_index + 1..].iter().position(|&n| line_boundary(n)).map_or(children.len(), |i| last_index + 1 + i);
     let left = begin.checked_sub(1).map(|i| children[i]);
     let right = children.get(end).copied();
     let list_tag = |n| dom.element(n).ok().filter(|el| el.is_html()).map(|el| el.local_name());
     let is_list = |n| list_tag(n).is_some_and(|name| matches!(&**name, "ol" | "ul"));
     let closing_break = right.filter(|&n| editing::local(dom, n) == "br"
-        && dom.next_sibling(n).ok().flatten().is_some_and(is_list));
-    if ![left, right].into_iter().flatten().any(is_list) && closing_break.is_none() { return None; }
+        && (quoted || dom.next_sibling(n).ok().flatten().is_some_and(is_list)));
+    if !quoted && ![left, right].into_iter().flatten().any(|n| is_list(n) || local_html(dom, n, "blockquote"))
+        && closing_break.is_none() { return None; }
 
     // A terminal locked list supplies no editable position past the line.
     // The command still completes its input and history step, with the
@@ -2413,8 +2423,8 @@ fn listify_bare_text(
     let right = right.filter(|&n| matches(n) && (left.is_none()
         || dom.first_child(n).ok().flatten().is_none_or(|first| editing::editing_host(dom, first) == Some(host))));
     let doc = dom.node_document(host).ok()?;
-    let item = dom.create_element(doc, "li").ok()?;
-    let content = dom.clone_node(text, false, None).ok()?;
+    let mut item = dom.create_element(doc, "li").ok()?;
+    let mut points = [(text, from), (last, to)];
     if let Some(right) = right {
         let first = dom.first_child(right).ok()?;
         dom.insert_before(right, item, first).ok()?;
@@ -2428,19 +2438,27 @@ fn listify_bare_text(
         dom.append_child(left, item).ok()?;
     } else {
         let list = dom.create_element(doc, tag).ok()?;
-        dom.insert_before(host, list, Some(children[begin])).ok()?;
+        dom.insert_before(container, list, Some(children[begin])).ok()?;
         dom.append_child(list, item).ok()?;
     }
     for &child in &children[begin..end] {
-        if child == text {
+        if quoted && local_html(dom, child, "br") {
+            let list = dom.parent_element(item).ok()??;
+            let next = dom.next_sibling(item).ok()?;
+            item = dom.create_element(doc, "li").ok()?;
+            dom.insert_before(list, item, next).ok()?;
+            dom.remove_node(child).ok()?;
+        } else if child == text || child == last {
+            let content = dom.clone_node(child, false, None).ok()?;
             dom.append_child(item, content).ok()?;
-            dom.remove_node(text).ok()?;
+            for point in &mut points { if point.0 == child { point.0 = content; } }
+            dom.remove_node(child).ok()?;
         } else {
             dom.append_child(item, child).ok()?;
         }
     }
     if let Some(br) = closing_break { dom.remove_node(br).ok()?; }
-    Some(((content, from), (content, to)))
+    Some((points[0], points[1]))
 }
 
 fn local_html(dom: &Dom, node: NodeId, name: &str) -> bool {
@@ -2583,13 +2601,16 @@ fn listify_directional_blocks(
 
 /// A list occupying a directional paragraph unwraps into lines of that
 /// same paragraph. Keep the container's authored attributes on toggle-off.
-fn unlist_directional_block(
+fn unlist_paragraph_lines(
     page: &PageDom, dom: &mut Dom, host: NodeId, list: NodeId, start: Point, end: Point,
 ) -> Option<(Point, Point)> {
     let parent = dom.parent_element(list).ok()??;
-    if parent == host || !local_html(dom, parent, "div") || dom.child_count(parent).ok()? != 1
-        || (dom.get_attribute(parent, "dir").ok()?.is_none()
-            && page.layout().computed_style_value(dom, parent, "direction") != "rtl") { return None; }
+    let next = dom.next_sibling(list).ok()?;
+    let quoted = local_html(dom, parent, "blockquote") || dom.parent_element(parent).ok()?.is_some_and(|n| local_html(dom, n, "blockquote"));
+    let beside_quote = parent == host && [dom.prev_sibling(list).ok()?, next].into_iter().flatten().any(|n| local_html(dom, n, "blockquote"));
+    let directional = parent != host && local_html(dom, parent, "div") && dom.child_count(parent).ok()? == 1
+        && (dom.get_attribute(parent, "dir").ok()?.is_some() || page.layout().computed_style_value(dom, parent, "direction") == "rtl");
+    if !quoted && !beside_quote && !directional { return None; }
     let first = editing::deep_forward(dom, start);
     let last = if start == end { first } else { editing::deep_backward(dom, end) };
     let items: Vec<_> = dom.children(list).ok()?.collect();
@@ -2604,6 +2625,11 @@ fn unlist_directional_block(
         while let Some(child) = dom.first_child(item).ok()? {
             dom.insert_before(parent, child, Some(list)).ok()?;
         }
+    }
+    if next.is_some_and(|n| !local_html(dom, n, "br") && (quoted && !editing::is_block(dom, n)
+        || beside_quote && local_html(dom, n, "blockquote"))) {
+        let br = dom.create_element(doc, "br").ok()?;
+        dom.insert_before(parent, br, Some(list)).ok()?;
     }
     dom.remove_node(list).ok()?;
     Some((first, last))
@@ -2635,7 +2661,7 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
             }
             let in_list = ancestor_named(&dom, start.0, host, &[tag]);
             if let Some(list) = in_list {
-                if let Some((a, b)) = unlist_directional_block(page, &mut dom, host, list, start, end) {
+                if let Some((a, b)) = unlist_paragraph_lines(page, &mut dom, host, list, start, end) {
                     drop(dom);
                     editing::set_selection(page, a, b);
                     return;
