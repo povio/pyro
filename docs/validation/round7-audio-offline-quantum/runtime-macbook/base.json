@@ -1,0 +1,206 @@
+{
+  "pcm": [
+    {
+      "quantum": 128,
+      "actualQuantum": 128,
+      "channels": [
+        {
+          "bad": 0,
+          "worst": 9.93587523367978e-9,
+          "length": 957,
+          "tail": 0.25
+        },
+        {
+          "bad": 0,
+          "worst": 1.987175046735956e-8,
+          "length": 957,
+          "tail": 0.5
+        }
+      ]
+    },
+    {
+      "quantum": 13,
+      "actualQuantum": 128,
+      "channels": [
+        {
+          "bad": 0,
+          "worst": 5.948228576357906e-9,
+          "length": 842,
+          "tail": 0.25
+        },
+        {
+          "bad": 0,
+          "worst": 1.1896457152715811e-8,
+          "length": 842,
+          "tail": 0.5
+        }
+      ]
+    },
+    {
+      "quantum": 441,
+      "actualQuantum": 128,
+      "channels": [
+        {
+          "bad": 0,
+          "worst": 1.0090756674685508e-8,
+          "length": 1270,
+          "tail": 0.25
+        },
+        {
+          "bad": 0,
+          "worst": 2.0181513349371016e-8,
+          "length": 1270,
+          "tail": 0.5
+        }
+      ]
+    },
+    {
+      "quantum": 33001,
+      "actualQuantum": 128,
+      "channels": [
+        {
+          "bad": 0,
+          "worst": 1.0962992291752016e-8,
+          "length": 33830,
+          "tail": 0.25
+        },
+        {
+          "bad": 0,
+          "worst": 2.1925984583504032e-8,
+          "length": 33830,
+          "tail": 0.5
+        }
+      ]
+    }
+  ],
+  "offlineaudiocontext-rendersizehint.html": {
+    "status": 0,
+    "tests": [
+      [
+        "OfflineAudioContext with no hint hint",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext with \"default\" hint",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext with \"hardware\" hint",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 1",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 1 expected 1 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 13",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 13 expected 13 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 127",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 127 expected 127 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 129",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 129 expected 129 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 256",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 256 expected 256 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 500",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 500 expected 500 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 16383",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 16383 expected 16383 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 3000, renderSizeHint 18000",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 18000 expected 18000 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 288000",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 288000 expected 288000 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 44100.1, renderSizeHint 264600",
+        1,
+        "assert_equals: renderQuantumSize should be exactly 264600 expected 264600 but got 128"
+      ],
+      [
+        "OfflineAudioContext [Throws Exception]: sampleRate 48000, renderSizeHint 0",
+        1,
+        "assert_throws_dom: function \"() => {\n        if (isOffline) {\n          new OfflineAudioContext(\n              {\n                length: OFFLINE_CONTEXT_LENGTH,\n                sampleRate,\n                renderSizeHint: hint\n              });\n        } else {\n          new AudioContext({ sampleRate, renderSizeHint: hint });\n        }\n      }\" did not throw"
+      ],
+      [
+        "OfflineAudioContext [Throws Exception]: sampleRate 3000, renderSizeHint 18001",
+        1,
+        "assert_throws_dom: function \"() => {\n        if (isOffline) {\n          new OfflineAudioContext(\n              {\n                length: OFFLINE_CONTEXT_LENGTH,\n                sampleRate,\n                renderSizeHint: hint\n              });\n        } else {\n          new AudioContext({ sampleRate, renderSizeHint: hint });\n        }\n      }\" did not throw"
+      ],
+      [
+        "OfflineAudioContext [Throws Exception]: sampleRate 48000, renderSizeHint 288001",
+        1,
+        "assert_throws_dom: function \"() => {\n        if (isOffline) {\n          new OfflineAudioContext(\n              {\n                length: OFFLINE_CONTEXT_LENGTH,\n                sampleRate,\n                renderSizeHint: hint\n              });\n        } else {\n          new AudioContext({ sampleRate, renderSizeHint: hint });\n        }\n      }\" did not throw"
+      ],
+      [
+        "OfflineAudioContext [Throws Exception]: sampleRate 48000, renderSizeHint -1",
+        1,
+        "assert_throws_dom: function \"() => {\n        if (isOffline) {\n          new OfflineAudioContext(\n              {\n                length: OFFLINE_CONTEXT_LENGTH,\n                sampleRate,\n                renderSizeHint: hint\n              });\n        } else {\n          new AudioContext({ sampleRate, renderSizeHint: hint });\n        }\n      }\" did not throw"
+      ]
+    ]
+  },
+  "offlineaudiocontext-suspend-rendersizehint.https.html": {
+    "status": 0,
+    "tests": [
+      [
+        "Offline suspend quantizes to custom render quantum size",
+        1,
+        "assert_equals: Suspend should occur at exactly the quantum boundary expected 0.0091875 but got 0.010666666666666666"
+      ]
+    ]
+  },
+  "offlineaudiocontext-close.html": {
+    "status": 0,
+    "tests": [
+      [
+        "close before rendering closes the context",
+        0,
+        null
+      ],
+      [
+        "calling close twice rejects the second call",
+        0,
+        null
+      ],
+      [
+        "close after rendering a chunk closes the context",
+        1,
+        "assert_equals: The chunk should finish before close is called expected 512 but got 384"
+      ],
+      [
+        "close while rendering a large chunk stops the context",
+        0,
+        null
+      ],
+      [
+        "close while suspended rejects current and queued incremental renders",
+        0,
+        null
+      ]
+    ]
+  }
+}

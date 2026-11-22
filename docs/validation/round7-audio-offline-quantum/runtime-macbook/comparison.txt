@@ -1,0 +1,6 @@
+base PCM [(128, 128, 0), (13, 128, 0), (441, 128, 0), (33001, 128, 0)]
+candidate PCM [(128, 128, 0), (13, 13, 0), (441, 441, 0), (33001, 33001, 0)]
+reference PCM [(128, 128, 0), (13, 13, 0), (441, 441, 0), (33001, 33001, 0)]
+offlineaudiocontext-rendersizehint.html 17 3 17 gains 14
+offlineaudiocontext-suspend-rendersizehint.https.html 1 0 1 gains 1
+offlineaudiocontext-close.html 5 4 5 gains 1

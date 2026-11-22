@@ -1,0 +1,14 @@
+pyro 0.0.17
+engine: JavaScriptCore; capabilities: Capabilities { weak_refs: true, modules: true, import_maps: true, typed_modules: true, unhandled_rejections: true, termination: true, hidden_properties: true, proxy_targets: true, object_global_context: true, fork: true, global_constants: true }
+candidate:
+	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2200.27.0)
+	/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)
+	/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)
+	/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText (compatibility version 1.0.0, current version 904.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)
+	/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)
+	/usr/lib/libicucore.A.dylib (compatibility version 1.0.0, current version 78.1.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
+c51f0aaf8db7cd61404cec4e55820ccb1a7916b5422ff6953f6570bca6f24fb3  base
+1d142e841e98b7d762b65b2e935a28c393c9df04f3b1367b15cc64f110f4cb6a  candidate
+b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e  /Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/Google Chrome.app/Contents/MacOS/Google Chrome
