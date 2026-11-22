@@ -374,7 +374,7 @@ impl BaseDocument {
         let matching_keyword = matches!((endpoint, size),
             (Size::Auto, Size::CalcSizeAuto(_)) | (Size::MinContent, Size::CalcSizeMinContent(_)) |
             (Size::MaxContent, Size::CalcSizeMaxContent(_)) | (Size::FitContent, Size::CalcSizeFitContent(_)));
-        if matching_keyword || matches!(endpoint, Size::LengthPercentage(length) if length.0.to_length().is_some()) {
+        if matching_keyword || matches!(endpoint, Size::LengthPercentage(_)) {
             use style::values::computed::MaxSize;
             let (minimum, maximum) = if width { (&live.min_width, &live.max_width) } else { (&live.min_height, &live.max_height) };
             if !minimum.is_auto() || !matches!(maximum, MaxSize::None) { return None; }

@@ -500,6 +500,19 @@ fn sampled_intrinsic_block_height_uses_fixed_child_not_endpoint() {
 }
 
 #[test]
+fn sampled_auto_height_with_percentage_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="height:300px"><div id=live style="height:50%"><div style="height:100px"></div></div></div><div id=sample style="height:calc-size(auto,size * 0.25 + 37.5%)"></div>"#);
+    let dom = page.dom.borrow();
+    let style = page.layout.style();
+    let live = page.find("#live");
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    let used = || page.layout.computed_style_value(&dom, live, "height");
+    assert_eq!(used(), "150px");
+    assert_eq!(style.with_style_override(live, sample, used).unwrap(), "137.5px");
+    assert_eq!(used(), "150px");
+}
+
+#[test]
 fn sampled_keyword_is_independent_of_live_calc_endpoint() {
     let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=intrinsic style="width:calc-size(fit-content,size);height:calc-size(auto,size)"><div style="width:100px;height:100px"></div></div><div id=stretch style="width:calc-size(stretch,size);height:calc-size(stretch,size)"><div style="width:100px;height:100px"></div></div></div><div id=available style="width:auto;height:stretch"></div><div id=content style="width:max-content;height:max-content"></div>"#);
     let dom = page.dom.borrow();
