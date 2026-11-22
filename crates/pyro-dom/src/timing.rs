@@ -666,12 +666,7 @@ impl TimingRules {
                 let geometry = self.geometry.as_ref()?.upgrade()?;
                 // Bring the mirror up to date before the read-only cascade.
                 style_of(el)?;
-                let pseudo = pseudo.map(|p| match p {
-                    PseudoElement::Before => style::selector_parser::PseudoElement::Before,
-                    PseudoElement::After => style::selector_parser::PseudoElement::After,
-                    PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
-                });
-                geometry.element_timing_style(crate::snapshot::render_key(el), pseudo.as_ref())
+                geometry.element_timing_style(crate::snapshot::render_key(el), pseudo.map(stylo_pseudo).as_ref())
             }).as_ref()?;
             // Keep 'auto' distinct for progress-based animation timelines.
             if longhand == Longhand::AnimationDuration {
@@ -857,12 +852,46 @@ impl TimingRules {
             "animation" => animation_shorthand(&lists),
             longhand => {
                 let longhand = Longhand::by_name(longhand)?;
+                // `animation-duration: auto` resolves to `0s` only while `animation-timeline` is
+                // its initial single `auto` (css-animations-2, csswg-drafts#6530; as Chromium):
+                // with any other timeline list `auto` stays.
+                let keep_auto = longhand == Longhand::AnimationDuration && !self.timeline_initial(el, pseudo, style_of);
+                let show = |v: &str| if keep_auto && v == "auto" { v.to_owned() } else { shown(longhand, v) };
                 match lists.get(longhand) {
-                    Some(list) => list.iter().map(|v| shown(longhand, v)).collect::<Vec<_>>().join(", "),
+                    Some(list) => list.iter().map(|v| show(v.as_str())).collect::<Vec<_>>().join(", "),
+                    // (`animation-duration`'s initial value is `auto`.)
+                    None if keep_auto => "auto".to_owned(),
                     None => longhand.initial().to_owned(),
                 }
             }
         })
+    }
+
+    /// Whether `el`'s (`pseudo`'s) computed `animation-timeline` is its initial value, one
+    /// `auto` (`true` when its style is unknown).
+    fn timeline_initial(&self, el: NodeId, pseudo: Option<PseudoElement>, style_of: StyleOf<'_>) -> bool {
+        let style = match pseudo {
+            None => style_of(el),
+            Some(p) => self.geometry.as_ref().and_then(|g| g.upgrade()).and_then(|geometry| {
+                style_of(el)?;
+                geometry.element_timing_style(crate::snapshot::render_key(el), Some(&stylo_pseudo(p)))
+            }),
+        };
+        let Some(style) = style else { return true };
+        let ui = style.get_ui();
+        match ui.animation_timeline_count() {
+            0 => true,
+            1 => ui.animation_timeline_at(0).is_auto(),
+            _ => false,
+        }
+    }
+}
+
+fn stylo_pseudo(pseudo: PseudoElement) -> style::selector_parser::PseudoElement {
+    match pseudo {
+        PseudoElement::Before => style::selector_parser::PseudoElement::Before,
+        PseudoElement::After => style::selector_parser::PseudoElement::After,
+        PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
     }
 }
 
