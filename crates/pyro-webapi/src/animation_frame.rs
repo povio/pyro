@@ -911,12 +911,14 @@ impl Source {
             return None;
         }
         let (before, after) = t.styles.as_ref()?;
+        let au_per_dev_px;
         // A transition the style no longer runs to (removed, or the value changed again before the
         // next style change event) is not reported.
         {
             let dom = page.dom.try_borrow().ok()?;
             // (An element going `display: none` has no style of the engine's to compare.)
             let style = page.try_layout()?;
+            au_per_dev_px = style.style().app_units_per_device_pixel();
             let current = match pseudo {
                 None => style.style().stylo_style(&dom, el),
                 Some(pseudo) => style.style().pseudo_style(&dom, el, pseudo, false),
@@ -942,7 +944,7 @@ impl Source {
             }
             (progress(&transition_timing(t), local, 1.0)?, Some(t.easing().unwrap_or("ease")))
         };
-        pyro_dom::animation::transition_value(longhand, before, after, sample.progress, sample.before, easing)
+        pyro_dom::animation::transition_value(longhand, before, after, sample.progress, sample.before, easing, au_per_dev_px)
     }
 }
 

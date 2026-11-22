@@ -39,6 +39,30 @@ impl BorderSideWidth {
     pub fn medium() -> Self {
         Self(Au::from_px(3))
     }
+
+    /// pyro: this width snapped as a border width at `au_per_dev_px` app units per device pixel,
+    /// as the cascade snaps a specified one: an interpolated border-like width (which
+    /// [`ToAnimatedValue::from_animated_value`] leaves unsnapped, having no device) is snapped
+    /// after interpolation, as in Chromium.
+    pub fn snapped(&self, au_per_dev_px: i32) -> Self {
+        Self(snap_as_border_width(self.0, au_per_dev_px))
+    }
+}
+
+/// pyro: https://drafts.csswg.org/css-values-4/#snap-a-length-as-a-border-width at
+/// `au_per_dev_px` app units per device pixel (the specified `BorderSideWidth`'s computation and
+/// [`BorderSideWidth::snapped`] share it).
+pub fn snap_as_border_width(len: Au, au_per_dev_px: i32) -> Au {
+    debug_assert!(len >= Au(0));
+
+    // Round `width` down to the nearest device pixel, but any non-zero value that would round
+    // down to zero is clamped to 1 device pixel.
+    if len == Au(0) {
+        return len;
+    }
+
+    let au_per_dev_px = au_per_dev_px.max(1);
+    std::cmp::max(Au(au_per_dev_px), Au(len.0 / au_per_dev_px * au_per_dev_px))
 }
 
 impl ToAnimatedValue for BorderSideWidth {

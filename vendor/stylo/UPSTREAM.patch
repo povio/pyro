@@ -10428,8 +10428,41 @@ diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
      generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;
 diff -ruN a/values/computed/border.rs b/values/computed/border.rs
 --- a/values/computed/border.rs	2026-11-11 19:55:57
-+++ b/values/computed/border.rs	2026-11-21 06:46:07
-@@ -51,7 +51,7 @@
++++ b/values/computed/border.rs	2026-11-22 19:43:34
+@@ -39,8 +39,32 @@
+     pub fn medium() -> Self {
+         Self(Au::from_px(3))
+     }
++
++    /// pyro: this width snapped as a border width at `au_per_dev_px` app units per device pixel,
++    /// as the cascade snaps a specified one: an interpolated border-like width (which
++    /// [`ToAnimatedValue::from_animated_value`] leaves unsnapped, having no device) is snapped
++    /// after interpolation, as in Chromium.
++    pub fn snapped(&self, au_per_dev_px: i32) -> Self {
++        Self(snap_as_border_width(self.0, au_per_dev_px))
++    }
+ }
+ 
++/// pyro: https://drafts.csswg.org/css-values-4/#snap-a-length-as-a-border-width at
++/// `au_per_dev_px` app units per device pixel (the specified `BorderSideWidth`'s computation and
++/// [`BorderSideWidth::snapped`] share it).
++pub fn snap_as_border_width(len: Au, au_per_dev_px: i32) -> Au {
++    debug_assert!(len >= Au(0));
++
++    // Round `width` down to the nearest device pixel, but any non-zero value that would round
++    // down to zero is clamped to 1 device pixel.
++    if len == Au(0) {
++        return len;
++    }
++
++    let au_per_dev_px = au_per_dev_px.max(1);
++    std::cmp::max(Au(au_per_dev_px), Au(len.0 / au_per_dev_px * au_per_dev_px))
++}
++
+ impl ToAnimatedValue for BorderSideWidth {
+     type AnimatedValue = CSSPixelLength;
+ 
+@@ -51,7 +75,7 @@
  
      #[inline]
      fn from_animated_value(animated: Self::AnimatedValue) -> Self {
@@ -10438,7 +10471,7 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
      }
  }
  
-@@ -92,6 +92,41 @@
+@@ -92,6 +116,41 @@
  /// A computed value for outline-offset
  pub type BorderSideOffset = Au;
  
@@ -10480,7 +10513,7 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
  /// A computed value for the `border-image-width` property.
  pub type BorderImageWidth = Rect<BorderImageSideWidth>;
  
-@@ -129,6 +164,12 @@
+@@ -129,6 +188,12 @@
      pub fn one() -> Self {
          GenericBorderImageSideWidth::Number(NonNegative(1.))
      }
@@ -10493,7 +10526,7 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
  }
  
  impl BorderImageSlice {
-@@ -140,6 +181,15 @@
+@@ -140,6 +205,15 @@
              fill: false,
          }
      }
@@ -13307,7 +13340,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  
 diff -ruN a/values/specified/border.rs b/values/specified/border.rs
 --- a/values/specified/border.rs	2026-11-11 19:55:57
-+++ b/values/specified/border.rs	2026-11-21 08:11:13
++++ b/values/specified/border.rs	2026-11-22 19:43:34
 @@ -186,9 +186,9 @@
      fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
          match *self {
@@ -13321,7 +13354,28 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
              Self::Length(ref length) => Au::from_f32_px(length.to_computed_value(context).px()),
          }
      }
-@@ -295,6 +295,51 @@
+@@ -233,16 +233,10 @@
+ 
+ // https://drafts.csswg.org/css-values-4/#snap-a-length-as-a-border-width
+ fn snap_as_border_width(len: Au, context: &Context) -> Au {
+-    debug_assert!(len >= Au(0));
+-
+-    // Round `width` down to the nearest device pixel, but any non-zero value that would round
+-    // down to zero is clamped to 1 device pixel.
+-    if len == Au(0) {
+-        return len;
+-    }
+-
+-    let au_per_dev_px = context.device().app_units_per_device_pixel();
+-    std::cmp::max(Au(au_per_dev_px), Au(len.0 / au_per_dev_px * au_per_dev_px))
++    crate::values::computed::border::snap_as_border_width(
++        len,
++        context.device().app_units_per_device_pixel(),
++    )
+ }
+ 
+ impl ToComputedValue for BorderSideWidth {
+@@ -295,6 +289,51 @@
      }
  }
  
