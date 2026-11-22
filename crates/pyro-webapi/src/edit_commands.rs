@@ -2773,11 +2773,11 @@ fn convert_list_items(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, st
             if !run.iter().all(|&n| editable_list_item(dom, host, n)) { return None; }
         }
         for (list, first, last) in runs.into_iter().rev() {
-            convert_list_run(page, dom, host, tag, list, first, last)?;
+            convert_list_run(page, dom, host, tag, list, first, last, true)?;
         }
     } else {
         if dom.parent_element(last).ok()?? != source { return None; }
-        convert_list_run(page, dom, host, tag, source, first, last)?;
+        convert_list_run(page, dom, host, tag, source, first, last, false)?;
     }
     Some((if start.0 == source { first_point } else { start }, if end.0 == source { last_point } else { end }))
 }
@@ -2795,7 +2795,60 @@ fn editable_list_item(dom: &Dom, host: NodeId, node: NodeId) -> bool {
         || dom.char_data(node).is_ok_and(|s| s.trim().is_empty())
 }
 
-fn convert_list_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, source: NodeId, first: NodeId, last: NodeId) -> Option<()> {
+/// Preserve the inherited color on the text when moving a structured list
+/// item; the descendant list itself has an independent numbering context.
+fn distribute_nested_item_color(page: &PageDom, dom: &mut Dom, host: NodeId, item: NodeId) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let mut style = DeclarationBlock::parse(dom.get_attribute(item, "style").ok()??);
+    let color = style.value("color");
+    if color.is_empty() || !dom.descendants(item).ok()?.any(|n| local_html(dom,n,"ol") || local_html(dom,n,"ul")) { return None; }
+    let layout = page.layout();
+    let mut texts = Vec::new();
+    for n in dom.descendants(item).ok()? {
+        if editing::editing_host(dom, n) != Some(host) { return None; }
+        if editing::is_text(dom, n) {
+            let parent = dom.parent_element(n).ok()??;
+            texts.push((n, parent, layout.computed_style_value(dom, parent, "color")));
+        }
+    }
+    let priority = style.important("color");
+    style.remove("color");
+    if style.is_empty() { dom.remove_attribute(item, "style").ok()?; }
+    else { dom.set_attribute(item, "style", &style.css_text()).ok()?; }
+    let doc = dom.node_document(item).ok()?;
+    for (text, parent, old) in texts {
+        if old == layout.computed_style_value(dom, parent, "color") { continue; }
+        let span = dom.create_element(doc, "span").ok()?;
+        let mut retained = DeclarationBlock::parse("");
+        let value = if pyro_dom::color_well::editing_color(&color).is_some_and(|(css,_)| css == old) { &color } else { &old };
+        retained.set("color", value, priority)?;
+        dom.set_attribute(span, "style", &retained.css_text()).ok()?;
+        dom.insert_before(parent, span, Some(text)).ok()?;
+        dom.append_child(span, text).ok()?;
+    }
+    Some(())
+}
+
+/// Join a selected bare host paragraph with the immediately following
+/// selected list items, leaving the trailing host content outside the list.
+fn convert_text_and_list(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
+    if !editing::is_text(dom, start.0) || dom.parent(start.0).ok()? != Some(host) || start == end { return None; }
+    let source = dom.next_sibling(start.0).ok()??;
+    if !(local_html(dom, source, "ol") || local_html(dom, source, "ul")) || !dom.attributes(source).ok()?.is_empty() { return None; }
+    let last = ancestor_item(dom, end.0, host)?;
+    if dom.parent_element(last).ok()? != Some(source) { return None; }
+    let first = dom.first_child(source).ok()??;
+    if !local_html(dom, first, "li") { return None; }
+    if !local_html(dom, source, tag) { convert_list_run(page, dom, host, tag, source, first, last, false)?; }
+    let list = dom.parent_element(first).ok()??;
+    let doc = dom.node_document(host).ok()?;
+    let item = dom.create_element(doc, "li").ok()?;
+    dom.insert_before(list, item, Some(first)).ok()?;
+    dom.append_child(item, start.0).ok()?;
+    Some(())
+}
+
+fn convert_list_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, source: NodeId, first: NodeId, last: NodeId, nested: bool) -> Option<()> {
     let parent = dom.parent_element(source).ok()??;
     let begin = dom.index_in_parent(first).ok()? as usize;
     let finish = dom.index_in_parent(last).ok()? as usize + 1;
@@ -2807,6 +2860,7 @@ fn convert_list_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, sour
     // Preserve authored presentation on the selected items. Numbering and
     // the source list's ID belong to the source list, not the converted run.
     for name in ["dir", "lang"] {
+        if nested && name == "dir" { continue; }
         if let Some(value) = dom.get_attribute(source, name).ok()?.map(str::to_owned) {
             dom.set_attribute(list, name, &value).ok()?;
         }
@@ -2821,7 +2875,10 @@ fn convert_list_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, sour
         dom.insert_before(parent, tail, after).ok()?;
         for &n in &children[finish..] { dom.append_child(tail, n).ok()?; }
     }
-    for &n in run { dom.append_child(list, n).ok()?; }
+    for &n in run {
+        dom.append_child(list, n).ok()?;
+        if nested && local_html(dom, n, "li") { distribute_nested_item_color(page, dom, host, n); }
+    }
     if dom.child_count(source).ok()? == 0 { dom.remove_node(source).ok()?; }
 
     // Adjacent simple lists of the requested type form a single list.
@@ -3182,6 +3239,11 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
         {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
+            if convert_text_and_list(page, &mut dom, host, tag, start, end).is_some() {
+                drop(dom);
+                editing::set_selection(page, start, end);
+                return;
+            }
             if let Some((a, b)) = convert_list_items(page, &mut dom, host, tag, start, end) {
                 drop(dom);
                 editing::set_selection(page, a, b);
@@ -3451,7 +3513,7 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
                     let other = if tag == "ol" { "ul" } else { "ol" };
                     let nested = ancestor_named(&dom, list, host, &["ol", "ul"]).is_some()
                         || dom.descendants(list).is_ok_and(|mut nodes| nodes.any(|n| local_html(&dom, n, "ol") || local_html(&dom, n, "ul")));
-                    if nested {
+                    if nested && editing::selection(page).is_some_and(|(anchor,_)| editing::editing_host(&dom, anchor.0) == Some(host)) {
                         return local_html(&dom, list, tag) && ancestor_named(&dom, end.0, host, &["ol", "ul"]) == Some(list)
                             && !dom.descendants(list).is_ok_and(|mut nodes| nodes.any(|n| local_html(&dom, n, other)));
                     }
