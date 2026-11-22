@@ -1927,9 +1927,21 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             };
             let mut last_wrapper: Option<NodeId> = None;
             let use_css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
-            let mixed_run = texts.len() > 1 && matches!(tag, "b" | "i" | "u" | "strike")
-                && texts.first().is_some_and(|&t| editing::is_text(&dom, t)
-                    && dom.parent_element(t).ok().flatten().is_some_and(|el| !carriers.contains(&editing::local(&dom, el).as_str())));
+            let mixed_run = matches!(tag, "b" | "i" | "u" | "strike") && texts.first().zip(texts.get(1)).is_some_and(|(&first, &next)| {
+                if !editing::is_text(&dom, first) { return false; }
+                let Some(sibling) = dom.next_sibling(first).ok().flatten() else { return false };
+                if !dom.contains(sibling, next).unwrap_or(false) { return false; }
+                let name = editing::local(&dom, sibling);
+                if carriers.contains(&name.as_str()) { return true; }
+                if name != "span" { return false; }
+                let style = pyro_dom::stylo::declarations::DeclarationBlock::parse(dom.get_attribute(sibling, "style").ok().flatten().unwrap_or(""));
+                match tag {
+                    "b" => style.value("font-weight") == "bold",
+                    "i" => style.value("font-style") == "italic",
+                    "u" => style.value("text-decoration-line").split_whitespace().any(|v| v == "underline"),
+                    _ => style.value("text-decoration-line").split_whitespace().any(|v| v == "line-through"),
+                }
+            });
             let single_link = href.and_then(|_| {
                 let link = ancestor_named(&dom, *texts.first()?, host, &["a"])?;
                 dom.contains(link, *texts.last()?).ok()?.then_some(link)
