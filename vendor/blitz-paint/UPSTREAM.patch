@@ -9291,7 +9291,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
      /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
      /// which scroll only programmatically). Thumbs appear on scroll and fade
-@@ -967,8 +3420,723 @@
+@@ -967,8 +3420,728 @@
          }
      }
  
@@ -10005,6 +10005,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    }
 +
      fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
++        // pyro: HTML-in-Canvas: a canvas with content=drawable lays its content out without
++        // painting it in place (on every path: plain, phased, multicol).
++        if self.element.is_drawable_canvas() {
++            return;
++        }
 +        // (Where a positioned inline box left for its paint-tree entry is painted from: `draw_inline_pass`.)
 +        let pos_before_offset = pos;
          if self.node.flags.is_inline_root() {
@@ -10015,7 +10020,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let text_layout = self.element
                  .inline_layout_data
                  .as_ref()
-@@ -976,6 +4144,11 @@
+@@ -976,6 +4149,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -10027,7 +10032,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,23 +4157,123 @@
+@@ -984,23 +4162,123 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -10162,7 +10167,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                      sel_start,
                      sel_end,
                  );
-@@ -1008,120 +4281,1199 @@
+@@ -1008,120 +4286,1204 @@
  
              // Render text
              let mut draw_text_context = self.context.draw_text_context.borrow_mut();
@@ -10351,10 +10356,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                input_data.editor.try_layout().unwrap().lines(),
 -                self.context.dom,
 -                transform,
--                TextPaintOptions {
--                    scale: self.scale,
--                    brush_override: None,
--                },
 +            // pyro: ruby annotations and emphasis marks, over the text of each line.
 +            if !text_layout.annotations.is_empty() {
 +                let recording = draw_text_context.runs.is_some();
@@ -10754,7 +10755,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            crate::highlight::stroke_highlighted_text(
 +                scene,
 +                self.context.dom,
-                 self.node.id,
++                self.node.id,
 +                &text_layout.layout,
 +                &text_layout.text,
 +                &line_transform,
@@ -10762,10 +10763,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
 +                &self.context.highlight_layers,
 +                ranges,
-                 &mut draw_text_context,
++                &mut draw_text_context,
 +                vertical,
-             );
-         }
++            );
++        }
 +        // pyro: `text-overflow` and line clamps cut the lines at the content box's inline size
 +        // (its physical height), as on horizontal lines (`stroke_inline_text`).
 +        let truncates = text_layout.ellipsis.is_some() || text_layout.clamp.is_some();
@@ -10789,14 +10790,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                std::iter::once(line.clone()),
 +                self.context.dom,
 +                line_transform(index),
-+                TextPaintOptions {
-+                    scale: self.scale,
-+                    brush_override: None,
+                 TextPaintOptions {
+                     scale: self.scale,
+                     brush_override: None,
 +                    shadows: true,
-+                },
-+                self.node.id,
+                 },
+                 self.node.id,
 +                Some(&text_layout.text),
-+                &mut draw_text_context,
+                 &mut draw_text_context,
 +                vertical,
 +                Some(&text_layout.layout),
 +            ); }
@@ -10872,8 +10873,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            }
 +            paint_pass(scene, pass);
 +        }
-     }
- 
++    }
++
 +    /// pyro: a text control in a vertical writing mode. The editor's layout is logical (laid out at
 +    /// the content box's inline size, `layout/mod.rs`): its value, placeholder, selection and caret
 +    /// are drawn through the turn of a vertical line (`draw_vertical_inline_layout`), lines running
@@ -10981,7 +10982,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                &mut draw_text_context,
 +                None,
 +                None,
-+            );
+             );
 +        }
 +        true
 +    }
@@ -11305,9 +11306,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                scene.pop_layer();
 +            }
 +            draw_text_context.line_tops = None;
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// pyro: an inside marker that is an image (`list-style-image`): at the start of the
 +    /// item's first line, its bottom on the baseline (the inline layout left room for it).
 +    fn draw_inside_marker_image(&self, scene: &mut impl PaintScene, pos: Point, width: f32, height: f32) {
@@ -11360,6 +11361,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    }
 +
      fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
++        // pyro: HTML-in-Canvas: a canvas with content=drawable lays its content out without
++        // painting it in place (on every path: plain, phased, multicol).
++        if self.element.is_drawable_canvas() {
++            return;
++        }
          if let Some(ListItemLayout {
 +            marker: Marker::Image { width, height },
 +            position: ListItemLayoutPosition::Inside,
@@ -11389,6 +11395,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                + x_padding
 -                + item_layout.padding.left
 -                + item_layout.border.left);
+-
+-            // Align the marker with the baseline of the first line of text in the list item
+-            let y_offset = if let Some((text_layout, first_text_line)) = &self
+-                .element
+-                .inline_layout_data
+-                .as_ref()
+-                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
+-            {
+-                (first_text_line.metrics().baseline
+-                    - layout.lines().next().unwrap().metrics().baseline)
 +            // pyro: after its right edge in a right-to-left item.
 +            let rtl = !self.style.writing_mode.is_bidi_ltr();
 +            let x_offset = if rtl {
@@ -11399,9 +11415,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    + item_layout.padding.left
 +                    + item_layout.border.left)
 +            };
- 
-             // Align the marker with the baseline of the first line of text in the list item
--            let y_offset = if let Some((text_layout, first_text_line)) = &self
++
++            // Align the marker with the baseline of the first line of text in the list item
 +            if let Marker::Char(symbol @ ('•' | '◦' | '▪')) = marker {
 +                self.draw_marker_symbol(scene, pos, *symbol, layout);
 +                return;
@@ -11414,10 +11429,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                return;
 +            }
 +            let first_line = self
-                 .element
-                 .inline_layout_data
-                 .as_ref()
--                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
++                .element
++                .inline_layout_data
++                .as_ref()
 +                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)));
 +            // pyro: the marker goes with the line, which floats beside the item move.
 +            let line_x = first_line.as_ref().filter(|_| !rtl).map_or(0.0, |(text_layout, line)| {
@@ -11430,20 +11444,19 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                let own = layout.lines().next().map_or(0.0, |line| line.metrics().baseline) / layout.scale();
 +                self.marker_baseline(layout).0 - own
 +            } else if let Some((text_layout, first_text_line)) = &first_line
-             {
++            {
 +                // pyro: with the line, where it is painted (`LineTops`).
 +                let shift = self
 +                    .text_placement(text_layout.block_offset as f64)
 +                    .1
 +                    .map_or(0.0, |tops| tops.shift(first_text_line.metrics()));
-                 (first_text_line.metrics().baseline
--                    - layout.lines().next().unwrap().metrics().baseline)
++                (first_text_line.metrics().baseline
 +                    - layout.lines().next().unwrap().metrics().baseline
 +                    + shift as f32)
                      / layout.scale()
                      + text_layout.block_offset
              } else {
-@@ -1129,7 +5481,7 @@
+@@ -1129,7 +5491,7 @@
              };
  
              let pos = Point {
@@ -11452,7 +11465,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,81 +5497,1744 @@
+@@ -1145,81 +5507,1749 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -11463,7 +11476,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  &mut draw_text_context,
 +                None,
 +                None,
-+            );
+             );
 +            // pyro: its emphasis marks, as over the item's text.
 +            if let Some(item) = self.list_item.filter(|item| !item.annotations.is_empty()) {
 +                let text = match marker {
@@ -11809,6 +11822,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// paint after it (`FlowPhase::Foreground`): those later boxes are painted again over them,
 +    /// clipped to where they meet.
 +    fn draw_inline_boxes_over_atomics(&self, scene: &mut impl PaintScene, pos: Point) {
++        // pyro: HTML-in-Canvas: a canvas with content=drawable lays its content out without
++        // painting it in place (on every path: plain, phased, multicol).
++        if self.element.is_drawable_canvas() {
++            return;
++        }
 +        if !self.node.flags.is_inline_root() || !self.context.backgrounds {
 +            return;
 +        }
@@ -12289,7 +12307,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                &viewport,
 +                Some(crate::layers::backdrop_root_marker()),
 +                None,
-             );
++            );
 +            self.with_inline_clip_path(scene, child_id, |scene| {
 +                self.draw_hoisted_children(scene, owned.iter(), parent_style_transform, clip_rect);
 +            });
@@ -13260,7 +13278,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +7244,73 @@
+@@ -1229,9 +7259,73 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -13336,7 +13354,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +7332,20 @@
+@@ -1253,9 +7347,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -13360,7 +13378,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +7356,209 @@
+@@ -1266,26 +7371,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -13572,7 +13590,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +7566,38 @@
+@@ -1293,15 +7581,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -13612,7 +13630,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7608,124 @@
+@@ -1312,7 +7623,124 @@
          );
      }
  
@@ -13737,7 +13755,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7742,22 @@
+@@ -1329,9 +7757,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -13763,7 +13781,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7773,28 @@
+@@ -1347,10 +7788,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -13792,7 +13810,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7802,23 @@
+@@ -1358,8 +7817,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -13817,7 +13835,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7842,32 @@
+@@ -1383,22 +7857,32 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -13860,7 +13878,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1425,8 +7894,34 @@
+@@ -1425,8 +7909,34 @@
      fn deref(&self) -> &Self::Target {
          self.context
      }
@@ -13895,7 +13913,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7933,13 @@
+@@ -1438,6 +7948,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -13909,7 +13927,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7959,364 @@
+@@ -1457,12 +7974,364 @@
          }
      };
      let s_border = style.get_border();

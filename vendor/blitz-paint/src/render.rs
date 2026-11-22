@@ -4130,6 +4130,11 @@ impl ElementCx<'_, '_> {
     }
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
+        // pyro: HTML-in-Canvas: a canvas with content=drawable lays its content out without
+        // painting it in place (on every path: plain, phased, multicol).
+        if self.element.is_drawable_canvas() {
+            return;
+        }
         // (Where a positioned inline box left for its paint-tree entry is painted from: `draw_inline_pass`.)
         let pos_before_offset = pos;
         if self.node.flags.is_inline_root() {
@@ -5402,6 +5407,11 @@ impl ElementCx<'_, '_> {
     }
 
     fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
+        // pyro: HTML-in-Canvas: a canvas with content=drawable lays its content out without
+        // painting it in place (on every path: plain, phased, multicol).
+        if self.element.is_drawable_canvas() {
+            return;
+        }
         if let Some(ListItemLayout {
             marker: Marker::Image { width, height },
             position: ListItemLayoutPosition::Inside,
@@ -5850,6 +5860,11 @@ impl ElementCx<'_, '_> {
     /// paint after it (`FlowPhase::Foreground`): those later boxes are painted again over them,
     /// clipped to where they meet.
     fn draw_inline_boxes_over_atomics(&self, scene: &mut impl PaintScene, pos: Point) {
+        // pyro: HTML-in-Canvas: a canvas with content=drawable lays its content out without
+        // painting it in place (on every path: plain, phased, multicol).
+        if self.element.is_drawable_canvas() {
+            return;
+        }
         if !self.node.flags.is_inline_root() || !self.context.backgrounds {
             return;
         }
