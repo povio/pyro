@@ -773,6 +773,7 @@ impl Browser {
             session: state.session_storage.clone(),
             net: self.context_net(state.context).cloned(),
             viewport: state.viewport.clone(),
+            window_chrome: state.frames.settings.borrow().window_chrome,
             user_agent: state.user_agent_override.clone(),
             extra_headers: state.extra_http_headers.clone(),
             cache_disabled: state.cache_disabled,
