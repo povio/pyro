@@ -263,6 +263,55 @@ fn deletes_visible_space(
     wraps(page, dom, node)
 }
 
+/// Find the rendered split position for an ordinary-space run in the
+/// paragraph's text. Return a caret in the original text when leading
+/// spaces move to the new paragraph with the following visible content.
+pub(super) fn prepare_paragraph_split(
+    page: &PageDom, dom: &mut Dom, block: NodeId, (node, offset): Point,
+) -> Option<(Point, Option<Point>)> {
+    if dom.first_child(block).ok()? != Some(node) || dom.last_child(block).ok()? != Some(node) { return None; }
+    let text = dom.char_data(node).ok()?;
+    let (cut, _) = pyro_dom::dom::utf16_range(text, offset, 0).ok()?;
+    let left = text[..cut].trim_end_matches(' ');
+    let right = text[cut..].trim_start_matches(' ');
+    let end = text.len() - right.len();
+    if left.len() == end || !collapses(page, dom, node) { return None; }
+    // Edge spaces were already invisible. Keep them attached to the text
+    // instead of creating a new paragraph containing only those spaces.
+    if left.is_empty() {
+        if right.is_empty() { return None; }
+        return Some(((node, 0), Some((node, end as u32))));
+    }
+    if right.is_empty() { return Some(((node, editing::len(dom, node)), None)); }
+    if left.ends_with(char::is_whitespace) && !left.ends_with('\u{a0}')
+        || right.starts_with(char::is_whitespace) && !right.starts_with('\u{a0}') { return None; }
+    // A caret in a collapsed run follows its first rendered space. A
+    // nonempty remainder on either new line needs one nonbreaking space.
+    let before = usize::from(cut > left.len());
+    let after = usize::from(end > left.len() + before);
+    let begin = pyro_dom::dom::utf16_len(left);
+    let count = (end - left.len()) as u32;
+    let replacement = "\u{a0}".repeat(before + after);
+    dom.replace_data(node, begin, count, &replacement).ok()?;
+    Some(((node, begin + before as u32), None))
+}
+
+/// Typing at the first visible position replaces the collapsed leading
+/// spaces. This also applies when the caret was placed by Selection API.
+pub(super) fn trim_leading_space_for_typing(page: &PageDom, dom: &mut Dom, caret: Point) -> Point {
+    let (node, offset) = caret;
+    let Ok(text) = dom.char_data(node) else { return caret };
+    let lead = text.len() - text.trim_start_matches(' ').len();
+    if lead == 0 || lead == text.len() || offset as usize > lead { return caret; }
+    let Some(parent) = dom.parent_element(node).ok().flatten() else { return caret };
+    if dom.child_count(parent).ok() != Some(1) || !matches!(editing::local(dom, parent).as_str(), "p" | "div")
+        || page.layout().computed_style_value(dom, parent, "display") != "block" || !collapses(page, dom, node)
+    {
+        return caret;
+    }
+    if dom.replace_data(node, 0, lead as u32, "").is_ok() { (node, 0) } else { caret }
+}
+
 fn wraps(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     let Some(el) = dom.parent_element(node).ok().flatten() else {
         return false;

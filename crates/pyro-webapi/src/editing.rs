@@ -926,6 +926,7 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
                     let Some(point) = typing_point(page, &dom, host, caret) else { return };
                     let point = if index == 0 && !keep_link { link_typing_point(page, &dom, host, point) } else { point };
                     whitespace::consume_padding_lf(page, &mut dom, host, point);
+                    let point = whitespace::trim_leading_space_for_typing(page, &mut dom, point);
                     let inserted_end = insert_at_point(&mut dom, point, part, true);
                     whitespace::inserted(page, &mut dom, host, inserted_end, part);
                     caret = crate::edit_commands::inline_value::format_typed(
@@ -1668,6 +1669,13 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
             return caret;
         }
     }
+    let mut leading_space_caret = None;
+    if !anonymous && !inline_box && matches!(tag.as_str(), "p" | "div") {
+        if let Some((point, after_split)) = whitespace::prepare_paragraph_split(page, dom, block, caret) {
+            caret = point;
+            leading_space_caret = after_split;
+        }
+    }
     let mut at_heading_end = false;
     if matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
         if terminal_break && dom.parent(void).ok().flatten() == Some(block) {
@@ -1792,7 +1800,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         let _ = dom.replace_all(new_block, Some(only_child));
     }
     placeholder_if_empty(dom, block);
-    if let Some(point) = empty_caret { return point; }
+    if let Some(point) = leading_space_caret.or(empty_caret) { return point; }
     if let Some(text) = following_text { return (text, 0); }
     placeholder_if_empty(dom, new_block).unwrap_or_else(|| paragraph_point(dom, new_block, (new_block, 0)).unwrap_or((new_block, 0)))
 }
