@@ -1094,6 +1094,8 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
             false
         } else {
             let ev = EventCore::trusted(page, EventInterface::SubmitEvent, "submit", true, true);
+            // Composed, as Chrome fires it (WPT SubmitEvent.window: submit from a shadow tree).
+            ev.state.borrow_mut().composed = true;
             ev.fields.borrow_mut().submitter = submitter.and_then(|s| key_of(page, s));
             match key_of(page, form) {
                 Some(k) => fire(page, k, &ev),

@@ -1065,9 +1065,17 @@ fn fill_install_result<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Obje
 
 fn fill_submit<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        if let Some(n) = s.unwrap::<crate::node::Node>(o.get_atom("submitter")?) {
-            f.submitter = Some(n.target.key);
+        // `HTMLElement? submitter = null`: anything but null/undefined or a node is a TypeError.
+        let v = o.get_atom("submitter")?;
+        if v.is_nullish() {
+            return Ok(());
         }
+        let Some(n) = s.unwrap::<crate::node::Node>(v) else {
+            return Err(JsError::type_error(
+                "Failed to construct 'SubmitEvent': Failed to read the 'submitter' property from 'SubmitEventInit': The provided value is not of type 'HTMLElement'.",
+            ));
+        };
+        f.submitter = Some(n.target.key);
     }
     Ok(())
 }
