@@ -171,9 +171,30 @@ fn append_text(dom: &mut Dom, parent: u32, before: u32, text: &str) {
 /// descendant (`this.appendChild(form)` for the form it was going into): inserting it would make
 /// a cycle (WPT custom-elements custom-button-abort-insertion-crash).
 fn cannot_insert(d: &Dom, parent: u32, child: &NodeOrText<u32>) -> bool {
+    // A Document (one a script gave children before writing to it) takes no second element:
+    // the parser's insertion is dropped, as DOM's pre-insert validity would refuse it.
+    if matches!(d.n(parent).kind, NodeKind::Document(_)) {
+        if let NodeOrText::AppendNode(n) = child {
+            if d.n(*n).is_element() && document_has_child(d, parent, |c| c != *n && d.n(c).is_element()) {
+                return true;
+            }
+        }
+    }
     // A node the parser just made has no children: only one a script filled can be an ancestor.
     matches!(child, NodeOrText::AppendNode(n)
         if (d.n(*n).first_child != NIL || *n == parent) && d.is_host_including_inclusive_ancestor(*n, parent))
+}
+
+/// Whether a child of `doc` satisfies `pred`.
+fn document_has_child(d: &Dom, doc: u32, pred: impl Fn(u32) -> bool) -> bool {
+    let mut c = d.n(doc).last_child;
+    while c != NIL {
+        if pred(c) {
+            return true;
+        }
+        c = d.n(c).prev;
+    }
+    false
 }
 
 fn assign_parser_registry(dom: &mut Dom, node: u32, parent: u32) {
@@ -352,6 +373,10 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 public_id: (&*public_id).into(),
                 system_id: (&*system_id).into(),
             };
+            // A Document with a doctype or an element child already takes no doctype.
+            if document_has_child(d, self.doc, |c| d.n(c).is_element() || matches!(d.n(c).kind, NodeKind::Doctype(_))) {
+                return;
+            }
             let owner = self.doc_owner(d);
             let n = d.alloc_raw(NodeKind::Doctype(Box::new(data)), owner);
             d.link_raw(n, self.doc, NIL);
