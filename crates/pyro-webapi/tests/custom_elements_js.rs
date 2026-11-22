@@ -482,6 +482,7 @@ fn fragment_upgrade_keeps_definition_chosen_before_sibling_adoption() {
 #[test]
 fn synchronous_autonomous_construction_reports_and_returns_a_fresh_failed_element() {
     let e = env(PAGE);
+    e.main.set_exception_reporter(Some(lifecycle::report_exception));
     assert_eq!(eval(&e.main, r#"
         const registry = new CustomElementRegistry(), errors = [];
         let partial;
