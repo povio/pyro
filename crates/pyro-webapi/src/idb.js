@@ -870,10 +870,12 @@
       e: error ? plainEvent('error', true, true) : plainEvent('success', false, false),
       a: (notCanceled, threw) => {
         x.inflight = false;
-        if (x.state === 'active') x.state = 'inactive';
+        if (x.state === 'active') {
+          x.state = 'inactive';
+          if (threw) return abortTx(x, fail('AbortError', 'An exception was thrown in an event handler.'));
+        }
         if (x.state === 'finished') return;
-        if (threw) abortTx(x, fail('AbortError', 'An exception was thrown in an event handler.'));
-        else if (error && notCanceled) abortTx(x, error);
+        if (error && notCanceled) abortTx(x, error);
         else pump(x);
       },
     };
