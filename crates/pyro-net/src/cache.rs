@@ -293,7 +293,13 @@ impl HttpCache {
         if self.shared {
             return shared_storable(status, response, request);
         }
-        if !matches!(status.as_u16(), 200 | 203 | 204 | 404 | 410) {
+        // RFC 9111 §3: any final status the cache understands, partial content
+        // (`Range` is unsupported) and redirects (not stored) aside.
+        if status.is_informational()
+            || status.is_redirection()
+            || status == StatusCode::PARTIAL_CONTENT
+            || !(200..600).contains(&status.as_u16())
+        {
             return false;
         }
         let (req, resp) = (Directives::parse(request, true), Directives::parse(response, false));
@@ -307,7 +313,10 @@ impl HttpCache {
             return false; // Vary: *
         }
         let explicit = resp.max_age.is_some() || response.contains_key(header::EXPIRES);
-        explicit || response.contains_key(header::ETAG) || response.contains_key(header::LAST_MODIFIED)
+        // Without an explicit lifetime an entry is kept only to revalidate it,
+        // for the statuses that are heuristically cacheable (RFC 9110 §15.1).
+        let heuristic = matches!(status.as_u16(), 200 | 203 | 204 | 404 | 405 | 410 | 414 | 501);
+        explicit || (heuristic && (response.contains_key(header::ETAG) || response.contains_key(header::LAST_MODIFIED)))
     }
 
     /// Stores a complete response. `request` is the header map actually sent,
@@ -838,6 +847,13 @@ mod tests {
             CacheMode::Default
         ));
         assert!(!c.storable(StatusCode::OK, &h(&[("cache-control", "max-age=60")]), &none, CacheMode::NoStore));
+        let status = |code: u16, resp: &[(&'static str, &str)]| {
+            c.storable(StatusCode::from_u16(code).unwrap(), &h(resp), &none, CacheMode::Default)
+        };
+        assert!(status(500, &[("cache-control", "max-age=60")]), "any final status with an explicit lifetime");
+        assert!(status(299, &[("expires", "Thu, 01 Dec 2094 16:00:00 GMT")]));
+        assert!(!status(500, &[("etag", "\"v\"")]), "not heuristically cacheable: nothing to revalidate");
+        assert!(!status(304, &[("cache-control", "max-age=60")]));
         assert!(!HttpCache::new(0, 0).storable(
             StatusCode::OK,
             &h(&[("cache-control", "max-age=60")]),
