@@ -30,6 +30,10 @@ pub struct ScriptInfo {
     pub nomodule: bool,
     pub parser_inserted: bool,
     pub already_started: bool,
+    /// HTML "force async": a script-inserted external script without an
+    /// `async` attribute runs as soon as possible unless this is false (it is
+    /// then in its document's in-order list).
+    pub force_async: bool,
     /// Child text content (inline script source).
     pub inline_text: String,
     pub crossorigin: Option<String>,
@@ -349,6 +353,15 @@ impl Dom {
             Some(e) if e.name.ns == ns!(svg) => "href",
             _ => "src",
         };
+        // HTML: a script whose force async is true loses it when it gets an
+        // `async` attribute.
+        if local == "async" && added {
+            if let Some(e) = self.n_mut(idx).element_mut() {
+                if e.is_html() && e.name.local == local_name!("script") {
+                    e.script_force_async = false;
+                }
+            }
+        }
         let script_src = local == source_attr && added && self.script_steps_due(idx);
         let meta = matches!(local, "name" | "content") && self.is_html_meta(idx);
         if meta {
@@ -562,6 +575,7 @@ impl Dom {
             nomodule: !svg && (e.attr_local(&local_name!("nomodule")).is_some() || !for_window_onload(e)),
             parser_inserted: e.flags & element_flags::PARSER_INSERTED != 0,
             already_started: e.flags & element_flags::SCRIPT_ALREADY_STARTED != 0,
+            force_async: e.script_force_async,
             inline_text,
             crossorigin: e.attr_local(&local_name!("crossorigin")).map(str::to_owned),
             integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
@@ -586,6 +600,16 @@ impl Dom {
         // :defined is element state.
         self.bump();
         self.note(crate::dom::Change::State(i));
+        Ok(())
+    }
+
+    /// Sets the script's "force async" (the `async` IDL attribute's setter
+    /// clears it; a parser-inserted script that prepare returns from before
+    /// "already started" without an `async` attribute gets it).
+    pub fn set_script_force_async(&mut self, script: NodeId, force_async: bool) -> DomResult<()> {
+        let i = self.check(script)?;
+        let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
+        e.script_force_async = force_async;
         Ok(())
     }
 

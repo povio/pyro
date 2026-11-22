@@ -231,6 +231,8 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                 let mut element = ElementData::new(name);
                 element.flags |=
                     if scripting { element_flags::PARSER_INSERTED } else { element_flags::SCRIPT_ALREADY_STARTED };
+                // The XML parser's scripts are not force async either.
+                element.script_force_async = false;
                 let mut expanded = FxHashSet::default();
                 for (key, value) in attributes {
                     let ns = if key.as_namespace_binding().is_some() {

@@ -585,6 +585,8 @@ pub struct DocumentState {
     /// started it, which `document.open()` stops (HTML "stop loading").
     pub(crate) pending_script: Option<(LoaderId, String)>,
     pub(crate) load: Option<loader::DocumentLoad>,
+    /// HTML "list of scripts that will execute in order as soon as possible".
+    pub(crate) in_order_scripts: loader::InOrderScripts,
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
     pub(crate) preloads: preload::Preloads,
@@ -1613,6 +1615,7 @@ impl Browser {
                 preloads: Default::default(),
                 refresh: Default::default(),
                 _owner_pin: None,
+                in_order_scripts: Default::default(),
             },
             session_storage,
             popup: None,

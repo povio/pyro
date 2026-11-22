@@ -918,6 +918,18 @@ struct PendingScript {
     external: bool,
 }
 
+/// HTML "list of scripts that will execute in order as soon as possible" of
+/// a frame's document: script-inserted external scripts that are neither
+/// `async` nor force async (`script.async = false`). Each runs once it and
+/// every script before it are fetched; each delays the document's `load`
+/// (`counted`, when the document has a `DocumentLoad`). The list belongs to
+/// the document of `loader`: another document's load starts a new one.
+#[derive(Default)]
+pub(crate) struct InOrderScripts {
+    loader: Option<LoaderId>,
+    list: VecDeque<(Rc<RefCell<PendingScript>>, bool)>,
+}
+
 enum ParsePhase {
     /// Whole body not yet fed.
     Feed(Vec<u8>),
@@ -1838,6 +1850,12 @@ impl Browser {
                 || info.kind == ScriptKind::Data
             {
                 let _ = d.clear_parser_inserted(node);
+                // Prepare step 4: without an `async` attribute it is now
+                // force async (`script.async` is true; reinserted, it runs as
+                // soon as possible).
+                if !info.async_ {
+                    let _ = d.set_script_force_async(node, true);
+                }
                 return;
             }
             let _ = d.mark_script_started(node);
@@ -2112,6 +2130,95 @@ impl Browser {
         });
     }
 
+    /// Fetches a script of the document's in-order list ([`InOrderScripts`])
+    /// and runs the ready scripts at the front of the list when it arrives.
+    fn fetch_in_order(
+        &mut self,
+        page: FrameKey,
+        ty: ScriptType,
+        url: String,
+        element: Rc<ResourceNode>,
+        opts: ScriptFetch,
+    ) {
+        let Some(loader_id) = self.frame_loader(page) else { return };
+        let counted = match self.load_mut(page) {
+            Some(mut l) => {
+                l.async_pending += 1;
+                true
+            }
+            None => false,
+        };
+        let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None, external: true }));
+        {
+            let Some(mut doc) = self.doc_mut(page) else { return };
+            let in_order = &mut doc.in_order_scripts;
+            if in_order.loader.as_ref() != Some(&loader_id) {
+                in_order.loader = Some(loader_id.clone());
+                in_order.list.clear();
+            }
+            in_order.list.push_back((ps.clone(), counted));
+        }
+        let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
+        self.fetch_script(page, url, kind, opts, move |b, res| {
+            if b.frame_loader(page).as_ref() != Some(&loader_id) {
+                return;
+            }
+            ps.borrow_mut().source = Some(res);
+            b.run_in_order(page);
+        });
+    }
+
+    /// Runs the scripts at the front of the in-order list while they are
+    /// fetched, in list order, then checks for the document's `load`.
+    fn run_in_order(&mut self, page: FrameKey) {
+        loop {
+            let next = {
+                let Some(mut doc) = self.doc_mut(page) else { return };
+                let loader = doc.main_frame.loader_id.clone();
+                let in_order = &mut doc.in_order_scripts;
+                if in_order.loader.as_ref() != Some(&loader) {
+                    return;
+                }
+                if in_order.list.front().is_none_or(|(ps, _)| ps.borrow().source.is_none()) {
+                    break;
+                }
+                in_order.list.pop_front()
+            };
+            let Some((ps, counted)) = next else { break };
+            let (ty, url, element, source) = {
+                let mut p = ps.borrow_mut();
+                (p.ty, p.url.clone(), p.element.clone(), p.source.take())
+            };
+            let Some(source) = source else { continue };
+            let loader_id = self.frame_loader(page);
+            match source {
+                _ if self.script_moved(page, &element) => {}
+                Ok(text) if ty == ScriptType::Classic => {
+                    self.execute_external(page, &text, &url, &element);
+                    self.script_loaded(page, &element, true);
+                }
+                Ok(text) => {
+                    self.execute_module(page, &text, &url, false, Some(element), true);
+                }
+                Err(e) => {
+                    self.report_load_error(page, &e);
+                    self.script_loaded(page, &element, false);
+                }
+            }
+            // The script or its `load`/`error` handler may have replaced the
+            // document: the rest of the list went with it.
+            if self.frame_loader(page) != loader_id {
+                return;
+            }
+            if counted {
+                if let Some(mut l) = self.load_mut(page) {
+                    l.async_pending -= 1;
+                }
+            }
+        }
+        self.maybe_fire_load(page);
+    }
+
     /// The loader of the document `page` shows (`None` without a document).
     fn frame_loader(&self, page: FrameKey) -> Option<LoaderId> {
         self.doc(page).map(|p| p.main_frame.loader_id.clone())
@@ -2248,11 +2355,16 @@ impl Browser {
                 // Scripts it inserted are prepared before the drain returns.
                 self.drain_dom_resources(page);
             }
-            // External classic scripts inserted by script are "force async":
-            // `defer` is ignored and they run as soon as they arrive.
+            // External scripts inserted by script ignore `defer`. With an
+            // `async` attribute or force async they run as soon as they
+            // arrive; otherwise (`script.async = false`) in insertion order.
             (ScriptType::Classic, Some(url)) | (ScriptType::Module, Some(url)) => {
                 self.block_rendering_on_script(page, node, false);
-                self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
+                if info.async_ || info.force_async {
+                    self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
+                } else {
+                    self.fetch_in_order(page, ty, url, element, ScriptFetch::of(&info))
+                }
             }
             (ScriptType::Module, None) => {
                 let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or(base);

@@ -381,6 +381,10 @@ pub struct ElementData {
     /// HTML tree builder learns the intended parent after allocating a token.
     pub(crate) parser_needs_registry: bool,
     pub(crate) link_explicitly_enabled: bool,
+    /// HTML script "force async": true for a script element created by
+    /// script (`createElement`, cloning), false for one a parser created.
+    /// Meaningless for other elements.
+    pub(crate) script_force_async: bool,
     pub name: QualName,
     /// Read freely; written only through the methods that keep `id` and
     /// `classes` in step (`set_attrs`, `push_attr`, `remove_attr`,
@@ -438,6 +442,7 @@ impl ElementData {
         ElementData {
             parser_needs_registry: false,
             link_explicitly_enabled: false,
+            script_force_async: true,
             name,
             attrs: Vec::new(),
             semantic_style: None,

@@ -1945,13 +1945,16 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     def.accessor(
         "async",
         |s, n| {
-            let dom = n.page().dom.borrow();
-            let info = dom.script_info(n.id).js()?;
-            // Non-parser scripts are async unless explicitly set otherwise.
-            Ok(s.boolean(info.async_ || !info.parser_inserted && !dom.has_attribute(n.id, "async").js()? && false))
+            // HTML: true when the element is force async (created by script,
+            // never given `async = false`) or has an `async` attribute.
+            let info = n.page().dom.borrow().script_info(n.id).js()?;
+            Ok(s.boolean(info.force_async || info.async_))
         },
         |_s, n, v| {
-            n.page().dom.borrow_mut().toggle_attribute(n.id, "async", Some(v.to_bool())).js()?;
+            // The setter clears force async, then sets or removes the attribute.
+            let mut dom = n.page().dom.borrow_mut();
+            dom.set_script_force_async(n.id, false).js()?;
+            dom.toggle_attribute(n.id, "async", Some(v.to_bool())).js()?;
             Ok(())
         },
     );

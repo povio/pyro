@@ -606,6 +606,12 @@ impl<A: DomAccess> Sink<A> {
             attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),
         );
         el.flags = self.elem_flags;
+        // HTML: a script the document's parser creates has its force async set
+        // to false. A fragment parser's scripts keep it: once connected they
+        // run as soon as possible (`createContextualFragment`, as Chrome).
+        if self.elem_flags & element_flags::FRAGMENT_PARSED == 0 {
+            el.script_force_async = false;
+        }
         if is_style {
             // Until `pop` (`Dom::resources_element_popped`).
             el.flags |= crate::node::element_flags::STYLE_PARSING;
