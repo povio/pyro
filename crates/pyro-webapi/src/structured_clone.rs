@@ -58,6 +58,9 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
                     None => Ok(s.undefined()),
                 },
                 13 => Ok(s.boolean(crate::audio_data::parts(s, value)?.is_some())),
+                // Whether a listed ImageBitmap or OffscreenCanvas can still be transferred, checked
+                // once the value is serialized: DataCloneError when a getter detached it meanwhile.
+                17 => Ok(s.boolean(canvas_object(s, value, true)?.is_some())),
                 14 => {
                     crate::audio_data::detach(s, value);
                     Ok(s.undefined())

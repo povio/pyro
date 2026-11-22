@@ -66,7 +66,7 @@
     // canvas objects' and AudioData frames' copies.
     function clone(value, options, ports, keep, streams, resources, forStorage = false, clusterBound) {
         const memory = new M(), buffers = [], moved = [];
-        let piped, detached, audio;
+        let piped, detached, audio, deferred;
         if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
@@ -83,6 +83,16 @@
                 }
                 // Nothing is detached unless the whole value clones.
                 const listed = new M();
+                // HTML checks that no listed object is detached only once the value is serialized:
+                // a getter's exception comes first. A DataCloneError of an already detached entry
+                // waits until then.
+                const later = (f) => {
+                    try { return f(); } catch (e) {
+                        if (!e || e.name !== 'DataCloneError') throw e;
+                        if (!deferred) deferred = e;
+                        return null;
+                    }
+                };
                 for (let i = 0; i < list.length; ++i) {
                     const entry = list[i];
                     if (call(mapHas, listed, [entry])) fail('An object is listed twice in the transfer list');
@@ -90,13 +100,19 @@
                     let length = -1;
                     try { length = call(abLength, entry); } catch (_) {}
                     if (length >= 0) {
-                        try { new U8(entry); } catch (_) { fail('An ArrayBuffer is detached and could not be transferred'); }
+                        let live = true;
+                        try { new U8(entry); } catch (_) { live = false; }
+                        if (!live) {
+                            later(() => fail('An ArrayBuffer is detached and could not be transferred'));
+                            continue;
+                        }
                         if (!abTransfer) fail('ArrayBuffer transfer is not available', true);
                         put(buffers, buffers.length, entry);
                         continue;
                     }
                     const ordinary = guard(entry);
-                    const port = ordinary ? undefined : host(entry, 1);
+                    const port = ordinary ? undefined : later(() => host(entry, 1));
+                    if (port === null) continue;
                     if (port === undefined) {
                         if (!ordinary) {
                             const frame = host(entry, 12, clusterBound);
@@ -109,7 +125,8 @@
                         }
                         // An ImageBitmap or OffscreenCanvas: its copy, the
                         // original detached once the whole value cloned.
-                        const canvas = host(entry, 8);
+                        const canvas = later(() => host(entry, 8));
+                        if (canvas === null) continue;
                         if (canvas !== undefined) {
                             call(mapSet, memory, [entry, canvas]);
                             if (!detached) detached = [];
@@ -288,6 +305,14 @@
             return result;
         }
         const result = copy(value, 0);
+        if (deferred) throw deferred;
+        // A getter may have detached a listed buffer, ImageBitmap or OffscreenCanvas meanwhile.
+        for (let i = 0; i < buffers.length; ++i) {
+            try { new U8(buffers[i]); } catch (_) { fail('An ArrayBuffer is detached and could not be transferred'); }
+        }
+        if (detached) for (let i = 0; i < detached.length; i += 2) {
+            if (!host(detached[i], 17)) fail('The object is detached and could not be transferred');
+        }
         // A getter can close a listed frame during serialization.
         if (audio) for (let i = 0; i < audio.length; i += 2) host(audio[i], 13);
         for (let i = 0; i < buffers.length; ++i) call(abTransfer, buffers[i]);
