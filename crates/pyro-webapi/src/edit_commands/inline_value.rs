@@ -898,7 +898,7 @@ pub(super) fn format_spaced_run(page: &Rc<PageDom>, host: NodeId, command: &str,
             if editing::local(&dom, container) != "span" || dom.child_count(container).ok() != Some(1)
                 || dom.parent_element(container).ok().flatten() != Some(parent)
                 || !dom.element(container).is_ok_and(|e| e.is_html())
-                || !dom.attributes(container).is_ok_and(|attrs| attrs.iter().all(|a| a.name.local.as_ref() == "style"))
+                || !dom.attributes(container).is_ok_and(|attrs| attrs.iter().all(|a| a.name.local == markup5ever::local_name!("style")))
             { return false; }
             // A declaration on the child takes precedence over inherited
             // formatting. Let the normal carrier-editing path handle it.
