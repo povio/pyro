@@ -1012,6 +1012,31 @@ impl JsClass for DomTokenList {
                     "allow-top-navigation-to-custom-protocols",
                 ],
                 "blocking" => &["render"],
+                // Scoped focusgroup tokens (WPT focusgroup/tentative/idl-reflection.html).
+                "focusgroup" => &[
+                    "toolbar",
+                    "tablist",
+                    "radiogroup",
+                    "listbox",
+                    "menu",
+                    "menubar",
+                    "wrap",
+                    "nowrap",
+                    "inline",
+                    "block",
+                    "nomemory",
+                    "none",
+                    "feed",
+                    "grid",
+                    "itemcontrols",
+                    "noitemcontrols",
+                    "manual",
+                    "rowwrap",
+                    "colwrap",
+                    "flow",
+                    "rowflow",
+                    "colflow",
+                ],
                 _ => {
                     return Err(JsError::Type(format!(
                         "DOMTokenList has no supported tokens for the '{}' attribute.",
@@ -1033,6 +1058,7 @@ pub fn token_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, attr: &'static 
         "sandbox" => 15,
         // `link` has both `sizes` (16) and `blocking`.
         "blocking" => 17,
+        "focusgroup" => 18,
         _ => 16,
     };
     let key = coll_identity(page, slot, id);

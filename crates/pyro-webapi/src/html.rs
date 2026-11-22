@@ -3650,8 +3650,24 @@ simple_class!(HtmlTrackElement, "HTMLTrackElement", HtmlElement, |def| {
     reflect_bool!(def, "default", "default");
 });
 
-/// HTMLOrSVGOrMathMLElement reflects both focus attributes in no namespace.
+/// HTMLOrSVGOrMathMLElement reflects both focus attributes in no namespace,
+/// and the scoped focusgroup ones: `[SameObject, PutForwards=value]
+/// readonly attribute DOMTokenList focusGroup` (`focusgroup`) and the
+/// boolean `focusGroupStart` (`focusgroupstart`), as WPT
+/// html/interaction/focus/focusgroup/tentative/idl-reflection.html tests.
 fn define_focus_attributes<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    reflect_tokens!(def, "focusGroup", "focusgroup");
+    def.accessor(
+        "focusGroupStart",
+        |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, None, "focusgroupstart").js()?.is_some())),
+        |_s, n, value| {
+            if value.to_bool() {
+                set_attr(n, "focusgroupstart", "")
+            } else {
+                n.page().dom.borrow_mut().remove_attribute_ns(n.id, None, "focusgroupstart").js().map(|_| ())
+            }
+        },
+    );
     def.accessor(
         "autofocus",
         |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, None, "autofocus").js()?.is_some())),
