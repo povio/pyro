@@ -264,6 +264,9 @@ pub struct PageDom {
     /// `document.referrer` and the `Referrer-Policy` header of the document's
     /// response, set by the embedder at commit (`crate::fetch`).
     pub(crate) referrer: crate::fetch::DocumentReferrer,
+    /// The document response's `Last-Modified` header as Unix milliseconds, set by the
+    /// embedder at commit (`document.lastModified`).
+    last_modified: std::cell::Cell<Option<f64>>,
     pub(crate) reflected_url_base: RefCell<Option<crate::html::ReflectedUrlBase>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
@@ -995,6 +998,7 @@ impl PageDom {
             popups: RefCell::new(Vec::new()),
             blob_urls: RefCell::new(FxHashMap::default()),
             referrer: Default::default(),
+            last_modified: std::cell::Cell::new(None),
             reflected_url_base: RefCell::new(None),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
@@ -2956,6 +2960,15 @@ impl PageDom {
     /// HTMLImageElement.complete: no `src`, or the current `src` has
     /// finished loading (successfully or not). A `src` set since the last
     /// load started is not complete yet, as in Chromium.
+    /// Records the committed document response's `Last-Modified` time (Unix milliseconds;
+    /// `None`: no valid header).
+    pub fn set_last_modified(&self, ms: Option<f64>) {
+        self.last_modified.set(ms.filter(|ms| ms.is_finite()));
+    }
+    /// [`PageDom::set_last_modified`]'s time.
+    pub(crate) fn last_modified(&self) -> Option<f64> {
+        self.last_modified.get()
+    }
     pub(crate) fn image_complete(&self, el: NodeId) -> bool {
         let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
         let Some(src) = src else { return true };

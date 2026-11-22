@@ -176,6 +176,9 @@ pub struct Resource {
     /// A document's `Content-Language` response header, if any (its
     /// language when no element or pragma gives one).
     pub content_language: Option<String>,
+    /// A document's `Last-Modified` response header as Unix milliseconds, if valid
+    /// (`document.lastModified`).
+    pub last_modified: Option<f64>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// A document's response asked for an origin-keyed agent cluster
@@ -507,6 +510,7 @@ impl ResourceLoader for NetLoader {
                 header_csp: None,
                 refresh: None,
                 content_language: None,
+                last_modified: None,
                 referrer_policy: None,
                 origin_agent_cluster: false,
                 sent_referrer: document.then(|| {
@@ -589,6 +593,7 @@ impl ResourceLoader for NetLoader {
                     header_csp: None,
                     refresh: None,
                     content_language: None,
+                    last_modified: None,
                     referrer_policy: None,
                     origin_agent_cluster: false,
                     sent_referrer: None,
@@ -652,6 +657,11 @@ impl ResourceLoader for NetLoader {
                         content_language: document
                             .then(|| h.headers.get(http::header::CONTENT_LANGUAGE)?.to_str().ok().map(str::to_owned))
                             .flatten(),
+                        last_modified: document
+                            .then(|| h.headers.get(http::header::LAST_MODIFIED)?.to_str().ok())
+                            .flatten()
+                            .and_then(pyro_net::parse_http_date)
+                            .map(|secs| secs * 1000.0),
                         referrer_policy: pyro_net::ReferrerPolicy::from_header(
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
@@ -897,6 +907,7 @@ impl ResourceLoader for StaticLoader {
                         header_csp: csp.clone(),
                         refresh: None,
                         content_language: None,
+                        last_modified: None,
                         referrer_policy,
                         origin_agent_cluster: false,
                         sent_referrer: sent_referrer.clone(),
@@ -1632,6 +1643,7 @@ impl Browser {
             header_csp: None,
             refresh: None,
             content_language: None,
+            last_modified: None,
             referrer_policy: None,
             origin_agent_cluster: false,
             sent_referrer: None,
@@ -1746,6 +1758,7 @@ impl Browser {
                 resource.referrer_policy,
             ),
         }
+        page_dom.set_last_modified(resource.last_modified);
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
         // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
@@ -3630,6 +3643,7 @@ mod disposition_tests {
             header_csp: None,
             refresh: None,
             content_language: None,
+            last_modified: None,
             referrer_policy: None,
             origin_agent_cluster: false,
             sent_referrer: None,

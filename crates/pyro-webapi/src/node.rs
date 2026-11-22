@@ -2090,6 +2090,23 @@ impl JsClass for Document {
             let page = n.page();
             Ok(s.string(&if page.document() == n.id { page.document_referrer() } else { String::new() }))
         });
+        // HTML `document.lastModified`: the document response's `Last-Modified` time, else the
+        // current time (read anew on each access, as in Chrome), as "MM/DD/YYYY hh:mm:ss" in the
+        // user's local time zone (the realm's `Date` does the zone conversion).
+        def.getter("lastModified", |s, n| {
+            let page = n.page();
+            let ms = (page.document() == n.id).then(|| page.last_modified()).flatten().unwrap_or_else(|| {
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64)
+            });
+            let date = s.date(ms)?;
+            let part = |name: &'static str| -> JsResult<i64> {
+                let method = date.get_atom(name)?.as_object().ok_or_else(|| JsError::type_error("Date method"))?;
+                Ok(method.call(Some(date), &[])?.to_number()? as i64)
+            };
+            let (month, day, year) = (part("getMonth")? + 1, part("getDate")?, part("getFullYear")?);
+            let (hours, minutes, seconds) = (part("getHours")?, part("getMinutes")?, part("getSeconds")?);
+            Ok(s.string(&format!("{month:02}/{day:02}/{year:04} {hours:02}:{minutes:02}:{seconds:02}")))
+        });
         // HTML `document.domain`. The getter is the origin's effective domain; the setter runs
         // the checks (no browsing context, no effective domain, not a registrable domain suffix:
         // SecurityError) and then has no effect, as every agent cluster is origin-keyed (Chromium's

@@ -636,7 +636,7 @@ fn header_date(headers: &HeaderMap, name: HeaderName) -> Option<f64> {
 
 /// HTTP-date (RFC 9110 §5.6.7): IMF-fixdate, plus the obsolete RFC 850 and
 /// asctime forms recipients must accept. Returns Unix seconds.
-pub(crate) fn parse_http_date(s: &str) -> Option<f64> {
+pub fn parse_http_date(s: &str) -> Option<f64> {
     let s = s.trim();
     let month = |m: &str| {
         ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
