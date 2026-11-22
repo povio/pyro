@@ -1,0 +1,123 @@
+{
+  "target": {
+    "base": {
+      "passed": 1142,
+      "reported": 1276,
+      "status": {
+        "complete": 4,
+        "error": 1,
+        "timeout": 1
+      },
+      "harness": {
+        "OK": 4,
+        "Error": 1,
+        "null": 1
+      },
+      "strict": 3
+    },
+    "candidate": {
+      "passed": 1142,
+      "reported": 1276,
+      "status": {
+        "complete": 4,
+        "error": 1,
+        "timeout": 1
+      },
+      "harness": {
+        "OK": 4,
+        "Error": 1,
+        "null": 1
+      },
+      "strict": 3
+    },
+    "chrome158": {
+      "passed": 1316,
+      "reported": 1316,
+      "status": {
+        "complete": 6
+      },
+      "harness": {
+        "OK": 6
+      },
+      "strict": 6
+    }
+  },
+  "guards": {
+    "base": {
+      "passed": 41,
+      "reported": 45,
+      "status": {
+        "complete": 8
+      },
+      "harness": {
+        "OK": 8
+      },
+      "strict": 7
+    },
+    "candidate": {
+      "passed": 45,
+      "reported": 45,
+      "status": {
+        "complete": 8
+      },
+      "harness": {
+        "OK": 8
+      },
+      "strict": 8
+    },
+    "chrome158": {
+      "passed": 44,
+      "reported": 45,
+      "status": {
+        "complete": 8
+      },
+      "harness": {
+        "OK": 8
+      },
+      "strict": 7
+    }
+  },
+  "unique": {
+    "base": {
+      "passed": 1183,
+      "reported": 1321,
+      "status": {
+        "complete": 12,
+        "error": 1,
+        "timeout": 1
+      },
+      "harness": {
+        "OK": 12,
+        "Error": 1,
+        "null": 1
+      },
+      "strict": 10
+    },
+    "candidate": {
+      "passed": 1187,
+      "reported": 1321,
+      "status": {
+        "complete": 12,
+        "error": 1,
+        "timeout": 1
+      },
+      "harness": {
+        "OK": 12,
+        "Error": 1,
+        "null": 1
+      },
+      "strict": 11
+    },
+    "chrome158": {
+      "passed": 1360,
+      "reported": 1361,
+      "status": {
+        "complete": 14
+      },
+      "harness": {
+        "OK": 14
+      },
+      "strict": 13
+    }
+  }
+}

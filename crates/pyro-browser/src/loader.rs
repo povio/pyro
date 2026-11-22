@@ -1625,7 +1625,10 @@ impl Browser {
         if resource.content_language.is_some() {
             let _ = dom.borrow_mut().set_content_language(doc, resource.content_language.as_deref());
         }
-        let mut parser = if resource.mime == "text/plain" {
+        let json_document = pyro_net::is_json_mime(&resource.mime);
+        let mut parser = if json_document {
+            DocumentParser::new_json(dom.clone(), doc, &resource.mime)
+        } else if resource.mime == "text/plain" {
             DocumentParser::new_plaintext(dom.clone(), doc)
         } else if pyro_dom::parse::is_xml_mime(&resource.mime) {
             DocumentParser::new_xml(dom.clone(), doc, &resource.mime)
@@ -1648,7 +1651,7 @@ impl Browser {
         // An image is shown in an image document (HTML § 7.6.6 "Page load processing model for
         // media"): Chromium's markup, the image at the top left in a frame, centred on a dark
         // background in a window.
-        let body = if resource.mime.starts_with("image/") && !pyro_dom::parse::is_xml_mime(&resource.mime) {
+        let body = if resource.mime.starts_with("image/") && !json_document && !pyro_dom::parse::is_xml_mime(&resource.mime) {
             let src = resource.url.replace('&', "&amp;").replace('"', "&quot;");
             let (body, img) = match page.child {
                 Some(_) => ("margin: 0px;", "display: block;"),
