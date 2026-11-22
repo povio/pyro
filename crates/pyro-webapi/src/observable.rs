@@ -71,7 +71,25 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
 /// was made at; any other value (`subscriber.error("text")`) is reported at
 /// the script that is running, where a `throw` of it would have been.
 pub(crate) fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
-    let mut details = JsException::from_value(s, value);
+    // Only an Error's properties describe it: another object's `message`, `name` or position
+    // getters are not invoked (`reportError({ get message() {...} })` runs none of them).
+    let error_like = value.as_object().is_none() || {
+        let error = s.global().get_atom("Error").ok().and_then(|e| e.as_object());
+        error.is_some_and(|ctor| value.instance_of(ctor).unwrap_or(false))
+    };
+    let mut details = if error_like {
+        JsException::from_value(s, value)
+    } else {
+        JsException {
+            message: value.to_string().unwrap_or_default(),
+            name: None,
+            stack: None,
+            line: None,
+            column: None,
+            url: None,
+            value: Some(Persistent::new(s, value)),
+        }
+    };
     if details.line.is_none() {
         if let Some((url, line, column)) = crate::csp::running_script_location(s) {
             details.url = Some(url);
