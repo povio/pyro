@@ -1756,6 +1756,13 @@ impl JsClass for HtmlElement {
             },
         );
         def.accessor(
+            "translate",
+            |s, n| Ok(s.boolean(translation_enabled(&n.page().dom.borrow(), n.id))),
+            |_s, n, v| {
+                n.page().dom.borrow_mut().set_attribute(n.id, "translate", if v.to_bool() { "yes" } else { "no" }).js()
+            },
+        );
+        def.accessor(
             "contentEditable",
             |s, n| {
                 let dom = n.page().dom.borrow();
@@ -5294,4 +5301,22 @@ mod canvas_dimension_tests {
         assert_eq!(canvas_dimension(Some("4294967296"), 300), 300);
         assert_eq!(canvas_dimension(None, 150), 150);
     }
+}
+
+/// HTML's translation mode: the nearest HTML element's `translate` (yes or
+/// empty: enabled, no: disabled, ASCII case-insensitive) up the parent
+/// elements; translate-enabled at the top. Non-HTML elements inherit.
+fn translation_enabled(dom: &pyro_dom::Dom, id: pyro_dom::NodeId) -> bool {
+    let mut current = Some(id);
+    while let Some(el) = current {
+        if dom.element(el).is_ok_and(|e| e.is_html()) {
+            match dom.get_attribute(el, "translate").ok().flatten() {
+                Some(v) if v.is_empty() || v.eq_ignore_ascii_case("yes") => return true,
+                Some(v) if v.eq_ignore_ascii_case("no") => return false,
+                _ => {}
+            }
+        }
+        current = dom.parent_element(el).ok().flatten();
+    }
+    true
 }
