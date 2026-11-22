@@ -62,7 +62,7 @@ fn selected_coordinate(page: &PageDom, el: NodeId) -> (i64, i64) {
 /// The form controls' entries for `form` (submitter included if given),
 /// without the `formdata` event: see [`construct_entry_list`].
 pub fn form_entries(page: &PageDom, form: NodeId, submitter: Option<NodeId>) -> Vec<(String, EntryValue)> {
-    form_entries_with_charset(page, form, submitter, "UTF-8")
+    form_entries_with_charset(page, form, submitter, "UTF-8", None)
 }
 
 thread_local! {
@@ -95,12 +95,15 @@ pub(crate) fn construct_entry_list<'s>(
     if CONSTRUCTING.with(|c| c.borrow().contains(&key)) {
         return None;
     }
-    let entries = form_entries_with_charset(page, form, submitter, charset);
+    let mut sources = Vec::new();
+    let entries = form_entries_with_charset(page, form, submitter, charset, Some(&mut sources));
     let Some(s) = s.filter(|_| page.dom.borrow().has_formdata_listeners()) else {
         return Some(EntryList::Entries(entries));
     };
     let Some(target) = page.dom.borrow().node_key(form) else { return Some(EntryList::Entries(entries)) };
-    let fd = match crate::form_data::with_entries(s, entries) {
+    let fd = match crate::form_data::with_entries(s, entries)
+        .and_then(|fd| crate::form_data::adopt_input_files(s, page, fd, &sources).map(|()| fd))
+    {
         Ok(fd) => fd,
         Err(e) => {
             s.report_exception(&e);
@@ -116,11 +119,14 @@ pub(crate) fn construct_entry_list<'s>(
 }
 
 /// `form_entries`, reporting `charset` in a hidden `_charset_` control.
+/// `sources` gets (entry index, file input, file index) of each selected
+/// file's entry.
 fn form_entries_with_charset(
     page: &PageDom,
     form: NodeId,
     submitter: Option<NodeId>,
     charset: &str,
+    mut sources: Option<&mut Vec<(usize, NodeId, usize)>>,
 ) -> Vec<(String, EntryValue)> {
     let dom = page.dom.borrow();
     let mut out = Vec::new();
@@ -176,7 +182,10 @@ fn form_entries_with_charset(
                                 }),
                             ));
                         } else {
-                            for f in files {
+                            for (k, f) in files.into_iter().enumerate() {
+                                if let Some(sources) = sources.as_deref_mut() {
+                                    sources.push((out.len(), c, k));
+                                }
                                 out.push((name.clone(), EntryValue::File(f)));
                             }
                         }

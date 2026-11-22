@@ -5,7 +5,8 @@
 //! mode. Native drag-and-drop (`crate::input` drag sessions) creates stores
 //! through `NativeTransfer` and moves them between the spec's read/write,
 //! read-only, protected and disabled modes around each event. Entries are plain
-//! native data (strings and file bytes), so a store holds no JS roots; each
+//! native data (strings and file bytes); the one JS root a store holds is a
+//! File script added with `items.add(file)`, returned as it is. Any other
 //! `files`/`getAsFile()` read wraps a fresh `File`. `items` is the same object
 //! for the lifetime of its DataTransfer; item objects are created per access.
 
@@ -21,7 +22,9 @@ use crate::util::*;
 
 enum Kind {
     Text { data: String },
-    File { bytes: Bytes, name: String, last_modified: f64 },
+    /// `object`: the File script added (`items.add(file)`), which `files`
+    /// and `getAsFile()` return as it is, as Chrome.
+    File { bytes: Bytes, name: String, last_modified: f64, object: Option<Persistent> },
 }
 
 struct Entry {
@@ -77,7 +80,10 @@ impl Store {
     }
 
     fn file<'s>(&self, s: &Scope<'s>, e: &Entry) -> JsResult<Option<Object<'s>>> {
-        let Kind::File { bytes, name, last_modified } = &e.kind else { return Ok(None) };
+        let Kind::File { bytes, name, last_modified, object } = &e.kind else { return Ok(None) };
+        if let Some(file) = object.as_ref().and_then(|o| o.get(s).as_object()) {
+            return Ok(Some(file));
+        }
         let data = BlobData { bytes: bytes.clone(), mime: e.ty.clone(), file: Some((name.clone(), *last_modified)) };
         Ok(Some(s.wrap::<File>(data, None)?))
     }
@@ -300,7 +306,9 @@ impl JsClass for DataTransferItemList {
             }
             if let Some(f) = s.unwrap::<File>(a.get(0)) {
                 let (name, last_modified) = f.file.clone().unwrap_or_default();
-                let id = l.store.push(f.mime.clone(), Kind::File { bytes: f.bytes.clone(), name, last_modified });
+                let object = Some(Persistent::new(s, a.get(0)));
+                let id =
+                    l.store.push(f.mime.clone(), Kind::File { bytes: f.bytes.clone(), name, last_modified, object });
                 return item_value(s, &l.store, id);
             }
             if a.get(1).is_undefined() {
@@ -451,7 +459,12 @@ impl NativeTransfer {
         for file in files {
             transfer.store.push(
                 file.mime.to_ascii_lowercase(),
-                Kind::File { bytes: file.bytes.clone(), name: file.name.clone(), last_modified: file.last_modified },
+                Kind::File {
+                    bytes: file.bytes.clone(),
+                    name: file.name.clone(),
+                    last_modified: file.last_modified,
+                    object: None,
+                },
             );
         }
         Some(transfer)

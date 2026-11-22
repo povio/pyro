@@ -470,6 +470,31 @@ fn fill(s: &Scope<'_>, data: &FormDataData, files: &Object<'_>, entries: Vec<(St
     Ok(())
 }
 
+/// The File entries a form's file inputs gave keep their identity: entry
+/// `i`, file `k` of `input`, becomes the File object that input's `files`
+/// holds, when script read or set that FileList.
+pub(crate) fn adopt_input_files(
+    s: &Scope<'_>,
+    page: &crate::page::PageDom,
+    fd: Object<'_>,
+    sources: &[(usize, pyro_dom::NodeId, usize)],
+) -> JsResult<()> {
+    if sources.is_empty() {
+        return Ok(());
+    }
+    let Some(d) = s.unwrap::<FormData>(fd.value()) else { return Ok(()) };
+    let files = d.files(s)?;
+    for &(i, input, k) in sources {
+        let Some(file) = crate::file::input_file_object(s, page, input, k)? else { continue };
+        let slot = match d.entries.borrow().get(i) {
+            Some((_, Entry::File(slot))) => *slot,
+            _ => continue,
+        };
+        files.set_index(slot, file)?;
+    }
+    Ok(())
+}
+
 /// A new FormData of `s`'s realm holding `entries`.
 pub(crate) fn with_entries<'s>(s: &Scope<'s>, entries: Vec<(String, EntryValue)>) -> JsResult<Object<'s>> {
     let page = crate::target::page_of(s)?;

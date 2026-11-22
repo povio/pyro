@@ -367,6 +367,29 @@ pub(crate) fn input_files<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>
     Ok(list)
 }
 
+/// File `k` of the FileList an input's `files` returned or was set to last,
+/// while the input's selection is still the one that list shows; `None`
+/// when script never saw one (no File identity to keep).
+pub(crate) fn input_file_object<'s>(
+    s: &Scope<'s>,
+    page: &crate::page::PageDom,
+    input: pyro_dom::NodeId,
+    k: usize,
+) -> JsResult<Option<Value<'s>>> {
+    let generation = page.file_generations.borrow().get(&input).copied().unwrap_or(0) as f64;
+    let Some(el) = crate::node::node_value(s, page, Some(input))?.as_object() else { return Ok(None) };
+    let (Some(list), Some(g)) = (s.get_hidden(el, INPUT_FILES)?, s.get_hidden(el, INPUT_FILES_GENERATION)?) else {
+        return Ok(None);
+    };
+    if g.to_number()? != generation {
+        return Ok(None);
+    }
+    match s.unwrap::<FileList>(list) {
+        Some(list) => list.get(s, k),
+        None => Ok(None),
+    }
+}
+
 /// The FileList an input's `files` returned last, and the selection
 /// generation it shows.
 const INPUT_FILES: &str = "__lpInputFiles";
