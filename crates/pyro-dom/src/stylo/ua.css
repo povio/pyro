@@ -1083,6 +1083,8 @@ marquee {
     display: inline-block;
     vertical-align: text-bottom;
     text-align: start;
+    /* HTML rendering: a marquee's overflow is hidden, whatever author styles say. */
+    overflow: hidden !important;
 }
 
 marquee:is([direction="up"], [direction="down"]) {
