@@ -1293,6 +1293,9 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
             if start == end {
                 return false;
             }
+            if matches!(tag, "sub" | "sup") && inline_value::change_selected_script(page, host, start, end, tag, input_type) {
+                return true;
+            }
             if format_state(page, &cmd).1 || tag == "i" && starts_in_semantic_italic(page, start, end) {
                 remove_inline(page, host, carriers, input_type);
             } else {
@@ -2879,8 +2882,8 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
             }
             "underline" => decorated("underline"),
             "strikethrough" => decorated("line-through"),
-            "superscript" => ancestor_named(&dom, n, scope, &["sup"]).is_some() || value("vertical-align") == "super",
-            "subscript" => ancestor_named(&dom, n, scope, &["sub"]).is_some() || value("vertical-align") == "sub",
+            "superscript" => inline_value::selected_script(page, &dom, n, scope) == Some("sup"),
+            "subscript" => inline_value::selected_script(page, &dom, n, scope) == Some("sub"),
             _ => false,
         }
     };
