@@ -15,7 +15,7 @@
 import { appendFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { Pyro } from '../index.js';
-import { beforeContextClose, Browser, chromium, openContexts, setTestDefaults, type BootSpec } from './browser.js';
+import { beforeContextClose, Browser, chromium, openContexts, playwrightServeEnv, setTestDefaults, type BootSpec } from './browser.js';
 import { als, currentTest, SkipError, TestInfo } from './context.js';
 import { devices, globalSetup, loadConfig, projectFor, runFiles, runPlan, startWebServers, stopWebServers, stopWithThisProcess, type FilePlan, type Loaded, type ResolvedProject } from './config.js';
 import { expect, ready, setExpectDefaults } from './expect.js';
@@ -323,7 +323,7 @@ async function sharedBrowser(o: { wsEndpoint?: string; bin?: string; args?: stri
   if (!b) {
     b = (async () => {
       const ws = o.wsEndpoint ?? process.env.PYRO_WS;
-      const lp = ws ? await Pyro.connect(ws) : await Pyro.launch({ bin: o.bin, args: o.args });
+      const lp = ws ? await Pyro.connect(ws) : await Pyro.launch({ bin: o.bin, args: o.args, env: playwrightServeEnv() });
       launched.add(lp);
       stopWithThisProcess((lp as any).child?.pid);
       return { lp, browser: new Browser(lp, false, o.boot ?? []) };

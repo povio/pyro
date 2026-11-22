@@ -924,11 +924,21 @@ function cdpCookie(c: Cookie): Record<string, unknown> {
   return out;
 }
 
+/**
+ * The `pyro serve` environment the Playwright drop-in starts the browser with: no navigation rate
+ * limit (`--navigation-rate-limit off`), as Playwright's Chromium runs with
+ * `--disable-ipc-flooding-protection` (stock Chrome, and WPT, keep it). The caller's environment and
+ * flags win; a binary that predates the setting ignores it.
+ */
+export const playwrightServeEnv = (): Record<string, string> => ({
+  PYRO_NAVIGATION_RATE_LIMIT: process.env.PYRO_NAVIGATION_RATE_LIMIT ?? 'off',
+});
+
 /** `chromium` for scripts that launch a browser themselves (`chromium.launch()`). */
 export const chromium = {
   name: () => 'chromium',
   async launch(o: ConnectOptions & { bin?: string; args?: string[]; boot?: BootSpec[]; stderr?: 'inherit' | 'ignore'; /** Deprecated in Playwright; unused. */ logger?: Logger } = {}): Promise<Browser> {
-    return new Browser(await Pyro.launch(o), true, o.boot);
+    return new Browser(await Pyro.launch({ ...o, env: playwrightServeEnv() }), true, o.boot);
   },
   /** A running pyro's CDP endpoint (`ws://…` or `http://host:port`). */
   async connectOverCDP(endpointURL: string, _options: { timeout?: number; headers?: Record<string, string> } = {}): Promise<Browser> {

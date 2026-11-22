@@ -34,7 +34,7 @@ use frames::{FrameHost, FrameKey};
 pub use loader::{
     FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
 };
-pub use nav::{History, HistoryEntry, Location, PageNav, Performance};
+pub use nav::{set_navigation_rate_limit, History, HistoryEntry, Location, PageNav, Performance};
 pub use network_idle::NetworkIdle;
 pub use quiet::{PageWork, WorkStamp, TIMER_HORIZON};
 pub use window::{note_client_activity, request_native_frame, Window, WindowData};

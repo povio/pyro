@@ -699,6 +699,9 @@ impl PageNav {
     /// to be ignored, past 200 in 10 seconds, as Chrome's
     /// NavigationRateLimiter does (HTML lets user agents limit them).
     fn rate_limit_allows(&self) -> bool {
+        if !NAVIGATION_RATE_LIMIT.load(std::sync::atomic::Ordering::Relaxed) {
+            return true;
+        }
         const LIMIT: u32 = 200;
         const PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
         let (start, count) = self.rate_limit.get();
@@ -1684,6 +1687,16 @@ impl JsClass for History {
             Ok(s.undefined())
         });
     }
+}
+
+static NAVIGATION_RATE_LIMIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Whether history updates and navigations past 200 in 10 seconds are
+/// ignored, as stock Chrome does (on by default; `serve
+/// --navigation-rate-limit off`, as Playwright's Chromium runs with
+/// `--disable-ipc-flooding-protection`). For the whole process.
+pub fn set_navigation_rate_limit(on: bool) {
+    NAVIGATION_RATE_LIMIT.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// HTML: History's methods throw a SecurityError for a document that is not
