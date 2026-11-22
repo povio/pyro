@@ -712,6 +712,15 @@ pub trait PageHooks {
     ) -> Option<Box<dyn FnOnce()>> {
         None
     }
+    /// Queue a `scheduler.yield()` continuation, which outranks tasks of its
+    /// priority on the window or worker's event loop.
+    fn post_web_continuation(
+        &self,
+        _priority: pyro_runtime::WebPrioritySource,
+        _task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        None
+    }
     /// Schedules `task` as a separate task after `delay` (default: at once).
     fn post_delayed_task(&self, _delay: std::time::Duration, task: Box<dyn FnOnce()>) {
         self.post_task(task)

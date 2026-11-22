@@ -1592,6 +1592,45 @@ mod tests {
     }
 
     #[test]
+    fn web_continuations_outrank_tasks_of_their_priority_only() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let mut state = St::default();
+        let post = |p, c: bool, name: &'static str| {
+            let task: Task<St> = Box::new(move |s: &mut St| s.log.push(name.into()));
+            let _ = if c {
+                s.post_web_continuation(WebPrioritySource::Fixed(p), task)
+            } else {
+                s.post_web_task(WebPrioritySource::Fixed(p), Duration::ZERO, task)
+            };
+        };
+        post(WebTaskPriority::Background, false, "bg-task");
+        post(WebTaskPriority::UserVisible, false, "uv-task");
+        post(WebTaskPriority::UserBlocking, false, "ub-task");
+        post(WebTaskPriority::Background, true, "bg-cont");
+        post(WebTaskPriority::UserVisible, true, "uv-cont");
+        post(WebTaskPriority::UserBlocking, true, "ub-cont");
+        while lp.run_one(&mut state) {}
+        assert_eq!(state.log, ["ub-cont", "ub-task", "uv-cont", "uv-task", "bg-cont", "bg-task"]);
+    }
+
+    #[test]
+    fn user_visible_continuations_resume_before_ready_ordinary_tasks() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let mut state = St::default();
+        s.set_timer(Duration::ZERO, false, true, |s| s.log.push("timer".into()));
+        s.post(TaskSource::Internal, |s| s.log.push("local".into()));
+        let _ = s.post_web_continuation(WebPrioritySource::Fixed(WebTaskPriority::Background),
+            Box::new(|s| s.log.push("bg-cont".into())));
+        let _ = s.post_web_continuation(WebPrioritySource::Fixed(WebTaskPriority::UserVisible),
+            Box::new(|s| s.log.push("uv-cont".into())));
+        while lp.run_one(&mut state) {}
+        assert_eq!(state.log[0], "uv-cont");
+        assert_eq!(state.log[3], "bg-cont");
+    }
+
+    #[test]
     fn canceled_web_tasks_release_queue_entries_and_delayed_timers() {
         let mut lp = EventLoop::<St>::new();
         let s = lp.scheduler();
