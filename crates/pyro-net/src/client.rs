@@ -2162,7 +2162,9 @@ impl Io {
                     let resp = self.send(Method::OPTIONS, &url, ph, None).await?;
                     let status = resp.status().as_u16();
                     let rh = resp.headers().clone();
-                    drop(resp.into_body().collect().await);
+                    // Only the head counts: a preflight body is not waited for (one that never
+                    // ends must not stall the request). An unread HTTP/1 body costs its connection.
+                    drop(resp);
                     self.preflight.lock().unwrap().record(status, &rh, &req, &origin).map_err(NetError::Cors)?;
                 }
             }
