@@ -78,17 +78,23 @@ mod avc {
     use openh264::formats::YUVSlices;
     use openh264::{OpenH264API, Timestamp};
 
-    pub(super) fn settings(c: &EncoderConfig) -> Option<(NativeConfig, u8)> {
+    pub(super) fn settings(c: &EncoderConfig) -> Option<(NativeConfig, [u8; 3])> {
         let hex = c.codec.strip_prefix("avc1.").or_else(|| c.codec.strip_prefix("avc3."))?;
         if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let profile = u32::from_str_radix(hex, 16).ok()?;
-        // RFC 6184 Baseline and Constrained Baseline. OpenH264 emits a
-        // constrained baseline stream (profile_idc 66, constraint flags C0).
-        if profile >> 16 != 66 || !matches!((profile >> 8) & 255, 0 | 0x80 | 0x40 | 0xc0 | 0xe0) {
-            return None;
-        }
+        let profile_id = (profile >> 16) as u8;
+        let flags = (profile >> 8) as u8;
+        // WelsWriteSpsSyntax signals progressive pictures and no B slices
+        // for Main and High (constraint_set4/5). Any subset of those actual
+        // constraints is compatible with the requested profile.
+        let (native_profile, output_flags) = match profile_id {
+            66 if matches!(flags, 0 | 0x80 | 0x40 | 0xc0 | 0xe0) => (Profile::Baseline, 0xc0),
+            77 if flags & !0x4c == 0 => (Profile::Main, 0x4c),
+            100 if flags & !0x0c == 0 => (Profile::High, 0x0c),
+            _ => return None,
+        };
         let id = profile as u8;
         // Annex A MaxFS, MaxMBPS and baseline MaxBR (kbit/s).
         let (level, fs, mbps, kbps) = match id {
@@ -123,18 +129,22 @@ mod avc {
         let x = c.width.div_ceil(16);
         let y = c.height.div_ceil(16);
         let fps = c.framerate.unwrap_or(30.0);
-        let bitrate = c.bitrate.unwrap_or((c.width * c.height * 3).clamp(64000, kbps * 1000));
+        // Annex A's High VCL factor is 1250 (Baseline/Main: 1000).
+        // OpenH264's WelsCheckLevelLimitation applies 1200 to every profile
+        // and would raise the level for the remaining High bitrate interval.
+        let max_bitrate = kbps * if profile_id == 100 { 1200 } else { 1000 };
+        let bitrate = c.bitrate.unwrap_or((c.width * c.height * 3).clamp(64000, max_bitrate));
         if x * y > fs
             || x.max(y).pow(2) > 8 * fs
             || !(1.0..=60.0).contains(&fps)
             || f64::from(x * y) * fps > f64::from(mbps)
-            || !(1000..=kbps * 1000).contains(&bitrate)
+            || !(1000..=max_bitrate).contains(&bitrate)
         {
             return None;
         }
         Some((
             NativeConfig::new()
-                .profile(Profile::Baseline)
+                .profile(native_profile)
                 .level(level)
                 .bitrate(BitRate::from_bps(bitrate))
                 .max_frame_rate(FrameRate::from_hz(fps as f32))
@@ -142,7 +152,7 @@ mod avc {
                 .vui(VuiConfig::bt709())
                 .skip_frames(false)
                 .num_threads(1),
-            id,
+            [profile_id, output_flags, id],
         ))
     }
 
@@ -151,13 +161,13 @@ mod avc {
         width: usize,
         height: usize,
         annex_b: bool,
-        level: u8,
+        profile_level: [u8; 3],
         first_timestamp: Option<i64>,
     }
 
     impl Encoder {
         pub(super) fn new(c: &EncoderConfig) -> Result<Self, String> {
-            let (settings, level) = settings(c).ok_or("unsupported AVC configuration")?;
+            let (settings, profile_level) = settings(c).ok_or("unsupported AVC configuration")?;
             let codec = openh264::encoder::Encoder::with_api_config(OpenH264API::from_source(), settings)
                 .map_err(|e| e.to_string())?;
             Ok(Self {
@@ -165,7 +175,7 @@ mod avc {
                 width: c.width as usize,
                 height: c.height as usize,
                 annex_b: c.format == "annexb",
-                level,
+                profile_level,
                 first_timestamp: None,
             })
         }
@@ -206,7 +216,11 @@ mod avc {
                         .ok_or("missing NAL prefix")?;
                     match nal.first().ok_or("empty AVC NAL")? & 31 {
                         7 => {
-                            if nal.len() < 4 || nal[1] != 66 || nal[2] & 0xc0 != 0xc0 || nal[3] != self.level {
+                            if nal.len() < 4
+                                || nal[1] != self.profile_level[0]
+                                || nal[2] & self.profile_level[1] != self.profile_level[1]
+                                || nal[3] > self.profile_level[2]
+                            {
                                 return Err("unexpected AVC profile or level".into());
                             }
                             sps = Some(nal.to_vec());
@@ -239,6 +253,11 @@ mod avc {
                 avcc.push(1);
                 avcc.extend_from_slice(&u16::try_from(pps.len()).map_err(|_| "oversized PPS")?.to_be_bytes());
                 avcc.extend_from_slice(&pps);
+                if sps[1] == 100 {
+                    // ISO/IEC 14496-15 High-profile avcC extension. This
+                    // encoder writes 4:2:0, 8-bit luma/chroma and no SPS ext.
+                    avcc.extend_from_slice(&[0xfd, 0xf8, 0xf8, 0]);
+                }
                 Some(avcc)
             } else {
                 None
