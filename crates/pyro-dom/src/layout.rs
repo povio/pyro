@@ -2707,8 +2707,21 @@ impl Layout {
 
     /// pyro: the `content-visibility: auto` state the layout engine determined (see
     /// `GeometrySource::content_visibility_state`).
-    pub fn content_visibility_state(&self, dom: &Dom) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+    pub fn content_visibility_state(&self, dom: &Dom) -> Vec<(u64, bool, [Option<f32>; 2])> {
         self.synced_geometry_source(dom).map(|s| s.content_visibility_state()).unwrap_or_default()
+    }
+
+    /// pyro: the rendering update's ResizeObserver step (CSS Sizing 4 § 5.1): when the layout
+    /// engine has elements that may remember a size, it is synced and they remember their sizes
+    /// (`GeometrySource::record_remembered_sizes`). Nothing to sync otherwise.
+    pub fn record_remembered_sizes(&self, dom: &Dom) {
+        let Some(source) = self.external.as_ref().filter(|s| s.active()) else { return };
+        if !source.has_remembered_size_candidates() {
+            return;
+        }
+        if let Some(source) = self.synced_geometry_source(dom) {
+            source.record_remembered_sizes();
+        }
     }
 
     /// pyro: the contents `content-visibility: auto` skips around `el` are rendered for a query

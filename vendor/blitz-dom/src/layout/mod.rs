@@ -629,23 +629,14 @@ impl LayoutPassState<'_> {
             if !contained {
                 return None;
             }
-            // pyro: `auto` takes the last remembered size when there is one (CSS Sizing 4 § 5.1);
-            // `content-visibility: auto` adds `auto` to `contain-intrinsic-size` (CSS Contain 2
-            // § 4.1, csswg-drafts#8407).
-            let remembered = node.layout_data().remembered_size;
-            let cv_auto = styles.get_box().slow_clone_content_visibility()
-                == style::values::specified::box_::ContentVisibility::Auto;
-            let length = |size: &style::values::computed::ContainIntrinsicSize, axis: usize| match size {
-                ContainIntrinsicSize::None | ContainIntrinsicSize::Length(_) if cv_auto && remembered.is_some() => {
-                    let (w, h) = remembered.unwrap();
-                    if axis == 0 { w } else { h }
-                }
-                ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_) if remembered.is_some() => {
-                    let (w, h) = remembered.unwrap();
-                    if axis == 0 { w } else { h }
-                }
-                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
-                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+            // pyro: `auto` takes the last remembered size in its axis when there is one and the
+            // box skips its contents (CSS Sizing 4 § 5.1; `contain: size` alone keeps the
+            // fallback: WPT css-sizing `contain-intrinsic-size/auto-004`, `auto-012`).
+            let remembered = [remembered_intrinsic_size(node, &styles, true), remembered_intrinsic_size(node, &styles, false)];
+            let length = |size: &style::values::computed::ContainIntrinsicSize, axis: usize| match (remembered[axis], size) {
+                (Some(remembered), _) => remembered,
+                (None, ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone) => 0.0,
+                (None, ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length)) => length.0.px(),
             };
             let position = styles.get_position();
             let (mut width, mut height) =
@@ -666,10 +657,12 @@ impl LayoutPassState<'_> {
                 // min-content width: WPT css-contain `contain-size-multicol-003`.)
                 let min_content = inputs.available_space.width == taffy::AvailableSpace::MinContent;
                 let empty = empty_container_size(&styles, min_content);
-                if none(&position.contain_intrinsic_width) {
+                // (Not over a remembered size: WPT css-sizing `contain-intrinsic-size/auto-014`, a
+                // multi-column container remembered 250px wide.)
+                if remembered[0].is_none() && none(&position.contain_intrinsic_width) {
                     width = empty.width;
                 }
-                if none(&position.contain_intrinsic_height) {
+                if remembered[1].is_none() && none(&position.contain_intrinsic_height) {
                     height = empty.height;
                 }
             }
@@ -764,9 +757,10 @@ impl LayoutPassState<'_> {
             }
             let position = styles.get_position();
             let inline = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
-            match inline {
-                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
-                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+            match (remembered_intrinsic_size(node, &styles, !vertical), inline) {
+                (Some(remembered), _) => remembered,
+                (None, ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone) => 0.0,
+                (None, ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length)) => length.0.px(),
             }
         };
         let style = self.child_layout_style(node);
@@ -1811,10 +1805,9 @@ impl LayoutPassState<'_> {
                             let position = styles.get_position();
                             let vertical = styles.writing_mode.is_vertical();
                             let override_size = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
-                            intrinsic_sizes.width = Some(match override_size {
-                                ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_)
-                                    if let Some((width, height)) = node.layout_data().remembered_size => if vertical { height } else { width },
-                                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+                            intrinsic_sizes.width = Some(match (remembered_intrinsic_size(node, &styles, !vertical), override_size) {
+                                (Some(remembered), _) => remembered,
+                                (None, ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length)) => length.0.px(),
                                 _ => 0.0,
                             });
                             intrinsic_sizes.height.get_or_insert(default_object_size.height);
@@ -3578,6 +3571,23 @@ impl Iterator for RefCellChildIter<'_> {
             taffy_node_id(*id)
         })
     }
+}
+
+/// pyro: the last remembered size `node` is sized as in its physical width (`width`) or height
+/// axis (CSS Sizing 4 § 5.1): only while it skips its contents, when that axis's
+/// `contain-intrinsic-size` has `auto` (`content-visibility: auto` adds it: CSS Contain 2 § 4.1,
+/// csswg-drafts#8407) and a size is remembered in the logical axis it is now (WPT css-sizing
+/// `contain-intrinsic-size/auto-006`: the remembered size is logical).
+pub(crate) fn remembered_intrinsic_size(node: &crate::Node, styles: &style::properties::ComputedValues, width: bool) -> Option<f32> {
+    if !crate::resolve::skips_contents(node, styles) {
+        return None;
+    }
+    let (auto_width, auto_height) = crate::resolve::contain_intrinsic_auto(styles);
+    if !(if width { auto_width } else { auto_height }) {
+        return None;
+    }
+    let inline = width != styles.writing_mode.is_vertical();
+    node.layout_data().remembered_size[if inline { 0 } else { 1 }]
 }
 
 /// pyro: the `natural=W,H` token of the element's

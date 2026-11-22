@@ -257,7 +257,7 @@ pub struct Snapshot {
     pub frame_animations: Vec<(String, Arc<AnimationFrame>)>,
     /// pyro: the `content-visibility: auto` elements' state as the layout engine determined it
     /// (by key: skipped, last remembered size); `None` leaves the document's.
-    pub content_visibility: Option<Vec<(u64, bool, Option<(f32, f32)>)>>,
+    pub content_visibility: Option<Vec<(u64, bool, [Option<f32>; 2])>>,
     /// An XML document (XHTML, SVG, other XML): selectors match element and
     /// attribute names case-sensitively. A [`Live`] document whose value
     /// changes is built anew.
@@ -2418,8 +2418,9 @@ impl Renderer {
     }
 
     /// pyro: the `content-visibility: auto` elements of `page`'s persistent document, by key:
-    /// whether they skip their contents, and their last remembered size.
-    pub fn content_visibility_state(&self, page: u64) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+    /// whether they skip their contents, and their last remembered size (logical, per axis);
+    /// then the other elements a size is remembered for (`contain-intrinsic-size: auto`).
+    pub fn content_visibility_state(&self, page: u64) -> Vec<(u64, bool, [Option<f32>; 2])> {
         let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
         m.doc
             .content_visibility_state()
@@ -2447,6 +2448,21 @@ impl Renderer {
         self.geometry.remove(&page);
         self.geometry.entry(page).or_default();
         true
+    }
+
+    /// pyro: whether some element of `page`'s persistent document may remember a size
+    /// (`BaseDocument::has_remembered_size_candidates`).
+    pub fn has_remembered_size_candidates(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.has_remembered_size_candidates())
+    }
+
+    /// pyro: `page`'s rendering update reached its ResizeObserver step: its elements with
+    /// `contain-intrinsic-size: auto` remember their sizes (`BaseDocument::record_remembered_sizes`,
+    /// on the current layout).
+    pub fn record_remembered_sizes(&mut self, page: u64) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.doc.record_remembered_sizes();
+        }
     }
 
     pub fn force_content_visibility(&mut self, page: u64, key: u64) -> bool {

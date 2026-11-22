@@ -205,6 +205,8 @@ impl crate::document::BaseDocument {
                 std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
             self.sticky_nodes
                 .extend(std::mem::take(traverser.sticky_nodes.get_mut().unwrap()));
+            self.cis_auto
+                .extend(std::mem::take(traverser.cis_auto_nodes.get_mut().unwrap()));
             style_changes = std::mem::take(traverser.style_changes.get_mut().unwrap());
             // Sticky: set once an element is styled with a generated
             // `::before` / `::after`, never cleared.
@@ -252,6 +254,9 @@ impl crate::document::BaseDocument {
             self.sticky_nodes
                 .retain(|id| nodes.get(*id).is_some_and(|node| is_sticky(node)));
         }
+        // pyro: restyled elements that lost `contain-intrinsic-size: auto` forget their remembered
+        // size in that axis now (`BaseDocument::retain_contain_intrinsic_auto`).
+        self.retain_contain_intrinsic_auto();
         self.pending_style_image_nodes
             .extend(nodes_needing_style_image_flush);
         if !style_changes.is_empty() {
@@ -2346,6 +2351,9 @@ pub struct RecalcStyle<'a> {
     /// pyro: elements styled `position: sticky` in this traversal
     /// (`BaseDocument::sticky_nodes`).
     sticky_nodes: Mutex<Vec<NodeId>>,
+    /// pyro: elements styled with `contain-intrinsic-size: auto` in an axis (or
+    /// `content-visibility: auto`) in this traversal (`BaseDocument::cis_auto`).
+    cis_auto_nodes: Mutex<Vec<NodeId>>,
     /// pyro: the elements whose primary style this traversal replaced, with the old
     /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
     style_changes: Mutex<Vec<crate::StyleChange>>,
@@ -2384,6 +2392,7 @@ impl<'a> RecalcStyle<'a> {
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
             generated_before_after: std::sync::atomic::AtomicBool::new(false),
             sticky_nodes: Mutex::new(Vec::new()),
+            cis_auto_nodes: Mutex::new(Vec::new()),
             style_changes: Mutex::new(Vec::new()),
             track_style_changes: false,
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
@@ -2768,6 +2777,13 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 style.clone_position() == style::computed_values::position::T::Sticky
             }) {
                 self.sticky_nodes.lock().unwrap().push(el.id);
+            }
+
+            if data.styles.get_primary().is_some_and(|style| {
+                let (width, height) = crate::resolve::contain_intrinsic_auto(style);
+                width || height
+            }) {
+                self.cis_auto_nodes.lock().unwrap().push(el.id);
             }
 
             if el.element_data().is_some_and(|element| element.marker_style.is_some()) {

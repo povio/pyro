@@ -808,6 +808,10 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // The frame's style update: what its callbacks changed starts transitions
     // and animations now (the next frame's callbacks see them running).
     w.target.page.update_animations();
+    // pyro: the frame's ResizeObserver step: last remembered sizes (CSS Sizing 4 § 5.1) are
+    // recorded after its callbacks, on the layout they leave (WPT css-sizing
+    // `contain-intrinsic-size/auto-006`: two frames, then skipping uses the size).
+    pyro_webapi::layout_api::record_remembered_sizes(&w.target.page);
     w.target.page.sync_frame_resources();
 }
 

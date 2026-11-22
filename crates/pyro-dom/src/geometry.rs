@@ -928,10 +928,19 @@ pub trait GeometrySource {
     /// (what queries forced to render since the last frame no longer is).
     fn content_visibility_frame(&self) {}
     /// pyro: the `content-visibility: auto` elements as of the last sync, by key: whether they
-    /// skip their contents, and their last remembered size (for the renderer that paints).
-    fn content_visibility_state(&self) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+    /// skip their contents, and their last remembered size (logical: inline, block; per axis),
+    /// then the other elements a size is remembered for (for the renderer that paints).
+    fn content_visibility_state(&self) -> Vec<(u64, bool, [Option<f32>; 2])> {
         Vec::new()
     }
+    /// pyro: whether, as of the last sync, some element may remember a size
+    /// (`contain-intrinsic-size: auto`, CSS Sizing 4 § 5.1).
+    fn has_remembered_size_candidates(&self) -> bool {
+        false
+    }
+    /// pyro: the rendering update's ResizeObserver step: the elements with
+    /// `contain-intrinsic-size: auto` remember their sizes on the synced layout.
+    fn record_remembered_sizes(&self) {}
     fn timeline_state(
         &self,
         _source: Option<u64>,

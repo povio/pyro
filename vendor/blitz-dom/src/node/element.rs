@@ -249,10 +249,12 @@ pub struct LayoutData {
     /// pyro: what this node's parent grid last gave it as a subgrid (css-grid-2 §9; Taffy's
     /// `LayoutGridContainer::set_subgrid_context`): its tracks there, their line names and sizes.
     pub subgrid: Option<Box<taffy::SubgridContext<style::Atom>>>,
-    /// pyro: the last remembered size of its content box (CSS px), the size it had when last
-    /// laid out with its contents: what `contain-intrinsic-size: auto <length>` sizes it as
-    /// while its contents are skipped (CSS Sizing 4 § 5.1).
-    pub remembered_size: Option<(f32, f32)>,
+    /// pyro: the last remembered size of its content box (CSS px), logical and per axis
+    /// (`[inline, block]`): the size it had at the last rendering update (before its
+    /// ResizeObserver callbacks) in each axis whose `contain-intrinsic-size` has `auto`, while it
+    /// did not skip its contents. What that `auto` sizes it as while its contents are skipped
+    /// (CSS Sizing 4 § 5.1, `BaseDocument::record_remembered_sizes`).
+    pub remembered_size: [Option<f32>; 2],
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -278,7 +280,7 @@ impl LayoutData {
             table_baseline_offset: 0.0,
             columns: None,
             subgrid: None,
-            remembered_size: None,
+            remembered_size: [None; 2],
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }

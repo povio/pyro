@@ -984,7 +984,7 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.viewport_scrolls_leftward(self.page))
     }
 
-    fn content_visibility_state(&self) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+    fn content_visibility_state(&self) -> Vec<(u64, bool, [Option<f32>; 2])> {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.content_visibility_state(self.page)))).unwrap_or_default()
     }
 
@@ -995,6 +995,20 @@ impl GeometrySource for BlitzGeometry {
         if changed {
             self.scroll_stale.set(true);
         }
+    }
+
+    fn has_remembered_size_candidates(&self) -> bool {
+        RENDERER.with(|r| r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.has_remembered_size_candidates(self.page))))
+    }
+
+    fn record_remembered_sizes(&self) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                if let Some(r) = r.as_mut() {
+                    r.record_remembered_sizes(self.page);
+                }
+            }
+        });
     }
 
     fn force_content_visibility(&self, key: u64) -> bool {

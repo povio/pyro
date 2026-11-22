@@ -1903,6 +1903,21 @@ Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `g
 
 Covered by `crates/pyro-render/tests/size_containment.rs` and `inline_size_containment.rs`; WPT
 `css/css-sizing/contain-intrinsic-size`: 23 more reftests pass.
+
+### Last remembered sizes (round 7, CSS Sizing 4 § 5.1)
+
+- `src/node/element.rs` (`LayoutData::remembered_size`): logical and per axis, `[inline, block]`.
+- `src/stylo.rs`, `src/resolve.rs` (`cis_auto`, `retain_contain_intrinsic_auto`): elements styled with
+  `contain-intrinsic-size: auto` in an axis (or `content-visibility: auto`, which adds it) join a set; after each
+  style traversal an element forgets its size in each axis that lost `auto` at once, and a removed one forgets both.
+- `src/resolve.rs` (`record_remembered_sizes`): at the rendering update's ResizeObserver step (pyro-browser's
+  frame, after its callbacks; pyro-webapi's ResizeObserver delivery, before its callbacks), not at each layout, an
+  element laid out with its contents remembers its content box size in its `auto` axes (size containment does not
+  stop it); one skipping its contents or without a box keeps its sizes. `update_content_visibility` no longer
+  records them.
+- `src/layout/mod.rs` (`remembered_intrinsic_size`): an `auto` axis takes the remembered size only while its
+  element skips its contents (`content-visibility: hidden`, or `auto` while not relevant); `contain: size` alone
+  keeps the fallback. A `none` axis with a remembered size is not replaced by the empty container's size.
 ## `image-set()`, images as `content`, font features and descriptors (WPT css-images and css-fonts, round 3 lane F)
 
 - `src/util.rs` (`unfiltered_image`, `image_resolution`): an `image-set()` layer loads and draws the option
