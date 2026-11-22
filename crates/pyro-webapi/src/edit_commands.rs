@@ -2917,6 +2917,46 @@ fn unlist_paragraph_lines(
 /// insertOrderedList / insertUnorderedList: the selected blocks become
 /// items of a new list; inside such a list already, its items become `div`
 /// lines again.
+/// Listify the empty visual line represented by a paragraph's leading BR.
+/// The paragraph survives unless its entire line joins an adjacent list.
+fn listify_placeholder(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, point: Point) -> Option<Point> {
+    let (block, offset) = point;
+    if block == host || !(local_html(dom, block, "p") || local_html(dom, block, "div"))
+        || editing::editing_host(dom, block) != Some(host) || ancestor_named(dom, block, host, &["li"]).is_some()
+    { return None; }
+    let br = dom.first_child(block).ok()??;
+    let whole = dom.child_count(block).ok()? == 1;
+    if !local_html(dom, br, "br") || !(offset == 0 || whole && offset == 1)
+        || editing::editing_host(dom, br) != Some(host) || !alignment::visible(page, dom, br) { return None; }
+    let parent = dom.parent_element(block).ok()??;
+    let matches = |n| whole && local_html(dom, n, tag) && editing::editing_host(dom, n) == Some(host);
+    let left = dom.prev_sibling(block).ok()?.filter(|&n| matches(n));
+    let right = dom.next_sibling(block).ok()?.filter(|&n| matches(n));
+    let doc = dom.node_document(block).ok()?;
+    let item = dom.create_element(doc, "li").ok()?;
+    let placeholder = dom.clone_node(br, false, None).ok()?;
+    dom.append_child(item, placeholder).ok()?;
+    if let Some(list) = right {
+        let first = dom.first_child(list).ok()?;
+        dom.insert_before(list, item, first).ok()?;
+        if let Some(left) = left {
+            while let Some(child) = dom.first_child(left).ok()? {
+                dom.insert_before(list, child, Some(item)).ok()?;
+            }
+            dom.remove_child(parent, left).ok()?;
+        }
+    } else if let Some(list) = left {
+        dom.append_child(list, item).ok()?;
+    } else {
+        let list = dom.create_element(doc, tag).ok()?;
+        dom.insert_before(block, list, Some(br)).ok()?;
+        dom.append_child(list, item).ok()?;
+    }
+    dom.remove_child(block, br).ok()?;
+    if left.is_some() || right.is_some() { dom.remove_child(parent, block).ok()?; }
+    Some((item, 0))
+}
+
 fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
     let (start, end) = editing::host_range(page, host);
     editing::apply_edit(page, host, input_type, None, None, |page| {
@@ -2937,6 +2977,13 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
                 drop(dom);
                 editing::set_selection(page, a, b);
                 return;
+            }
+            if start == end {
+                if let Some(caret) = listify_placeholder(page, &mut dom, host, tag, start) {
+                    drop(dom);
+                    editing::set_selection(page, caret, caret);
+                    return;
+                }
             }
             let in_list = ancestor_named(&dom, start.0, host, &[tag]);
             if let Some(list) = in_list {
