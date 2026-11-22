@@ -197,6 +197,9 @@ impl Dom {
         if self.pending_input_value_attr.is_some() && name.local == markup5ever::local_name!("type") {
             self.apply_pending_input_value_attr(i);
         }
+        if name.local == markup5ever::local_name!("selected") && name.ns == markup5ever::ns!() {
+            self.option_selected_attr_changed(i);
+        }
         if self.select_seen && name.ns == markup5ever::ns!() && name.local == markup5ever::local_name!("multiple") {
             self.select_multiple_changed(i, new.is_some());
         }

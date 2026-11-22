@@ -369,6 +369,10 @@ pub struct ControlState {
     pub custom_validity: Option<String>,
     /// `<option>` selectedness when explicitly set.
     pub selected: Option<bool>,
+    /// `<option>`: `selected` was set without the dirtiness (the `Option()`
+    /// constructor), so a change of the `selected` attribute still sets the
+    /// selectedness (`selected` back to `None`).
+    pub(crate) selected_clean: bool,
     /// `<select>`: script deselected every option (`selectedIndex = -1`) of
     /// this list of options, so none is selected by default until an option
     /// is inserted, removed or selected.

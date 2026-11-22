@@ -1436,7 +1436,9 @@ impl Dom {
                 self.control_state_mut(oid)?.selected = Some(false);
             }
         }
-        self.control_state_mut(opt)?.selected = Some(v);
+        let c = self.control_state_mut(opt)?;
+        c.selected = Some(v);
+        c.selected_clean = false;
         // The setter asks the select for a reset.
         if select != NIL {
             self.set_no_selection(select, None);
@@ -1444,6 +1446,28 @@ impl Dom {
         }
         Ok(())
     }
+    /// The `Option()` constructor's selectedness: set without the
+    /// dirtiness, so the `selected` attribute still changes it.
+    pub fn set_option_selectedness_clean(&mut self, opt: NodeId, v: bool) -> DomResult<()> {
+        let c = self.control_state_mut(opt)?;
+        c.selected = Some(v);
+        c.selected_clean = true;
+        Ok(())
+    }
+
+    /// After an option's `selected` attribute changed: while its dirtiness
+    /// is false the selectedness follows the attribute again.
+    pub(crate) fn option_selected_attr_changed(&mut self, i: u32) {
+        let clean = self.n(i).element().and_then(|e| e.control.as_ref()).is_some_and(|c| c.selected_clean);
+        if clean && self.html_local(i) == Some(&local_name!("option")) {
+            let id = self.id_of(i);
+            if let Ok(c) = self.control_state_mut(id) {
+                c.selected = None;
+                c.selected_clean = false;
+            }
+        }
+    }
+
     /// Records that script left the options `opts` of `select` all
     /// deselected (`None`: the default selection applies again).
     fn set_no_selection(&mut self, select: u32, opts: Option<Vec<u32>>) {
@@ -1462,7 +1486,9 @@ impl Dom {
         let opts = self.select_options_idx(s);
         for (k, &o) in opts.iter().enumerate() {
             let oid = self.id_of(o);
-            self.control_state_mut(oid)?.selected = Some(k as i32 == index);
+            let c = self.control_state_mut(oid)?;
+            c.selected = Some(k as i32 == index);
+            c.selected_clean = false;
         }
         let none = index < 0 || index as usize >= opts.len();
         self.set_no_selection(s, none.then_some(opts));
@@ -1615,7 +1641,9 @@ impl Dom {
                     let oid = self.id_of(o);
                     let hit = !found && self.option_value(oid)? == v;
                     found |= hit;
-                    self.control_state_mut(oid)?.selected = Some(hit);
+                    let c = self.control_state_mut(oid)?;
+                    c.selected = Some(hit);
+                    c.selected_clean = false;
                 }
                 let opts = self.select_options_idx(i);
                 self.set_no_selection(i, (!found).then_some(opts));

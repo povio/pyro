@@ -2888,13 +2888,10 @@ simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
             if default_selected {
                 dom.set_attribute(el, "selected", "").js()?;
             }
-            // The constructor sets the selectedness, not the dirtiness. When
-            // the selectedness is what the attribute gives, the option stays
-            // clean and keeps following `defaultSelected`; an explicit state
-            // is only needed when the two differ (which pyro-dom can only
-            // record as dirty).
+            // The constructor sets the selectedness, not the dirtiness: the
+            // option keeps following its `selected` attribute.
             if selected != default_selected {
-                dom.set_option_selected(el, selected).js()?;
+                dom.set_option_selectedness_clean(el, selected).js()?;
             }
         }
         crate::node::wrap_new_node::<Self>(s, &page, el, new_target)
