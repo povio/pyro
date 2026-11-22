@@ -1,0 +1,3 @@
+stylo: patch verified: git apply on the upstream reconstructed at b99353ad (HEAD) reproduces vendor/stylo, and git apply -R gives it back
+stylo_taffy: patch verified: git apply on the upstream reconstructed at b99353ad (HEAD) reproduces vendor/stylo_taffy/src, and git apply -R gives it back
+taffy: patch verified: git apply on the upstream reconstructed at b99353ad (HEAD) reproduces vendor/taffy/src, vendor/taffy/examples, vendor/taffy/README.md, and git apply -R gives it back
