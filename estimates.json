@@ -5,11 +5,11 @@
    "scope": {
     "macbook_in_scope": 355,
     "studio_in_scope": 38,
-    "other_dirs_out_of_scope": 28
+    "other_dirs_out_of_scope": 27
    },
-   "distinct_census_pages": 383,
+   "distinct_census_pages": 382,
    "owner_reported_unlisted": 0,
-   "selector_union": 413,
+   "selector_union": 412,
    "owner_estimate_reduction": 30,
    "of_which_tentative": 117,
    "studio_css_reported_pages_not_deduped": 0,
@@ -20,15 +20,14 @@
     "scheduler": 19,
     "html/syntax": 12,
     "html/semantics": 6,
-    "fetch/api": 4,
     "FileAPI": 4,
+    "fetch/api": 4,
     "fetch/data-urls": 3,
-    "xhr": 2,
     "encoding": 2,
+    "xhr": 2,
+    "svg/styling": 1,
     "html/rendering": 1,
-    "dom/collections": 1,
-    "quirks": 1,
-    "svg/styling": 1
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -50,32 +49,32 @@
     "fetch/fetch-later": 39,
     "html/syntax": 30,
     "dom/events": 21,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
     "html/interaction": 14,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
-    "selection": 7,
     "shadow-dom": 7,
+    "selection": 7,
     "navigation-api": 6,
-    "fetch/api": 5,
     "html/editing": 5,
-    "intersection-observer": 5,
     "uievents": 5,
+    "fetch/api": 5,
+    "intersection-observer": 5,
     "svg/types": 4,
-    "close-watcher": 3,
+    "inert": 3,
     "mathml": 3,
     "event-timing": 3,
-    "inert": 3,
-    "soft-navigation-heuristics": 2,
+    "close-watcher": 3,
     "resource-timing": 2,
+    "soft-navigation-heuristics": 2,
+    "svg/animations": 2,
     "html/rendering": 2,
     "dom/nodes": 2,
-    "svg/animations": 2,
     "html/browsers": 1,
-    "pointerlock": 1,
     "editing": 1,
     "custom-elements": 1,
+    "pointerlock": 1,
     "document-picture-in-picture": 1
    }
   },
@@ -111,691 +110,965 @@
  "per_brief": {
   "OWN-blob-textstream": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 4,
    "pages": 4,
    "tentative": 0
   },
   "OWN-xhr-send-usp": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 2,
    "pages": 2,
    "tentative": 0
   },
   "OWN-collection-deletion": {
-   "state": "implemented-unbuilt",
+   "state": "held-out-of-scope",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 1,
    "pages": 1,
    "tentative": 0
   },
   "OWN-studio-anim-display": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "OWN-studio-margin-trim": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "Q01": {
    "state": "claimed",
+   "in_scope_pages": 55,
+   "out_of_scope_pages": 106,
    "pages": 161,
    "tentative": 30
   },
   "Q02": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 1,
    "pages": 1,
    "tentative": 0
   },
   "Q03": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
   },
   "Q03b": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "Q04": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 1,
    "pages": 1,
    "tentative": 0
   },
   "Q05": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "Q06": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
   },
   "Q07": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 0
   },
   "Q08": {
    "state": "claimed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 1,
    "pages": 1,
    "tentative": 0
   },
   "Q09": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "Q10": {
    "state": "retired",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "Q11": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 4,
    "pages": 4,
    "tentative": 0
   },
   "Q12": {
    "state": "claimed",
+   "in_scope_pages": 16,
+   "out_of_scope_pages": 0,
    "pages": 16,
    "tentative": 0
   },
   "S01": {
    "state": "merged",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "S02": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 8,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "S03": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "S04": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q01-color-interp-8bit-rounding": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 9,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "SC-Q02-border-like-width-snap-after-interp": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "SC-Q03-image-props-transitions-start": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q04-scroll-methods-return-promise": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q05-no-transition-for-inherited-change": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q06-transitionend-longhand-alias-names": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q07-font-size-transition-under-zoom": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q08-align-content-in-fragmentation": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q09-contain-intrinsic-size-auto-remembered": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 9,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "SC-Q10-system-font-keywords": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q11-highlight-pseudo-computed-inheritance": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q12-Highlight-setlike-interface": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q13-integer-interp-rounding": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q14-overflow-clip-margin-discrete": {
    "state": "claimed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "SC-Q15-position-area-geometry": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q16-anchor-scrollable-containing-block": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q17-multicol-getClientRects-wm-dir": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q18-sticky-constraints": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q18a": {
    "state": "claimed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q19-overlay-property": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q20-container-query-nested-containers": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q21-container-query-fractional-sizes": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q22-container-units-svg-and-animation": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q23-cascade-layer-fontface-counterstyle": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q25-page-rule-selector-validation": {
    "state": "claimed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q26-css-syntax-eof-serialization": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q27-tiny-number-exponent-serialization": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q28-transform-interp-mismatched-primitives": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q29-hit-test-border-radius-clip": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q30-marker-hit-testing": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q31-marker-animations": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q32-smooth-scroll-behavior": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q33-scroll-anchoring-start-edge": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q34-env-parsing": {
    "state": "claimed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q35-picker-pseudo-parsing": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q36-mask-shorthand-none-layers": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q37-shape-outside-path-absolute": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q38-text-transform-innerText": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q39-steps-calc-count": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q40-starting-style-rule-parsing": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q41-typed-om-idl-length-enumerable": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q42-animation-duration-auto-resolved": {
    "state": "claimed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "SC-Q43-resize-interactive": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q44-text-input-scroll-on-blur": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q45-intrinsic-percent-replaced-cyclic": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q46-clip-path-calc-zero-simplify": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q47-clip-additive-composition": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "SC-Q48-corner-shape-shape-outside": {
    "state": "proposed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "C01": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 100,
+   "out_of_scope_pages": 0,
    "pages": 100,
    "tentative": 0
   },
   "C02": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 75,
+   "out_of_scope_pages": 0,
    "pages": 75,
    "tentative": 0
   },
   "C03": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 30,
+   "out_of_scope_pages": 0,
    "pages": 30,
    "tentative": 0
   },
   "C04": {
    "state": "claimed",
+   "in_scope_pages": 19,
+   "out_of_scope_pages": 0,
    "pages": 19,
    "tentative": 0
   },
   "C05": {
    "state": "claimed",
+   "in_scope_pages": 93,
+   "out_of_scope_pages": 0,
    "pages": 93,
    "tentative": 0
   },
   "C05a": {
    "state": "claimed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "P01": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "P02": {
    "state": "proposed",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 0
   },
   "P03": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 6,
    "pages": 6,
    "tentative": 0
   },
   "P04": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 0
   },
   "P05": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "P06": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 19,
    "pages": 19,
    "tentative": 19
   },
   "P07": {
    "state": "claimed",
+   "in_scope_pages": 9,
+   "out_of_scope_pages": 0,
    "pages": 9,
    "tentative": 0
   },
   "P08": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 8,
+   "out_of_scope_pages": 0,
    "pages": 8,
    "tentative": 0
   },
   "P09": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "P10": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 1,
    "pages": 1,
    "tentative": 0
   },
   "P11": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 19,
    "pages": 19,
    "tentative": 0
   },
   "P12": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "P13": {
    "state": "claimed",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
    "pages": 5,
    "tentative": 0
   },
   "P14": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 229,
    "pages": 229,
    "tentative": 21
   },
   "P15": {
    "state": "proposed",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 36,
    "pages": 36,
    "tentative": 0
   },
   "F01": {
    "state": "proposed",
+   "in_scope_pages": 130,
+   "out_of_scope_pages": 9,
    "pages": 139,
    "tentative": 0
   },
   "F02": {
    "state": "claimed",
+   "in_scope_pages": 14,
+   "out_of_scope_pages": 0,
    "pages": 14,
    "tentative": 14
   },
   "F02a": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 60,
+   "out_of_scope_pages": 0,
    "pages": 60,
    "tentative": 60
   },
   "F02b": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 13,
+   "out_of_scope_pages": 0,
    "pages": 13,
    "tentative": 13
   },
   "F02c": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 21,
+   "out_of_scope_pages": 0,
    "pages": 21,
    "tentative": 21
   },
   "F02d": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
   },
   "F03": {
    "state": "claimed",
+   "in_scope_pages": 63,
+   "out_of_scope_pages": 0,
    "pages": 63,
    "tentative": 5
   },
   "F04": {
    "state": "claimed",
+   "in_scope_pages": 66,
+   "out_of_scope_pages": 0,
    "pages": 66,
    "tentative": 0
   },
   "F04a": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
   },
   "F05": {
    "state": "proposed",
+   "in_scope_pages": 36,
+   "out_of_scope_pages": 0,
    "pages": 36,
    "tentative": 0
   },
   "F06": {
    "state": "proposed",
+   "in_scope_pages": 20,
+   "out_of_scope_pages": 0,
    "pages": 20,
    "tentative": 0
   },
   "F07": {
    "state": "claimed",
+   "in_scope_pages": 40,
+   "out_of_scope_pages": 0,
    "pages": 40,
    "tentative": 1
   },
   "F08": {
    "state": "claimed",
+   "in_scope_pages": 31,
+   "out_of_scope_pages": 0,
    "pages": 31,
    "tentative": 0
   },
   "F08a": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "F09": {
    "state": "claimed",
+   "in_scope_pages": 30,
+   "out_of_scope_pages": 0,
    "pages": 30,
    "tentative": 0
   },
   "F10": {
    "state": "claimed",
+   "in_scope_pages": 34,
+   "out_of_scope_pages": 0,
    "pages": 34,
    "tentative": 34
   },
   "F10a": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 2
   },
   "F10b": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 2
   },
   "OWN-body-textstream": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 4,
+   "out_of_scope_pages": 0,
    "pages": 4,
    "tentative": 0
   },
   "E01": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 0
   },
   "E02": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "C06": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 6,
+   "out_of_scope_pages": 0,
    "pages": 6,
    "tentative": 0
   },
   "C07": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "C08": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "C09": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 9,
+   "out_of_scope_pages": 0,
    "pages": 9,
    "tentative": 0
   },
   "C10": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 18,
+   "out_of_scope_pages": 0,
    "pages": 18,
    "tentative": 0
   },
   "C11": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "C12": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "C13": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "C14": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 10,
+   "out_of_scope_pages": 0,
    "pages": 10,
    "tentative": 0
   },
   "C15": {
    "state": "claimed",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
   },
   "R-FETCH-1": {
    "state": "proposed",
+   "in_scope_pages": 10,
+   "out_of_scope_pages": 0,
    "pages": 10,
    "tentative": 0
   },
   "R-FETCH-2": {
    "state": "proposed",
+   "in_scope_pages": 9,
+   "out_of_scope_pages": 0,
    "pages": 9,
    "tentative": 0
   },
   "R-FETCH-3": {
    "state": "proposed",
+   "in_scope_pages": 6,
+   "out_of_scope_pages": 0,
    "pages": 6,
    "tentative": 0
   },
   "R-FETCH-4": {
    "state": "proposed",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 3
   },
   "R-FETCH-fetchLater": {
-   "state": "claimed",
+   "state": "active",
+   "in_scope_pages": 39,
+   "out_of_scope_pages": 0,
    "pages": 39,
    "tentative": 0
   },
   "R-FETCH-5": {
    "state": "proposed",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "R-FETCH-6": {
    "state": "proposed",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
    "pages": 5,
    "tentative": 0
   },
   "R-FETCH-7": {
    "state": "proposed",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "R-FETCH-8": {
    "state": "proposed",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "R-ENC-1": {
    "state": "proposed",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 0
   },
   "R-ENC-2": {
    "state": "proposed",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
   },
   "R-ENC-3": {
    "state": "proposed",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
   },
   "R-ENC-4": {
    "state": "proposed",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
   },
   "R-ENC-5": {
    "state": "proposed",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
   },
   "R-ENC-6": {
    "state": "proposed",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
    "pages": 1,
    "tentative": 0
   }
  },
- "implemented_total_estimate": 421,
+ "implemented_total_estimate": 420,
  "milestones_reached": [
   250
  ],

@@ -107,7 +107,8 @@ def main(ledger,out):
         else: adj_oth+=d
     scope={'macbook_in_scope':mb_list-adj_mb+unl,'studio_in_scope':sd_list+len(cssu)+css,'other_dirs_out_of_scope':oth-adj_oth}
     res['tiers'][t]={'scope':scope,'distinct_census_pages':len(u)-adj+unl,'owner_reported_unlisted':unl,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'studio_css_listed_distinct':len(cssu),'by_dir':dict(byd.most_common())}
-  res['per_brief']={i:{'state':st,'pages':(len(pg) if pg is not None else None),'tentative':(sum(1 for x in pg if 'tentative' in x) if pg is not None else None)} for i,(st,pg,r) in per.items()}
+  INS=('html','fetch','IndexedDB','encoding','css','referrer-policy','content-security-policy')
+  res['per_brief']={i:{'state':st,'in_scope_pages':(sum(1 for x in pg if x.split('/')[0] in INS)+len(CSS.get(i,())) if pg is not None else None),'out_of_scope_pages':(sum(1 for x in pg if x.split('/')[0] not in INS) if pg is not None else None),'pages':(len(pg) if pg is not None else None),'tentative':(sum(1 for x in pg if 'tentative' in x) if pg is not None else None)} for i,(st,pg,r) in per.items()}
   cum=res['tiers']['implemented']['distinct_census_pages']+res['tiers']['implemented']['studio_css_reported_pages_not_deduped']+res['tiers']['implemented']['studio_css_listed_distinct']
   res['implemented_total_estimate']=cum
   res['milestones_reached']=[m for m in (250,500,750,1000) if cum>=m]
