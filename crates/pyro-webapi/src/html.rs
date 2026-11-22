@@ -2662,7 +2662,7 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     );
     def.accessor(
         "checked",
-        |s, n| Ok(s.boolean(n.page().dom.borrow().checked(n.id).js()?)),
+        |s, n| Ok(s.boolean(n.page().dom.borrow().checked_idl(n.id).js()?)),
         |_s, n, v| n.page().dom.borrow_mut().set_checked(n.id, v.to_bool()).js(),
     );
     reflect_bool!(def, "defaultChecked", "checked");

@@ -832,7 +832,12 @@ impl Dom {
         if !self.is_input(idx) || !matches!(self.input_type_idx(idx), InputType::Checkbox | InputType::Radio) {
             return false;
         }
-        let e = self.n(idx).element().unwrap();
+        self.raw_checkedness_idx(idx)
+    }
+    /// The checkedness an input of any type keeps (only checkboxes and
+    /// radios use it).
+    fn raw_checkedness_idx(&self, idx: u32) -> bool {
+        let Some(e) = self.n(idx).element() else { return false };
         match &e.control {
             Some(c) if c.dirty_checked => c.checked.unwrap_or(false),
             _ => e.attr_local(&local_name!("checked")).is_some(),
@@ -840,6 +845,11 @@ impl Dom {
     }
     pub fn checked(&self, id: NodeId) -> DomResult<bool> {
         Ok(self.checkedness_idx(self.check(id)?))
+    }
+    /// The `checked` IDL attribute: an input's checkedness whatever its type.
+    pub fn checked_idl(&self, id: NodeId) -> DomResult<bool> {
+        let i = self.check(id)?;
+        Ok(self.is_input(i) && self.raw_checkedness_idx(i))
     }
 
     /// `input.checked = v`; unchecks other radios in the group when set.
