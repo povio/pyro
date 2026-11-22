@@ -855,6 +855,14 @@ pub fn is_xml_mime(mime: &str) -> bool {
 /// with the "get an attribute" algorithm, and `content` counts only with
 /// `http-equiv="content-type"`.
 pub fn prescan_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    // An XML declaration's `<?x` in UTF-16 (BOM-less) names that encoding before any `<meta>`
+    // (Chromium; WPT html/syntax/xmldecl/xmldecl-2.html utf-16le-and-meta.htm).
+    if head.starts_with(b"<\0?\0x\0") {
+        return Some(encoding_rs::UTF_16LE);
+    }
+    if head.starts_with(b"\0<\0?\0x") {
+        return Some(encoding_rs::UTF_16BE);
+    }
     match meta_charset(head, true) {
         MetaScan::Found(enc) => Some(enc),
         _ => xml_encoding(head),
@@ -1157,7 +1165,13 @@ fn xml_encoding(b: &[u8]) -> Option<&'static encoding_rs::Encoding> {
     let quote = *b.get(pos).filter(|&&c| c == b'"' || c == b'\'')?;
     pos += 1;
     let close = b[pos..end].iter().position(|&c| c == quote)?;
-    let enc = encoding_rs::Encoding::for_label(&b[pos..pos + close])?;
+    let label = &b[pos..pos + close];
+    // The label is taken as is: white space around it makes it no label (Chromium; WPT
+    // html/syntax/xmldecl/xmldecl-2.html space-around-label.htm).
+    if label.first().is_some_and(|&c| c <= 0x20) || label.last().is_some_and(|&c| c <= 0x20) {
+        return None;
+    }
+    let enc = encoding_rs::Encoding::for_label(label)?;
     Some(if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE { encoding_rs::UTF_8 } else { enc })
 }
 
