@@ -2836,10 +2836,18 @@ impl Layout {
             }
         }
         // Outside the topmost modal dialog everything is inert: the point
-        // hits the dialog's ::backdrop, whose events go to the dialog.
+        // hits the dialog's ::backdrop, whose events go to the dialog. A
+        // `::backdrop { display: none }` has no box to hit: the point hits
+        // nothing (pointer input then targets the root, as Chrome does).
         let hit = best.map(|(_, node)| node).or_else(|| {
             dom.topmost_modal().filter(|&m| {
-                dom.node_document(m).ok() == Some(self.document()) && result.get(m).is_some() && self.is_visible(dom, m)
+                dom.node_document(m).ok() == Some(self.document())
+                    && result.get(m).is_some()
+                    && self.is_visible(dom, m)
+                    && self
+                        .style
+                        .stylo_pseudo_style(dom, m, &style::selector_parser::PseudoElement::Backdrop, false)
+                        .is_none_or(|backdrop| !backdrop.get_box().display.is_none())
             })
         });
         if let (Some(list), Some(modal)) = (all, hit) {
