@@ -364,7 +364,8 @@ impl BaseDocument {
         let endpoint = sizes.0.prepared_size();
         let size = sizes.1.prepared_size();
         let keyword = |value: &Size| matches!(value, Size::Auto | Size::MinContent | Size::MaxContent | Size::FitContent | Size::Stretch);
-        if keyword(endpoint) && keyword(size) && endpoint != size {
+        let intrinsic_calculation = matches!(endpoint, Size::CalcSizeAuto(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeStretch(_));
+        if keyword(size) && endpoint != size && (keyword(endpoint) || intrinsic_calculation) {
             let parent = node.layout_parent.get()?;
             let layout = self.physical_unrounded_layout(parent);
             let available = if width { layout.content_box_width() } else { layout.content_box_height() };

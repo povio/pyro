@@ -53681,7 +53681,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          format!(
              "matrix3d({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
              c(m.m11),
-@@ -342,6 +345,156 @@
+@@ -342,6 +345,157 @@
      /// `transform-origin`, `grid-template-rows`/`columns`) resolve to *used* values, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
      pub fn resolved_style_value(&self, node_id: NodeId, property_name: &str) -> String {
@@ -53704,7 +53704,8 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +        let endpoint = sizes.0.prepared_size();
 +        let size = sizes.1.prepared_size();
 +        let keyword = |value: &Size| matches!(value, Size::Auto | Size::MinContent | Size::MaxContent | Size::FitContent | Size::Stretch);
-+        if keyword(endpoint) && keyword(size) && endpoint != size {
++        let intrinsic_calculation = matches!(endpoint, Size::CalcSizeAuto(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeStretch(_));
++        if keyword(size) && endpoint != size && (keyword(endpoint) || intrinsic_calculation) {
 +            let parent = node.layout_parent.get()?;
 +            let layout = self.physical_unrounded_layout(parent);
 +            let available = if width { layout.content_box_width() } else { layout.content_box_height() };
@@ -53838,7 +53839,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          let Some(node) = self.get_node(node_id) else {
              return String::new();
          };
-@@ -364,6 +517,7 @@
+@@ -364,6 +518,7 @@
              },
          };
  
@@ -53846,7 +53847,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          let display = styles.clone_display();
          // Non-atomic inline elements are laid out as style spans within their
          // inline root's text layout rather than as boxes of their own, so their
-@@ -398,6 +552,36 @@
+@@ -398,6 +553,36 @@
          let format_used_px = |px: f32| format_px(px / zoom);
  
          // Layout-dependent "used value" special cases
@@ -53883,7 +53884,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          match property_name {
              // Shorthands of longhands that resolve to used values
              "margin" | "margin-block" | "margin-inline" | "padding" | "padding-block"
-@@ -466,7 +650,7 @@
+@@ -466,7 +651,7 @@
              "width" | "height" if has_layout_box => {
                  // Used value: the layout size interpreted according to `box-sizing`
                  // (border-box size for `border-box`, content-box size for `content-box`)
@@ -53892,7 +53893,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
                  let border_box = styles.get_position().box_sizing == BoxSizing::BorderBox;
                  let size = if property_name == "width" {
                      if border_box {
-@@ -682,14 +866,21 @@
+@@ -682,14 +867,21 @@
                      let reference_box = euclid::Rect::new(
                          euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
                          euclid::Size2D::new(
