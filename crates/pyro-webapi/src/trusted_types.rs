@@ -117,18 +117,47 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         wrap_parser_options(s, proto, options)
     })?;
     natives.set_atom("createParserOptions", create_options.value())?;
-    // The policies of the realm's document that have Trusted Types directives: [text, report-only].
+    // The policies of the realm's document that have Trusted Types directives:
+    // [text, report-only, from a `<meta>`].
     let policies = s.function("policies", |s, _this, _a| {
         let mut entries = Vec::new();
         if let Ok(page) = crate::target::page_of(s) {
             let policies: Vec<pyro_dom::CspPolicy> = page.dom.borrow().trusted_types_policies(page.document()).to_vec();
             for policy in policies {
-                entries.push(s.array(&[s.string(&policy.text), s.boolean(policy.report_only)])?.value());
+                entries.push(
+                    s.array(&[s.string(&policy.text), s.boolean(policy.report_only), s.boolean(policy.meta)])?.value(),
+                );
             }
         }
         Ok(s.array(&entries)?.value())
     })?;
     natives.set_atom("policies", policies.value())?;
+    // A violation's report delivery (csp_report), after its event: the violated policy's
+    // `report-uri` (not a `<meta>` policy's) or `report-to`. Args: policy text, report-only,
+    // from a `<meta>`, directive, blocked, sample, document URL, referrer. Workers send none yet
+    // (their report delivery belongs with the worker CSP hooks).
+    let deliver = s.function("deliverReport", |s, _this, a| {
+        if crate::worker_scope::is_worker(s) {
+            return Ok(s.undefined());
+        }
+        if let Ok(page) = crate::target::page_of(s) {
+            let text = |i: usize| crate::util::dom_string(a.get(i));
+            let violation = crate::csp_report::Violation {
+                policy: text(0)?,
+                report_only: a.get(1).to_bool(),
+                effective_directive: text(3)?,
+                blocked: text(4)?,
+                sample: text(5)?,
+                url: text(6)?,
+                referrer: text(7)?,
+                ..Default::default()
+            };
+            let targets = crate::csp_report::ReportTargets::from_policy(&violation.policy, a.get(2).to_bool());
+            crate::csp_report::report_violation(&page, &violation, &targets);
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("deliverReport", deliver.value())?;
     // eval and Function through the module's hooks (patched JSC 0035), and the document's
     // enforcement for them.
     let install = s.function("installCompileHooks", |s, _this, a| {

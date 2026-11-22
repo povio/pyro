@@ -248,10 +248,16 @@
       originalPolicy: policy.text, sample: String_(sample),
       disposition: policy.reportOnly ? 'report' : 'enforce', statusCode: 0,
     };
-    apply(setTimeoutFn, global, [() => target.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', init)), 0]);
+    // The event, then (same task) the policy's report-uri / report-to delivery.
+    apply(setTimeoutFn, global, [() => {
+      target.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', init));
+      native.deliverReport(policy.text, policy.reportOnly, policy.meta, directive, blockedURI, init.sample,
+        init.documentURI, init.referrer);
+    }, 0]);
   }
   function cspPolicies() {
-    return native.policies().map(([text, reportOnly]) => ({ text, reportOnly, directives: directivesOf(text) }));
+    return native.policies().map(([text, reportOnly, meta]) =>
+      ({ text, reportOnly, meta, directives: directivesOf(text) }));
   }
   function directivesOf(text) {
     const out = new Map();
