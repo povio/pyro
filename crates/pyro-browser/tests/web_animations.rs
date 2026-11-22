@@ -734,6 +734,23 @@ fn simultaneous_transitions_list_by_property_name() {
 }
 
 #[test]
+fn a_color_change_transitions_color_only_and_vertical_align_keeps_its_name() {
+    // WPT css-transitions properties-value-*: `transition: all` on a `color` change runs `color`
+    // alone (the `currentcolor` longhands keep one computed value), and a `vertical-align` length
+    // transition is named `vertical-align` (Chrome's longhand; Stylo's `baseline-shift`).
+    let (mut t, root) = transition_page("#v { color: red; vertical-align: 1px; transition: all 20ms }");
+    eval(&root, "globalThis.v = el('v'); getComputedStyle(v).color; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "v.style.color = 'blue'; v.style.verticalAlign = '10px'; getComputedStyle(v).color; 0");
+    run_until(&mut t, &root, "log.filter(e => e.startsWith('transitionend')).length >= 2");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    assert_eq!(
+        eval(&root, "log.filter(e => e.startsWith('transitionend')).sort().join(' ')"),
+        "transitionend:color:v transitionend:vertical-align:v"
+    );
+}
+
+#[test]
 fn review_a_reversed_transition_cancels_and_runs_again() {
     let (mut t, root) = transition_page(".t { transition: width 300ms; width: 100px; height: 10px } .w { width: 200px }");
     eval(&root, "globalThis.a = el('a', 't'); a.offsetHeight; 0");

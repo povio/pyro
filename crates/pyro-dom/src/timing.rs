@@ -1130,6 +1130,11 @@ pub fn changed_longhands_with<'a>(
                 // (A property Stylo animates discretely transitions only with `allow-discrete`,
                 // as in Chromium, css-transitions-2 §2.1, even where its `Animate` succeeds; WPT
                 // `*-no-interpolation`, `display-interpolation`.)
+                // (One computed value at both ends whose serialization differs only by what it
+                // resolves against: `currentcolor` (or `caret-color: auto`) when only `color`
+                // changes. No transition of the longhands that follow `color`, as in Chrome; WPT
+                // css-transitions `properties-value-001` 'color … / events'.)
+                (Some(a), Some(b)) if a == b => false,
                 (Some(a), Some(b)) => {
                     allow_discrete
                         || (!longhand.is_discrete_animatable()

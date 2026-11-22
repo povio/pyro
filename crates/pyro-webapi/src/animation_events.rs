@@ -905,7 +905,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
                     })
                     .flatten(),
                 transition,
-                name: t.name.clone(),
+                name: if transition { shown_property(&t.name).to_owned() } else { t.name.clone() },
                 start_ms: t.start_ms,
                 delay_ms: t.delay_ms,
                 duration_ms: t.duration_ms,
@@ -1716,7 +1716,7 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
     {
         let mut fields = ev.fields.borrow_mut();
         if event.transition {
-            fields.property_name = event.name.clone();
+            fields.property_name = shown_property(&event.name).to_owned();
         } else {
             fields.animation_name = event.name.clone();
         }
@@ -1724,6 +1724,17 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
         fields.pseudo_element = event.pseudo.to_owned();
     }
     crate::target::fire_at_node(page, event.el, &ev);
+}
+
+/// The name a transition of longhand `name` shows (`propertyName`, `transitionProperty`): Stylo's
+/// `vertical-align` is a shorthand of `baseline-shift` (and two discrete longhands), Chrome's a
+/// longhand, whose transitions it names `vertical-align` (WPT css-transitions
+/// `properties-value-*` 'vertical-align … / events').
+fn shown_property(name: &str) -> &str {
+    match name {
+        "baseline-shift" => "vertical-align",
+        _ => name,
+    }
 }
 
 /// pyro: a scroll-driven CSS animation's `animation-timeline` and range, serialized.
