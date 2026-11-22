@@ -226,6 +226,14 @@
                     return '["E",' + stringify(call(domName, source)) + ',' + stringify(call(domMessage, source))
                         + ',' + node(stack && stack.value) + ']';
                 }
+                // A QuotaExceededError: its message, quota and requested (null for none).
+                case '[object QuotaExceededError]': {
+                    const QEE = globalThis.QuotaExceededError, stack = data(source, 'stack');
+                    const quota = call(descriptor(QEE.prototype, 'quota').get, source);
+                    const requested = call(descriptor(QEE.prototype, 'requested').get, source);
+                    return '["U",' + stringify(call(domMessage, source)) + ',' + stringify(quota) + ','
+                        + stringify(requested) + ',' + node(stack && stack.value) + ']';
+                }
             }
             const parts = host(source, 0);
             if (parts !== undefined) {
@@ -331,6 +339,15 @@
                 case 'E': {
                     const error = remember(id, new DOMExceptionC(tree[2], tree[1]));
                     const stack = node(tree[3]);
+                    if (typeof stack === 'string') hide(error, 'stack', stack);
+                    return error;
+                }
+                case 'U': {
+                    const options = {};
+                    if (tree[2] !== null) options.quota = tree[2];
+                    if (tree[3] !== null) options.requested = tree[3];
+                    const error = remember(id, new globalThis.QuotaExceededError(tree[1], options));
+                    const stack = node(tree[4]);
                     if (typeof stack === 'string') hide(error, 'stack', stack);
                     return error;
                 }

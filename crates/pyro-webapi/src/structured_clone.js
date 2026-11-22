@@ -204,6 +204,21 @@
                     catch (_) { fail('Object type is not supported'); }
                     return errorParts(source, remember(source, new DOMExceptionC(message, name)));
                 }
+                // A QuotaExceededError (a DOMException subclass) is serializable with its message,
+                // quota and requested (HTML; WPT structuredclone_0).
+                if (kind === '[object QuotaExceededError]') {
+                    const QEE = globalThis.QuotaExceededError;
+                    let message, quota, requested;
+                    try {
+                        message = call(domMessage, source);
+                        quota = call(descriptor(QEE.prototype, 'quota').get, source);
+                        requested = call(descriptor(QEE.prototype, 'requested').get, source);
+                    } catch (_) { fail('Object type is not supported'); }
+                    const options = {};
+                    if (quota !== null) options.quota = quota;
+                    if (requested !== null) options.requested = requested;
+                    return errorParts(source, remember(source, new QEE(message, options)));
+                }
                 if (kind === '[object ArrayBuffer]') {
                     let length, view;
                     try { length = call(abLength, source); view = new U8(source); }
