@@ -178,6 +178,9 @@ impl Dom {
         {
             self.inline_transitions_seen = true;
         }
+        if !self.interest_for_elements.is_empty() && name.ns == markup5ever::ns!() && &*name.local == "interestfor" {
+            self.interest_for_elements.remove(&i);
+        }
         if name.ns == markup5ever::ns!() && &*name.local == "popover" {
             self.popover_attribute_changed(i, old, new);
         }

@@ -2027,7 +2027,32 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     part!("password", password, set_password, "");
 }
 
+fn define_interest_invoker<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.accessor(
+        "interestForElement",
+        |s, n| {
+            let target = n.page().dom.borrow().interest_for_element(n.id).js()?;
+            node_value(s, n.page(), target)
+        },
+        |s, n, v| {
+            let target = if v.is_nullish() {
+                None
+            } else {
+                let element = s.unwrap::<Element>(v).ok_or_else(|| JsError::Type("Expected an Element".into()))?;
+                if !Rc::ptr_eq(&element.page().dom, &n.page().dom) {
+                    // Separate DOM stores cannot share a shadow-including ancestor.
+                    n.page().dom.borrow_mut().set_attribute(n.id, "interestfor", "").js()?;
+                    return Ok(());
+                }
+                Some(element.id)
+            };
+            n.page().dom.borrow_mut().set_interest_for_element(n.id, target).js()
+        },
+    );
+}
+
 simple_class!(HtmlAnchorElement, "HTMLAnchorElement", HtmlElement, |def| {
+    define_interest_invoker(def);
     define_hyperlink(def);
     reflect_str!(def, "coords", "coords");
     reflect_str!(def, "charset", "charset");
@@ -2044,6 +2069,7 @@ simple_class!(HtmlAnchorElement, "HTMLAnchorElement", HtmlElement, |def| {
     );
 });
 simple_class!(HtmlAreaElement, "HTMLAreaElement", HtmlElement, |def| {
+    define_interest_invoker(def);
     define_hyperlink(def);
     reflect_str!(def, "alt", "alt");
     reflect_str!(def, "coords", "coords");
@@ -2719,6 +2745,7 @@ simple_class!(HtmlOptGroupElement, "HTMLOptGroupElement", HtmlElement, |def| {
 });
 
 simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
+    define_interest_invoker(def);
     define_labels(def);
     define_validation(def);
     reflect_str!(def, "name", "name");
@@ -4426,6 +4453,7 @@ simple_class!(SvgFeTurbulenceElement, "SVGFETurbulenceElement", SvgElement, |def
 
 // SVG 2 `a`: the link attributes it shares with HTML's.
 simple_class!(SvgAElement, "SVGAElement", SvgGraphicsElement, |def| {
+    define_interest_invoker(def);
     svg_href(def);
     def.getter("target", |s, n| {
         Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &LINK_TARGET)?.value())
