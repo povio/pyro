@@ -1452,6 +1452,10 @@ impl<T: FlexboxContainerStyle> FlexboxContainerStyle for &'_ T {
         (*self).block_baseline_synthesis()
     }
     #[inline(always)]
+    fn inline_baseline_synthesis(&self) -> (f32, bool) {
+        (*self).inline_baseline_synthesis()
+    }
+    #[inline(always)]
     fn flex_direction(&self) -> FlexDirection {
         (*self).flex_direction()
     }
@@ -1507,6 +1511,10 @@ impl<T: FlexboxItemStyle> FlexboxItemStyle for &'_ T {
     #[inline(always)]
     fn flex_basis(&self) -> Dimension {
         (*self).flex_basis()
+    }
+    #[inline(always)]
+    fn baseline_flow(&self, axis: crate::geometry::AbsoluteAxis) -> Option<bool> {
+        (*self).baseline_flow(axis)
     }
     #[inline(always)]
     fn flex_basis_calculation(&self) -> Option<CalcSizeFunction> {
