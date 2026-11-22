@@ -150,13 +150,26 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     })?;
     natives.set_atom("ttLevel", tt.value())?;
     // cspEval(code) -> whether the realm's CSP lets `code` compile (`'unsafe-eval'`); a
-    // violation is reported otherwise.
+    // violation is reported otherwise, located at the script that called eval or Function.
     let csp_eval = s.function("cspEval", |s, _this, a| {
         let code = crate::util::dom_string(a.get(0))?;
-        let allowed = crate::target::page_of(s).map_or(true, |page| crate::csp::eval_allowed(&page, &code));
+        let allowed = crate::target::page_of(s).map_or(true, |page| {
+            let location = if crate::csp::has_policies(&page) { crate::csp::SourceLocation::running(s) } else { None };
+            crate::csp::eval_allowed_at(&page, &code, location.as_ref())
+        });
         Ok(s.boolean(allowed))
     })?;
     natives.set_atom("cspEval", csp_eval.value())?;
+    // sourceLocation() -> [sourceFile, lineNumber, columnNumber] of the page script on the
+    // stack (the file stripped for reports), or null when there is none: a Trusted Types
+    // violation's location, read when it happens.
+    let location = s.function("sourceLocation", |s, _this, _a| match crate::csp::SourceLocation::running(s) {
+        Some(at) => Ok(s
+            .array(&[s.string(&at.source_file), s.number(f64::from(at.line)), s.number(f64::from(at.column))])?
+            .value()),
+        None => Ok(s.null()),
+    })?;
+    natives.set_atom("sourceLocation", location.value())?;
     Ok(natives)
 }
 
