@@ -613,9 +613,9 @@ fn is_revoked_proxy(s: &Scope<'_>, value: Value<'_>) -> bool {
 
 impl ListenerInvoker for Invoker<'_> {
     fn invoke(&mut self, callback: ListenerHandle, current: TargetKey, _target: TargetKey) {
-        // HTML "check if we can run script": not with scripting disabled, nor
-        // in a document that is no longer fully active (its frame was removed).
-        if self.page.scripting_disabled() || !self.page.is_fully_active() {
+        // HTML "check if we can run script": not in a document that is no longer fully active (its
+        // frame was removed); scripting disabled is checked below, for the callback's realm.
+        if !self.page.is_fully_active() {
             return;
         }
         // The relatedTarget as this invocation target sees it (DOM "invoke").
@@ -661,6 +661,14 @@ impl ListenerInvoker for Invoker<'_> {
         // `cs`: the callback's realm, which is entered for the call, owns the
         // current event and reports the exception.
         let cs = callback_scope.as_ref().unwrap_or(&s);
+        // HTML "check if we can run script" for the callback's realm: a listener or handler
+        // function its embedder added to a document sandboxed without `allow-scripts` still
+        // runs (it is the embedder's script, not the document's).
+        let scripting_disabled =
+            page_of(cs).map_or_else(|_| self.page.scripting_disabled(), |p| p.scripting_disabled());
+        if scripting_disabled {
+            return;
+        }
         // DOM "inner invoke": the callback's global (a Window) exposes the
         // event as its current event unless the invocation target was in a
         // shadow tree; the previous value is restored afterwards, including on
