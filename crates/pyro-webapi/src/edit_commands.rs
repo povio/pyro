@@ -2653,7 +2653,13 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
             let p = editing::host_start(&page.dom.borrow(), host);
             (p, p)
         });
-        editing::set_selection(page, s, e);
+        if start != end && s == e && !editing::is_editable(&page.dom.borrow(), s.0) {
+            // Formatting normalizes a structural table range to forward,
+            // even when its visible endpoints coincide on the locked edge.
+            editing::set_adjusted_caret(page, s, false);
+        } else {
+            editing::set_selection(page, s, e);
+        }
     });
 }
 
