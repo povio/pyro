@@ -1738,6 +1738,7 @@ affects = "layout"
 type = "OverflowClipMargin"
 initial = "computed::OverflowClipMargin::zero()"
 struct = "margin"
+animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-overflow/#propdef-overflow-clip-margin"
 affects = "overflow"
 

@@ -207,7 +207,9 @@ only. `-webkit-box` is never a computed value. Tests: `crates/pyro-render/tests/
 `values/specified/box.rs`, `values/computed/box.rs` (`OverflowClipMargin`): the length of `overflow-clip-margin`
 may be negative, as Blink takes it (the clip edge moves inwards; WPT `css-overflow/overflow-clip-margin-016`,
 `-017`), where the specification and upstream have a non-negative length. Test:
-`crates/pyro-render/tests/overflow_clip.rs`.
+`crates/pyro-render/tests/overflow_clip.rs`. `properties/longhands.toml`: `overflow-clip-margin` animates
+discretely (upstream interpolates its length), as Blink does and as the WPT expects
+(it cites csswg-drafts#4441); WPT `css/css-overflow/overflow-no-interpolation.html`.
 - `values/specified/text.rs` (`WordBreak::Manual`): `word-break: manual` (CSS Text 4) is parsed for the servo engine.
   blitz-dom lays it out as `normal` without dictionary breaks in Southeast Asian scripts (its README.pyro.md).
   `WordBreak::AutoPhrase`: `word-break: auto-phrase` (CSS Text 4), parsed under the same condition; parley lays it
