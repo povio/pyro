@@ -1661,6 +1661,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     crate::url_search_params::install(s, helpers.get_atom("urlSearchParams")?)?;
     crate::form_data::install(s, helpers.get_atom("formData")?)?;
     crate::fetch::install(s)?;
+    crate::fetch::install_wasm_streaming(s, helpers.get_atom("wasmStreaming")?)?;
     crate::xhr::install(s, page)?;
     crate::structured_clone::install(s, page, helpers.get_atom("structuredClone")?)?;
     // What the lazy globals (streams, CryptoKey) replace themselves with.
