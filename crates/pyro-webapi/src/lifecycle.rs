@@ -345,6 +345,19 @@ pub fn report_diagnostic(s: &Scope<'_>, error: &JsError) {
     page.error_reporting.set(was);
 }
 
+/// HTML "reveal" (update the rendering, before the animation frame callbacks): the first
+/// rendering update of a document fires `pagereveal` at its Window, once. Gap: it is a plain
+/// `Event` (no `PageRevealEvent.viewTransition`), and a document that never requests an animation
+/// frame never gets it.
+pub fn reveal(page: &Rc<PageDom>) {
+    if page.revealed.replace(true) {
+        return;
+    }
+    let Some(w) = page.window_target() else { return };
+    let ev = EventCore::trusted(page, EventInterface::Event, "pagereveal", false, false);
+    fire(page, w, &ev);
+}
+
 /// `popstate` at the window (history traversal / back-forward).
 pub fn popstate(page: &Rc<PageDom>, state: Option<Persistent>) {
     let Some(w) = page.window_target() else { return };

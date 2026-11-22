@@ -120,6 +120,8 @@ pub struct PageDom {
     /// URLs of the classic scripts this document fetched CORS-cross-origin (tainting "opaque"):
     /// their errors are muted (HTML "muted errors": "Script error.", no location, no error).
     muted_scripts: RefCell<FxHashSet<String>>,
+    /// HTML "has been revealed": the document's `pagereveal` event fired (`lifecycle::reveal`).
+    pub(crate) revealed: Cell<bool>,
     pub(crate) selectors: RefCell<SelectorCache>,
     /// Attribute and tag names by JavaScript string identity (see `names`).
     pub(crate) names: crate::names::NameTable,
@@ -935,6 +937,7 @@ impl PageDom {
             render_blocking: Default::default(),
             connected_iframes: RefCell::new(FxHashSet::default()),
             muted_scripts: RefCell::new(FxHashSet::default()),
+            revealed: Cell::new(false),
             selectors: RefCell::new(SelectorCache::default()),
             names: Default::default(),
             collection_members: RefCell::default(),
