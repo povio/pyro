@@ -6,18 +6,18 @@
     "macbook_in_scope": 847,
     "studio_in_scope": 111,
     "other_dirs_out_of_scope": 21,
-    "macbook_worker_variants_if_enabled": 186,
+    "macbook_worker_variants_if_enabled": 188,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1138,
+   "distinct_census_pages": 1140,
    "owner_reported_unlisted": 5,
-   "selector_union": 1317,
+   "selector_union": 1319,
    "owner_estimate_reduction": 184,
    "of_which_tentative": 188,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
-    "html/semantics": 353,
+    "html/semantics": 358,
     "html/canvas": 342,
     "html/interaction": 115,
     "referrer-policy": 78,
@@ -27,45 +27,45 @@
     "content-security-policy": 52,
     "fetch/fetch-later": 29,
     "html/dom": 24,
-    "html/webappapis": 23,
     "fetch/content-encoding": 21,
+    "html/webappapis": 20,
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
-    "encoding": 7,
     "html/infrastructure": 7,
+    "encoding": 7,
     "fetch/data-urls": 6,
     "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "html/rendering": 3,
     "fetch/nosniff": 3,
+    "html/rendering": 3,
     "fetch/http-cache": 3,
     "xhr": 2,
+    "quirks": 1,
     "svg/styling": 1,
-    "IndexedDB": 1,
-    "quirks": 1
+    "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 190,
+    "macbook_in_scope": 187,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 45,
+    "macbook_worker_variants_if_enabled": 43,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 211,
+   "distinct_census_pages": 206,
    "owner_reported_unlisted": 0,
-   "selector_union": 454,
+   "selector_union": 449,
    "owner_estimate_reduction": 243,
    "of_which_tentative": 201,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 232,
-    "html/semantics": 146,
+    "html/semantics": 141,
     "html/syntax": 30,
     "html/browsers": 26,
     "fetch/api": 15,
@@ -74,15 +74,15 @@
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 39,
+    "macbook_in_scope": 42,
     "studio_in_scope": 178,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 122,
+   "distinct_census_pages": 125,
    "owner_reported_unlisted": 0,
-   "selector_union": 127,
+   "selector_union": 130,
    "owner_estimate_reduction": 5,
    "of_which_tentative": 33,
    "studio_css_reported_pages_not_deduped": 122,
@@ -92,10 +92,11 @@
     "html/semantics": 34,
     "content-security-policy": 20,
     "webidl": 19,
-    "html/browsers": 5,
     "html/interaction": 5,
+    "html/browsers": 5,
     "svg/path": 4,
     "workers": 3,
+    "html/webappapis": 3,
     "dom/nodes": 1
    }
   }
@@ -880,9 +881,9 @@
   },
   "F04c": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 6,
+   "in_scope_pages": 8,
    "out_of_scope_pages": 0,
-   "pages": 6,
+   "pages": 8,
    "tentative": 0
   },
   "F04d": {
@@ -904,6 +905,27 @@
    "in_scope_pages": 1,
    "out_of_scope_pages": 0,
    "pages": 1,
+   "tentative": 0
+  },
+  "F04i": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
+   "tentative": 0
+  },
+  "F04h": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
+   "pages": 0,
+   "tentative": 0
+  },
+  "F04g": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
+   "pages": 2,
    "tentative": 0
   },
   "F05": {
@@ -1404,7 +1426,7 @@
    "tentative": 0
   },
   "R-HTML-B-1b": {
-   "state": "implemented-unbuilt",
+   "state": "proposed",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
@@ -1782,7 +1804,7 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1176,
+ "implemented_total_estimate": 1178,
  "milestones_reached": [
   250,
   500,
