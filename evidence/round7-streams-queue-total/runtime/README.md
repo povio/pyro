@@ -1,0 +1,7 @@
+# Independent browser verification
+
+Pyro 5ea0e3298 passed 32/32 named assertions on the eight readable and writable default-stream floating-point queue URLs at WPT a421f2fea5eb7f91e0db399e44b0fb0779ee1603. Signed Google Chrome 158.0.8127.37 passed 32/32. The baseline passed 24/32. All 24 page runs completed with harness status OK. All eight URLs gained the positive near-zero residue assertion, while the maximum-safe-integer, clamped near-zero and zero controls retained their passes. No names disappeared and no pass was lost.
+
+The baseline revision was eb81d184aa0d5e5701e9be210b47f7096a0f7d10. The archived baseline executable was built at its parent 531432aa9bd1aadc1d6f460574473722d15a234d. The entire diff consists of 14 evidence files, verified with an empty diff outside evidence. The executable digest matched the candidate-build receipt under evidence/round7-editing/description-split. The candidate executable was built from a clean checkout at the exact tested revision, with the same JSC archive and profile. The Chrome application passed deep strict code-signature verification.
+
+The manifest-first WPT runner executed the eight generated global URLs through wptserve with four jobs, testdriver and HTTP/2 enabled. Each URL’s actual protocol is determined by the manifest. The named ledger joins by full URL and original assertion name. The run ledger preserves harness status, global and upstream blob for every page. The provenance file identifies the binaries, runner, manifest and build inputs.
