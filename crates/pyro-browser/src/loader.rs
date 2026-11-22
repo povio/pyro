@@ -1467,6 +1467,56 @@ fn allow_csp_from_header(headers: &http::HeaderMap) -> Option<String> {
     (!values.is_empty()).then(|| values.join(", "))
 }
 
+/// MIME Sniffing "rules for identifying an unknown MIME type" (sniff-scriptable flag set) for a
+/// navigation response whose type is unknown (`*/*`, `unknown/unknown`, `application/unknown`):
+/// an HTML signature is `text/html`, `<?xml` `text/xml`, a byte order mark or text without binary
+/// bytes `text/plain` (WPT `a-type.historical`). `None` for anything else, which keeps its type.
+fn sniff_unknown_document_mime(mime: &str, body: &[u8]) -> Option<&'static str> {
+    if !matches!(mime, "*/*" | "unknown/unknown" | "application/unknown") {
+        return None;
+    }
+    let header = &body[..body.len().min(1445)];
+    let start = header.iter().position(|b| !matches!(b, b'\t' | b'\n' | 0x0C | b'\r' | b' ')).unwrap_or(header.len());
+    let rest = &header[start..];
+    const HTML: [&[u8]; 17] = [
+        b"<!DOCTYPE HTML",
+        b"<HTML",
+        b"<HEAD",
+        b"<SCRIPT",
+        b"<IFRAME",
+        b"<H1",
+        b"<DIV",
+        b"<FONT",
+        b"<TABLE",
+        b"<A",
+        b"<STYLE",
+        b"<TITLE",
+        b"<B",
+        b"<BODY",
+        b"<BR",
+        b"<P",
+        b"<!--",
+    ];
+    for pattern in HTML {
+        if rest.len() > pattern.len()
+            && rest[..pattern.len()].eq_ignore_ascii_case(pattern)
+            && matches!(rest[pattern.len()], b' ' | b'>')
+        {
+            return Some("text/html");
+        }
+    }
+    if rest.starts_with(b"<?xml") {
+        return Some("text/xml");
+    }
+    if header.starts_with(&[0xFE, 0xFF]) || header.starts_with(&[0xFF, 0xFE]) || header.starts_with(&[0xEF, 0xBB, 0xBF])
+    {
+        return Some("text/plain");
+    }
+    // Binary data bytes (MIME Sniffing § 3): an image, media or archive keeps its type.
+    let binary = |b: &u8| matches!(b, 0x00..=0x08 | 0x0B | 0x0E..=0x1A | 0x1C..=0x1F);
+    (!header.iter().any(binary)).then_some("text/plain")
+}
+
 /// `scheme://host[:port]` of an absolute URL, or `"null"`.
 pub(crate) fn origin_of(url: &str) -> String {
     match url::Url::parse(url) {
@@ -2053,6 +2103,13 @@ impl Browser {
         history: HistoryHandling,
         unreachable: Option<crate::NavigationError>,
     ) -> Result<(), JsError> {
+        // MIME Sniffing: a response of an unknown type renders as what its bytes are.
+        // (`X-Content-Type-Options: nosniff` keeps the supplied type.)
+        if unreachable.is_none() && !resource.nosniff {
+            if let Some(mime) = sniff_unknown_document_mime(&resource.mime, &resource.body) {
+                resource.mime = mime.to_owned();
+            }
+        }
         // CSP Embedded Enforcement: the required policy this document accepted, taken before
         // anything can fail (`Browser::prepare_required_csp`).
         let enforce_required = self.doc_mut(page).and_then(|mut p| p.enforce_required_csp.take());
