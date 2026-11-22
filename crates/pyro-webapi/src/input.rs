@@ -1312,6 +1312,11 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta) && control_key_action(page, target, &k.key) {
         return;
     }
+    if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta || k.modifiers.shift)
+        && focusgroup_key_action(page, target, &k.key)
+    {
+        return;
+    }
     let editable = is_text_control(&page.dom.borrow(), target);
     match k.key.as_str() {
         "Backspace" if editable => delete(page, target, "deleteContentBackward", true),
@@ -1344,6 +1349,61 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
             move_caret_vertically(page, target, k.key == "ArrowUp", k.modifiers.shift)
         }
         _ => {}
+    }
+}
+
+/// Scoped focusgroup arrow keys (Chrome's `FocusgroupController`): on a
+/// focused focusgroup item, an arrow along an axis the owner allows moves
+/// focus to the next or previous item (wrapping when the owner wraps), Home
+/// and End to the first and last item. Arrows map to the owner's logical
+/// axes through its `writing-mode` and `direction`. Text controls keep the
+/// keys for their caret. Returns whether focus moved.
+fn focusgroup_key_action(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool {
+    use pyro_dom::focus_group::FocusgroupMove;
+    if !matches!(key, "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End") {
+        return false;
+    }
+    let next = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        if is_text_control(&dom, target) {
+            return false;
+        }
+        let Some((owner, _)) = dom.focusgroup_owner_of(target) else { return false };
+        let (writing_mode, direction) = {
+            let style = layout.style();
+            (
+                style.computed_value(&dom, owner, "writing-mode").unwrap_or_default(),
+                style.computed_value(&dom, owner, "direction").unwrap_or_default(),
+            )
+        };
+        let vertical = writing_mode.starts_with("vertical") || writing_mode.starts_with("sideways");
+        let rtl = direction == "rtl";
+        // (inline axis, forward) for each physical arrow.
+        let (inline, forward) = match (key, vertical) {
+            ("ArrowLeft" | "ArrowRight", false) => (true, (key == "ArrowRight") != rtl),
+            ("ArrowUp" | "ArrowDown", false) => (false, key == "ArrowDown"),
+            ("ArrowUp" | "ArrowDown", true) => (true, (key == "ArrowDown") != (rtl != (writing_mode == "sideways-lr"))),
+            ("ArrowLeft" | "ArrowRight", true) => {
+                let lr = matches!(writing_mode.as_str(), "vertical-lr" | "sideways-lr");
+                (false, (key == "ArrowRight") == lr)
+            }
+            _ => (false, false),
+        };
+        let mv = match key {
+            "Home" => FocusgroupMove::First,
+            "End" => FocusgroupMove::Last,
+            _ if forward => FocusgroupMove::Next { inline },
+            _ => FocusgroupMove::Previous { inline },
+        };
+        dom.focusgroup_move_target(target, mv, &|n| is_focusable_area(&layout, &dom, n))
+    };
+    match next {
+        Some(n) => {
+            focus_element(page, n);
+            true
+        }
+        None => false,
     }
 }
 

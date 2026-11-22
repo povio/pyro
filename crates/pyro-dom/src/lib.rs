@@ -16,6 +16,7 @@ pub mod fragment_filter;
 pub mod events;
 mod flow_font;
 pub mod font_face;
+pub mod focus_group;
 mod focus_nav;
 pub mod forms;
 pub(crate) mod gecko_only;
