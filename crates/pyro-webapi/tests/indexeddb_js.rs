@@ -926,6 +926,43 @@ fn dedicated_workers_share_the_owner_partition() {
 }
 
 #[test]
+fn upgrade_complete_listener_requests_follow_open_success() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let trace = env.run(
+        &doc,
+        r#"
+        const events = [];
+        const open = indexedDB.open('upgrade-order');
+        let writeFinished;
+        open.onupgradeneeded = () => {
+          const db = open.result;
+          db.createObjectStore('rows');
+          const upgrade = open.transaction;
+          upgrade.oncomplete = () => {
+            events.push('complete:' + (open.transaction === upgrade));
+            const write = db.transaction('rows', 'readwrite');
+            writeFinished = done(write);
+            const put = write.objectStore('rows').put('saved', 1);
+            put.onsuccess = () => events.push('put:' + put.result);
+            Promise.resolve().then(() => events.push('microtask:' + (open.transaction === upgrade)));
+          };
+        };
+        const db = await req(open);
+        events.push('open:' + (open.transaction === null));
+        await writeFinished;
+        db.close();
+        const reopened = await openDb('upgrade-order');
+        events.push(await req(reopened.transaction('rows').objectStore('rows').get(1)));
+        reopened.close();
+        out = events.join('|');
+        "#,
+    );
+    assert_eq!(trace, "complete:true|microtask:true|open:true|put:1|saved");
+}
+
+#[test]
 fn open_request_releases_transaction_after_terminal_dispatch() {
     let env = Env::new();
     let doc = env.doc("http://idb.test/");

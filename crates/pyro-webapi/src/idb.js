@@ -900,12 +900,18 @@
   // `complete` or `abort`. An upgrade no longer runs while its listeners do
   // (the open request keeps its transaction until after them).
   function finishedEvent(x, type, committed) {
-    if (x.upgrade) x.conn.upgrade = null;
+    if (x.upgrade) {
+      x.conn.upgrade = null;
+      post(() => finishOpen(x, committed));
+    }
     return {
       t: x.obj,
       e: plainEvent(type, !committed, false),
       a: () => {
-        if (x.upgrade) upgradeFinished(x, committed);
+        if (x.upgrade) {
+          requestState(x.openItem.request).tx = null;
+          maybeClose(x.conn);
+        }
       },
     };
   }
@@ -1576,19 +1582,15 @@
     };
   }
   // After the upgrade transaction's complete or abort event.
-  function upgradeFinished(x, committed) {
+  function finishOpen(x, committed) {
     const item = x.openItem, c = x.conn, s = requestState(item.request);
-    s.tx = null;
-    maybeClose(c);
-    post(() => {
-      N.release(item.name);
-      if (committed && !c.closePending) {
-        succeed(s, c.db);
-        return settle(item, plainEvent('success', false, false));
-      }
-      failed(s, fail('AbortError', committed ? 'The connection was closed.' : 'The version change transaction was aborted.'));
-      return settle(item, plainEvent('error', true, true));
-    });
+    N.release(item.name);
+    if (committed && !c.closePending) {
+      succeed(s, c.db);
+      return settle(item, plainEvent('success', false, false));
+    }
+    failed(s, fail('AbortError', committed ? 'The connection was closed.' : 'The version change transaction was aborted.'));
+    return settle(item, plainEvent('error', true, true));
   }
   function runDelete(item) {
     const name = item.name;
