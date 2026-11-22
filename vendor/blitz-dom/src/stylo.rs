@@ -1982,6 +1982,17 @@ impl Node {
             push_style(declaration);
         }
 
+        // pyro: HTML § 15.3.2 (quirks mode): `form { margin-block-end: 1em; }`. Pyro's UA sheet
+        // is one sheet for every document, so the quirks-mode rule is a hint of the element's
+        // (author-overridable, as the UA rule is).
+        if *tag == local_name!("form") && elem.name.ns == ns!(html) && self.tree().quirks_mode {
+            use style::values::generics::length::GenericMargin;
+            use style::values::specified::{LengthPercentage, NoCalcLength};
+            push_style(PropertyDeclaration::MarginBlockEnd(GenericMargin::LengthPercentage(
+                LengthPercentage::Length(NoCalcLength::from_em(1.0)),
+            )));
+        }
+
         // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
         let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
         let mut lang = None;

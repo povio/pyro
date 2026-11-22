@@ -58136,7 +58136,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1092,6 +1977,11 @@
+@@ -1092,6 +1977,22 @@
                  attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
              });
  
@@ -58145,10 +58145,21 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            push_style(declaration);
 +        }
 +
++        // pyro: HTML § 15.3.2 (quirks mode): `form { margin-block-end: 1em; }`. Pyro's UA sheet
++        // is one sheet for every document, so the quirks-mode rule is a hint of the element's
++        // (author-overridable, as the UA rule is).
++        if *tag == local_name!("form") && elem.name.ns == ns!(html) && self.tree().quirks_mode {
++            use style::values::generics::length::GenericMargin;
++            use style::values::specified::{LengthPercentage, NoCalcLength};
++            push_style(PropertyDeclaration::MarginBlockEnd(GenericMargin::LengthPercentage(
++                LengthPercentage::Length(NoCalcLength::from_em(1.0)),
++            )));
++        }
++
          // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
          let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
          let mut lang = None;
-@@ -1100,6 +1990,28 @@
+@@ -1100,6 +2001,28 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -58177,7 +58188,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +2037,42 @@
+@@ -1125,12 +2048,42 @@
                  }
              }
  
@@ -58220,7 +58231,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1139,6 +2081,67 @@
+@@ -1139,6 +2092,67 @@
                  }
              }
  
@@ -58288,7 +58299,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `valign` on HTML table row groups, rows and cells maps to
              // `vertical-align`, matched ASCII case-insensitively. `vertical-align`
              // is a shorthand in Stylo, so push the three longhands each keyword
-@@ -1164,7 +2167,7 @@
+@@ -1164,7 +2178,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -58297,7 +58308,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2273,9 @@
+@@ -1270,7 +2284,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -58308,7 +58319,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1307,6 +2312,21 @@
+@@ -1307,6 +2323,21 @@
                  }
              }
  
@@ -58330,7 +58341,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `body` carries four legacy margin attributes, as pixel lengths:
              // marginwidth and marginheight set both sides of an axis, and
              // leftmargin and topmargin set one side each.
-@@ -1358,6 +2378,16 @@
+@@ -1358,6 +2389,16 @@
                  }
              }
  
@@ -58347,7 +58358,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1367,154 +2397,67 @@
+@@ -1367,154 +2408,67 @@
                  }
              }
  
@@ -58544,7 +58555,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2470,47 @@
+@@ -1527,6 +2481,47 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -58592,7 +58603,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2518,208 @@
+@@ -1534,11 +2529,208 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -58801,7 +58812,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2727,269 @@
+@@ -1546,14 +2738,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -59071,7 +59082,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3033,12 @@
+@@ -1597,6 +3044,12 @@
      }
  }
  
@@ -59084,7 +59095,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3111,41 @@
+@@ -1669,12 +3122,41 @@
                      .push(pe_node_id);
              }
          }
@@ -59126,7 +59137,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3160,46 @@
+@@ -1689,24 +3171,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -59181,7 +59192,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3230,842 @@
+@@ -1737,3 +3241,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
