@@ -278,6 +278,7 @@ fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
             let Some(end) = pending else { return };
             dispatch_scroll(&p, doc, target, "scroll");
             if end {
+                fire_snap_events(&p);
                 dispatch_scroll(&p, doc, target, "scrollend");
             }
         }),
@@ -303,6 +304,9 @@ pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
         clamp_scrolls(page, true);
     }
     flush_pending_scrolls(page);
+    // pyro: snap targets a layout change or an initial snap changed, without a scroll to report
+    // them before its `scrollend`.
+    fire_snap_events(page);
 }
 
 /// Runs queued scroll steps before animation-frame callbacks in a rendering update.
@@ -332,7 +336,36 @@ pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     for ((doc, target), end, _) in pending {
         dispatch_scroll(page, doc, target, "scroll");
         if end {
+            fire_snap_events(page);
             dispatch_scroll(page, doc, target, "scrollend");
+        }
+    }
+}
+
+/// pyro: CSS Scroll Snap 2 § 5.1: `scrollsnapchanging`, then `scrollsnapchange`, at each scroller
+/// whose snap targets changed since they were last reported (a scroll's, before its
+/// `scrollend`, as Chromium; a layout change's in the rendering update that re-snaps it): at the
+/// document for the viewport, bubbling, at the element otherwise, not; never cancelable. A
+/// scroller that stopped snapping reports `(null, null)`.
+pub(crate) fn fire_snap_events(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    let changes = match (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
+        (Ok(dom), Ok(mut layout)) => layout.take_snap_changes(&dom),
+        _ => return,
+    };
+    let doc = page.document();
+    for (scroller, targets) in changes {
+        for ty in ["scrollsnapchanging", "scrollsnapchange"] {
+            if page.is_disposed() || crate::target::unheard(page, ty) {
+                continue;
+            }
+            let Some(key) = page.dom.borrow().node_key(scroller.unwrap_or(doc)) else { continue };
+            let iface = crate::event::EventInterface::SnapEvent;
+            let ev = crate::event::EventCore::trusted(page, iface, ty, scroller.is_none(), false);
+            crate::event::set_snap_targets(page, &mut ev.fields.borrow_mut(), targets);
+            crate::target::fire(page, key, &ev);
         }
     }
 }
@@ -412,6 +445,11 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
         } else if !page.pending_scrolls.borrow().iter().any(|(key, _, _)| *key == (doc, node)) {
             dispatch_scroll(page, doc, node, "scroll");
         }
+    }
+    // pyro: a re-snap's snap events, after its `scroll` (a script read's at the next rendering
+    // update).
+    if now {
+        fire_snap_events(page);
     }
 }
 

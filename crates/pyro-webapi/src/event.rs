@@ -56,6 +56,8 @@ pub enum EventInterface {
     TaskPriorityChangeEvent,
     /// HTML-in-Canvas `paint` (`crate::html_in_canvas`).
     CanvasPaintEvent,
+    /// CSS Scroll Snap 2 `scrollsnapchange` / `scrollsnapchanging`.
+    SnapEvent,
     /// Made in JS on first use (`crate::editing_globals`): natively an
     /// Event wrapper with ClipboardEvent.prototype.
     ClipboardEvent,
@@ -212,6 +214,10 @@ pub struct EventFields {
     /// them on first read ([SameObject]).
     pub changed_elements: Vec<NodeId>,
     pub changed_elements_array: Option<Persistent>,
+    /// `SnapEvent.snapTargetBlock` / `.snapTargetInline`, each held for as long as the event
+    /// exposes it.
+    pub snap_targets: [Option<NodeId>; 2],
+    pub snap_holds: Vec<crate::collections::NodeHold>,
 }
 
 /// Resolves a `MessageEvent.source` window in the realm reading it.
@@ -467,6 +473,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
         EventInterface::InterestEvent => s.wrap::<InterestEvent>(d, Some(key)),
         EventInterface::CanvasPaintEvent => s.wrap::<CanvasPaintEvent>(d, Some(key)),
+        EventInterface::SnapEvent => s.wrap::<SnapEvent>(d, Some(key)),
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
@@ -1950,6 +1957,61 @@ impl JsClass for CanvasPaintEvent {
     }
 }
 
+/// `SnapEvent` (CSS Scroll Snap 2 § 5): the boxes a scroller snaps to on its block and inline
+/// axes, of `scrollsnapchange` and `scrollsnapchanging`.
+pub struct SnapEvent;
+impl JsClass for SnapEvent {
+    const NAME: &'static str = "SnapEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<SnapEvent>(s, nt, a, EventInterface::SnapEvent, fill_snap));
+        def.getter("snapTargetBlock", |s, e| snap_target(s, e, 0));
+        def.getter("snapTargetInline", |s, e| snap_target(s, e, 1));
+    }
+}
+
+fn snap_target<'s>(s: &Scope<'s>, e: &EventData, axis: usize) -> JsResult<Value<'s>> {
+    let target = e.fields.borrow().snap_targets[axis];
+    match target {
+        Some(id) => Ok(crate::node::wrap_node(s, &e.page, id)?.value()),
+        None => Ok(s.null()),
+    }
+}
+
+/// Holds the snap targets `targets` (block, inline) in the event fields `f`.
+pub(crate) fn set_snap_targets(page: &Rc<PageDom>, f: &mut EventFields, targets: [Option<NodeId>; 2]) {
+    f.snap_targets = targets;
+    f.snap_holds =
+        targets.into_iter().flatten().filter_map(|id| crate::collections::NodeHold::new(page, id).ok()).collect();
+}
+
+/// `snapTargetBlock` / `snapTargetInline` of a SnapEventInit: a Node or null.
+fn fill_snap<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(o) = init else { return Ok(()) };
+    let page = page_of(s)?;
+    let mut targets = [None; 2];
+    for (axis, name) in [(0, "snapTargetBlock"), (1, "snapTargetInline")] {
+        let v = o.get_atom(name)?;
+        if v.is_undefined() || v.is_null() {
+            continue;
+        }
+        match s.unwrap::<crate::node::Node>(v) {
+            Some(n) if Rc::ptr_eq(&page.dom, &n.page().dom) => targets[axis] = Some(n.id),
+            _ => {
+                return Err(JsError::Type(
+                    format!(
+                        "Failed to construct 'SnapEvent': Failed to read the '{name}' property from 'SnapEventInit': Failed to convert value to 'Node'."
+                    )
+                    .into(),
+                ))
+            }
+        }
+    }
+    set_snap_targets(&page, f, targets);
+    Ok(())
+}
+
 /// `changedElements` of a CanvasPaintEventInit: a sequence of Elements.
 fn fill_canvas_paint<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     let Some(o) = init else { return Ok(()) };
@@ -2267,6 +2329,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<TransitionEvent>();
     engine.register::<ToggleEvent>();
     engine.register::<CanvasPaintEvent>();
+    engine.register::<SnapEvent>();
     engine.register::<CommandEvent>();
     engine.register::<InterestEvent>();
 }
