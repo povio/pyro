@@ -681,8 +681,8 @@ fn response_head(
     kind: ResponseKind,
     redirected: bool,
 ) -> ResponseHead {
-    let (mime, charset) =
-        headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(parse_content_type).unwrap_or_default();
+    // Fetch "extract a MIME type" over every Content-Type value, not just the first line.
+    let (mime, charset) = extract_mime_type(&headers);
     ResponseHead {
         url: url.clone(),
         status,

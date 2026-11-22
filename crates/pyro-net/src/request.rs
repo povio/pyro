@@ -390,6 +390,124 @@ pub fn parse_content_type(v: &str) -> (String, Option<String>) {
     (essence, charset)
 }
 
+/// Fetch "extract a MIME type" from a response's header list, as (essence, charset): every
+/// `Content-Type` value split at commas outside quoted strings, the last one that parses
+/// winning, with a charset kept from an earlier value of the same essence; ("", None) when none
+/// parses.
+pub fn extract_mime_type(headers: &http::HeaderMap) -> (String, Option<String>) {
+    let mut essence: Option<String> = None;
+    let mut charset: Option<String> = None;
+    let mut found: Option<(String, Option<String>)> = None;
+    for line in headers.get_all(http::header::CONTENT_TYPE) {
+        let Ok(line) = std::str::from_utf8(line.as_bytes()) else { continue };
+        for value in split_header_value(line) {
+            let Some((value_essence, value_charset)) = parse_mime_type(value) else { continue };
+            if value_essence == "*/*" {
+                continue;
+            }
+            if essence.as_deref() != Some(value_essence.as_str()) {
+                charset = value_charset.clone();
+                essence = Some(value_essence.clone());
+                found = Some((value_essence, value_charset));
+            } else {
+                let kept = value_charset.or_else(|| charset.clone());
+                found = Some((value_essence, kept));
+            }
+        }
+    }
+    found.unwrap_or_default()
+}
+
+/// Fetch "get, decode, and split": `value` split at commas outside double-quoted strings
+/// (backslash escapes inside them), each piece stripped of HTTP tab and space.
+fn split_header_value(value: &str) -> Vec<&str> {
+    let (mut out, mut start, mut quoted, mut escaped) = (Vec::new(), 0, false, false);
+    for (i, c) in value.char_indices() {
+        if quoted {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => quoted = false,
+                _ => {}
+            }
+        } else if c == '"' {
+            quoted = true;
+        } else if c == ',' {
+            out.push(value[start..i].trim_matches([' ', '\t']));
+            start = i + 1;
+        }
+    }
+    out.push(value[start..].trim_matches([' ', '\t']));
+    out
+}
+
+/// MIME Sniffing "parse a MIME type", as (lowercased essence, lowercased charset parameter);
+/// None on failure (a type or subtype that is not an HTTP token).
+fn parse_mime_type(input: &str) -> Option<(String, Option<String>)> {
+    let token = |s: &str| {
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+    };
+    let ws = |c: char| matches!(c, ' ' | '\t' | '\n' | '\r');
+    let input = input.trim_matches(ws);
+    let (ty, rest) = input.split_once('/')?;
+    let (subtype, mut params) = rest.split_once(';').map_or((rest, ""), |(s, p)| (s, p));
+    let subtype = subtype.trim_end_matches(ws);
+    if !token(ty) || !token(subtype) {
+        return None;
+    }
+    let essence = format!("{}/{}", ty.to_ascii_lowercase(), subtype.to_ascii_lowercase());
+    let mut charset = None;
+    loop {
+        params = params.trim_start_matches(ws);
+        if params.is_empty() {
+            break;
+        }
+        let end = params.find([';', '=']).unwrap_or(params.len());
+        let name = params[..end].to_ascii_lowercase();
+        params = &params[end..];
+        if let Some(rest) = params.strip_prefix(';') {
+            params = rest;
+            continue;
+        }
+        let Some(rest) = params.strip_prefix('=') else { break };
+        params = rest;
+        let value = if let Some(rest) = params.strip_prefix('"') {
+            // A quoted string: backslash escapes, up to the closing quote, then to the next `;`.
+            let mut value = String::new();
+            let mut chars = rest.char_indices();
+            let mut close = rest.len();
+            while let Some((i, c)) = chars.next() {
+                match c {
+                    '\\' => match chars.next() {
+                        Some((_, e)) => value.push(e),
+                        None => value.push('\\'),
+                    },
+                    '"' => {
+                        close = i + 1;
+                        break;
+                    }
+                    _ => value.push(c),
+                }
+            }
+            let after = &rest[close.min(rest.len())..];
+            params = after.find(';').map_or("", |i| &after[i + 1..]);
+            value
+        } else {
+            let end = params.find(';').unwrap_or(params.len());
+            let value = params[..end].trim_end_matches(ws).to_owned();
+            params = params.get(end + 1..).unwrap_or("");
+            if value.is_empty() {
+                continue;
+            }
+            value
+        };
+        if name == "charset" && charset.is_none() && token(&name) {
+            charset = Some(value.to_ascii_lowercase());
+        }
+    }
+    Some((essence, charset))
+}
+
 /// MIME Sniffing "JavaScript MIME type essence match" for a lowercased
 /// essence (as [`parse_content_type`] returns it).
 pub fn is_javascript_mime(essence: &str) -> bool {
