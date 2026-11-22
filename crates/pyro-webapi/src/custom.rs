@@ -228,7 +228,7 @@ pub(crate) fn first_state_set(page: &PageDom, realm: RealmId) -> bool {
 
 /// Whether `el`'s constructor is running (upgrade or construction).
 pub(crate) fn is_being_constructed(page: &PageDom, el: NodeId) -> bool {
-    CONSTRUCTIONS.with(|frames| frames.borrow().iter().any(|f| f.el == el && Rc::ptr_eq(&page.dom, &f.page.dom)))
+    CONSTRUCTIONS.with(|frames| frames.borrow().iter().any(|f| f.upgrade.as_ref().is_some_and(|u| u.el == el && Rc::ptr_eq(&page.dom, &u.page.dom))))
 }
 
 use pyro_dom::dom::is_valid_custom_element_name as valid_name;
@@ -240,10 +240,15 @@ use pyro_dom::dom::is_valid_custom_element_name as valid_name;
 /// constructed marker until the invocation returns.
 struct ConstructionFrame {
     constructor: Persistent,
+    selected: UpgradeDefinition,
+    // Only upgrading an existing element pushes onto its definition's
+    // construction stack. A fresh createElement call sets the active map.
+    upgrade: Option<UpgradeTarget>,
+}
+
+struct UpgradeTarget {
     page: Rc<PageDom>,
     el: NodeId,
-    local: LocalName,
-    name: LocalName,
     consumed: bool,
 }
 
@@ -263,47 +268,55 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>, 
     let page = page_of(s)?;
     let target = new_target.value().as_raw();
     let pending = CONSTRUCTIONS.with(|frames| {
-        frames.borrow().iter().rfind(|f| f.constructor.as_raw() == target)
-            .map(|f| (f.name.clone(), f.local.clone()))
+        frames.borrow().iter().rfind(|f| f.constructor.as_raw() == target).map(|f| f.selected.clone())
     });
-    let key = RegistryKey::global(s.realm_id());
-    let definition = pending.or_else(|| with_registry(&page, |r| {
-        r.defs.iter().find(|((registry, _), d)| *registry == key && d.ctor.get(s).strict_equals(new_target.value()))
-            .map(|((_, n), d)| (n.clone(), d.local_name.clone()))
-    }));
-    let Some((name, local_name)) = definition else { return Err(JsError::Type("Illegal constructor".into())) };
-    let expected = if local_name == name { "HTMLElement" } else { crate::html::interface_name_for_html(&local_name) };
+    let selection = pending.or_else(|| {
+        let key = RegistryKey::global(s.realm_id());
+        with_registry(&page, |r| {
+            r.defs.iter().find(|((registry, _), d)| *registry == key && d.ctor.get(s).strict_equals(new_target.value()))
+                .map(|((_, name), definition)| UpgradeDefinition {
+                    owner: page.clone(), key, name: name.clone(), definition: definition.clone(),
+                })
+        })
+    });
+    let Some(selected) = selection else { return Err(JsError::Type("Illegal constructor".into())) };
+    let name = &selected.name;
+    let local_name = &selected.definition.local_name;
+    let expected = if local_name == name { "HTMLElement" } else { crate::html::interface_name_for_html(local_name) };
     if active != expected {
         return Err(JsError::Type("Illegal constructor".into()));
     }
-    let proto = new_target.get_atom("prototype")?;
-    let upgrading = CONSTRUCTIONS.with(|frames| {
-        let mut frames = frames.borrow_mut();
-        frames.iter_mut().rfind(|f| f.constructor.as_raw() == target).map(|f| {
-            if std::mem::replace(&mut f.consumed, true) {
+    // An inner invocation may change the active registry without changing
+    // any definition's stack. A stack entry belongs to the exact definition.
+    let target_index = CONSTRUCTIONS.with(|frames| frames.borrow().iter().rposition(|f| {
+        f.upgrade.is_some() && Rc::ptr_eq(&f.selected.definition, &selected.definition)
+    }));
+    if let Some(index) = target_index {
+        // Reading the prototype may run author code; retain the original
+        // stack position and check its marker only after that read.
+        let proto = new_target.get_atom("prototype")?;
+        let (node_page, el) = CONSTRUCTIONS.with(|frames| {
+            let mut frames = frames.borrow_mut();
+            let u = frames[index].upgrade.as_mut().expect("selected upgrade target");
+            if std::mem::replace(&mut u.consumed, true) {
                 Err(JsError::Type("The custom element has already been constructed.".into()))
-            } else {
-                Ok((f.page.clone(), f.el))
-            }
-        }).transpose()
-    })?;
-    if let Some((node_page, el)) = upgrading {
+            } else { Ok((u.page.clone(), u.el)) }
+        })?;
         let obj = wrap_node(s, &node_page, el)?;
         obj.set_prototype(proto);
         return Ok(obj);
     }
 
-    // A direct invocation without a construction stack uses only the global registry.
-    let (observes, face) = with_registry(&page, |r| r.defs.get(&(key, name.clone()))
-        .map_or((false, false), |d| (!d.observed.is_empty(), d.form_associated)));
+    let (observes, face) = (!selected.definition.observed.is_empty(), selected.definition.form_associated);
     let el = {
         let mut dom = page.dom.borrow_mut();
-        let el = dom.create_element(page.document(), &local_name).js()?;
+        let el = dom.create_element_raw(page.document(), QualName::new(None, markup5ever::ns!(html), local_name.clone())).js()?;
         if local_name != name {
             dom.set_is_value(el, Some(name.clone())).js()?;
         }
         dom.prepare_custom_element(el, observes, face).js()?;
-        record_definition(&mut dom, el, &page, key)?;
+        dom.set_registry_association(el, selected.key.association()).js()?;
+        record_definition(&mut dom, el, &selected.owner, selected.key)?;
         dom.set_custom_defined(el).js()?;
         if face {
             dom.set_form_associated(el).js()?;
@@ -320,6 +333,7 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>, 
 /// stack + `new ctor()`, then `attributeChangedCallback` for the observed
 /// attributes it had, `connectedCallback` when it was connected, and the
 /// form-associated callbacks.
+#[derive(Clone)]
 struct UpgradeDefinition {
     owner: Rc<PageDom>,
     key: RegistryKey,
@@ -362,7 +376,7 @@ fn upgrade_with<'s>(
     if page.dom.borrow().custom_definition_owner(el).js()?.is_some() {
         return Ok(());
     }
-    let (ctor, local, observed, face) = (d.ctor.get(s), d.local_name.clone(), &d.observed, d.form_associated);
+    let (ctor, observed, face) = (d.ctor.get(s), &d.observed, d.form_associated);
     // The reactions the upgrade enqueues before it constructs.
     let (attributes, connected) = {
         let mut dom = page.dom.borrow_mut();
@@ -381,7 +395,9 @@ fn upgrade_with<'s>(
     let constructor = ctor.as_object().ok_or_else(|| JsError::Type("not a constructor".into()))?;
     let result = {
         CONSTRUCTIONS.with(|frames| frames.borrow_mut().push(ConstructionFrame {
-            constructor: Persistent::new(s, ctor), page: page.clone(), el, local, name: name.clone(), consumed: false,
+            constructor: Persistent::new(s, ctor),
+            selected: UpgradeDefinition { owner: owner.clone(), key, name: name.clone(), definition: d.clone() },
+            upgrade: Some(UpgradeTarget { page: page.clone(), el, consumed: false }),
         }));
         let _restore = ConstructionGuard;
         constructor.construct(&[])
@@ -687,44 +703,67 @@ pub(crate) fn create_element_value<'s>(
             if let Some((name, fallback)) = definition {
                 let selected = UpgradeDefinition::lookup(owner.clone(), key, name)
                     .ok_or_else(|| JsError::Type("Missing element definition.".into()))?;
-                let result = upgrade(s, page, el, selected).and_then(|()| {
-                    if let Some(expected) = &fallback {
-                        let mut dom = page.dom.borrow_mut();
-                        let element = dom.element(el).js()?;
-                        if element.name.ns != expected.ns || element.name.local != expected.local
-                            || !element.attrs.is_empty() || dom.first_child(el).js()?.is_some()
-                            || dom.parent(el).js()?.is_some() || dom.node_document(el).js()? != doc
-                        {
-                            return Err(JsError::dom("NotSupportedError", "The constructor did not return a fresh element of the requested name and document."));
+                if let Some(expected) = fallback {
+                    let ctor = selected.definition.ctor.get(s);
+                    CONSTRUCTIONS.with(|frames| frames.borrow_mut().push(ConstructionFrame {
+                        constructor: Persistent::new(s, ctor), selected, upgrade: None,
+                    }));
+                    let _restore = ConstructionGuard;
+                    match construct_fresh(s, page, doc, &expected, ctor, key.association()) {
+                        Ok(result) => return Ok(result),
+                        Err(error) => {
+                            report_construction_error(&owner, key, &error);
+                            let mut dom = page.dom.borrow_mut();
+                            let failed = dom.create_element_raw(doc, expected).js()?;
+                            dom.set_registry_association(failed, key.association()).js()?;
+                            dom.set_custom_failed(failed).js()?;
+                            drop(dom);
+                            return Ok(crate::node::wrap_created_node(s, page, doc, failed)?.value());
                         }
-                        dom.set_is_value(el, None).js()?;
-                        dom.set_registry_association(el, key.association()).js()?;
                     }
-                    Ok(())
-                });
-                if let Err(error) = result {
-                    // Synchronous construction reports failures in the
-                    // definition's realm. An autonomous constructor can
-                    // retain its own partially constructed element; DOM
-                    // returns a fresh failed HTMLUnknownElement instead.
-                    let realm = owner.realms.borrow().get(&key.realm).and_then(|r| r.upgrade());
-                    if let Some(realm) = realm {
-                        if let Ok(home) = realm.scope() { home.report_exception(&error); }
-                    }
-                    if let Some(name) = fallback {
-                        let mut dom = page.dom.borrow_mut();
-                        let failed = dom.create_element_raw(doc, name).js()?;
-                        dom.set_registry_association(failed, key.association()).js()?;
-                        dom.set_custom_failed(failed).js()?;
-                        drop(dom);
-                        return Ok(crate::node::wrap_created_node(s, page, doc, failed)?.value());
-                    }
+                }
+                if let Err(error) = upgrade(s, page, el, selected) {
+                    report_construction_error(&owner, key, &error);
                 }
                 return Ok(wrap_node(s, page, el)?.value());
             }
         }
     }
     Ok(crate::node::wrap_created_node(s, page, doc, el)?.value())
+}
+
+fn report_construction_error(owner: &PageDom, key: RegistryKey, error: &JsError) {
+    let realm = owner.realms.borrow().get(&key.realm).and_then(|r| r.upgrade());
+    if let Some(realm) = realm {
+        if let Ok(home) = realm.scope() { home.report_exception(error); }
+    }
+}
+
+/// Synchronous autonomous creation calls the constructor with its registry
+/// active. The HTMLElement constructor allocates; unlike an upgrade, there
+/// is no existing element to consume. The namespace prefix is assigned only
+/// to the validated result after author code returns.
+fn construct_fresh<'s>(
+    s: &Scope<'s>, page: &Rc<PageDom>, doc: NodeId, expected: &QualName, ctor: Value<'s>, association: RegistryAssociation,
+) -> JsResult<Value<'s>> {
+    let constructor = ctor.as_object().ok_or_else(|| JsError::Type("Not a constructor.".into()))?;
+    let result = constructor.construct(&[])?;
+    let element = s.unwrap::<crate::html::HtmlElement>(result.value())
+        .ok_or_else(|| JsError::Type("The constructor did not return an HTMLElement.".into()))?;
+    let invalid = || JsError::dom("NotSupportedError", "The constructor did not return a fresh element of the requested name and document.");
+    if !Rc::ptr_eq(&page.dom, &element.page().dom) { return Err(invalid()) }
+    let id = element.id;
+    let mut dom = page.dom.borrow_mut();
+    let e = dom.element(id).js()?;
+    if e.name.ns != expected.ns || e.name.local != expected.local || !e.attrs.is_empty()
+        || dom.first_child(id).js()?.is_some() || dom.parent(id).js()?.is_some() || dom.node_document(id).js()? != doc
+    {
+        return Err(invalid());
+    }
+    dom.set_element_prefix(id, expected.prefix.clone()).js()?;
+    dom.set_is_value(id, None).js()?;
+    dom.set_registry_association(id, association).js()?;
+    Ok(result.value())
 }
 
 /// DOM "clone a node": a clone of a defined custom element made for the

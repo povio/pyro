@@ -498,3 +498,26 @@ fn synchronous_autonomous_construction_reports_and_returns_a_fresh_failed_elemen
          result.title, result.customElementRegistry === registry, result.matches(':defined')].join('|')
     "#), "NotSupportedError|true|changed|true||true|false");
 }
+
+#[test]
+fn fresh_autonomous_construction_reenters_without_consuming_an_upgrade_target() {
+    let e = env(PAGE);
+    assert_eq!(eval(&e.main, r#"
+        const scoped = new CustomElementRegistry(), seen = [];
+        let nested;
+        class Panel extends HTMLElement {
+            constructor() {
+                super();
+                seen.push(this.prefix === null && this.customElementRegistry === scoped);
+                if (seen.length === 1) nested = new Panel();
+            }
+        }
+        scoped.define('x-panel', Panel);
+        const outer = document.createElementNS('http://www.w3.org/1999/xhtml', 'ui:x-panel',
+            {customElementRegistry: scoped});
+        let restored = false;
+        try { new Panel(); } catch (e) { restored = e instanceof TypeError; }
+        [seen.join(','), outer !== nested, outer.prefix, nested.prefix === null,
+         nested.ownerDocument === document, restored].join('|')
+    "#), "true,true|true|ui|true|true|true");
+}

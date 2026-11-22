@@ -3846,6 +3846,18 @@ impl Dom {
 
     // ----- names -------------------------------------------------------
 
+    /// Applies the validated qualified name's prefix after synchronous
+    /// construction. Shared tag-name strings are keyed by prefix and local name.
+    pub fn set_element_prefix(&mut self, id: NodeId, prefix: Option<Prefix>) -> DomResult<()> {
+        let index = self.check(id)?;
+        let el = self.n_mut(index).element_mut().ok_or(DomError::Type("not an element"))?;
+        if el.name.prefix != prefix {
+            el.name.prefix = prefix;
+            self.bump_tree();
+        }
+        Ok(())
+    }
+
     /// `Element.tagName` / `nodeName` for elements.
     pub fn tag_name(&self, id: NodeId) -> DomResult<String> {
         let (i, el) = self.el(id)?;
