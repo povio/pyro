@@ -40,7 +40,7 @@ for key in proven:
 for name in ['allocation.json','machine-provenance.json']:cp(w/name,machine/name)
 for name in ['github-artifact.json','github-run.json','publication-comparison.json','compare-publication.py']:
  if (w/'shipped'/name).is_file():cp(w/'shipped'/name,out/name)
-for name in ['export.sh','release_identity.py','release-identity.json','even-jsc-runtime.json','publish.py','directional.py']:cp(d/name,out/name)
+for name in ['export.sh','release_identity.py','release-identity.json','even-jsc-runtime.json','reference-index-readback.json','publish.py','directional.py']:cp(d/name,out/name)
 for name in ['aggregate.py','reference_index.py','tracked.py','wpt_ports.py']:cp(d/'exporter'/name,out/'exporter'/name)
 for f in snap.iterdir():
  if f.is_file():cp(f,out/'comparison'/f.name)

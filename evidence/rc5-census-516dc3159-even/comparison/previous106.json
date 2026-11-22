@@ -2745,12 +2745,21 @@
   "shard": "ordinary-229"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location",
    "chrome158": [
@@ -2785,12 +2794,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.assign",
    "chrome158": [
@@ -2825,12 +2843,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.href",
    "chrome158": [
@@ -2865,12 +2892,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.replace",
    "chrome158": [
@@ -2905,12 +2941,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location",
    "chrome158": [
@@ -2945,12 +2990,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.assign",
    "chrome158": [
@@ -2985,12 +3039,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.href",
    "chrome158": [
@@ -3025,12 +3088,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.replace",
    "chrome158": [
@@ -3065,12 +3137,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location",
    "chrome158": [
@@ -3105,12 +3186,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.assign",
    "chrome158": [
@@ -3145,12 +3235,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.href",
    "chrome158": [
@@ -3185,12 +3284,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.replace",
    "chrome158": [
@@ -3225,12 +3333,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.assign",
    "chrome158": [
@@ -3265,12 +3382,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.href",
    "chrome158": [
@@ -3305,12 +3431,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.replace",
    "chrome158": [
@@ -3345,12 +3480,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS downgrade (header not sent) - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location",
    "chrome158": [
@@ -3385,12 +3529,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS downgrade (header not sent) - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.assign",
    "chrome158": [
@@ -3425,12 +3578,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS downgrade (header not sent) - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.href",
    "chrome158": [
@@ -3465,12 +3627,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS downgrade (header not sent) - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.replace",
    "chrome158": [
@@ -3505,12 +3676,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS downgrade-upgrade - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.assign",
    "chrome158": [
@@ -3545,12 +3725,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS downgrade-upgrade - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.href",
    "chrome158": [
@@ -3585,12 +3774,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS downgrade-upgrade - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.replace",
    "chrome158": [
@@ -3625,12 +3823,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS upgrade - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS upgrade - location.assign",
    "chrome158": [
@@ -3665,12 +3872,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS upgrade - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS upgrade - location.href",
    "chrome158": [
@@ -3705,12 +3921,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-site - HTTPS upgrade - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-site - HTTPS upgrade - location.replace",
    "chrome158": [
@@ -3745,12 +3970,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location",
    "chrome158": [
@@ -3785,12 +4019,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.assign",
    "chrome158": [
@@ -3825,12 +4068,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.href",
    "chrome158": [
@@ -3865,12 +4117,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.replace",
    "chrome158": [
@@ -3905,12 +4166,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location",
    "chrome158": [
@@ -3945,12 +4215,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.assign",
    "chrome158": [
@@ -3985,12 +4264,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.href",
    "chrome158": [
@@ -4025,12 +4313,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.replace",
    "chrome158": [
@@ -4065,12 +4362,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location",
    "chrome158": [
@@ -4105,12 +4411,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.assign",
    "chrome158": [
@@ -4145,12 +4460,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.href",
    "chrome158": [
@@ -4185,12 +4509,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.replace",
    "chrome158": [
@@ -4225,12 +4558,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location",
    "chrome158": [
@@ -4265,12 +4607,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.assign",
    "chrome158": [
@@ -4305,12 +4656,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.href",
    "chrome158": [
@@ -4345,12 +4705,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.replace",
    "chrome158": [
@@ -4385,12 +4754,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location",
    "chrome158": [
@@ -4425,12 +4803,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.assign",
    "chrome158": [
@@ -4465,12 +4852,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.href",
    "chrome158": [
@@ -4505,12 +4901,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.replace",
    "chrome158": [
@@ -4545,12 +4950,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-site destination - location"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location",
    "chrome158": [
@@ -4585,12 +4999,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.assign"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.assign",
    "chrome158": [
@@ -4625,12 +5048,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.href"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.href",
    "chrome158": [
@@ -4665,12 +5097,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.replace"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   70,
+   72
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.replace",
    "chrome158": [

@@ -21,9 +21,9 @@
   "previous106": {
    "currentDisposition": {
     "Fail": 18,
-    "Pass": 25,
+    "Pass": 74,
     "newlyWithheld": 2,
-    "outsideRequestedShardSet": 61
+    "outsideRequestedShardSet": 12
    },
    "total": 106
   }
