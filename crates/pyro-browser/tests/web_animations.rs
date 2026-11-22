@@ -672,6 +672,31 @@ fn review_hidden_until_found_content_transitions_when_revealed() {
 }
 
 #[test]
+fn removing_or_moving_an_element_cancels_its_transitions() {
+    // WPT css-transitions disconnected-element-001, transition-reparented,
+    // transition-cancel-elapsed-time-on-removal: a removed element's running transitions are
+    // canceled (its `transitioncancel` still reaches it, though it no longer bubbles to the
+    // window), as are a moved one's, even back under the same parent; the moved element's
+    // computed style is its after-change value at once.
+    let (mut t, root) = transition_page(".t { transition: width 10s linear; width: 100px; height: 10px } .w { width: 200px }");
+    eval(
+        &root,
+        "globalThis.own = [];
+         globalThis.a = el('a', 't'); globalThis.b = el('b', 't'); globalThis.c = el('c');
+         for (const x of [a, b]) x.addEventListener('transitioncancel', e => own.push(e.target.id + ':' + (e.elapsedTime >= 0)));
+         a.offsetHeight; b.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); b.classList.add('w'); a.offsetHeight; b.offsetHeight; 0");
+    run_until(&mut t, &root, "log.includes('transitionrun:width:a') && log.includes('transitionrun:width:b')");
+    assert_ne!(eval(&root, "getComputedStyle(b).width"), "200px");
+    eval(&root, "a.remove(); c.appendChild(b); 0");
+    assert_eq!(eval(&root, "getComputedStyle(b).width"), "200px");
+    run_until(&mut t, &root, "own.length == 2");
+    assert_eq!(eval(&root, "own.sort().join(' ')"), "a:true b:true");
+}
+
+#[test]
 fn review_a_reversed_transition_cancels_and_runs_again() {
     let (mut t, root) = transition_page(".t { transition: width 300ms; width: 100px; height: 10px } .w { width: 200px }");
     eval(&root, "globalThis.a = el('a', 't'); a.offsetHeight; 0");
