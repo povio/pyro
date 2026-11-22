@@ -2243,9 +2243,11 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
         let leaving = current.and_then(owner_of);
         let mut next = step(current);
         // Tab from an item that keeps the arrow keys goes to the adjacent
-        // item, the way out of it.
+        // item of its focusgroup, the way out of it. An element past the
+        // group (another focusgroup's item included) is reached as from any
+        // item: entering another group lands on its entry.
         let handler = current.is_some_and(|c| is_directional_input_handler(&dom, c));
-        let next_item = next.filter(|_| handler && leaving.is_some());
+        let next_item = next.filter(|&n| handler && leaving.is_some() && owner_of(n) == leaving);
         if next_item.is_some() {
             next = None;
         }
