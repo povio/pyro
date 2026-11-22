@@ -1054,6 +1054,24 @@
 
   // ---------- Parsing numeric text (dimensions and math functions) ----------
   const NUM = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(%|[a-zA-Z]+)?/;
+  // These leaves belong to the parser and have not escaped to script. Fold
+  // their magnitudes without allocating CSSUnitValue copies for conversion.
+  function foldParsedUnits(left, right) {
+    const a = left instanceof CSSMathNegate ? left.value : left;
+    const b = right instanceof CSSMathNegate ? right.value : right;
+    if (!isUnit(a) || !isUnit(b)) return null;
+    let unit = a.unit, av = a.value, bv = b.value;
+    if (unit !== b.unit) {
+      const from = unitInfo(unit), other = unitInfo(b.unit);
+      if (!from || !other || from.f === null || other.f === null || from.canonical !== other.canonical) return null;
+      unit = from.canonical;
+      av *= from.f;
+      bv *= other.f;
+    }
+    const value = (left === a ? av : -av) + (right === b ? bv : -bv);
+    if (unit === a.unit) { a.value = value; return a; }
+    return new CSSUnitValue(value, unit);
+  }
   const parseNumeric = (text, simplifyParsedSums = false) => {
     const p = { s: text, i: 0 };
     const ws = () => { while (p.i < p.s.length && /\s/.test(p.s[p.i])) p.i++; };
@@ -1103,7 +1121,10 @@
         const t = product();
         items.push(op === '+' ? t : new CSSMathNegate(t));
       }
-      if (simplifyParsedSums && items.length > 1) {
+      if (simplifyParsedSums && items.length === 2) {
+        return foldParsedUnits(items[0], items[1]) ?? new CSSMathSum(...items);
+      }
+      if (simplifyParsedSums && items.length > 2) {
         // Combine compatible numeric leaves while retaining the order and
         // structure of unresolved terms (and their authored math operators).
         const combined = [], indices = new Map();
@@ -1117,11 +1138,7 @@
             indices.set(canonical, combined.length);
             combined.push(item);
           } else {
-            const previous = combined[index];
-            const prior = previous instanceof CSSMathNegate ? previous.value : previous;
-            const unit = prior.unit === leaf.unit ? leaf.unit : canonical;
-            const a = convert(prior, unit).value, b = convert(leaf, unit).value;
-            combined[index] = new CSSUnitValue((prior === previous ? a : -a) + (leaf === item ? b : -b), unit);
+            combined[index] = foldParsedUnits(combined[index], item);
           }
         }
         return combined.length === 1 ? combined[0] : new CSSMathSum(...combined);
