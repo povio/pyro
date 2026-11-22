@@ -1,0 +1,6 @@
+[
+  "shadow-dom/focus-navigation/reading-flow/grid-order-with-display-contents.html",
+  "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html",
+  "shadow-dom/focus-navigation/reading-flow/grid-order-on-shadow-host.html",
+  "shadow-dom/focus-navigation/reading-flow/grid-order-across-scopes.html"
+]
