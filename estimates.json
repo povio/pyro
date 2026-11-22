@@ -32,8 +32,8 @@
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
-    "html/infrastructure": 9,
     "workers": 9,
+    "html/infrastructure": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
     "fetch/corb": 6,
@@ -43,13 +43,13 @@
     "fetch/nosniff": 3,
     "html/rendering": 3,
     "fetch/http-cache": 3,
-    "fetch/orb": 2,
     "xhr": 2,
+    "fetch/orb": 2,
     "IndexedDB": 1,
     "fetch/redirect-navigate": 1,
+    "svg/styling": 1,
     "quirks": 1,
-    "fetch/security": 1,
-    "svg/styling": 1
+    "fetch/security": 1
    }
   },
   "in_progress": {
@@ -83,10 +83,10 @@
     "fetch/security": 4,
     "fetch/cross-origin-resource-policy": 2,
     "fetch/images": 1,
-    "fetch/range": 1,
-    "fetch/redirects": 1,
     "fetch/http-cache": 1,
-    "fetch/content-type": 1
+    "fetch/content-type": 1,
+    "fetch/range": 1,
+    "fetch/redirects": 1
    }
   },
   "queued": {
