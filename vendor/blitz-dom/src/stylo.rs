@@ -2006,10 +2006,10 @@ impl Node {
                 use style::values::generics::position::{GenericAspectRatio, PreferredRatio};
                 use style::values::generics::ratio::Ratio;
                 use style::values::specified::NonNegativeNumber;
-                push_style(PropertyDeclaration::AspectRatio(GenericAspectRatio {
+                push_style(PropertyDeclaration::AspectRatio(Box::new(GenericAspectRatio {
                     auto: true,
                     ratio: PreferredRatio::Ratio(Ratio(NonNegativeNumber::new(w), NonNegativeNumber::new(h))),
-                }));
+                })));
             }
         }
 
