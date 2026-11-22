@@ -246,14 +246,14 @@
                     // Serializable: width, height, color space and a copy of the pixels, read
                     // through the interface's own getters (the realm's ImageData).
                     const IDC = globalThis.ImageData, P = IDC && IDC.prototype;
-                    let width, height, data, colorSpace;
+                    let width, height, data, colorSpace, pixelFormat;
                     try {
                         const get = (k) => call(descriptor(P, k).get, source);
-                        width = get('width'); height = get('height'); data = get('data'); colorSpace = get('colorSpace');
+                        width = get('width'); height = get('height'); data = get('data'); colorSpace = get('colorSpace'); pixelFormat = get('pixelFormat');
                     } catch (_) { fail('Object type is not supported'); }
                     bytes += data.length;
                     if (bytes > 64 * 1024 * 1024) fail('Clone buffer limit exceeded', true);
-                    return remember(source, new IDC(copy(data, depth + 1), width, height, {colorSpace}));
+                    return remember(source, new IDC(copy(data, depth + 1), width, height, {colorSpace, pixelFormat}));
                 }
                 const name = call(stringSlice, kind, [8, -1]);
                 if (descriptor(boxed, name)) return remember(source, O(call(boxed[name], source)));

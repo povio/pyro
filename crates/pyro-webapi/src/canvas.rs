@@ -1634,6 +1634,9 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     }
     // ImageDataSettings.colorSpace: the context's when absent.
     let space = space_member(a.get(4), c.space)?;
+    // ImageDataSettings.pixelFormat (validated by canvas2d.js): float data
+    // is made from the 8-bit pixels.
+    let format = module_helper(s, c, "pixelFormatOf", &[a.get(4)])?;
     if !c.clean.get() {
         return Err(security_error());
     }
@@ -1652,7 +1655,7 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     let mut pixels = c.surface.borrow_mut().get_image_data(x, y, w as u32, h as u32);
     pyro_dom::canvas_color::convert_pixels(&mut pixels, c.space, space);
     let data = clamped_array(s, &pixels)?;
-    module_helper(s, c, "imageDataOf", &[data, s.number(w as f64), s.number(h as f64), s.string(space.name())])
+    module_helper(s, c, "imageDataOf", &[data, s.number(w as f64), s.number(h as f64), s.string(space.name()), format])
 }
 
 /// `putImageData(imagedata, dx, dy, dirtyX, dirtyY, dirtyWidth, dirtyHeight)`.
@@ -1692,7 +1695,9 @@ fn put_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     if bw <= 0 || bh <= 0 {
         return Ok(s.undefined());
     }
-    let mut data = typed_bytes(s, info.get_index(2)?)?;
+    // Float data is put as its 8-bit copy.
+    let pixels = module_helper(s, c, "unorm8Of", &[info.get_index(2)?])?;
+    let mut data = typed_bytes(s, pixels)?;
     // The ImageData's values are converted to the canvas's color space.
     let from = info.get_index(3)?;
     let from = if from.is_string() { Space::parse(&from.to_string()?) } else { None };
@@ -2498,6 +2503,7 @@ impl ContextData {
                 };
                 let settings = s.object();
                 settings.set_atom("colorSpace", size.get_index(2)?)?;
+                settings.set_atom("pixelFormat", size.get_index(3)?)?;
                 return module_helper(s, c, "imageData", &[size.get_index(0)?, size.get_index(1)?, settings.value()]);
             }
             a.require(2, "CanvasRenderingContext2D.createImageData")?;
@@ -2508,19 +2514,13 @@ impl ContextData {
                     format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
                 ));
             }
-            // ImageDataSettings.colorSpace: the context's when absent.
-            let explicit = match a.get(2).as_object() {
-                Some(o) => !o.get_atom("colorSpace")?.is_undefined(),
-                None => false,
-            };
-            let settings = if explicit {
-                a.get(2)
-            } else {
-                let settings = s.object();
-                settings.set_atom("colorSpace", s.string(c.space.name()))?;
-                settings.value()
-            };
-            module_helper(s, c, "imageData", &[s.number(w.abs() as f64), s.number(h.abs() as f64), settings])
+            // ImageDataSettings with the context's color space when it names none.
+            module_helper(
+                s,
+                c,
+                "imageDataIn",
+                &[s.number(w.abs() as f64), s.number(h.abs() as f64), a.get(2), s.string(c.space.name())],
+            )
         });
         def.method("getImageData", 4, get_image_data);
         def.method("putImageData", 3, put_image_data);

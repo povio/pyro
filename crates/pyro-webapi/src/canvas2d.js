@@ -21,6 +21,7 @@
   const getOwnPropertyNames = Object.getOwnPropertyNames;
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const parseColor = natives.parseColor;
+  const apply = Reflect.apply;
 
   function illegal() { return new TypeErrorC('Illegal constructor'); }
   function domError(name, message) { return new DOMExceptionC(message, name); }
@@ -635,37 +636,69 @@
     if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
     return space;
   }
-  function dimension(value, what) {
-    const n = finite(value, what) >>> 0;
-    return n;
+  // pyro: ImageDataPixelFormat. Float data is stored as given; canvases
+  // read and write it through 8-bit conversions (unorm8Of / imageDataOf).
+  const Float16ArrayC = globalThis.Float16Array;
+  const u8From = Uint8ClampedArrayC.from;
+  const PIXEL_FORMATS = ['rgba-unorm8', 'rgba-float16'];
+  function isFloat16(data) { return !!Float16ArrayC && data instanceof Float16ArrayC; }
+  // ImageDataSettings, converted member by member (colorSpace, pixelFormat).
+  function imageSettings(settings) {
+    const o = dict(settings);
+    const rawSpace = o.colorSpace;
+    const space = rawSpace === undefined ? 'srgb' : String(rawSpace);
+    if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
+    const rawFormat = o.pixelFormat;
+    const format = rawFormat === undefined ? 'rgba-unorm8' : String(rawFormat);
+    if (!PIXEL_FORMATS.includes(format)) throw new TypeErrorC(`The provided value '${format}' is not a valid enum value of type ImageDataPixelFormat.`);
+    if (format === 'rgba-float16' && !Float16ArrayC) throw new TypeErrorC('Float16Array is not supported.');
+    return { space, format };
+  }
+  // Web IDL `unsigned long` (no [EnforceRange]): ToNumber, then modulo 2^32
+  // (NaN and infinities are 0).
+  function uint32(value) { return +value >>> 0; }
+  // 8-bit copy of float pixel data (clamped to 0..1).
+  function unorm8Of(data) { return isFloat16(data) ? apply(u8From, Uint8ClampedArrayC, [data, (v) => v * 255]) : data; }
+  // Float copy of 8-bit pixel data.
+  function float16Of(data) {
+    const out = new Float16ArrayC(data.length);
+    for (let i = 0; i < data.length; i++) out[i] = data[i] / 255;
+    return out;
   }
   const MAX_PIXELS = 0x10000000;
   class ImageData {
     constructor(a, b, c, d) {
       if (arguments.length < 2) throw new TypeErrorC(`Failed to construct 'ImageData': 2 arguments required, but only ${arguments.length} present.`);
-      if (a instanceof Uint8ClampedArrayC) {
+      // Web IDL converts every argument before the constructor's steps run.
+      if (a instanceof Uint8ClampedArrayC || isFloat16(a)) {
+        const width = uint32(b);
+        const wantHeight = c === undefined ? undefined : uint32(c);
+        const settings = imageSettings(d);
+        if (isFloat16(a) !== (settings.format === 'rgba-float16')) {
+          throw domError('InvalidStateError', 'The input data type is not compatible with the requested pixel format.');
+        }
         const length = a.length;
         if (length === 0 || length % 4 !== 0) throw domError('InvalidStateError', 'The input data length is not a multiple of 4.');
-        const width = dimension(b, 'width');
         if (width === 0) throw domError('IndexSizeError', 'The source width is zero or not a number.');
         if ((length / 4) % width !== 0) throw domError('IndexSizeError', 'The input data length is not a multiple of (4 * width).');
         const height = length / 4 / width;
-        if (c !== undefined && dimension(c, 'height') !== height) throw domError('IndexSizeError', 'The input data length is not equal to (4 * width * height).');
-        images.set(this, { width, height, data: a, colorSpace: colorSpace(d) });
+        if (wantHeight !== undefined && wantHeight !== height) throw domError('IndexSizeError', 'The input data length is not equal to (4 * width * height).');
+        images.set(this, { width, height, data: a, colorSpace: settings.space, pixelFormat: settings.format });
         return;
       }
-      const width = dimension(a, 'width'), height = dimension(b, 'height');
+      const width = uint32(a), height = uint32(b);
+      const settings = imageSettings(c);
       if (width === 0) throw domError('IndexSizeError', 'The source width is 0.');
       if (height === 0) throw domError('IndexSizeError', 'The source height is 0.');
-      if (width * height > MAX_PIXELS) throw new RangeErrorC('Out of memory at ImageData creation.');
-      images.set(this, { width, height, data: new Uint8ClampedArrayC(width * height * 4), colorSpace: colorSpace(c) });
+      if (width * height > MAX_PIXELS) throw domError('IndexSizeError', 'The requested image size exceeds the supported range.');
+      const data = settings.format === 'rgba-float16' ? new Float16ArrayC(width * height * 4) : new Uint8ClampedArrayC(width * height * 4);
+      images.set(this, { width, height, data, colorSpace: settings.space, pixelFormat: settings.format });
     }
     get width() { return img(this).width; }
     get height() { return img(this).height; }
     get data() { return img(this).data; }
     get colorSpace() { return img(this).colorSpace; }
-    // pyro: only 8-bit RGBA data is made.
-    get pixelFormat() { img(this); return 'rgba-unorm8'; }
+    get pixelFormat() { return img(this).pixelFormat; }
   }
   webidl(ImageData, 'ImageData');
 
@@ -790,7 +823,7 @@
     if (typeof CSSImageValueC === 'function' && image instanceof CSSImageValueC) return [4, String(image)];
     if (imageData) {
       const d = images.get(image);
-      if (d) return [2, d.data, d.width, d.height, d.colorSpace];
+      if (d) return [2, unorm8Of(d.data), d.width, d.height, d.colorSpace];
       if (natives.isBlob(image)) return [3, image];
     }
     return null;
@@ -935,10 +968,30 @@
     pattern(repetition, image) { return new CanvasPattern(secret, repetition, image); },
     textMetrics(values) { return new TextMetrics(secret, values); },
     imageData(width, height, settings) { return new ImageData(width, height, settings); },
+    // createImageData: ImageDataSettings with the context's color space as
+    // the default; the 8-bit copy of an ImageData's data (putImageData);
+    // the pixel format check of getImageData's settings.
+    imageDataIn(width, height, settings, space) {
+      const o = dict(settings);
+      const colorSpace = o.colorSpace;
+      const pixelFormat = o.pixelFormat;
+      return new ImageData(width, height, { colorSpace: colorSpace === undefined ? space : colorSpace, pixelFormat });
+    },
+    unorm8Of,
+    pixelFormatOf(settings) {
+      const raw = dict(settings).pixelFormat;
+      const format = raw === undefined ? 'rgba-unorm8' : String(raw);
+      if (!PIXEL_FORMATS.includes(format)) throw new TypeErrorC(`The provided value '${format}' is not a valid enum value of type ImageDataPixelFormat.`);
+      if (format === 'rgba-float16' && !Float16ArrayC) throw new TypeErrorC('Float16Array is not supported.');
+      return format;
+    },
     // An ImageData over `data` (a Uint8ClampedArray the native side filled).
-    imageDataOf(data, width, height, space) {
+    // `format` 'rgba-float16' turns 8-bit data into floats; the pixel format
+    // otherwise follows the data's type (a cloned float ImageData).
+    imageDataOf(data, width, height, space, format) {
+      if (format === 'rgba-float16' && !isFloat16(data)) data = float16Of(data);
       const o = Object.create(ImageData.prototype);
-      images.set(o, { width, height, data, colorSpace: space });
+      images.set(o, { width, height, data, colorSpace: space, pixelFormat: isFloat16(data) ? 'rgba-float16' : 'rgba-unorm8' });
       return o;
     },
     // Structured serialization and transfer (canvas.rs `canvas_object_of`):
@@ -979,7 +1032,7 @@
       return canvas;
     },
     // [width, height, data, colorSpace] of an ImageData, or null.
-    imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data, s.colorSpace] : null; },
+    imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data, s.colorSpace, s.pixelFormat] : null; },
     // The gradient or pattern record of a fill/stroke style.
     paintRecord(value) { return gradients.get(value) || patterns.get(value) || null; },
     frameCanvasSource(image) { return bitmaps.has(image) || offscreens.has(image); },
@@ -992,7 +1045,7 @@
     matrix(a, b, c, d, e, f) { return make(DOMMatrix, from2D(a, b, c, d, e, f), true); },
     pathOps(value) { return paths.get(value) || null; },
     isFillStyle(value) { return gradients.has(value) || patterns.has(value); },
-    imageSize(value) { const s = images.get(value); return s ? [s.width, s.height, s.colorSpace] : null; },
+    imageSize(value) { const s = images.get(value); return s ? [s.width, s.height, s.colorSpace, s.pixelFormat] : null; },
     roundRectRadii,
   };
 })
