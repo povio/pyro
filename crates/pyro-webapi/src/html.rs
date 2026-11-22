@@ -3218,7 +3218,7 @@ fn table_set_child(s: &Scope<'_>, n: &NodeData, v: Value<'_>, tag: &str) -> JsRe
         "thead" => dom.element_children(n.id).js()?.find(|&c| !is_html(&dom, c, &["caption", "colgroup"])),
         _ => None,
     };
-    dom.insert_before(n.id, el, before).js()
+    dom.insert_before(n.id, el, before).js().map(|_| ())
 }
 
 /// `deleteCaption()` / `deleteTHead()` / `deleteTFoot()`.
