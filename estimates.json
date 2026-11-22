@@ -4,14 +4,14 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 848,
-    "studio_in_scope": 111,
+    "studio_in_scope": 147,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1170,
+   "distinct_census_pages": 1206,
    "owner_reported_unlisted": 5,
-   "selector_union": 1433,
+   "selector_union": 1469,
    "owner_estimate_reduction": 268,
    "of_which_tentative": 188,
    "studio_css_reported_pages_not_deduped": 0,
@@ -20,7 +20,7 @@
     "html/canvas": 415,
     "html/semantics": 370,
     "html/interaction": 115,
-    "referrer-policy": 78,
+    "referrer-policy": 114,
     "fetch/api": 72,
     "html/browsers": 71,
     "html/editing": 55,
@@ -28,24 +28,24 @@
     "fetch/fetch-later": 29,
     "html/dom": 24,
     "fetch/content-encoding": 21,
-    "html/webappapis": 20,
     "html/infrastructure": 20,
+    "html/webappapis": 20,
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "html/rendering": 3,
-    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "fetch/nosniff": 3,
+    "html/rendering": 3,
     "xhr": 2,
-    "IndexedDB": 1,
+    "svg/styling": 1,
     "quirks": 1,
-    "svg/styling": 1
+    "IndexedDB": 1
    }
   },
   "in_progress": {
@@ -75,29 +75,28 @@
   "queued": {
    "scope": {
     "macbook_in_scope": 60,
-    "studio_in_scope": 178,
+    "studio_in_scope": 142,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 1,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 143,
+   "distinct_census_pages": 107,
    "owner_reported_unlisted": 0,
-   "selector_union": 149,
+   "selector_union": 113,
    "owner_estimate_reduction": 6,
    "of_which_tentative": 33,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/semantics": 46,
-    "referrer-policy": 36,
     "content-security-policy": 20,
     "webidl": 19,
     "html/canvas": 7,
-    "html/interaction": 5,
     "html/browsers": 5,
+    "html/interaction": 5,
     "svg/path": 4,
-    "workers": 3,
     "html/webappapis": 3,
+    "workers": 3,
     "dom/nodes": 1
    }
   }
@@ -937,7 +936,7 @@
    "tentative": 0
   },
   "F05": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 36,
    "out_of_scope_pages": 0,
    "pages": 36,
@@ -1903,7 +1902,7 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1208,
+ "implemented_total_estimate": 1244,
  "milestones_reached": [
   250,
   500,
