@@ -97,6 +97,8 @@ pub fn is_safelisted_header(name: &str, value: &HeaderValue) -> bool {
 pub fn is_cors_safelisted_header(name: &str, value: &HeaderValue) -> bool {
     is_safelisted_header(name, value)
         || (name == "range"
+            // Fetch: a safelisted value is at most 128 bytes.
+            && value.len() <= 128
             && crate::range::parse_single_range_with(value.as_bytes(), false).is_some_and(|(start, _)| start.is_some()))
 }
 
