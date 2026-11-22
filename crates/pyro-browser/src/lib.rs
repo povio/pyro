@@ -2167,6 +2167,9 @@ impl Browser {
                 flags.scripts_disabled |= parent.sandbox.scripts_disabled;
                 flags.automatic_features_blocked |= parent.sandbox.automatic_features_blocked;
                 flags.popups_blocked |= parent.sandbox.popups_blocked;
+                flags.navigation_blocked |= parent.sandbox.navigation_blocked;
+                flags.top_navigation_blocked |= parent.sandbox.top_navigation_blocked;
+                flags.top_navigation_needs_activation |= parent.sandbox.top_navigation_needs_activation;
             }
             flags
         } else {

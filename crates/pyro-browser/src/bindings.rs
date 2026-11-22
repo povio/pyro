@@ -357,7 +357,10 @@ impl PageHooks for Hooks {
             let key = if own_frame {
                 Some(page)
             } else {
-                lookup_target.and_then(|t| host.named_frame(page, t))
+                request.target.as_deref().and_then(|t| match host.ancestor_target(page, t, user_gesture) {
+                    Some(ancestor) => ancestor,
+                    None => lookup_target.and_then(|t| host.named_frame(page, t)),
+                })
             };
             cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
             key.and_then(|key| host.nav(key))
@@ -400,8 +403,20 @@ impl PageHooks for Hooks {
             }) {
                 return;
             }
-            let named = request.target.as_deref().filter(|_| !request.window_features.noopener)
-                .and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
+            // `_parent` and `_top` choose an ancestor (noopener or not), unless sandboxing forbids it.
+            let ancestor =
+                request.target.as_deref().and_then(|t| b.page(page.page)?.frames.ancestor_target(page, t, user_gesture));
+            if ancestor == Some(None) {
+                return;
+            }
+            let named = match ancestor {
+                Some(target) => target,
+                None => request
+                    .target
+                    .as_deref()
+                    .filter(|_| !request.window_features.noopener)
+                    .and_then(|t| b.page(page.page)?.frames.named_frame(page, t)),
+            };
             // HTML "navigate to a javascript: URL": the script runs in the
             // target document; a string result replaces that document.
             if let Some(source) = javascript_url_source(&request.url) {
@@ -443,10 +458,8 @@ impl PageHooks for Hooks {
                 }
                 return;
             }
-            let result = if new_context
-                || (page.child.is_some() && request.target.as_deref().is_some_and(|t| matches!(t, "_top" | "_parent")))
-            {
-                Err(JsError::Unsupported(&"form POST to a new window and cross-frame navigation targets"))
+            let result = if new_context {
+                Err(JsError::Unsupported(&"form POST to a new window"))
             } else {
                 b.navigate_frame_with_handling(
                     named.unwrap_or(page),

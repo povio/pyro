@@ -1142,17 +1142,31 @@ pub(crate) struct Sandbox {
     /// still follows a refresh, as Chrome does.
     pub automatic_features_blocked: bool,
     pub popups_blocked: bool,
+    /// The sandboxed navigation browsing context flag (any `sandbox` attribute): no navigating
+    /// an ancestor below the top-level one.
+    pub navigation_blocked: bool,
+    /// The sandboxed top-level navigation flags: neither `allow-top-navigation` nor
+    /// `allow-top-navigation-by-user-activation`.
+    pub top_navigation_blocked: bool,
+    /// Only `allow-top-navigation-by-user-activation`: the top-level one only with activation.
+    pub top_navigation_needs_activation: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
         let Some(value) = value else { return Self::default() };
         let tokens: Vec<_> = value.split_ascii_whitespace().collect();
         let scripts_disabled = !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-scripts"));
+        let top = tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-top-navigation"));
+        let top_by_activation =
+            tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-top-navigation-by-user-activation"));
         Self {
             opaque: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-same-origin")),
             scripts_disabled,
             automatic_features_blocked: scripts_disabled,
             popups_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups")),
+            navigation_blocked: true,
+            top_navigation_blocked: !top && !top_by_activation,
+            top_navigation_needs_activation: !top && top_by_activation,
         }
     }
 }
@@ -1187,6 +1201,27 @@ impl FrameHost {
     /// The iframe a navigation `target` from `source` names, if `source` may
     /// navigate it: its own subtree first, then same-origin frames of the page
     /// (a simplified "find a navigable by target name").
+    /// HTML "the rules for choosing a navigable" for `_parent` and `_top` (ASCII
+    /// case-insensitive) from frame `source`: `Some(Some(target))` when it may navigate that
+    /// navigable, `Some(None)` when sandboxing forbids it (HTML "allowed by sandboxing to
+    /// navigate"), None for any other name. A top-level frame is its own parent and top.
+    pub fn ancestor_target(&self, source: FrameKey, name: &str, user_activation: bool) -> Option<Option<FrameKey>> {
+        let top = name.eq_ignore_ascii_case("_top");
+        if !top && !name.eq_ignore_ascii_case("_parent") {
+            return None;
+        }
+        let target = if top { FrameKey::from(self.page) } else { self.parent_key(source) };
+        if target == source {
+            return Some(Some(source));
+        }
+        let Some(sandbox) = self.with_frame(source, |f| f.sandbox) else { return Some(None) };
+        let allowed = if target.child.is_none() {
+            !sandbox.top_navigation_blocked && (!sandbox.top_navigation_needs_activation || user_activation)
+        } else {
+            !sandbox.navigation_blocked
+        };
+        Some(allowed.then_some(target))
+    }
     pub fn named_frame(&self, source: FrameKey, name: &str) -> Option<FrameKey> {
         if ["", "_blank", "_self", "_parent", "_top"].iter().any(|k| name.eq_ignore_ascii_case(k)) {
             return None;
