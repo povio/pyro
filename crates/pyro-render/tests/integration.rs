@@ -48,6 +48,7 @@ mod subgrid_edge_tracks;
 mod table_part_containing_blocks;
 mod table_cell_percent_heights;
 mod flex_gaps;
+mod flex_inline_axis_baselines;
 mod flex_last_baseline;
 mod flex_natural_ratio;
 mod flex_size_keywords;
