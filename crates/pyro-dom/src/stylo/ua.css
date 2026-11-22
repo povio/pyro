@@ -685,7 +685,9 @@ th {
     text-align: -moz-center-or-inherit;
 }
 
-:is(tr, tbody, thead, tfoot, table)>form:-moz-is-html {
+/* pyro: Gecko's :-moz-is-html is not parsed by this Stylo (the rule was dropped); the default
+   namespace already limits it to HTML forms, as Chromium's rule applies. */
+:is(tr, tbody, thead, tfoot, table)>form {
     /* Important: don't show these forms in HTML */
     display: none !important;
 }
