@@ -409,7 +409,7 @@ pub(crate) fn message(
     client: Option<&str>,
     origin_key: &str,
 ) {
-    let source = client.and_then(|json| s.parse_json(json).ok()).unwrap_or_else(|| s.null());
+    let source = client.and_then(|json| s.parse_json(json)).unwrap_or_else(|| s.null());
     let origin = s.string(crate::event::serialize_message_origin(origin_key));
     let key = s.string(origin_key);
     match crate::structured_clone::decode_with_ports(s, message) {
