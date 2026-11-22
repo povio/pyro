@@ -2025,6 +2025,7 @@ impl Browser {
         if let Some(leaving) = self.doc(page).and_then(|doc| doc.main_frame.page_dom.clone()) {
             pyro_webapi::lifecycle::before_unload(&leaving);
         }
+        self.cancel_lazy_frame(page);
         // The container policy (`fullscreen`) is taken as the navigation begins: an `allowfullscreen`
         // set while the response is on its way applies to the next navigation, not this one.
         // (The document now shown keeps the policy it was made with.)

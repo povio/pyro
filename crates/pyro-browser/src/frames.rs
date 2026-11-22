@@ -265,6 +265,11 @@ pub(crate) struct FrameHost {
     pub(crate) lazy_frames: RefCell<Vec<(FrameKey, Option<LazyFrameStamp>)>>,
     /// Lazy iframes the check let go: their next attribute processing navigates.
     pub(crate) lazy_approved: RefCell<Vec<FrameKey>>,
+    /// Lazy iframes navigated by something else (a link, `location`, a reload) while their
+    /// lazy load was pending: HTML clears their lazy load resumption steps, so it never runs.
+    pub(crate) lazy_cancelled: RefCell<Vec<FrameKey>>,
+    /// Set while attribute processing navigates its iframe (a navigation that cancels nothing).
+    pub(crate) attribute_navigation: Cell<bool>,
     /// The layout engine's sync stamp when the hidden objects were last checked.
     pub(crate) hidden_checked_at: Cell<Option<(u64, u64, u32, u32)>>,
 }
@@ -378,6 +383,8 @@ impl FrameHost {
             hidden_objects: RefCell::new(Vec::new()),
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
+            lazy_cancelled: RefCell::new(Vec::new()),
+            attribute_navigation: Cell::new(false),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
@@ -457,6 +464,8 @@ impl FrameHost {
             hidden_objects: RefCell::new(Vec::new()),
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
+            lazy_cancelled: RefCell::new(Vec::new()),
+            attribute_navigation: Cell::new(false),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
@@ -1954,6 +1963,7 @@ impl Browser {
         if self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref()) {
             return;
         }
+        let was_attribute_navigation = host.attribute_navigation.replace(true);
         let (srcdoc, src, src_base) = {
             let dom = host.dom.borrow();
             // An `<object>` hosting a document navigates to its `data`, an `<embed>` to its `src`
@@ -2052,6 +2062,7 @@ impl Browser {
                 .map(|_| ())
             }
         };
+        host.attribute_navigation.set(was_attribute_navigation);
         if let Err(e) = result {
             if let Some(realm) = host.frame(key).and_then(|f| f.main_realm().cloned()) {
                 if let Ok(scope) = realm.scope() {
@@ -2078,6 +2089,15 @@ impl Browser {
         if !lazy {
             return false;
         }
+        // Navigated otherwise first (before this queued processing ran): no lazy load, and this
+        // processing navigates nowhere.
+        {
+            let mut cancelled = host.lazy_cancelled.borrow_mut();
+            if let Some(i) = cancelled.iter().position(|k| *k == key) {
+                cancelled.remove(i);
+                return true;
+            }
+        }
         {
             let mut approved = host.lazy_approved.borrow_mut();
             if let Some(i) = approved.iter().position(|k| *k == key) {
@@ -2098,6 +2118,32 @@ impl Browser {
             doc.main_frame.loaded = true;
         }
         true
+    }
+
+    /// HTML "navigate" clears the container's lazy load resumption steps: a lazy iframe navigated
+    /// other than by its attribute processing (a link, `location`, a reload, `window.open`)
+    /// loses its pending lazy load, including one whose queued processing has not run yet.
+    pub(crate) fn cancel_lazy_frame(&mut self, key: FrameKey) {
+        if key.child.is_none() {
+            return;
+        }
+        let Some(host) = self.page(key.page).map(|p| p.frames.clone()) else { return };
+        if host.attribute_navigation.get() {
+            return;
+        }
+        let Some(owner) = host.frame(key).and_then(|f| f.owner) else { return };
+        if !is_lazy_iframe(&host.dom.borrow(), owner) {
+            return;
+        }
+        host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+        host.lazy_approved.borrow_mut().retain(|k| *k != key);
+        let pending = self.doc(key).is_some_and(|d| d.pending_frame_attributes > 0);
+        if pending {
+            let mut cancelled = host.lazy_cancelled.borrow_mut();
+            if !cancelled.contains(&key) {
+                cancelled.push(key);
+            }
+        }
     }
 
     /// The deferred lazy iframes that stopped being lazy, or that intersect the viewport expanded
@@ -2324,7 +2370,7 @@ mod frame_id_tests {
 }
 
 /// An HTML `<iframe>` whose `loading` attribute is in the Lazy state.
-fn is_lazy_iframe(dom: &pyro_dom::Dom, node: NodeId) -> bool {
+pub(crate) fn is_lazy_iframe(dom: &pyro_dom::Dom, node: NodeId) -> bool {
     dom.element(node).is_ok_and(|e| {
         e.is_html() && &*e.name.local == "iframe" && e.attr("loading").is_some_and(|l| l.eq_ignore_ascii_case("lazy"))
     })
