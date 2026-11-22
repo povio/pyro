@@ -278,26 +278,31 @@
     cancelScheduledValues(cancelTime) {
       const p = paramOf(this);
       const t = time(cancelTime, 'cancelScheduledValues');
-      p.events = p.events.filter((e) => e.time < t);
+      p.events = p.events.filter(e => e.time < t && !(e.type === CURVE && t < eventEnd(e)));
       return this;
     }
     cancelAndHoldAtTime(cancelTime) {
       const p = paramOf(this);
       const t = time(cancelTime, 'cancelAndHoldAtTime');
-      const held = valueAt(p, t);
-      const kept = p.events.filter((e) => e.time < t && !(e.type === CURVE && e.time + e.duration > t));
       const next = p.events.find((e) => e.time >= t);
+      const kept = p.events.filter(e => e.time < t || (e.time === t && e.type === SET));
+      const previous = kept.at(-1);
+      const inCurve = previous?.type === CURVE && t < eventEnd(previous);
+      const inRamp = !inCurve && next && (next.type === LINEAR || next.type === EXPONENTIAL);
+      const held = fround(inRamp ? valueAt({...p, events: [...kept, next]}, t) : valueAt({...p, events: kept}, t));
+      if (inCurve) kept[kept.length - 1] = {...previous, cutoff: t, value: held};
       // A ramp under way ends where it is held.
-      if (next && (next.type === LINEAR || next.type === EXPONENTIAL)) kept.push({ type: next.type, time: t, value: held, t0: next.t0, v0: next.v0 });
-      else kept.push({ type: SET, time: t, value: held });
+      if (inRamp) kept.push({ type: next.type, time: t, value: held, t0: next.t0, v0: next.v0 });
+      else if (previous?.type === TARGET) kept.push({ type: SET, time: t, value: held });
       p.events = kept;
       return this;
     }
   }
   webidl(AudioParam, 'AudioParam');
 
+  function eventEnd(e) { return e.type === CURVE ? e.cutoff ?? (e.time + e.duration) : e.time; }
   function checkValueAtTime(p, t) {
-    if (p.events.some(e => e.type === CURVE && e.time <= t && t < e.time + e.duration)) {
+    if (p.events.some(e => e.type === CURVE && e.time <= t && t < eventEnd(e))) {
       throw new DE('The current time overlaps an automation curve.', 'NotSupportedError');
     }
   }
@@ -330,8 +335,8 @@
   function insertEvent(p, e, method) {
     const events = p.events;
     for (const o of events) {
-      const oEnd = o.type === CURVE ? o.time + o.duration : o.time;
-      const eEnd = e.type === CURVE ? e.time + e.duration : e.time;
+      const oEnd = eventEnd(o);
+      const eEnd = eventEnd(e);
       if ((o.type === CURVE && e.time > o.time && e.time < oEnd) || (e.type === CURVE && o.time > e.time && o.time < eEnd)
         || (o.type === CURVE && e.type === CURVE && o.time === e.time)) {
         throw new DE(`Failed to execute '${method}' on 'AudioParam': Event overlaps another event.`, 'NotSupportedError');
@@ -354,7 +359,7 @@
     const e = p.events[i];
     switch (e.type) {
       case TARGET: return e.value + (startValue(p, i) - e.value) * exp(-(t - e.time) / e.tc);
-      case CURVE: return t >= e.time + e.duration ? e.value : curveAt(e, t);
+      case CURVE: return t >= eventEnd(e) ? e.value : curveAt(e, t);
       default: return e.value;
     }
   }
@@ -376,13 +381,14 @@
       let t0, v0;
       if (i >= 0) {
         const prev = events[i];
-        t0 = prev.type === CURVE ? prev.time + prev.duration : prev.time;
+        t0 = eventEnd(prev);
         v0 = endValue(p, i, max(t0, prev.time));
       } else {
         t0 = next.t0 || 0;
         v0 = next.v0 === undefined ? p.value : next.v0;
       }
       const t1 = next.time, v1 = next.value;
+      if (t < t0 && i >= 0 && events[i].type === CURVE) return curveAt(events[i], t);
       if (t <= t0) return v0;
       if (t1 <= t0) return v1;
       const f = (t - t0) / (t1 - t0);

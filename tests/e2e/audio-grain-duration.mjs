@@ -6,10 +6,12 @@ import { join } from 'node:path';
 const { chromium } = createRequire(new URL('../../bench/package.json', import.meta.url))('playwright-core');
 const [executablePath, wptRoot, modulePath, batch] = process.argv.slice(2);
 const periodic = batch === 'periodic';
-const directory = '/webaudio/the-audio-api/' + (periodic ? '' : 'the-audiobuffersourcenode-interface/');
-const pages = periodic ? ['the-periodicwave-interface/periodicWave.html', 'the-oscillatornode-interface/ctor-oscillator.html'] : ['sub-sample-scheduling.html', 'audiobuffersource-duration-loop.html', 'audiobuffersource-duration-loop-playbackrate.html'];
+const hold = batch === 'hold';
+const directory = '/webaudio/the-audio-api/' + (hold ? 'the-audioparam-interface/' : periodic ? '' : 'the-audiobuffersourcenode-interface/');
+const pages = hold ? ['audioparam-cancel-and-hold.html', 'cancel-scheduled-values.html'] : periodic ? ['the-periodicwave-interface/periodicWave.html', 'the-oscillatornode-interface/ctor-oscillator.html'] : ['sub-sample-scheduling.html', 'audiobuffersource-duration-loop.html', 'audiobuffersource-duration-loop-playbackrate.html'];
 const allowed = new Set([...pages.map(name => directory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
+if (hold) allowed.add('/webaudio/resources/audio-param.js');
 try {
   const page = await browser.newPage();
   if (modulePath) {
@@ -31,6 +33,31 @@ try {
     await page.waitForFunction(() => globalThis.results);
     outcomes[name] = await page.evaluate(() => globalThis.results);
   }
+  if (hold) outcomes['hold-pcm'] = await page.evaluate(async () => {
+    const tests = [];
+    for (const event of ['set', 'target', 'ramp', 'none', 'curveEnd']) {
+      const context = new OfflineAudioContext(1, 384, 8192), source = context.createConstantSource();
+      const param = source.offset, cut = 128 / context.sampleRate;
+      param.value = 0.25;
+      if (event === 'set') param.setValueAtTime(0.75, cut);
+      if (event === 'target') param.setTargetAtTime(0.75, cut, cut);
+      if (event === 'ramp') param.linearRampToValueAtTime(0.75, cut);
+      if (event === 'curveEnd') param.setValueCurveAtTime([0, 0.75], 0, cut);
+      param.cancelAndHoldAtTime(cut).linearRampToValueAtTime(1, 2 * cut);
+      source.connect(context.destination);
+      source.start();
+      const samples = (await context.startRendering()).getChannelData(0);
+      const pass = samples.every((sample, frame) => {
+        if (frame >= 256) return sample === 1;
+        if (event === 'target' || event === 'none') return sample === 0.25 + 0.75 * frame / 256;
+        if (frame >= 128) return sample === 0.75 + 0.25 * (frame - 128) / 128;
+        if (event === 'set') return sample === 0.25;
+        return sample === (event === 'curveEnd' ? 0.75 * frame / 128 : 0.25 + 0.5 * frame / 128);
+      });
+      tests.push([event, pass ? 0 : 1]);
+    }
+    return {status: 0, tests};
+  });
   if (periodic) outcomes['periodic-wave-pcm'] = await page.evaluate(async () => {
     const tests = [];
     for (const normalize of [true, false]) {
