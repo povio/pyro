@@ -1762,7 +1762,9 @@ pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_sr
 /// replaces the selection; the caret goes after it.
 pub(crate) fn insert_html(page: &Rc<PageDom>, host: NodeId, html: &str, input_type: &str) {
     let (start, end) = host_range(page, host);
-    if plaintext_at(&page.dom.borrow(), start.0) {
+    // HTML conversion follows the receiving editor. In designMode the
+    // body can own a selection inside an explicitly plaintext descendant.
+    if plaintext_at(&page.dom.borrow(), host) {
         let Ok(text) = Dom::plaintext_from_html(html) else { return };
         let newline = crate::edit_commands::newlines_significant(page, start.0);
         edit(page, host, input_type, None, |page| {
