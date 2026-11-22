@@ -1687,6 +1687,28 @@ fn unlink_styled_fragment(dom: &mut Dom, anchor: NodeId, text: NodeId, whole: bo
         selected
     };
     let doc = dom.node_document(selected).ok()?;
+    // Keep an existing inline child at the same depth when the link only
+    // contributed inherited font/color declarations. Its own declarations
+    // take precedence over inherited values, including their priorities.
+    if dom.child_count(selected).ok()? == 1 {
+        let child = dom.first_child(selected).ok()??;
+        if dom.element(child).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "span" | "i" | "em" | "b" | "strong" | "u"))
+            && rich_node(dom, child) && !dom.has_attribute(child, "class").ok()?
+        {
+            use pyro_dom::stylo::declarations::DeclarationBlock;
+            let mut inherited = DeclarationBlock::parse(style);
+            if inherited.names().iter().all(|p| matches!(p.as_str(), "font-weight" | "font-style" | "color")) {
+                let own = DeclarationBlock::parse(dom.get_attribute(child, "style").ok()?.unwrap_or(""));
+                for name in own.names() {
+                    inherited.set(&name, &own.value(&name), own.important(&name))?;
+                }
+                dom.set_attribute(child, "style", &inherited.css_text()).ok()?;
+                dom.insert_before(parent, child, Some(selected)).ok()?;
+                dom.remove_child(parent, selected).ok()?;
+                return Some(());
+            }
+        }
+    }
     let contents = dom.create_fragment(doc).ok()?;
     while let Some(child) = dom.first_child(selected).ok()? {
         dom.append_child(contents, child).ok()?;
