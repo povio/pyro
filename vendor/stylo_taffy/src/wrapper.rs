@@ -1360,6 +1360,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
     }
 
     #[inline]
+    fn grid_max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        <Self as taffy::BlockItemStyle>::max_size_keyword(self)
+    }
+
+    #[inline]
     fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
         self.grid_row_placement()
     }

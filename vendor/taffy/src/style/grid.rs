@@ -350,9 +350,15 @@ impl<S: Clone> SubgridLineNames<S> {
 /// The set of styles required for a CSS Grid item (child of a CSS Grid container)
 pub trait GridItemStyle: CoreStyle {
     /// pyro: `min-width`/`min-height` when they are sizing keywords (`min-content`, `max-content`,
-    /// `fit-content`), which [`CoreStyle::min_size`] reads as `auto`.
+    /// `fit-content`, `stretch`), which [`CoreStyle::min_size`] reads as `auto`.
     #[inline(always)]
     fn grid_min_size_keyword(&self) -> Size<Dimension> {
+        Size { width: Dimension::auto(), height: Dimension::auto() }
+    }
+    /// pyro: `max-width`/`max-height` when they are sizing keywords (see [`Self::grid_min_size_keyword`]),
+    /// which [`CoreStyle::max_size`] reads as `auto`.
+    #[inline(always)]
+    fn grid_max_size_keyword(&self) -> Size<Dimension> {
         Size { width: Dimension::auto(), height: Dimension::auto() }
     }
     /// Defines which row in the grid the item should start and end at

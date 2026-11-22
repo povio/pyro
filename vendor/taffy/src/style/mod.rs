@@ -1762,6 +1762,14 @@ impl<S: CheapCloneStr> GridItemStyle for Style<S> {
 #[cfg(feature = "grid")]
 impl<T: GridItemStyle> GridItemStyle for &'_ T {
     #[inline(always)]
+    fn grid_min_size_keyword(&self) -> Size<Dimension> {
+        (*self).grid_min_size_keyword()
+    }
+    #[inline(always)]
+    fn grid_max_size_keyword(&self) -> Size<Dimension> {
+        (*self).grid_max_size_keyword()
+    }
+    #[inline(always)]
     fn grid_row(&self) -> Line<GridPlacement<Self::CustomIdent>> {
         (*self).grid_row()
     }
