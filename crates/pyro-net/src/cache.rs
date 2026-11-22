@@ -785,6 +785,41 @@ mod tests {
     }
 
     #[test]
+    fn stale_while_revalidate_window() {
+        let mut c = HttpCache::new(1 << 20, 1 << 20);
+        let req = HeaderMap::new();
+        let insert = |c: &mut HttpCache, path: &str, cc: &str| {
+            c.insert(
+                &url(path),
+                &req,
+                false,
+                StatusCode::OK,
+                &h(&[("cache-control", cc)]),
+                Bytes::from_static(b"x"),
+                T0,
+                T0,
+                Version::HTTP_11,
+            )
+        };
+        insert(&mut c, "/swr", "max-age=10, stale-while-revalidate=60");
+        let lookup = |c: &mut HttpCache, path: &str, req: &HeaderMap, mode: CacheMode, t: f64| {
+            c.lookup(&url(path), req, false, mode, t)
+        };
+        assert!(matches!(lookup(&mut c, "/swr", &req, CacheMode::Default, T0 + 5.0), Lookup::Hit(_)), "fresh");
+        assert!(matches!(lookup(&mut c, "/swr", &req, CacheMode::Default, T0 + 30.0), Lookup::StaleWhileRevalidate(_)));
+        assert!(matches!(lookup(&mut c, "/swr", &req, CacheMode::Default, T0 + 75.0), Lookup::Miss), "past the window");
+        // A request that asks for something fresher, or another cache mode, does not take it.
+        let no_cache = h(&[("cache-control", "no-cache")]);
+        assert!(matches!(lookup(&mut c, "/swr", &no_cache, CacheMode::Default, T0 + 30.0), Lookup::Miss));
+        assert!(matches!(lookup(&mut c, "/swr", &req, CacheMode::NoCache, T0 + 30.0), Lookup::Miss));
+        // must-revalidate (RFC 9111 §5.2.2.2) and response no-cache keep it out of the window.
+        insert(&mut c, "/must", "max-age=10, stale-while-revalidate=60, must-revalidate");
+        assert!(matches!(lookup(&mut c, "/must", &req, CacheMode::Default, T0 + 30.0), Lookup::Miss));
+        insert(&mut c, "/nc", "max-age=10, stale-while-revalidate=60, no-cache");
+        assert!(matches!(lookup(&mut c, "/nc", &req, CacheMode::Default, T0 + 30.0), Lookup::Miss));
+    }
+
+    #[test]
     fn freshness_and_age_follow_rfc9111() {
         let mut c = HttpCache::new(1 << 20, 1 << 20);
         let date = "Sun, 06 Nov 1994 08:49:37 GMT";
