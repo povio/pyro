@@ -176,6 +176,45 @@ fn records_survive_navigation_and_appear_in_databases() {
 }
 
 #[test]
+fn databases_exposes_only_committed_upgrades() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const catalog = () => indexedDB.databases().then(rows => rows.map(row => `${row.name}:${row.version}`).sort().join(','));
+        const stable = await openDb('stable', 1);
+        const log = [];
+        let snapshot;
+        let db = await openDb('changing', 1, conn => {
+          conn.createObjectStore('rows').put('kept', 1);
+          snapshot = catalog();
+        });
+        log.push(await snapshot, await catalog());
+        db.close();
+        db = await openDb('changing', 2, () => { snapshot = catalog(); });
+        log.push(await snapshot, await catalog());
+        db.close();
+        const failure = await openDb('changing', 3, (conn, tx) => {
+          snapshot = catalog();
+          conn.deleteObjectStore('rows');
+          tx.abort();
+        }).catch(error => error.name);
+        log.push(await snapshot, failure, await catalog());
+        db = await openDb('changing');
+        log.push(db.version, await req(db.transaction('rows').objectStore('rows').get(1)));
+        db.close(); stable.close();
+        out = log.join('|');
+    "#,
+    );
+    assert_eq!(
+        got,
+        "stable:1|changing:1,stable:1|changing:1,stable:1|changing:2,stable:1|changing:2,stable:1|AbortError|changing:2,stable:1|2|kept"
+    );
+}
+
+#[test]
 fn keys_order_compare_and_validate() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");

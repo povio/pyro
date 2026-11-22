@@ -152,8 +152,10 @@ impl Namespace {
         let server = self.lock();
         let Some(dbs) = server.origins.get(origin) else { return Vec::new() };
         dbs.iter()
-            .filter(|(_, db)| db.version > 0)
-            .map(|(name, db)| DatabaseInfo { name: name.clone(), version: db.version })
+            .filter_map(|(name, db)| {
+                let version = db.upgrade.as_ref().map_or(db.version, |upgrade| upgrade.old_version);
+                (version > 0).then(|| DatabaseInfo { name: name.clone(), version })
+            })
             .collect()
     }
 
