@@ -2102,6 +2102,33 @@ impl Browser {
         self.navigate_with_history(page, opts, false)
     }
 
+    /// HTML `pageswap` at the active document of `frame`, which a cross-document navigation to
+    /// `url` (of origin `origin`) is about to replace. Its activation is null for a navigation to
+    /// another origin; an about:blank or srcdoc document takes its creator's origin, as the one it
+    /// replaces did. (Pyro does not track the origins of a navigation's redirects: a cross-origin
+    /// redirect back to the same origin still gets an activation.)
+    fn fire_page_swap(&mut self, frame: FrameKey, url: &str, history: HistoryHandling, origin: &str) {
+        let Some((dom, old_origin, realm)) = self.doc(frame).and_then(|d| {
+            Some((d.main_frame.page_dom.clone()?, d.main_frame.origin.clone(), d.main_frame.main_realm().cloned()?))
+        }) else {
+            return;
+        };
+        let same_origin = matches!(url, "about:blank" | "about:srcdoc") || (old_origin != "null" && old_origin == origin);
+        let ty = match history {
+            HistoryHandling::Push => "push",
+            HistoryHandling::Replace => "replace",
+            HistoryHandling::Traverse => "traverse",
+            HistoryHandling::Reload => "reload",
+        };
+        pyro_webapi::lifecycle::page_swap(&dom, || {
+            if !same_origin {
+                return None;
+            }
+            let scope = realm.scope().ok()?;
+            window::navigation_activation(&scope, ty, url)
+        });
+    }
+
     /// HTML "unload a document and its descendants" for the active document
     /// of `frame`: its child frames' documents first, then its own
     /// (`pyro_webapi::lifecycle::unload`). A frame tree without listeners
@@ -2137,7 +2164,8 @@ impl Browser {
         history: HistoryHandling,
         unreachable: Option<NavigationError>,
     ) -> Result<(), JsError> {
-        // The document being replaced (and its frames) unloads first.
+        // `pageswap` at the document being replaced, then it (and its frames) unloads.
+        self.fire_page_swap(page, &opts.url, history, origin);
         self.unload_documents(page);
         let host = self.page(page.page).ok_or(JsError::ContextDestroyed)?.frames.clone();
         self.cancel_pending_document(page);

@@ -358,6 +358,23 @@ pub fn reveal(page: &Rc<PageDom>) {
     fire(page, w, &ev);
 }
 
+/// HTML `pageswap` at the Window of a document that a cross-document navigation is about to
+/// replace, before it unloads. `activation` makes the event's NavigationActivation (null for a
+/// navigation to another origin); it runs only when the Window has listeners, which is all the
+/// event costs otherwise.
+pub fn page_swap(page: &Rc<PageDom>, activation: impl FnOnce() -> Option<pyro_js::Persistent>) {
+    if page.is_disposed() || page.scripting_disabled() {
+        return;
+    }
+    let Some(window) = page.window_target() else { return };
+    if !page.dom.try_borrow().is_ok_and(|dom| dom.has_listeners(window)) {
+        return;
+    }
+    let ev = EventCore::trusted(page, EventInterface::PageSwapEvent, "pageswap", false, false);
+    ev.fields.borrow_mut().activation = activation();
+    fire(page, window, &ev);
+}
+
 /// `popstate` at the window (history traversal / back-forward).
 pub fn popstate(page: &Rc<PageDom>, state: Option<Persistent>) {
     let Some(w) = page.window_target() else { return };

@@ -549,10 +549,39 @@
   handlerAttributes(Navigation, ['navigate', 'navigatesuccess', 'navigateerror', 'currententrychange'], () => navigationData);
   tag(Navigation, 'Navigation');
 
+  // HTML NavigationActivation: a cross-document navigation's entry, the entry it leaves
+  // (`from`, the current one) and its type, as `pageswap` reports them.
+  const activationData = new WeakMap();
+  class NavigationActivation {
+    constructor(t, data) {
+      if (t !== token) throw illegal('NavigationActivation');
+      activationData.set(this, data);
+    }
+    get entry() {
+      return activationData.get(this).entry;
+    }
+    get from() {
+      return activationData.get(this).from;
+    }
+    get navigationType() {
+      return activationData.get(this).type;
+    }
+  }
+  tag(NavigationActivation, 'NavigationActivation');
+  // The activation of a cross-document navigation of this document to `url`: a reload's entry
+  // is the current one, any other's a new entry of the document to come.
+  const activation = (type, url) => {
+    const from = current();
+    const entry = type === 'reload' && from !== null
+      ? from
+      : new NavigationHistoryEntry(token, { key: '', id: '', url, same: false, state: undefined });
+    return new NavigationActivation(token, { entry, from, type });
+  };
+
   const navigation = new Navigation(token);
   lastEntry = current();
   return {
     navigation, Navigation, NavigateEvent, NavigationHistoryEntry, NavigationDestination, NavigationTransition,
-    NavigationCurrentEntryChangeEvent,
+    NavigationCurrentEntryChangeEvent, NavigationActivation, activation,
   };
 })

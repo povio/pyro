@@ -354,7 +354,8 @@ impl JsClass for Window {
             "NavigationHistoryEntry",
             "NavigationDestination",
             "NavigationTransition",
-            "NavigationCurrentEntryChangeEvent"
+            "NavigationCurrentEntryChangeEvent",
+            "NavigationActivation"
         );
         // [Replaceable], as in Chrome: assignment shadows it on the window.
         def.accessor(
@@ -814,6 +815,20 @@ fn clear_frame_timers(w: &WindowData) {
     let mut frame = w.animation.borrow_mut();
     for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
         w.sched.clear_timer(id);
+    }
+}
+
+/// The NavigationActivation of a cross-document navigation of this realm's document to `url`
+/// (navigation.js `activation`), for its `pageswap` event; `ty` is its navigation type.
+pub(crate) fn navigation_activation(scope: &Scope<'_>, ty: &str, url: &str) -> Option<Persistent> {
+    let w = scope.global_data::<Window>()?;
+    let make = crate::nav::navigation_module(scope, &w.nav).ok()?.get("activation").ok()?.as_object()?;
+    match make.call(None, &[scope.string(ty), scope.string(url)]) {
+        Ok(activation) => Some(Persistent::new(scope, activation)),
+        Err(e) => {
+            scope.report_exception(&e);
+            None
+        }
     }
 }
 
