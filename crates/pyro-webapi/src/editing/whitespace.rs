@@ -511,17 +511,20 @@ pub(super) fn delete_inline_space(page: &PageDom, dom: &mut Dom, host: NodeId, f
     if !matches!(&text[a..b], " " | "\u{a0}") || text.len() == b - a { return None; }
     let start = text[..a].trim_end_matches(space).len();
     let end = text.len() - text[b..].trim_start_matches(space).len();
-    if (start != 0 && end != text.len()) || text[start..end].contains("  ") { return None; }
+    if start != 0 && end != text.len() { return None; }
+    if text[start..end].contains("  ") && collapses(page, dom, node) { return None; }
     let edited_parent = dom.parent_element(node).ok()??;
     let neighbor = |forward| {
-        let n = match adjacent(page, dom, host, node, forward) {
-            Next::Text(n) | Next::PreservedText(n) => n,
+        let (n, preserved) = match adjacent(page, dom, host, node, forward) {
+            Next::Text(n) => (n, false),
+            Next::PreservedText(n) => (n, true),
             _ => return None,
         };
         if dom.parent_element(n).ok()?? == edited_parent || !super::target_range::rendered(page, dom, n) { return None; }
         let data = dom.char_data(n).ok()?;
         let ch = if forward { data.chars().next()? } else { data.chars().next_back()? };
-        if !space(ch) || (ch == ' ' && if forward { text.ends_with(' ') } else { text.starts_with(' ') }) {
+        if (!space(ch) && !(preserved && forward)) || (ch == ' ' && !preserved && collapses(page, dom, node)
+            && if forward { text.ends_with(' ') } else { text.starts_with(' ') }) {
             return None;
         }
         Some(n)
@@ -531,8 +534,11 @@ pub(super) fn delete_inline_space(page: &PageDom, dom: &mut Dom, host: NodeId, f
     if left.is_none() && right.is_none() { return None; }
     let expose_right = b == text.len();
     dom.replace_data(node, from.1, 1, "").ok()?;
-    at(page, dom, host, from, Repair::RemovedBox);
-    if let Some(n) = right.filter(|_| expose_right) { at(page, dom, host, (n, 0), Repair::RemovedBox); }
+    // Rebalance at the first position downstream of the deleted character.
+    // At the boundary this belongs to the following text, while the caret
+    // can still be represented at the end of the preceding text.
+    let point = right.filter(|_| expose_right).map_or(from, |n| (n, 0));
+    at(page, dom, host, point, Repair::RemovedBox);
     Some(if let Some(n) = left.filter(|_| from.1 == 0) { (n, editing::len(dom, n)) } else { from })
 }
 
