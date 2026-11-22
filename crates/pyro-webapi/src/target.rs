@@ -993,7 +993,6 @@ pub(crate) fn set_event_handler(
     if value.is_null() {
         return Ok(());
     }
-    let cancel_on_false = !matches!(ty, "mouseover" | "error");
     let window_error = ty == "error" && target.page.is_window_key(target.key);
     let callback = s.function("eventHandler", move |s, this, args| {
         if let Some(object) = this.as_object() {
@@ -1044,7 +1043,8 @@ pub(crate) fn set_event_handler(
                                 true
                             }
                             Some(_) => false,
-                            None => cancel_on_false && result.is_boolean() && !result.to_bool(),
+                            // Returning false cancels (mouseover is no longer special).
+                            None => result.is_boolean() && !result.to_bool(),
                         }
                     }
                 };
