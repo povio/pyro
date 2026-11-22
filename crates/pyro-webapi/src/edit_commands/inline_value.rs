@@ -882,7 +882,7 @@ pub(super) fn format_spaced_run(page: &Rc<PageDom>, host: NodeId, command: &str,
     if repeated && !(dom.parent_element(parent).ok().flatten() == Some(host)
         && editing::local(&dom, parent) == tag
         && dom.attributes(parent).is_ok_and(|attrs| attrs.len() == usize::from(!attr.is_empty()))
-        && (attr.is_empty() || dom.get_attribute(parent, attr).ok().flatten() == Some(&attribute_value))) {
+        && (attr.is_empty() || dom.get_attribute(parent, attr).ok().flatten().is_some_and(|v| v == attribute_value || command == "createlink"))) {
         return false;
     }
     let texts = super::inline_texts(page, &dom, host, start, end);
@@ -912,16 +912,27 @@ pub(super) fn format_spaced_run(page: &Rc<PageDom>, host: NodeId, command: &str,
     if !separator || units.len() < 3 || texts.first() != Some(&start.0) || texts.last() != Some(&end.0) { return false; }
     if repeated && dom.child_count(parent).ok() != Some(units.len() as u32) { return false; }
     if !repeated && toggle.is_some() && super::format_state(page, command).1 { return false; }
-    if repeated && (command == "createlink" || tag == "font" && matches!(kind, Some(Kind::Size | Kind::Family))) { return true; }
+    if repeated && tag == "font" && matches!(kind, Some(Kind::Size | Kind::Family)) { return true; }
     let reversed = editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
     drop(dom);
     editing::apply_edit(page, host, input_type, (command == "createlink").then_some(value), None, |page| {
         let mut dom = page.dom.borrow_mut();
-        if repeated {
+        if repeated && command == "createlink" {
+            // Reapplying even the same href replaces the selected anchor.
+            // Moving the original children retains both selection endpoints.
+            let Ok(link) = dom.create_element(page.document(), "a") else { return };
+            let _ = dom.set_attribute(link, "href", value);
+            let _ = dom.insert_before(host, link, Some(parent));
+            for unit in units { let _ = dom.append_child(link, unit); }
+            let _ = dom.remove_child(host, parent);
+        } else if repeated {
             let mut points = [start, end];
             for unit in units {
                 if editing::local(&dom, unit) == "span" && dom.attributes(unit).is_ok_and(|attrs| attrs.is_empty()) {
                     super::indentation::unwrap(&mut dom, unit, &mut points);
+                } else if let Ok(Some(style)) = dom.get_attribute(unit, "style") {
+                    let declarations = DeclarationBlock::parse(style);
+                    let _ = dom.set_attribute(unit, "style", &declarations.css_text());
                 }
             }
             if toggle.is_some() { super::indentation::unwrap(&mut dom, parent, &mut points); }
