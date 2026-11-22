@@ -1,0 +1,52 @@
+{
+  "available": "function",
+  "rows": [
+    {
+      "timestamp": 0,
+      "type": "key",
+      "config": {
+        "codedWidth": 64,
+        "codec": "avc1.42001e",
+        "description": [
+          1,
+          66,
+          192,
+          30
+        ]
+      }
+    },
+    {
+      "timestamp": 33333,
+      "type": "key",
+      "config": null
+    },
+    {
+      "timestamp": 66666,
+      "type": "key",
+      "config": {
+        "codedWidth": 80,
+        "codec": "avc1.42001e",
+        "description": [
+          1,
+          66,
+          192,
+          30
+        ]
+      }
+    },
+    {
+      "timestamp": 99999,
+      "type": "key",
+      "config": {
+        "codedWidth": 80,
+        "codec": "avc1.42001e",
+        "description": [
+          1,
+          66,
+          192,
+          30
+        ]
+      }
+    }
+  ]
+}

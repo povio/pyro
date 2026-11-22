@@ -1,0 +1,70 @@
+{
+  "scores": {
+    "baseFull": 9,
+    "candidateFull": 26,
+    "chrome158Full": 84,
+    "baseNamed": 606,
+    "candidateNamed": 840,
+    "chrome158Named": 1184,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 344,
+    "lpOnly": 0,
+    "gained": 234
+  },
+  "gainsByPage": {
+    "webcodecs/idlharness.https.any.html": 29,
+    "webcodecs/idlharness.https.any.worker.html": 29,
+    "webcodecs/video-encoder-config.https.any.html": 41,
+    "webcodecs/video-encoder-config.https.any.worker.html": 41,
+    "webcodecs/video-encoder-flush.https.any.html?h264_avc": 2,
+    "webcodecs/video-encoder-flush.https.any.worker.html?h264_avc": 2,
+    "webcodecs/video-encoder-h264.https.any.html?baseline": 1,
+    "webcodecs/video-encoder-h264.https.any.html?high": 1,
+    "webcodecs/video-encoder-h264.https.any.html?main": 1,
+    "webcodecs/video-encoder-h264.https.any.worker.html?baseline": 1,
+    "webcodecs/video-encoder-h264.https.any.worker.html?high": 1,
+    "webcodecs/video-encoder-h264.https.any.worker.html?main": 1,
+    "webcodecs/video-encoder-h26x-annexb.https.any.html?h264_annexb_hardware": 1,
+    "webcodecs/video-encoder-h26x-annexb.https.any.html?h264_annexb_software": 1,
+    "webcodecs/video-encoder-h26x-annexb.https.any.worker.html?h264_annexb_hardware": 1,
+    "webcodecs/video-encoder-h26x-annexb.https.any.worker.html?h264_annexb_software": 1,
+    "webcodecs/video-encoder-rescaling.https.any.html?h264_annexb": 18,
+    "webcodecs/video-encoder-rescaling.https.any.html?h264_avc": 18,
+    "webcodecs/video-encoder-rescaling.https.any.worker.html?h264_annexb": 18,
+    "webcodecs/video-encoder-rescaling.https.any.worker.html?h264_avc": 18,
+    "webcodecs/video-encoder.https.any.html": 4,
+    "webcodecs/video-encoder.https.any.worker.html": 4
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 76,
+        "error": 5,
+        "timeout": 5
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "d7e9584c6acfeb71b67d127201b9479a2da6cbef230cd68602b64e9c44ad3511"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 76,
+        "error": 8,
+        "timeout": 2
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "650ca44da654c8158af82dcd67180078087857d8aff1613ecdd403c1800c0709"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 86
+      },
+      "restarts": null,
+      "watchdogKills": null,
+      "receiptSHA256": "83ca20b83374594c929fb3706926fc462b2916b9246a1f1bacd9880dd4261c31"
+    }
+  }
+}

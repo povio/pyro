@@ -1,0 +1,50 @@
+{
+  "source": {
+    "supported": true,
+    "colorSpace": {
+      "fullRange": true,
+      "matrix": "rgb",
+      "primaries": "bt709",
+      "transfer": "iec61966-2-1"
+    },
+    "format": "RGBA",
+    "pixel": [
+      255,
+      0,
+      0,
+      255
+    ]
+  },
+  "empty": {
+    "supported": true,
+    "colorSpace": {
+      "fullRange": true,
+      "matrix": "rgb",
+      "primaries": "bt709",
+      "transfer": "iec61966-2-1"
+    },
+    "format": "RGBA",
+    "pixel": [
+      255,
+      0,
+      0,
+      255
+    ]
+  },
+  "override": {
+    "supported": true,
+    "colorSpace": {
+      "fullRange": false,
+      "matrix": "bt709",
+      "primaries": "bt709",
+      "transfer": "bt709"
+    },
+    "format": "I420",
+    "pixel": [
+      255,
+      40,
+      0,
+      255
+    ]
+  }
+}
