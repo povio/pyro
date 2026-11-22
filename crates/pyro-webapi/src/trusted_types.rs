@@ -235,6 +235,21 @@ pub fn sync_compile_strings(s: &Scope<'_>, page: &Rc<PageDom>) {
     s.set_trusted_types_enforcement(level as i32);
 }
 
+/// HTML "timer initialization steps" for the string handler `handler` of `setTimeout` /
+/// `setInterval` (`sink`: "Window setTimeout", "WorkerGlobalScope setInterval", ...), checked
+/// when the timer is set, as Chrome: Trusted Types first (a TrustedScript, else what the default
+/// policy makes of the string; a TypeError when an enforced policy rejects it), then CSP's
+/// string compilation check (`crate::csp::eval_allowed`, its violation reported now even when
+/// the timer is cleared right away). `None`: blocked, the timer is not set (it returns 0).
+pub fn timer_handler_source(s: &Scope<'_>, page: &Rc<PageDom>, handler: Value<'_>, sink: &str) -> JsResult<Option<String>> {
+    let code = compliant_string(s, page, Kind::Script, handler, sink, false)?;
+    // CSP3 'trusted-types-eval': with Trusted Types enforced, what passed them compiles.
+    if tt_level(page) == 2 && crate::csp::trusted_types_eval_allows(page) {
+        return Ok(Some(code));
+    }
+    Ok(crate::csp::eval_allowed(page, &code).then_some(code))
+}
+
 /// Whether the document's policies have `require-trusted-types-for 'script'`: the script sinks
 /// (HTML parsing, script text and URLs, `javascript:` navigation) then take Trusted Types values,
 /// or what the default policy makes of a string.
