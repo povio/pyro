@@ -33,6 +33,8 @@ pub struct TextStyle<'a> {
     /// `font-variant-caps` keyword (canvas `fontVariantCaps`); the small and
     /// petite caps values are synthesized ([`small_caps`]).
     pub variant_caps: &'a str,
+    /// Kerning applies (canvas `fontKerning` other than `none`).
+    pub kerning: bool,
 }
 
 /// Glyphs of one font, positioned relative to the text's origin (the
@@ -258,6 +260,9 @@ fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
     }
     if let Some(lang) = style.lang.and_then(|l| parley::Language::parse(l).ok()) {
         builder.push_default(StyleProperty::Locale(Some(lang)));
+    }
+    if !style.kerning {
+        builder.push_default(StyleProperty::FontFeatures(parley::FontFeatures::Source(Cow::Borrowed("\"kern\" 0"))));
     }
     for range in caps.iter().flat_map(|(_, ranges)| ranges) {
         builder.push(StyleProperty::FontSize(size * SMALL_CAPS_SCALE), range.clone());
