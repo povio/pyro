@@ -1,0 +1,44 @@
+{
+  "overflow": {
+    "reads": [
+      "alpha",
+      "displayHeight",
+      "displayWidth"
+    ],
+    "error": "TypeError"
+  },
+  "negative": {
+    "reads": [
+      "alpha",
+      "displayHeight"
+    ],
+    "error": "TypeError"
+  },
+  "fractional": {
+    "reads": [
+      "alpha",
+      "displayHeight",
+      "displayWidth",
+      "timestamp"
+    ],
+    "display": [
+      3,
+      2
+    ]
+  },
+  "nonfinite": {
+    "reads": [
+      "alpha",
+      "displayHeight"
+    ],
+    "error": "TypeError"
+  },
+  "abrupt": {
+    "reads": [
+      "alpha",
+      "displayHeight",
+      "displayWidth"
+    ],
+    "error": "Error"
+  }
+}
