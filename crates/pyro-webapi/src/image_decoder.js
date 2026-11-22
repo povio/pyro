@@ -302,6 +302,10 @@
       if (k !== 'constructor') defineProperty(C.prototype, k, {enumerable:true});
     }
   }
+  // Web IDL gives interfaces with an indexed getter the realm's array values iterator.
+  defineProperty(ImageTrackList.prototype, Symbol.iterator, {
+    value: Array.prototype.values, writable: true, configurable: true
+  });
   defineProperty(ImageDecoder, 'isTypeSupported', {enumerable:true});
   return {ImageDecoder, ImageTrack, ImageTrackList};
 })
