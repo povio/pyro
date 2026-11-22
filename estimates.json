@@ -15,10 +15,10 @@
    }
   },
   "in_progress": {
-   "distinct_census_pages": 600,
+   "distinct_census_pages": 562,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
-    "html/semantics": 251,
+    "html/semantics": 211,
     "html/interaction": 108,
     "html/canvas": 45,
     "html/syntax": 34,
@@ -31,35 +31,37 @@
     "shadow-dom": 7,
     "selection": 7,
     "navigation-api": 6,
+    "uievents": 5,
     "html/editing": 5,
     "intersection-observer": 5,
-    "uievents": 5,
     "svg/types": 4,
     "event-timing": 3,
     "mathml": 3,
     "close-watcher": 3,
     "inert": 3,
     "svg/animations": 2,
-    "fetch/fetch-later": 2,
-    "dom/nodes": 2,
+    "encoding": 2,
+    "soft-navigation-heuristics": 2,
     "resource-timing": 2,
     "html/rendering": 2,
-    "soft-navigation-heuristics": 2,
-    "document-picture-in-picture": 1,
-    "svg/styling": 1,
+    "fetch/fetch-later": 2,
+    "dom/nodes": 2,
     "pointerlock": 1,
-    "editing": 1,
-    "html/browsers": 1
+    "html/browsers": 1,
+    "svg/styling": 1,
+    "document-picture-in-picture": 1,
+    "editing": 1
    }
   },
   "queued": {
-   "distinct_census_pages": 596,
+   "distinct_census_pages": 636,
    "studio_css_reported_pages_not_deduped": 122,
    "by_dir": {
     "svg/animations": 229,
     "referrer-policy": 114,
     "html/canvas": 93,
     "content-security-policy": 72,
+    "html/semantics": 40,
     "intersection-observer": 36,
     "webidl": 19,
     "workers": 12,
@@ -442,7 +444,7 @@
    "pages": 20
   },
   "F07": {
-   "state": "claimed",
+   "state": "proposed",
    "pages": 40
   },
   "F08": {
@@ -456,6 +458,10 @@
   "F10": {
    "state": "claimed",
    "pages": 34
+  },
+  "E01": {
+   "state": "claimed",
+   "pages": 2
   }
  },
  "implemented_total_estimate": 220,
