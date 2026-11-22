@@ -21,6 +21,7 @@ mod animation_events;
 mod animation_frame;
 mod animations;
 mod cache_storage;
+mod opfs;
 pub mod canvas;
 mod canvas_path;
 mod clipboard;
@@ -203,6 +204,7 @@ pub fn register(engine: &pyro_js::Engine) {
     xpath::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
+    opfs::register(engine);
     engine.register::<cache_storage::CacheHandle>();
     engine.register::<cache_storage::StoredBody>();
     engine.register::<headers::Headers>();

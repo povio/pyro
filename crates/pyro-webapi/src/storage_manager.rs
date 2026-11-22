@@ -1,8 +1,8 @@
 //! `navigator.storage` (StorageManager: `estimate()`, `persisted()`,
-//! `persist()`) on windows and dedicated workers. The class is made in JS on a
+//! `persist()`, `getDirectory()`) on windows and workers. The class is made in JS on a
 //! realm's first read of `navigator.storage` or `StorageManager`, so other
 //! realms pay one accessor. `estimate()` reports the origin's local storage
-//! bytes as usage and a fixed quota; storage is never persistent (a headless
+//! and committed origin-private file system bytes and a fixed quota; storage is never persistent (a headless
 //! context's data dies with it), so `persisted()` and `persist()` are false.
 //! Opaque origins reject with TypeError, as in Chrome.
 use std::rc::Rc;
@@ -18,7 +18,7 @@ const KEY: &str = "lpStorageManager";
 /// grants an origin on a typical disk.
 const QUOTA: f64 = 10.0 * 1024.0 * 1024.0 * 1024.0;
 
-const SCRIPT: &str = r#"((estimate, window) => {
+const SCRIPT: &str = r#"((estimate, directory, window, secure) => {
   'use strict';
   const token = Symbol('pyro');
   const PromiseC = Promise;
@@ -35,8 +35,8 @@ const SCRIPT: &str = r#"((estimate, window) => {
       try {
         if (!(#brand in this)) throw new TypeErrorC("Failed to execute 'estimate' on 'StorageManager': Illegal invocation");
         const result = estimate();
-        // usageDetails as in Chrome (an empty record: nothing is broken down).
-        return PromiseC.resolve({ quota: result[1], usage: result[0], usageDetails: {} });
+        const usageDetails = result[2] ? {fileSystem: result[2]} : {};
+        return PromiseC.resolve({ quota: result[1], usage: result[0], usageDetails });
       } catch (e) {
         return PromiseC.reject(e);
       }
@@ -46,6 +46,14 @@ const SCRIPT: &str = r#"((estimate, window) => {
     }
     persist() {
       return this.#check('persist');
+    }
+    getDirectory() {
+      try {
+        if (!(#brand in this)) throw new TypeErrorC("Illegal invocation");
+        return directory();
+      } catch (e) {
+        return PromiseC.reject(e);
+      }
     }
     #check(name) {
       try {
@@ -60,7 +68,9 @@ const SCRIPT: &str = r#"((estimate, window) => {
   const proto = StorageManager.prototype;
   // persist() is [Exposed=Window].
   if (!window) delete proto.persist;
-  for (const name of window ? ['estimate', 'persisted', 'persist'] : ['estimate', 'persisted']) {
+  if (!secure) delete proto.getDirectory;
+  for (const name of ['estimate', 'persisted', 'persist', 'getDirectory']) {
+    if (!(name in proto)) continue;
     const desc = Object.getOwnPropertyDescriptor(proto, name);
     desc.enumerable = true;
     defineProperty(proto, name, desc);
@@ -82,13 +92,22 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         let page = crate::target::page_of(s)?;
         let origin = crate::storage::tuple_origin(s, &page)
             .ok_or_else(|| JsError::Type("Storage is unavailable for an opaque origin.".into()))?;
-        let usage = page.local_storage.borrow().usage(&origin) as f64;
-        Ok(s.array(&[s.number(usage), s.number(QUOTA)])?.value())
+        let storage = page.local_storage.borrow();
+        let file_usage = storage.opfs_usage(&origin) as f64;
+        let usage = storage.usage(&origin) as f64 + file_usage;
+        Ok(s.array(&[s.number(usage), s.number(QUOTA), s.number(file_usage)])?.value())
     })?;
     let estimate = Persistent::new(s, estimate.value());
+    let directory = s.function("getDirectory", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        let module = crate::opfs::module(s, &page, dedicated_worker(s))?;
+        module.get_atom("getDirectory")?.as_object().ok_or_else(unavailable)?.call(None, &[])
+    })?;
+    let directory = Persistent::new(s, directory.value());
     let factory = s.eval(SCRIPT, Some("pyro://internal/storage-manager.js"), 1)?;
     let window = s.boolean(!crate::worker_scope::is_worker(s));
-    let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[estimate.get(s), window])?;
+    let secure = crate::worker_scope::secure_worker(s).unwrap_or_else(|| crate::secure_context::secure(s, page));
+    let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[estimate.get(s), directory.get(s), window, s.boolean(secure)])?;
     s.set_hidden(holder, KEY, module)?;
     module.as_object().ok_or_else(unavailable)
 }
@@ -124,5 +143,43 @@ fn replace(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> JsResult<()> 
     desc.set_atom("enumerable", s.boolean(false))?;
     desc.set_atom("configurable", s.boolean(true))?;
     define.call(None, &[s.global().value(), s.string("StorageManager"), desc.value()])?;
+    Ok(())
+}
+
+
+fn dedicated_worker(s: &Scope<'_>) -> bool {
+    s.global_data::<crate::worker_scope::DedicatedWorkerGlobalScope>().is_some()
+}
+
+fn file_system_interface<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &'static str) -> JsResult<Value<'s>> {
+    let module = crate::opfs::module(s, page, dedicated_worker(s))?;
+    let value = module.get_atom(name)?;
+    crate::lazy_module::replace(s, page, name, value)?;
+    Ok(value)
+}
+
+macro_rules! file_system_global {
+    ($def:ident, $name:literal) => {
+        $def.global_value_accessor($name, |s, w| file_system_interface(s, w.page(), $name),
+            |s, w, v| crate::lazy_module::replace(s, w.page(), $name, v));
+    };
+}
+
+pub(crate) fn define_file_system_globals<W: JsClass>(def: &mut ClassDef<W>) where W::Data: WindowHost {
+    file_system_global!(def, "FileSystemHandle");
+    file_system_global!(def, "FileSystemDirectoryHandle");
+    file_system_global!(def, "FileSystemFileHandle");
+    file_system_global!(def, "FileSystemWritableFileStream");
+}
+
+pub(crate) fn define_sync_access_global<W: JsClass>(def: &mut ClassDef<W>) where W::Data: WindowHost {
+    file_system_global!(def, "FileSystemSyncAccessHandle");
+}
+
+pub(crate) fn hide_file_system_globals(s: &Scope<'_>) -> JsResult<()> {
+    for name in ["FileSystemHandle", "FileSystemDirectoryHandle", "FileSystemFileHandle",
+                 "FileSystemWritableFileStream", "FileSystemSyncAccessHandle"] {
+        s.global().delete(name)?;
+    }
     Ok(())
 }

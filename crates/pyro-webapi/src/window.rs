@@ -190,6 +190,7 @@ where
     crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition");
     crate::crypto::define_globals(def);
     crate::storage_manager::define_globals(def);
+    crate::storage_manager::define_file_system_globals(def);
     crate::service_worker::define_globals(def);
     crate::cache_storage::define_globals(def);
     crate::event_source::define_globals(def);

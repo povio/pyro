@@ -84,6 +84,7 @@ pub(crate) struct WorkerStart {
     indexed_db: crate::indexeddb::Namespace,
     /// Its Cache Storage, likewise.
     caches: crate::cache_storage::Namespace,
+    opfs: crate::opfs::Namespace,
     permissions: crate::navigator_extras::PermissionTable,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
@@ -126,6 +127,7 @@ impl WorkerStart {
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
+            opfs: page.local_storage.borrow().opfs(),
             permissions: page.context_services().permissions.clone(),
             module: false,
             early: Vec::new(),
@@ -168,6 +170,7 @@ impl WorkerStart {
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
+            opfs: page.local_storage.borrow().opfs(),
             permissions: page.context_services().permissions.clone(),
             module,
             early: Vec::new(),
@@ -577,7 +580,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
     page.set_storage_namespaces(
-        crate::storage::StorageNamespace::with_shared(start.indexed_db.clone(), start.caches.clone()),
+        crate::storage::StorageNamespace::with_shared(start.indexed_db.clone(), start.caches.clone(), start.opfs.clone()),
         Default::default(),
     );
     page.set_request_context(crate::RequestContext { frame_id: start.frame_id.clone(), loader_id: None });
@@ -1002,6 +1005,7 @@ impl JsClass for WorkerGlobalScope {
         crate::trusted_types::define_globals(def);
         def.getter("fonts", |s, g| crate::font_loading::fonts(s, &g.target.page));
         crate::storage_manager::define_globals(def);
+        crate::storage_manager::define_file_system_globals(def);
         crate::websocket::define_worker_globals(def);
         def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
         crate::indexeddb::define_globals(def);
@@ -1103,6 +1107,7 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
+        crate::storage_manager::define_sync_access_global(def);
         crate::canvas::define_video_globals(def);
         def.getter("name", |s, g| Ok(s.string(&g.name)));
         def.method("postMessage", 1, |s, g, a| {
@@ -1269,6 +1274,10 @@ pub(crate) fn is_worker(s: &Scope<'_>) -> bool {
     s.global_data::<WorkerGlobalScope>().is_some()
 }
 
+pub(crate) fn secure_worker(s: &Scope<'_>) -> Option<bool> {
+    s.global_data::<WorkerGlobalScope>().map(|g| g.secure)
+}
+
 /// The classes a worker's realm exposes; returns its global's class.
 fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::ClassId {
     engine.register::<EventTarget>();
@@ -1292,6 +1301,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     engine.register::<crate::xhr::WorkerXMLHttpRequest>();
     engine.register::<crate::xhr::XMLHttpRequestUpload>();
     engine.register::<crate::indexeddb::IdbFactory>();
+    crate::opfs::register(engine);
     engine.register::<crate::cache_storage::CacheHandle>();
     engine.register::<crate::cache_storage::StoredBody>();
     engine.register::<crate::request::Request>();
@@ -1335,6 +1345,9 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         s.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
     {
         page.define_properties.borrow_mut().insert(s.realm_id(), Persistent::new(s, define));
+    }
+    if secure_worker(s) == Some(false) {
+        crate::storage_manager::hide_file_system_globals(s)?;
     }
     if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !g.secure) {
         s.global().delete("VideoDecoder")?;
