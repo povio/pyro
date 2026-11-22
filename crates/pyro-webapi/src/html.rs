@@ -2841,6 +2841,17 @@ simple_class!(HtmlFieldSetElement, "HTMLFieldSetElement", HtmlElement, |def| {
     );
 });
 simple_class!(HtmlLegendElement, "HTMLLegendElement", HtmlElement, |def| {
+    def.getter("form", |s, n| {
+        let dom = n.page().dom.borrow();
+        let fieldset = dom.parent(n.id).js()?.filter(|&parent| is_html(&dom, parent, &["fieldset"]));
+        let owner = match fieldset {
+            Some(fieldset) => dom.form_owner(fieldset).js()?,
+            None => None,
+        };
+        let form = reflected_association(&dom, n.id, owner);
+        drop(dom);
+        node_value(s, n.page(), form)
+    });
     reflect_str!(def, "align", "align");
 });
 simple_class!(HtmlUListElement, "HTMLUListElement", HtmlElement, |def| {
@@ -3461,6 +3472,7 @@ simple_class!(HtmlBaseElement, "HTMLBaseElement", HtmlElement, |def| {
     reflect_str!(def, "target", "target");
 });
 simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {
+    def.getter("form", form_value);
     reflect_url!(def, "data", "data");
     reflect_str!(def, "type", "type");
     reflect_str!(def, "name", "name");
