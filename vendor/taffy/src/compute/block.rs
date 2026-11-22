@@ -1036,7 +1036,10 @@ fn compute_inner(
         };
         let (margin_left, margin_right) = (margin.left.unwrap_or(0.0), margin.right.unwrap_or(0.0));
         let available = (inner_width - margin_left - margin_right).max(0.0);
-        let parent = Size { width: Some(inner_width), height: None };
+        // pyro: a percentage block size of the legend resolves against the fieldset's content box
+        // (its item size already did; WPT `fieldset-percentage-block-size`).
+        let parent = Size { width: Some(inner_width), height: container_content_box_size.height };
+        let known_height = legend.size.height.maybe_clamp(legend.min_size.height, legend.max_size.height);
         let width = match legend.size.width {
             Some(width) => width,
             None => {
@@ -1064,8 +1067,8 @@ fn compute_inner(
                 run_mode,
                 sizing_mode: SizingMode::InherentSize,
                 axis: RequestedAxis::Both,
-                known_dimensions: Size { width: Some(width), height: None },
-                known_dimensions_are_definite: Size { width: true, height: false },
+                known_dimensions: Size { width: Some(width), height: known_height },
+                known_dimensions_are_definite: Size { width: true, height: known_height.is_some() },
                 parent_size: parent,
                 available_space: Size { width: AvailableSpace::Definite(width), height: AvailableSpace::MaxContent },
                 vertical_margins_are_collapsible: Line::FALSE,
