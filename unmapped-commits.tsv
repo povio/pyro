@@ -1,141 +1,74 @@
-sha	subject
-c6295b18e	fix(wasm): async WebAssembly promises settle in workers too
-0b9041595	fix(navigation): a link or form targeting an open popup's name navigates that popup
-ff95c542b	fix(load): a document's load waits for the messages it posted
-e5155faa2	document.title follows HTML's title element rules for SVG and XML documents
-8aa5ea888	Hide forms that are children of table parts again
-6beb7d638	Give marquee overflow: hidden !important in the UA style sheet
-968abf8a9	Reflect HTMLMarqueeElement.loop
-9dee8fd89	document.body = x throws unless x is a body or frameset element
-3f43b71e2	Add the obsolete no-op APIs: document.clear/captureEvents/releaseEvents, window.captureEvents/releaseEvents and window.external
-f7ecdff4c	Safelist Chromium's decentralized schemes for protocol handlers
-c84c31c6e	Add MessageEvent.initMessageEvent and MessageEventInit.source
-8a51aa133	CSP for inline <style> (style-src-elem) and style attributes (style-src-attr)
-32624f3b0	reportError() reads no properties of an object that is not an Error
-2a4c72a9c	fix(focus): an <object> showing a document is focusable
-581fecf5b	fix(focus): focusing a text field collapses the selection just before it
-a0915a1cd	Expose empty navigator.plugins and navigator.mimeTypes
-01573ca04	feat(focus): focus({focusVisible}) decides :focus-visible
-bf465986c	fix(focus): an SVG <a href> is focusable
-27bc62615	fix(focus): document.activeElement is null with nothing focused and no body
-64121cf0e	onbeforeunload returning false does not cancel a non-BeforeUnloadEvent
-f354df9fd	fix(focus): label.focus() passes focus to the labeled control
-b1d80ca9c	Media documents report their MIME type and are in standards mode
-b7ea8cdd0	fix(popover): a right press does not light-dismiss popovers
-1a3e3fcbe	fix(hit-test): an inert modal dialog is not hit through its ::backdrop
-ce0f948b1	fix(dialog): closing a dialog with no previously focused element moves focus out of it
-0ebcc4dd5	fix(nav): a Location javascript: URL with a string result replaces the document
-e4423f723	fix(input): a label without a labeled control has no activation behavior
-5187a2bb0	feat(script): inline classic scripts run from their start tag's line in the document
-6659fee08	feat(csp): violations carry the initiating script's source file, line and column
-cdc841eae	Give text/plain and JSON documents no doctype, still no-quirks
-be59669bd	fix(popover): popover methods act for the document the popover is in now
-aef057dde	fix(hit-test): outside a modal dialog whose ::backdrop is display:none the point hits nothing
-0130d72ef	fix(object): an <object> with an about: URL loads instead of failing
-942c26f23	feat(csp): CSP Embedded Enforcement for <iframe csp>, on the CSP core
-397705c25	Check fetchLater requests against CSP connect-src
-431086b1f	fix(dialog): closing restores focus when it is in the dialog's flat tree, always for a modal one
-e65964a0b	fix(input): no trusted mousedown, mouseup or click at a disabled form control
-97c41ae9a	fix(toggle): a coalesced toggle event is queued again after the tasks queued since
-4930d2f7d	Map width and height attributes to aspect-ratio for images, video and canvas
-e04f1cf16	Give a quirks-mode form its 1em block-end margin
-453f6c861	Keep hidden embeds inline at zero size, and source elements inline
-1edc5ece6	Hide a form that is a direct child of a table, row group or row
-9e742c7a6	Style multicol as the unknown element it is
-1f6d48002	Give image map areas and SVG links the link cursor
-0b7739df4	Map iframe frameborder to zero border widths as HTML specifies
-883e331bc	fix(popover): showPopover throws when beforetoggle moves the popover to another document
-2fecb1f3e	feat(reporting): ReportingObserver, csp-violation reports to observers, webkit rAF deprecation reports
-a75f14f71	fix(popover): a button that is its own popovertarget toggles itself
-efcb7144e	feat(csp): fetch <link rel=prefetch> under CSP (default-src or any fetch directive, as Chrome)
-f5c59ae72	fix(popover): a disabled command button does not keep its target popover open on light dismiss
-b37a0ddec	fix(dialog): a dialog's toggle events are coalesced apart from its popover's
-7809671fd	fix(popover): removing a showing popover hides the popovers nested above it
-92579f9cd	fix(window): the named properties object refuses define, delete and preventExtensions (JSC patch 0041)
-50d009e35	fix(popover): auto/hint hierarchy (auto inside a hint, nested hints of an auto, light dismiss on a hint)
-8514c1841	fix(csp): setTimeout/setInterval string handlers are checked when the timer is set
-3ddaa086c	fix(csp): object-src checks an <object>/<embed> with a type and no URL
-8901cc5b4	feat(csp): local-scheme documents inherit their creator's policies
-dfbe98f94	feat(csp): WebAssembly compile gate ('wasm-unsafe-eval' / script-src) for windows and workers
-a9747dfd3	fix(layout): a fieldset's rendered legend resolves a percentage block size
-6e97afb10	fix(popover): a reset button of a form does not toggle its popovertarget
-81d5ee241	fix(layout): a fieldset's legend spill comes out of a definite block size for percentages
-fbb0185a7	feat(html): HTMLElement.autocapitalize and autocorrect
-7103b9e09	Follow no hyperlink from a disconnected <area>
-6d12c0e4b	feat(csp): enforce frame-ancestors on child navigation responses
-a1c23e729	Make form.elements an HTMLFormControlsCollection
-1d7f94410	feat(csp): deliver the CSP core's violation reports after its event
-61148b585	feat(csp): serialize and deliver CSP violation reports (report-uri, report-to)
-799e94a4d	fix(layout): inline content on both sides of a fieldset's rendered legend is one run
-40f4d13e6	fix(popover): showPopover/togglePopover({source: null}) throw a TypeError
-0951eea26	Treat an empty DOCTYPE system identifier as missing for quirks
-2250fb12c	fix(window): BarProp.visible is false once the window has no browsing context
-ab8a664c4	Drop parser doctypes and elements a non-empty Document cannot take
-2f6487466	fix(selectors): :link and :any-link do not match <link> elements
-2a82174d0	feat(window): window.status
-32e2affad	fix(layout): a fieldset establishes a block formatting context
-7fb5399ef	fix(selectors): :indeterminate matches radio groups with nothing checked, not the radio IDL flag
-b7f7639f4	Keep the content-language pragma after its <meta> is removed
-ac2cd04f9	fix(frames): a container's later name change leaves its child window's name
-fe4cddc1f	textarea rows/cols: parse as HTML positive integers, invalid ones are 2 and 20
-b4045f24a	Hidden, file and image inputs have appearance: none
-ede700920	fix(selectors): :read-write and :read-only follow HTML
-e0b19309e	Parse a template's innerHTML with scripting disabled
-4155c5577	fix(window): closed is true once the window's browsing context is gone
-63f216941	Answer relList.supports() per element as Chromium does
-54925b537	fix(cssom): a declared px width/height that min/max sizing overrides reports the used size
-d755516a4	HTMLTitleElement.text is the child text content
-0192ae1f2	fix(location): a relative href resolves against the navigable's URL when the entry document has no base
-0f596a713	fix(custom-elements): ElementInternals.labels is a live NodeList
-ad0af0db1	DOMStringList.contains() requires its argument
+32b4d83a3	fix(navigation): a javascript: URL's string result aborts the frame's ongoing navigation
+1d848465f	fix(iframe): a child frame's failed navigation commits the error document
+f30736ec2	fix(navigation): a cross-origin initiator's navigation to a frame's own URL with a fragment pushes
+83e7fe8fe	Render noscript and template as content-less elements; restyle a script's own attributes
+4dcfc5aab	fix(editing): turning designMode on keeps an existing selection
+1dce34479	feat(fetch): <link rel=compression-dictionary> fetches its dictionary
+c0d4f513b	fix(popup): a popup's opener is the window of the frame that opened it
+0729192ae	Revert mixed-content blocking (EXCL area, 0 credit)
+066dec316	fix(navigation): window.stop() drops a script navigation that has not started
+ecf4666d2	fix(file): a form's formdata event and DataTransfer.files keep the script's File objects
+ca09913e3	fix(images): an <img> insertion alone keeps its request instead of resolving src again
+7aa109627	fix(iframe): a javascript: src holds the parent's load until its script has run
+d67374261	fix(navigation): fragment navigations of the initial about:blank document replace and keep it initial
+e4f609340	fix(navigation): a target naming the current or the top-level window navigates it
+b061fffe0	fix(forms): text control cursor after child changes, type changes and reset
+5526cff79	fix(forms): a number input rejects a typed sign that cannot fit
+28b24967f	fix(navigation): beforeunload fires synchronously for Location navigations; a frame cannot navigate from its own unload handlers
+1c2853fef	fix(navigation): a Location navigation of a document in its unload listeners is ignored
+12d84f4cf	fix(parser): the <meta> charset scan skips raw text and reads past 1 KB while the head lasts
+26f3e0915	fix(selectors): a label's labeled control matches :active with it
+bf58cbacc	fix(dom): an element of an XML document serializes innerHTML as XML
+6be956923	A form, fieldset or select restyles its :valid/:invalid when its children change
+50bd6c198	An invalid writingsuggestions value is the true state, not inherited
+f27581dc4	fix(forms): textarea hard wrapping inserts LF into the entry
+8f92c1072	feat(navigation): window.stop() cancels the navigation and aborts the document
+20b27a0ee	fix(location): a Location navigation's referrer is the calling script's document
+f86a2669b	fix(links): an editable link does not navigate when clicked
+503bf8dea	fix(document): document.open with three arguments runs the window open steps itself
+8e062e08c	fix(forms): a hidden input has no activation behavior
+7da6b6939	fix(canvas): an SVG <image> is broken only when its request failed
+21e5170cd	:-webkit-autofill parses as :autofill
+76a16679a	:optional matches every input, select and textarea that is not required
+e275a4bb2	execCommand and queryCommand*() throw outside HTML and XHTML documents
+781e7100a	fix(canvas): a broken SVG <image> is an InvalidStateError image source
+7235ec49a	test(window): clearTimeout leaves an animation frame callback
+064ce6736	fix(file): input.files and DataTransfer.files return the same FileList
+6c5b6fdda	fix(window): animation frame handles are their own sequence from 1
+08ed02e14	fix(fetch): a multipart close delimiter must end the body or a line
+07194d15f	fix(clone): length-tracking TypedArrays and DataViews stay length-tracking
+a57c70cbe	fix(fetch): Body methods reject on a bad receiver; forEach and fetch lengths
+5f0b469a8	fix(parser): foster parenting into a table's template element parent goes to its contents
+15a1b2a33	Block downloads from documents sandboxed without allow-downloads
+ae7c7ab39	fix(forms): the Option() constructor leaves the option's dirtiness false
+748bae9c7	fix(forms): a canceled checkbox click restores indeterminate as it was
+84ee7b790	fix(forms): input.checked returns the checkedness of any input type
+1ab086809	fix(navigation): a document of an unknown MIME type renders as what its bytes are
+dbfde500e	fix(net): a response's MIME type is Fetch's "extract a MIME type"
+3e46da0ca	fix(forms): blurring a text field fires change only after a user edit
+63b205937	fix(canvas): fontKerning 'none' turns kerning off
+23f5b7774	Revert "Reflect HTMLElement.autocorrect and autocapitalize with form inheritance"
+64660c26d	Reflect HTMLElement.autocorrect and autocapitalize with form inheritance
+3890fbc19	fix(forms): stepping an empty number input clamps to its minimum
+317a53021	fix(clone): VideoFrame is serializable and transferable
+068aca623	fix(forms): email value sanitization follows multiple and converts IDN domains
+b5245bbbf	fix(forms): a pattern that does not compile alone applies no constraint
+3c82e094d	fix(forms): stepMismatch is decided in decimal, as Chrome does
+f09e4e33e	fix(forms): form="" gives no form owner; a disconnected control uses its ancestor form
+856d4b777	fix(navigation): about:blank with a query or fragment commits a blank document
+194d5c78a	fix(clone): a transfer list's detached objects fail only after the value serialized
+f2fcc6efe	fix(history): history traversals from beforeunload or unload listeners are ignored
+1812d34a3	fix(clone): QuotaExceededError is serializable with its quota and requested
+31ee13280	fix(forms): a checked radio joining a group unchecks the rest of it
+dca25d3de	fix(forms): the selection attributes do not apply to email inputs
+86d2744a8	fix(forms): fieldset.elements is the fieldset's listed descendants
+578d954b9	fix(history): a same-document traversal restores the scroll position after popstate
+44b6364ba	fix(location): a Location without a browsing context ignores navigation
+ab1639abf	fix(history): scrollRestoration belongs to the session history entry
+33413ebc8	fix(history): length, state and scrollRestoration need a fully active document
+b61b40bc7	feat(events): PopStateEvent.hasUAVisualTransition
+d40b25d70	fix(canvas): a failed updateElementGeometry leaves the element unhittable
 8c373d12f	fix(location): ancestorOrigins masks every occurrence of the embedder's origin
-e65293504	fix(sandbox): window.open without allow-popups still navigates a named existing frame
-491b3a3eb	feat(webaudio): BaseAudioContext.audioWorklet, CSP-checked as an audioworklet request
 e5c2cd131	fix(wright): scrollIntoViewIfNeeded scrolls instantly
-ffd49eb93	fix(img): an unparseable src rejects pending decode() calls
 ea7daf4c4	fix(iframe): compute the attribute navigation's history handling before the call
-62d42f366	fix(sandbox): popups take the sandbox of the document that opened them
-7a86b696e	Fall back to the minimal deferred-fetch quota when allow= does not enable it
-931311668	Drop a deferred lazy image adopted into another document
-7697f40b0	An img with a srcset is not complete before its request finishes
-4c9151ea3	fix(view-transitions): a skip only Pyro makes leaves ready handled
-c5fe0532b	Report a toBlob callback's exception in the callback's realm
-665f374a3	Start media at the #t= time of its URL's media fragment
-fe4f3cd1f	fix(transitions): getAnimations orders transitions by the style change event that started them
-4d224634b	Take pending play() promises before firing playing
-457992246	CSP enforcement for img/style/connect/font/media/frame/form-action/object/manifest/prefetch, inline scripts and eval
-a7e2f883e	CSP fetch check core: policy lists, source matching, request checks for scripts, workers and worklets
-8d0dc8a39	Show an img response that is an image whatever its status
-1215ead74	fix(navigation): beforeunload also fires in the documents of the navigated frame's descendants
-3db74cb02	An img whose src does not parse is complete once its steps ran
-be84ba523	Answer controlsList.supports() with Chromium's media tokens
-91f25aac4	fix(navigation): a javascript: URL into a new noopener window does not run
-8c117ae60	feat(cssom-view): smooth scrolling on the rendering-frame clock
-cd21430ab	An img with an empty selected source has an empty currentSrc
-dd48f6082	fix(location): ancestorOrigins is stored when the document commits; only no-referrer and same-origin hide
-9a244304e	fix(wright): scrollIntoViewIfNeeded resolves to undefined
-f07bf214a	fix(grid): a percentage track within float noise of a layout unit snaps to it
-012d066bd	Screenshots wait only on the lazy loads they started
-e9b1d47bc	fix(forms): SubmitEvent submitter type check; submit is composed
-fd8e172a4	fix(canvas): a drawable canvas paints no inline content in place on any paint path
-62d68f95f	fix(canvas): drawElementImage taints for a visited link around the element
-7bb67f14e	Avoid moving a matched slice in set_drawn_transform
-c33183561	fix(anchor): anchor() and anchor-size() interpolate in CSS animations and transitions
-d6178adf9	Store drawElementImage's element transform in the canvas box's CSS px
-0f28fc202	fix(forms): constraint validation follows where readonly and required apply
-6e4010b84	fix(forms): a lone "webauthn" autocomplete token is its own autofill value
-2e163c50a	fix(forms): option.text leaves out script contents
-d527b612e	fix(forms): labels is a live NodeList, null on a hidden input
-e78f7de78	fix(forms): setCustomValidity normalizes newlines
-a6706c23b	Place drawable elements by their canvas transform in getBoundingClientRect
-eb60ce3b2	feat(css): anchored(fallback ...) container queries with not/and/or, any and physical position-area matching
-c0d6f0006	feat(css-contain): contentvisibilityautostatechange, and anchors keep content-visibility:auto relevant
-0206f4243	fix(history): an iframe navigated from its document's load or pageshow handler replaces its entry
-1ccc4238d	fix(webapi): no window.caches outside a secure context
-bfe194f6c	fix(css-scroll-snap): an unsnapped mandatory snap container snaps after a style change
-7fb25f233	feat(css-scroll-snap): scrollsnapchanging and scrollsnapchange, and SnapEvent
-193dc92e4	fix(view-transitions): element-scoped transitions mark their scope, hold its size and skip what Chrome skips (VT-3 scoped)
-f4cd4a657	feat(html): HTMLProgressElement.position
-5e371d9d4	fix(table): caption, tHead and tFoot setters; sectionRowIndex outside sections
-57023b90c	feat(css): scroll-initial-target (none | nearest) scrolls the nearest scroll container to its target
 5f1a92a62	feat(scroll-markers): a click on a ::scroll-button() scrolls its element by a page
