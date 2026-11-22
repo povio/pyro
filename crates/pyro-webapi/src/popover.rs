@@ -273,6 +273,29 @@ fn nearest_invoked_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
     None
 }
 
+/// Whether popover `inner` is nested in popover `outer`: `outer` is a flat-tree ancestor of it or
+/// of one of its invokers, along the chain of invokers.
+fn nested_in(dom: &Dom, inner: NodeId, outer: NodeId) -> bool {
+    let mut current = Some(inner);
+    let mut budget = 64;
+    while let Some(popover) = current {
+        let mut node = parent_or_host(dom, popover);
+        while let Some(n) = node {
+            if n == outer {
+                return true;
+            }
+            node = parent_or_host(dom, n);
+        }
+        let invoker = dom.popover_invoker(popover);
+        if invoker.is_some_and(|i| i == outer || dom.contains(outer, i).unwrap_or(false)) {
+            return true;
+        }
+        budget -= 1;
+        current = invoker.and_then(|i| nearest_open_popover(dom, i)).filter(|&p| p != popover && budget > 0);
+    }
+    false
+}
+
 /// HTML "topmost popover ancestor": the highest popover of `stack` that
 /// contains `el` (flat tree) or its invoker.
 fn topmost_popover_ancestor(dom: &Dom, el: NodeId, stack: PopoverStack, invoker: Option<NodeId>) -> Option<NodeId> {
@@ -375,9 +398,16 @@ fn close_stack_until(
 fn hide_all_popovers_until(page: &Rc<PageDom>, endpoint: Option<NodeId>, focus_previous: bool, fire_events: bool) {
     let in_hint = endpoint.is_some_and(|e| page.dom.borrow().popover_stack(PopoverStack::Hint).contains(&e));
     close_stack_until(page, PopoverStack::Hint, endpoint.filter(|_| in_hint), focus_previous, fire_events);
-    if !in_hint {
-        close_stack_until(page, PopoverStack::Auto, endpoint, focus_previous, fire_events);
-    }
+    let auto_endpoint = match endpoint {
+        // A hint endpoint keeps the auto popovers it is nested in (shown inside or invoked
+        // from), and the ones below them; the autos above close (whatwg/html#12304).
+        Some(hint) if in_hint => {
+            let dom = page.dom.borrow();
+            topmost_popover_ancestor(&dom, hint, PopoverStack::Auto, dom.popover_invoker(hint))
+        }
+        other => other,
+    };
+    close_stack_until(page, PopoverStack::Auto, auto_endpoint, focus_previous, fire_events);
 }
 
 fn remove_watcher(page: &PageDom, el: NodeId) {
@@ -408,10 +438,20 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
         return Ok(());
     }
     let ty = popover_type(&page.dom.borrow(), el);
+    // An auto popover inside a showing hint popover (or invoked from one) is shown as a hint: it
+    // joins the hint stack above that ancestor (HTML: an auto popover nested in a hint is
+    // downgraded to a hint).
+    let mut downgraded = false;
     match ty {
         Some(PopoverType::Auto) => {
-            let ancestor = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, invoker);
-            hide_all_popovers_until(page, ancestor, false, fire_events);
+            let hint_ancestor = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Hint, invoker);
+            if hint_ancestor.is_some() {
+                downgraded = true;
+                close_stack_until(page, PopoverStack::Hint, hint_ancestor, false, fire_events);
+            } else {
+                let ancestor = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, invoker);
+                hide_all_popovers_until(page, ancestor, false, fire_events);
+            }
         }
         Some(PopoverType::Hint) => {
             let ancestor = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Hint, invoker);
@@ -430,7 +470,7 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
         return Ok(());
     }
     let previous = focused(page);
-    let stack = stack_of(ty);
+    let stack = if downgraded { Some(PopoverStack::Hint) } else { stack_of(ty) };
     overlay_style_flush(page, el);
     {
         let mut dom = page.dom.borrow_mut();
@@ -503,6 +543,21 @@ pub(crate) fn hide_showing_popover(
         close_stack_until(page, stack, Some(el), focus_previous, fire_events);
         if !still_showing() {
             return Ok(());
+        }
+        // An auto popover's hidden with the hint popovers nested in it (shown inside it or
+        // invoked from it); unrelated hints stay open.
+        if stack == PopoverStack::Auto {
+            let nested = {
+                let dom = page.dom.borrow();
+                let hints = dom.popover_stack(PopoverStack::Hint);
+                hints.iter().position(|&h| nested_in(&dom, h, el)).map(|i| i.checked_sub(1).map(|j| hints[j]))
+            };
+            if let Some(endpoint) = nested {
+                close_stack_until(page, PopoverStack::Hint, endpoint, focus_previous, fire_events);
+                if !still_showing() {
+                    return Ok(());
+                }
+            }
         }
     }
     page.dom.borrow_mut().set_popover_invoker(el, None);
