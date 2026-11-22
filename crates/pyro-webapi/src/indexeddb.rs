@@ -765,6 +765,8 @@ fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'
 /// EventTarget lets a borrowed same-origin accessor reach the owner's state.
 fn binding_natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
+    let array_key = s.function("isArrayKeyObject", |s, _, args| Ok(s.boolean(args.get(0).is_array())))?;
+    natives.set_atom("isArrayKeyObject", array_key.value())?;
     let state = s.function("handlerState", |s, _, args| {
         const KEY: &str = "lpIDBEventHandlers";
         let Some(object) = args.get(0).as_object() else { return Ok(s.undefined()) };

@@ -129,7 +129,7 @@
       for (let i = 0; i < bytes.length; i++) out += HEX[bytes[i] >>> 4] + HEX[bytes[i] & 15];
       return out + '!';
     }
-    if (isArray(input)) {
+    if (N.isArrayKeyObject(input)) {
       if (!seen) seen = new Set();
       if (seen.has(input)) return undefined;
       seen.add(input);
