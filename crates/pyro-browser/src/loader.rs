@@ -991,7 +991,15 @@ struct PageModuleFetcher {
     worklet_credentials: Option<pyro_net::Credentials>,
     /// That worklet's module map, where each module this fetcher loads is recorded.
     worklet_modules: Option<(pyro_js::WorkletModuleMap, u64)>,
+    /// Fetches in flight of JSON, CSS and text modules by URL and type, with
+    /// the requests that joined each (HTML module map: an entry being fetched
+    /// collects callbacks). The engine asks once per load until one settles;
+    /// JavaScript modules join in the document's shared module fetches
+    /// (`Browser::fetch_imported_module`). Nothing stays once a fetch settles.
+    typed_in_flight: TypedModuleFetches,
 }
+
+type TypedModuleFetches = Rc<RefCell<std::collections::HashMap<(String, ModuleType), Vec<ModuleRequest>>>>;
 
 /// A worklet module's entry in its worklet's module map while it is fetched. It is marked fetched
 /// before its source goes to the engine (which may run the rest of the graph, and script waiting on
@@ -1094,6 +1102,7 @@ impl ModuleFetcher for PageModuleFetcher {
             fetches: Rc::default(),
             worklet_credentials: Some(credentials),
             worklet_modules: Some((modules, graph)),
+            typed_in_flight: Rc::default(),
         }))
     }
 
@@ -1107,6 +1116,21 @@ impl ModuleFetcher for PageModuleFetcher {
             }
             return;
         }
+        let joined_key =
+            (ty != ModuleType::JavaScript && self.worklet_credentials.is_none()).then(|| (url.clone(), ty));
+        if let Some(key) = &joined_key {
+            let mut typed = self.typed_in_flight.borrow_mut();
+            if let Some(joined) = typed.get_mut(key) {
+                joined.push(request);
+                return;
+            }
+            typed.insert(key.clone(), Vec::new());
+        }
+        let typed_in_flight = self.typed_in_flight.clone();
+        // The requests that joined this fetch, taken out of the map: one the
+        // engine makes from here on starts a fetch of its own.
+        let take_joined =
+            move || joined_key.as_ref().and_then(|key| typed_in_flight.borrow_mut().remove(key)).unwrap_or_default();
         // A blob: URL names the blob it named when the module was requested
         // (URL parsing takes the blob URL entry): one revoked right after
         // `import()` still loads.
@@ -1128,10 +1152,12 @@ impl ModuleFetcher for PageModuleFetcher {
         self.sched.post(TaskSource::Networking, move |b| {
             let Some(request) = request.borrow_mut().take() else {
                 module_trace!("task found no request {url}");
+                drop(take_joined());
                 return;
             };
             if realm.upgrade().is_none_or(|r| r.is_disposed()) {
                 module_trace!("task skipped, realm gone {url}");
+                drop(take_joined());
                 return;
             }
             module_trace!("fetching {url} (document {})", b.doc(page).is_some());
@@ -1139,6 +1165,7 @@ impl ModuleFetcher for PageModuleFetcher {
             let complete = move |_b: &mut Browser, res: Result<String, String>| {
                 // Dropped when this returns, the result handed to the engine.
                 let _in_flight = in_flight;
+                let joined = take_joined();
                 let fetched = res.is_ok();
                 match &res {
                     Ok(text) => module_trace!("loaded {traced} ({} bytes)", text.len()),
@@ -1155,13 +1182,19 @@ impl ModuleFetcher for PageModuleFetcher {
                 if let Some(entry) = worklet_entry.as_ref().filter(|_| fetched) {
                     entry.set_loaded(true);
                 }
-                let r = match res {
-                    Ok(text) => pyro_webapi::module_script::complete(&scope, request, &text),
+                let settle = |request: ModuleRequest| match &res {
+                    Ok(text) => pyro_webapi::module_script::complete(&scope, request, text),
                     Err(e) => request.reject(
                         &scope,
                         &JsError::type_error(format!("Failed to fetch dynamically imported module: {traced} ({e})")),
                     ),
                 };
+                let r = settle(request);
+                for request in joined {
+                    if let Err(e) = settle(request) {
+                        scope.report_exception(&e);
+                    }
+                }
                 if let Some(entry) = worklet_entry.as_ref().filter(|_| fetched && r.is_err()) {
                     entry.set_loaded(false);
                 }
@@ -3379,7 +3412,14 @@ impl Browser {
 }
 
 pub(crate) fn install_module_fetcher(sched: pyro_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
-    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched, fetches: Rc::default(), worklet_credentials: None, worklet_modules: None })));
+    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher {
+        page,
+        sched,
+        fetches: Rc::default(),
+        worklet_credentials: None,
+        worklet_modules: None,
+        typed_in_flight: Rc::default(),
+    })));
 }
 
 /// The download's file name: the `download` attribute without path
