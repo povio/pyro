@@ -11,14 +11,14 @@
    },
    "distinct_census_pages": 1202,
    "owner_reported_unlisted": 5,
-   "selector_union": 1438,
-   "owner_estimate_reduction": 241,
+   "selector_union": 1435,
+   "owner_estimate_reduction": 238,
    "of_which_tentative": 188,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
     "html/canvas": 415,
-    "html/semantics": 374,
+    "html/semantics": 373,
     "html/interaction": 115,
     "referrer-policy": 114,
     "fetch/api": 72,
@@ -39,12 +39,12 @@
     "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
-    "html/rendering": 3,
     "fetch/http-cache": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
-    "IndexedDB": 1,
+    "html/rendering": 1,
     "quirks": 1,
+    "IndexedDB": 1,
     "svg/styling": 1
    }
   },
@@ -68,21 +68,21 @@
     "html/semantics": 163,
     "html/syntax": 30,
     "html/browsers": 26,
-    "html/dom": 5,
-    "fetch/api": 5
+    "fetch/api": 5,
+    "html/dom": 5
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 40,
+    "macbook_in_scope": 43,
     "studio_in_scope": 142,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 87,
+   "distinct_census_pages": 90,
    "owner_reported_unlisted": 0,
-   "selector_union": 111,
+   "selector_union": 114,
    "owner_estimate_reduction": 24,
    "of_which_tentative": 6,
    "studio_css_reported_pages_not_deduped": 122,
@@ -91,11 +91,12 @@
     "html/browsers": 38,
     "content-security-policy": 20,
     "webidl": 19,
-    "html/semantics": 18,
+    "html/semantics": 19,
     "html/interaction": 5,
     "svg/path": 4,
     "html/webappapis": 3,
     "workers": 3,
+    "html/rendering": 2,
     "dom/nodes": 1
    }
   }
@@ -1762,9 +1763,23 @@
   },
   "R-HTML-24": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 6,
+   "in_scope_pages": 3,
    "out_of_scope_pages": 0,
-   "pages": 6,
+   "pages": 3,
+   "tentative": 0
+  },
+  "R-HTML-24b": {
+   "state": "proposed",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
+   "pages": 2,
+   "tentative": 0
+  },
+  "R-HTML-24c": {
+   "state": "proposed",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
    "tentative": 0
   },
   "R-HTML-25": {
