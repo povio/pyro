@@ -1027,7 +1027,8 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
     apply_edit(page, host, input_type, None, None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
-            if let Some(caret) = whitespace::delete_after_spaces(page, &mut dom, host, from, to) {
+            let inline_space = (start == end).then(|| whitespace::delete_inline_space(page, &mut dom, host, from, to)).flatten();
+            if let Some(caret) = inline_space.or_else(|| whitespace::delete_after_spaces(page, &mut dom, host, from, to)) {
                 drop(dom);
                 set_selection(page, caret, caret);
                 return;
