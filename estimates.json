@@ -3,15 +3,15 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 382,
+    "macbook_in_scope": 383,
     "studio_in_scope": 29,
     "other_dirs_out_of_scope": 16,
     "macbook_worker_variants_if_enabled": 148,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 557,
+   "distinct_census_pages": 558,
    "owner_reported_unlisted": 5,
-   "selector_union": 603,
+   "selector_union": 604,
    "owner_estimate_reduction": 51,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
@@ -19,7 +19,7 @@
    "by_dir": {
     "html/canvas": 292,
     "html/interaction": 100,
-    "html/semantics": 81,
+    "html/semantics": 82,
     "fetch/api": 46,
     "fetch/content-encoding": 21,
     "scheduler": 19,
@@ -27,31 +27,31 @@
     "fetch/cross-origin-resource-policy": 10,
     "encoding": 7,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/data-urls": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
-    "svg/styling": 1,
     "quirks": 1,
-    "html/rendering": 1
+    "html/rendering": 1,
+    "svg/styling": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 261,
+    "macbook_in_scope": 283,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 43,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 297,
+   "distinct_census_pages": 319,
    "owner_reported_unlisted": 75,
-   "selector_union": 302,
-   "owner_estimate_reduction": 80,
-   "of_which_tentative": 35,
+   "selector_union": 328,
+   "owner_estimate_reduction": 84,
+   "of_which_tentative": 38,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 120,
+    "html/semantics": 146,
     "html/canvas": 90,
     "fetch/fetch-later": 39,
     "html/syntax": 30,
@@ -60,38 +60,38 @@
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 234,
+    "macbook_in_scope": 210,
     "studio_in_scope": 308,
     "other_dirs_out_of_scope": 297,
     "macbook_worker_variants_if_enabled": 17,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 730,
+   "distinct_census_pages": 706,
    "owner_reported_unlisted": 0,
-   "selector_union": 864,
-   "owner_estimate_reduction": 134,
-   "of_which_tentative": 190,
+   "selector_union": 837,
+   "owner_estimate_reduction": 131,
+   "of_which_tentative": 187,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "svg/animations": 229,
     "html/canvas": 160,
     "referrer-policy": 114,
-    "html/semantics": 85,
     "content-security-policy": 72,
     "html/browsers": 71,
+    "html/semantics": 58,
     "intersection-observer": 36,
     "html/webappapis": 23,
     "webidl": 19,
     "html/dom": 13,
     "workers": 12,
-    "fetch/range": 5,
     "html/interaction": 5,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "svg/path": 4,
-    "fetch/http-cache": 3,
-    "fetch/data-urls": 3,
     "html/infrastructure": 3,
+    "fetch/data-urls": 3,
+    "fetch/http-cache": 3,
     "encoding": 1,
     "dom/nodes": 1
    }
@@ -910,6 +910,13 @@
    "pages": 1,
    "tentative": 0
   },
+  "F09f": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
+   "tentative": 0
+  },
   "F09e": {
    "state": "proposed",
    "in_scope_pages": 4,
@@ -1303,28 +1310,28 @@
    "tentative": 0
   },
   "R-HTML-5": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 14,
    "out_of_scope_pages": 0,
    "pages": 14,
    "tentative": 0
   },
   "R-HTML-6": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 6,
    "out_of_scope_pages": 0,
    "pages": 6,
    "tentative": 0
   },
   "R-HTML-7": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
    "tentative": 0
   },
   "R-HTML-8": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
@@ -1415,12 +1422,12 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 586,
+ "implemented_total_estimate": 587,
  "milestones_reached": [
   250,
   500
  ],
- "macbook_in_scope_implemented": 382,
+ "macbook_in_scope_implemented": 383,
  "macbook_in_scope_milestones": [
   100,
   200,
