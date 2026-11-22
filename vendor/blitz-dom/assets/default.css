@@ -271,6 +271,34 @@ textarea {
     text-shadow: initial;
 }
 
+/* pyro: the rest of HTML § 15.5.1 (WPT html/rendering form-controls/resets):
+   controls do not inherit text-align, inputs clip at their padding box. Clip is
+   no scroll container (inline baselines and taffy's automatic minimum sizes
+   stay as for `visible`); button-like and file inputs keep their own
+   `!important` rules below. */
+input,
+select,
+textarea {
+    text-align: initial;
+}
+
+input:not([type="range" i], [type="checkbox" i], [type="radio" i]) {
+    overflow: clip;
+    overflow-clip-margin: 0;
+}
+
+input[type="image" i] {
+    overflow-clip-margin: content-box;
+}
+
+input[type="search" i] {
+    box-sizing: border-box;
+}
+
+textarea {
+    display: inline-block;
+}
+
 /* https://html.spec.whatwg.org/multipage/rendering.html#the-select-element-2
    (select only has native appearance here) */
 select {
@@ -1355,6 +1383,8 @@ marquee {
     display: inline-block;
     vertical-align: text-bottom;
     text-align: start;
+    /* pyro: the HTML rendering section's marquee rule (WPT form-controls/resets). */
+    overflow: hidden;
 }
 
 marquee:is([direction="up"], [direction="down"]) {
