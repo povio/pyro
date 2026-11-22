@@ -495,6 +495,12 @@ impl Browser {
             }
         }
         let Some((urls, script_blocking, blocker)) = processing else { return false };
+        // pyro: CSP (`style-src-elem`, its nonce and text): a blocked style block has no sheet,
+        // imports nothing and blocks nothing; its element gets `error` (as Chrome).
+        if !pyro_webapi::csp::style_element_allowed(&bindings, node) {
+            self.queue_style_event(page, loader, &bindings, node, false);
+            return true;
+        }
         if urls.is_empty() {
             self.queue_style_event(page, loader, &bindings, node, true);
             return true;

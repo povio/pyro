@@ -31,7 +31,7 @@ pub mod custom;
 mod internals;
 mod moving;
 mod nonce;
-pub use nonce::CspPolicy;
+pub use nonce::{CspPolicy, PendingStyleChecks};
 pub mod picture;
 pub mod prescan;
 mod details;

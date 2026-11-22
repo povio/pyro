@@ -2068,7 +2068,19 @@ impl PageDom {
     pub fn layout(&self) -> std::cell::Ref<'_, pyro_dom::layout::Layout> {
         self.sync_frame_viewport();
         self.sync_viewport_meta();
+        self.resolve_inline_styles();
         self.layout.borrow()
+    }
+
+    /// pyro: runs the inline style CSP checks that wait ([`crate::csp::resolve_inline_styles`])
+    /// before styles are read; one `RefCell` check when none waits (any page without a policy).
+    pub(crate) fn resolve_inline_styles(&self) {
+        if !self.dom.try_borrow().is_ok_and(|d| d.has_pending_style_checks()) {
+            return;
+        }
+        if let Some(page) = self.this.upgrade() {
+            crate::csp::resolve_inline_styles(&page);
+        }
     }
 
     /// [`PageDom::layout`] without panicking while the layout is borrowed
@@ -2076,6 +2088,7 @@ impl PageDom {
     pub fn try_layout(&self) -> Option<std::cell::Ref<'_, pyro_dom::layout::Layout>> {
         self.sync_frame_viewport();
         self.sync_viewport_meta();
+        self.resolve_inline_styles();
         self.layout.try_borrow().ok()
     }
 
@@ -2169,6 +2182,8 @@ impl PageDom {
     /// `set_stylesheet_text` once fetched.
     pub fn apply_style_event(&self, ev: &pyro_dom::script::ResourceEvent) {
         use pyro_dom::script::{ResourceKind, ResourceReason};
+        // pyro: a `<style>` CSP blocks registers with no rules (`StyleEngine` asks the DOM).
+        self.resolve_inline_styles();
         let mut layout = self.layout.borrow_mut();
         let style = layout.style_mut();
         match (ev.kind, ev.reason) {
@@ -2482,6 +2497,9 @@ impl PageDom {
         if self.quiet_since_last_task() {
             return;
         }
+        // pyro: inline style CSP checks no read ran yet report now (before the stamp: a blocked
+        // one changes the DOM's version).
+        self.resolve_inline_styles();
         // The DOM as this checkpoint saw it (the checkpoint's idle check
         // asks first, so asking does not consume a change).
         if let Ok(dom) = self.dom.try_borrow() {

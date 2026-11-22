@@ -26,8 +26,16 @@
 //! `frame-src` is checked against the parent's policies (a `javascript:` navigation against its
 //! initiator's, [`NavigationInitiator`]); `Page.setBypassCSP` applies from
 //! the next document committed; a blocked `sendBeacon` sends nothing and still returns true
-//! (as Chrome); inline `<style>` and `style` attributes (CSS code) and `setTimeout`
-//! strings are not checked.
+//! (as Chrome); `setTimeout` strings are not checked.
+//!
+//! Inline styles ([`resolve_inline_styles`]): an HTML `<style>` is checked (`style-src-elem`,
+//! its nonce and text) at each update of its style block, a `style` attribute
+//! (`style-src-attr`, its hashes with `'unsafe-hashes'`) at each write by the parser or a script
+//! and when its element joins the document. pyro-dom records what waits; it is checked before
+//! anything reads styles (layout, `el.style`, `document.styleSheets`, the `sheet`) and after each
+//! task. A blocked `<style>` has no sheet and fires `error`; a blocked attribute declares
+//! nothing. CSSOM writes (`el.style.x = …`), constructed sheets and `insertRule` are not checked
+//! (as Chrome). Violations carry no source position.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -160,6 +168,70 @@ pub fn inline_allowed_in(
     let outcome = list.inline_check(kind, nonce, source);
     report(page, outcome.violations, target);
     !outcome.blocked
+}
+
+/// Runs the inline style checks waiting in `page`'s document (pyro-dom records them: a `style`
+/// attribute set, a `<style>` updated, in a document with policies), each reporting its
+/// violations at its element. Nothing to do (one `RefCell` check) without them; nothing either
+/// while the DOM is borrowed (the next read or task runs them).
+pub fn resolve_inline_styles(page: &Rc<PageDom>) {
+    let pending = {
+        let Ok(mut dom) = page.dom.try_borrow_mut() else { return };
+        if !dom.has_pending_style_checks() {
+            return;
+        }
+        dom.take_pending_style_checks(page.document())
+    };
+    for el in pending.elements {
+        style_element_allowed(page, el);
+    }
+    if pending.attributes.is_empty() {
+        return;
+    }
+    let list = policy_list(page);
+    for el in pending.attributes {
+        let text = page.dom.borrow().get_attribute(el, "style").ok().flatten().map(str::to_owned);
+        let Some(text) = text else {
+            page.dom.borrow_mut().set_style_attribute_blocked(el, None);
+            continue;
+        };
+        let allowed = inline_allowed_in(page, list.as_deref(), InlineKind::StyleAttribute, "", &text, Some(el));
+        page.dom.borrow_mut().set_style_attribute_blocked(el, (!allowed).then_some(text.as_str()));
+    }
+}
+
+/// CSP3 "Should element's inline type behavior be blocked?" for the HTML `<style>` `el` of
+/// `page`'s document (`style-src-elem`: its nonce, its text), once per update of its style block
+/// (its style sheet generation): another update checks, and reports, again. Whether its sheet
+/// applies. Without a policy, true at once.
+pub fn style_element_allowed(page: &Rc<PageDom>, el: NodeId) -> bool {
+    let text = {
+        let dom = page.dom.borrow();
+        if dom.csp_policies(page.document()).is_empty() || dom.node_document(el).ok() != Some(page.document()) {
+            return true;
+        }
+        let Ok(e) = dom.element(el) else { return true };
+        let parsing = e.flags & pyro_dom::node::element_flags::STYLE_PARSING != 0;
+        if !e.is_html() || &*e.name.local != "style" || parsing {
+            return !dom.style_element_blocked(el);
+        }
+        let generation = dom.style_sheet_generation(el);
+        if let Some((checked, blocked)) = dom.style_element_check(el) {
+            if checked == generation {
+                return !blocked;
+            }
+        }
+        // A disconnected one has no sheet: checked when it is connected (a new update).
+        if !dom.is_connected(el).unwrap_or(false) {
+            return true;
+        }
+        let text = dom.child_text_content(el).into_owned();
+        text
+    };
+    let nonce = element_nonce(page, el);
+    let allowed = inline_allowed(page, InlineKind::Style, &nonce, &text, Some(el));
+    page.dom.borrow_mut().set_style_element_blocked(el, !allowed);
+    allowed
 }
 
 /// A navigation initiator's CSP, snapshotted when it starts a navigation: its document (where

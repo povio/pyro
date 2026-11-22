@@ -444,12 +444,14 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     fn add_attrs_if_missing(&self, target: &u32, attrs: Vec<Attribute>) {
         if self.stream_invalid() { return; }
         self.dom.with(|d| {
+            let mut style_added = false;
             for a in attrs {
                 if self.filter.as_ref().is_some_and(|filter| !filter.allows_attribute(&a.name)) {
                     continue;
                 }
                 let Some(el) = d.n_mut(*target).element_mut() else { return };
                 if !el.attrs.iter().any(|x| x.name == a.name) {
+                    style_added |= a.name.ns == ns!() && a.name.local == local_name!("style");
                     d.note_style_attr(*target, &a.name, None);
                     let change = crate::dom::Change::attr(*target, &a.name);
                     let name = a.name.clone();
@@ -460,6 +462,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 }
             }
             d.note_inline_handlers(*target);
+            if style_added {
+                d.note_inline_style(*target);
+            }
         });
     }
     fn associate_with_form(&self, _target: &u32, _form: &u32, _nodes: (&u32, Option<&u32>)) {}
@@ -630,6 +635,7 @@ impl<A: DomAccess> Sink<A> {
             d.n_mut(i).element_mut().unwrap().template_contents = frag;
         }
         d.note_inline_handlers(i);
+        d.note_inline_style(i);
         if is_details {
             d.details_created(i);
         }

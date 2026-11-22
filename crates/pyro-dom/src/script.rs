@@ -537,6 +537,10 @@ impl Dom {
         {
             let generation = self.resources.sheet_generations.entry(ev.node).or_default();
             *generation = generation.wrapping_add(1);
+            // pyro: an updated style block is checked against the document's CSP (`style-src-elem`).
+            if kind == ResourceKind::StyleText {
+                self.note_style_element(idx);
+            }
         }
         // Coalesce consecutive duplicates (e.g. many text appends to one <style>).
         if self.resources.events.last() != Some(&ev) {

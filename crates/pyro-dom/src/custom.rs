@@ -400,6 +400,7 @@ impl Dom {
         }
         self.resummarize(i);
         self.note_inline_handlers(i);
+        self.note_inline_style(i);
     }
 
     /// Appends the attributes of the token the parser constructed `el` for,

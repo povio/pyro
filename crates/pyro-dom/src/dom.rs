@@ -724,6 +724,17 @@ impl Dom {
         self.style_text_revision = self.style_text_revision.wrapping_add(1);
     }
 
+    /// pyro: CSP blocked or allowed the HTML `<style>` `i`'s sheet: its sheet text (empty or its
+    /// own) differs, as after a text change, without a new sheet object.
+    pub(crate) fn style_csp_changed(&mut self, i: u32) {
+        let revision = self.style_text_revision.wrapping_add(1);
+        if let NodeKind::Element(e) = &mut self.n_mut(i).kind {
+            e.style_text_revision = revision;
+        }
+        self.style_text_revision = revision;
+        self.bump();
+    }
+
     /// `change` changed the children of an HTML `<style>`, or a child's
     /// data: its sheet text may differ.
     #[inline]
@@ -3295,6 +3306,9 @@ impl Dom {
                 // Inline `on*` handlers compile in the new document (a clone
                 // of template contents had none in its inert one).
                 self.note_inline_handlers(i);
+                // pyro: and its `style` attribute is checked against the new document's CSP
+                // (Chrome re-runs the attribute's change steps on a document move).
+                self.note_inline_style(i);
                 let contents = self.n(i).element().map_or(NIL, |e| e.template_contents);
                 if contents != NIL {
                     templates.push(contents);
@@ -3496,6 +3510,9 @@ impl Dom {
                 self.capture_hyperlink_blob(id.idx);
                 self.resummarize(id.idx);
                 self.note_inline_handlers(id.idx);
+                // pyro: a copy of a `style` attribute CSP blocked declares nothing either (Chrome
+                // copies the element's empty inline style); a clone is not checked again.
+                self.copy_style_attribute_block(n, id);
                 id.idx
             }
             NodeKind::Text(s) => {
@@ -3758,10 +3775,11 @@ impl Dom {
             std::sync::Arc::new(crate::node::InlineStyleBacking { semantic, typed })
         });
         let semantic_only = el.semantic_style != backing && slot.is_some_and(|k| *el.attrs[k].value == *canonical);
-        match slot {
-            Some(k) => self.change_attr(i, k, &canonical),
-            None => self.append_attr(i, QualName::new(None, ns!(), local.clone()), &canonical),
-        }
+        // pyro: a CSSOM write is no `style` attribute CSP checks (as Chrome).
+        self.cssom_style_write(id, |dom| match slot {
+            Some(k) => dom.change_attr(i, k, &canonical),
+            None => dom.append_attr(i, QualName::new(None, ns!(), local.clone()), &canonical),
+        });
         let el = self.n_mut(i).element_mut().unwrap();
         el.semantic_style = backing;
         el.checked_style_backing = true;
@@ -3986,6 +4004,10 @@ impl Dom {
             }
             self.note_style_attr(i, &name, Some(&old));
         }
+        // pyro: CSP checks every write of a `style` attribute (Chrome: also an unchanged value).
+        if name.ns == ns!() && name.local == local_name!("style") {
+            self.note_inline_style(i);
+        }
         if *old == *value {
             // Same value: still an attribute mutation (records, XPath
             // iterators), but nothing that styles or geometry depend on
@@ -4014,6 +4036,9 @@ impl Dom {
         self.note_style_attr(i, &name, None);
         let attr = Attr { name: name.clone(), value: value.into() };
         self.edit_attrs(i, &name, |el| el.push_attr(attr));
+        if name.ns == ns!() && name.local == local_name!("style") {
+            self.note_inline_style(i);
+        }
         self.bump_tree();
         self.note(Change::attr(i, &name));
         self.queue_attribute(i, &name, None);
