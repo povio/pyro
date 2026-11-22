@@ -942,7 +942,10 @@ fn image_source(
                 source_page.adopt_available_image_bytes(n.id);
                 // pyro: drawn as the image element's `image-orientation` shows it (Blink; the
                 // source of the preference is not specified, w3c/csswg-drafts#4666).
-                let from_image = {
+                // createImageBitmap (`image_data`) takes the image's own media, as its EXIF
+                // orientation shows it, whatever the element's style (WPT
+                // imagebitmap-replication-exif-orientation).
+                let from_image = image_data || {
                     let dom = source_page.dom.borrow();
                     source_page.layout.borrow().computed_style_value(&dom, n.id, "image-orientation") != "none"
                 };
@@ -1098,7 +1101,8 @@ fn image_source(
         3 => {
             let blob = s.unwrap::<crate::file::Blob>(desc.get_index(1)?).ok_or_else(not_source)?;
             let budget = page.raster_budget().ok_or_else(|| JsError::dom("InvalidStateError", "No active document."))?;
-            let pixmap = pyro_canvas::codec::decode_bitmap(&blob.bytes, false, &budget)
+            // As its EXIF orientation shows it (imageOrientation "from-image").
+            let pixmap = pyro_canvas::codec::decode_bitmap(&blob.bytes, true, &budget)
                 .ok_or_else(|| JsError::dom("InvalidStateError", "The source image could not be decoded."))?;
             let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
             Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean: true, space: Space::Srgb }))
