@@ -2398,9 +2398,20 @@ impl Io {
                 }
                 if let Some(loc) = resp_headers.get(header::LOCATION).map(|v| location_text(v.as_bytes())) {
                     let target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
-                    // Fetch "HTTP-redirect fetch": only HTTP(S) survives a redirect.
+                    // Fetch "HTTP-redirect fetch": only HTTP(S) survives a redirect, and a CORS
+                    // request may not be sent to credentials in the URL of another origin.
                     if !matches!(target.scheme(), "http" | "https") {
                         return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                    }
+                    let has_credentials = !target.username().is_empty() || target.password().is_some();
+                    if has_credentials
+                        && self.shared.config.enforce_cors
+                        && req.mode == RequestMode::Cors
+                        && (cors_cross
+                            || tainted
+                            || origin_url.as_ref().is_some_and(|o| !cors::same_origin(o, &target)))
+                    {
+                        return Err(NetError::Cors("Redirect to a URL with credentials".into()));
                     }
                     crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                     drop(resp.into_body().collect().await);
