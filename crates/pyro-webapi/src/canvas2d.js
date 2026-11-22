@@ -627,7 +627,7 @@
     if (!s) throw new TypeErrorC('Illegal invocation');
     return s;
   }
-  const COLOR_SPACES = ['srgb', 'display-p3'];
+  const COLOR_SPACES = ['srgb', 'srgb-linear', 'display-p3', 'display-p3-linear'];
   function colorSpace(settings) {
     const o = dict(settings);
     if (o.colorSpace === undefined) return 'srgb';
@@ -760,7 +760,7 @@
   }
   // An image argument that is not an element as canvas.rs takes it, or null:
   // [0, handle] for an ImageBitmap, [1, context or null, width, height] for
-  // an OffscreenCanvas, [2, data, width, height] for an ImageData (only
+  // an OffscreenCanvas, [2, data, width, height, colorSpace] for an ImageData (only
   // where `imageData` allows it), [3, blob] for a Blob.
   function sourceOf(image, imageData) {
     const b = bitmaps.get(image);
@@ -778,7 +778,7 @@
     if (typeof CSSImageValueC === 'function' && image instanceof CSSImageValueC) return [4, String(image)];
     if (imageData) {
       const d = images.get(image);
-      if (d) return [2, d.data, d.width, d.height];
+      if (d) return [2, d.data, d.width, d.height, d.colorSpace];
       if (natives.isBlob(image)) return [3, image];
     }
     return null;
@@ -826,8 +826,10 @@
       }
       if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
       if (type !== '2d') return null;
+      // CanvasRenderingContext2DSettings.colorSpace (validated on every call).
+      const space = colorSpace(options);
       if (!o.context) {
-        o.context = natives.offscreenContext(this, o.width, o.height, o.placeholder);
+        o.context = natives.offscreenContext(this, o.width, o.height, o.placeholder, space);
       }
       return o.context;
     }

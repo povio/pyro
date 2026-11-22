@@ -3360,7 +3360,7 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     // other context types are unsupported (null).
     def.method("getContext", 1, |s, n, a| {
         let kind = arg_string(&a, 0, "HTMLCanvasElement.getContext")?;
-        crate::canvas::get_context(s, n.page(), n.id, &kind)
+        crate::canvas::get_context(s, n.page(), n.id, &kind, a.get(1))
     });
     def.method("toDataURL", 0, |s, n, a| crate::canvas::to_data_url(s, n.page(), n.id, a));
     def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), n.id, a));

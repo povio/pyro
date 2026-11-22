@@ -39,6 +39,7 @@ use std::sync::{Arc, Mutex};
 
 use kurbo::{Affine, BezPath, Point, Rect};
 use pyro_canvas::{Bitmap, ClipPath, Color, Composite, DrawState, Paint, Pixmap, Surface};
+use pyro_dom::canvas_color::Space;
 use pyro_dom::text_metrics::{self, FontSpec};
 use pyro_dom::NodeId;
 use pyro_js::sys;
@@ -176,7 +177,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let offscreen = s.function("offscreenContext", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let (w, h) = (a.get(1).to_number()?, a.get(2).to_number()?);
-        let context = new_context(s, &page, Target::Offscreen, size_u32(w), size_u32(h))?;
+        let space = Space::parse(&a.get(4).to_string()?).unwrap_or_default();
+        let context = new_context(s, &page, Target::Offscreen, size_u32(w), size_u32(h), space)?;
         s.set_hidden(context, OFFSCREEN, a.get(0))?;
         page.canvas_used.set(true);
         // An OffscreenCanvas of `transferControlToOffscreen`: its frames go
@@ -209,6 +211,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                 width: surface.width(),
                 height: surface.height(),
                 clean: c.clean.get(),
+                space: c.space,
             };
             let (w, h) = (surface.width(), surface.height());
             surface.resize(w, h);
@@ -273,7 +276,7 @@ fn context_color(c: &ContextData, value: &str) -> Option<pyro_dom::canvas_color:
         }
         _ => black,
     };
-    pyro_dom::canvas_color::parse(value, current)
+    pyro_dom::canvas_color::parse_in(value, current, c.space)
 }
 
 /// The color of a [`canvas_color`] serialization.
@@ -322,6 +325,8 @@ pub(crate) struct State {
     line_dash_offset: f64,
     shadow_blur: f64,
     shadow_color: String,
+    /// `shadow_color` in the context's color space.
+    shadow_rgba: Color,
     shadow_offset_x: f64,
     shadow_offset_y: f64,
     image_smoothing: bool,
@@ -361,6 +366,7 @@ impl State {
             line_dash_offset: 0.0,
             shadow_blur: 0.0,
             shadow_color: "rgba(0, 0, 0, 0)".into(),
+            shadow_rgba: Color::TRANSPARENT,
             shadow_offset_x: 0.0,
             shadow_offset_y: 0.0,
             image_smoothing: true,
@@ -378,7 +384,7 @@ impl State {
     }
 
     fn draw_state(&self) -> DrawState<'_> {
-        let shadow_color = color_of(&self.shadow_color);
+        let shadow_color = self.shadow_rgba;
         DrawState {
             transform: self.transform,
             alpha: self.global_alpha as f32,
@@ -434,6 +440,9 @@ pub struct ContextData {
     surface: Rc<RefCell<Surface>>,
     /// HTML "origin-clean": nothing cross-origin was drawn.
     clean: Rc<Cell<bool>>,
+    /// The `colorSpace` of the context's settings: the space the bitmap's
+    /// values are in.
+    space: Space,
 }
 
 impl ContextData {
@@ -515,7 +524,14 @@ fn canvas_size(page: &PageDom, canvas: NodeId) -> (u32, u32) {
     (attr("width", 300), attr("height", 150))
 }
 
-fn new_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Target, w: u32, h: u32) -> JsResult<Object<'s>> {
+fn new_context<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    target: Target,
+    w: u32,
+    h: u32,
+    space: Space,
+) -> JsResult<Object<'s>> {
     let data = ContextData {
         page: page.clone(),
         target,
@@ -524,6 +540,7 @@ fn new_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Target, w: u32, h:
         path: RefCell::new(Path::default()),
         surface: Rc::new(RefCell::new(Surface::new(w, h))),
         clean: Rc::new(Cell::new(true)),
+        space,
     };
     match target {
         Target::Element(canvas) => {
@@ -536,7 +553,13 @@ fn new_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Target, w: u32, h:
 
 /// `HTMLCanvasElement.getContext(type)`: one 2D context per canvas; other
 /// context types are unsupported (null).
-pub fn get_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, kind: &str) -> JsResult<Value<'s>> {
+pub fn get_context<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    canvas: NodeId,
+    kind: &str,
+    settings: Value<'s>,
+) -> JsResult<Value<'s>> {
     if placeholder_frame(page, canvas).is_some() {
         return Err(JsError::dom(
             "InvalidStateError",
@@ -546,16 +569,56 @@ pub fn get_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, kind: 
     if kind != "2d" {
         return Ok(s.null());
     }
+    // CanvasRenderingContext2DSettings: converted on every call.
+    let space = space_member(settings, Space::Srgb)?;
     let element = node_value(s, page, Some(canvas))?;
     let element = element.as_object().ok_or(JsError::ContextDestroyed)?;
     if let Some(existing) = s.get_hidden(element, CONTEXT_2D)? {
         return Ok(existing);
     }
     let (w, h) = canvas_size(page, canvas);
-    let context = new_context(s, page, Target::Element(canvas), w, h)?;
+    let context = new_context(s, page, Target::Element(canvas), w, h, space)?;
     page.canvas_used.set(true);
     s.set_hidden(element, CONTEXT_2D, context.value())?;
     Ok(context.value())
+}
+
+/// The `colorSpace` member of a settings dictionary (`default` when absent);
+/// an unknown value is a TypeError (Web IDL enumeration).
+fn space_member(settings: Value<'_>, default: Space) -> JsResult<Space> {
+    let Some(settings) = settings.as_object() else { return Ok(default) };
+    let value = settings.get_atom("colorSpace")?;
+    if value.is_undefined() {
+        return Ok(default);
+    }
+    let name = dom_string(value)?;
+    Space::parse(&name).ok_or_else(|| {
+        JsError::Type(
+            format!("The provided value '{name}' is not a valid enum value of type PredefinedColorSpace.").into(),
+        )
+    })
+}
+
+/// `bitmap`'s values converted from `from` to `to` (the same bitmap when the
+/// spaces are equal; `None` when there is no room for the copy).
+fn convert_bitmap(bitmap: Bitmap, from: Space, to: Space) -> Option<Bitmap> {
+    if from == to {
+        return Some(bitmap);
+    }
+    let (w, h) = (u32::from(bitmap.width()), u32::from(bitmap.height()));
+    let mut bytes = bitmap.data_as_u8_slice().to_vec();
+    pyro_canvas::unpremultiply(&mut bytes);
+    pyro_dom::canvas_color::convert_pixels(&mut bytes, from, to);
+    pyro_canvas::pixmap_from_straight(bytes, w, h).and_then(Bitmap::new)
+}
+
+/// `handle` with its pixels in `space`.
+fn handle_in(mut handle: ImageHandle, space: Space) -> ImageHandle {
+    if handle.space != space {
+        handle.pixmap = handle.pixmap.and_then(|p| convert_bitmap(p, handle.space, space));
+        handle.space = space;
+    }
+    handle
 }
 
 /// The 2D context of a canvas element, if it has one.
@@ -668,6 +731,9 @@ struct ImageHandle {
     width: u32,
     height: u32,
     clean: bool,
+    /// The color space of `pixmap`'s values (a canvas's, an ImageData's;
+    /// decoded images are sRGB).
+    space: Space,
 }
 
 thread_local! {
@@ -721,6 +787,8 @@ fn frame_canvas_snapshot<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<
     let home = realm.scope()?;
     let source_page = crate::target::page_of(&home)?;
     let source = image_source(&home, &source_page, home.rehome(value), "VideoFrame", false, None)?.ok_or_else(invalid)?;
+    // The frame's pixels are sRGB (its colorSpace says so).
+    let source = handle_in(source, Space::Srgb);
     if !source.clean {
         return Err(JsError::dom("SecurityError", "The canvas image source is not origin-clean."));
     }
@@ -841,6 +909,7 @@ fn image_source(
                     height: natural.map_or(u32::from(pixmap.height()), |(_, h)| h.round() as u32),
                     pixmap: Some(pixmap),
                     clean,
+                    space: Space::Srgb,
                 }))
             }
             "canvas" => {
@@ -861,14 +930,18 @@ fn image_source(
                     Some(c) => {
                         c.sync_size();
                         let pixmap = c.surface.borrow_mut().snapshot();
-                        ImageHandle { pixmap, width: w, height: h, clean: c.clean.get() }
+                        ImageHandle { pixmap, width: w, height: h, clean: c.clean.get(), space: c.space }
                     }
                     // A placeholder shows its OffscreenCanvas's last frame.
                     None => match placeholder_frame(&source_page, n.id) {
-                        Some(frame) => {
-                            ImageHandle { pixmap: frame.bitmap, width: frame.width, height: frame.height, clean: frame.clean }
-                        }
-                        None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
+                        Some(frame) => ImageHandle {
+                            pixmap: frame.bitmap,
+                            width: frame.width,
+                            height: frame.height,
+                            clean: frame.clean,
+                            space: Space::Srgb,
+                        },
+                        None => ImageHandle { pixmap: None, width: w, height: h, clean: true, space: Space::Srgb },
                     },
                 };
                 Ok(Some(handle))
@@ -877,7 +950,13 @@ fn image_source(
             // or without a decoder for the video.
             "video" => Ok(crate::media::current_frame(&source_page, n.id).and_then(|(frame, clean)| {
                 let pixmap = pyro_canvas::pixmap_from_straight((*frame.rgba).clone(), frame.width, frame.height)?;
-                Some(ImageHandle { pixmap: Bitmap::new(pixmap), width: frame.width, height: frame.height, clean })
+                Some(ImageHandle {
+                    pixmap: Bitmap::new(pixmap),
+                    width: frame.width,
+                    height: frame.height,
+                    clean,
+                    space: Space::Srgb,
+                })
             })),
             // pyro: an SVG `<image>`: the image of its `href` from the list of available images
             // (nothing while it is not loaded), shown as the element's `image-orientation` says
@@ -909,7 +988,7 @@ fn image_source(
                     return Ok(None);
                 };
                 let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
-                Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean }))
+                Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean, space: Space::Srgb }))
             }
             _ => Err(not_source()),
         };
@@ -946,9 +1025,9 @@ fn image_source(
             Ok(Some(match s.unwrap::<OffscreenCanvasRenderingContext2D>(desc.get_index(1)?) {
                 Some(c) => {
                     let pixmap = c.surface.borrow_mut().snapshot();
-                    ImageHandle { pixmap, width: w, height: h, clean: c.clean.get() }
+                    ImageHandle { pixmap, width: w, height: h, clean: c.clean.get(), space: c.space }
                 }
-                None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
+                None => ImageHandle { pixmap: None, width: w, height: h, clean: true, space: Space::Srgb },
             }))
         }
         // An ImageData or a buffer-backed VideoFrame, both with straight RGBA
@@ -957,12 +1036,15 @@ fn image_source(
             let (w, h) = (size_u32(desc.get_index(2)?.to_number()?), size_u32(desc.get_index(3)?.to_number()?));
             let data = typed_bytes(s, desc.get_index(1)?)?;
             let pixmap = pyro_canvas::pixmap_from_straight(data, w, h).and_then(Bitmap::new);
-            let (width, height) = if kind == 5 {
-                (size_u32(desc.get_index(4)?.to_number()?), size_u32(desc.get_index(5)?.to_number()?))
+            let (width, height, space) = if kind == 5 {
+                (size_u32(desc.get_index(4)?.to_number()?), size_u32(desc.get_index(5)?.to_number()?), Space::Srgb)
             } else {
-                (w, h)
+                // An ImageData's values are in its colorSpace.
+                let space = desc.get_index(4)?;
+                let space = if space.is_string() { Space::parse(&space.to_string()?) } else { None };
+                (w, h, space.unwrap_or_default())
             };
-            Ok(Some(ImageHandle { pixmap, width, height, clean: true }))
+            Ok(Some(ImageHandle { pixmap, width, height, clean: true, space }))
         }
         3 => {
             let blob = s.unwrap::<crate::file::Blob>(desc.get_index(1)?).ok_or_else(not_source)?;
@@ -970,7 +1052,7 @@ fn image_source(
             let pixmap = pyro_canvas::codec::decode_bitmap(&blob.bytes, false, &budget)
                 .ok_or_else(|| JsError::dom("InvalidStateError", "The source image could not be decoded."))?;
             let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
-            Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean: true }))
+            Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean: true, space: Space::Srgb }))
         }
         // pyro: a CSSImageValue: the image of its `url()` from the list of available images
         // (nothing while it is not loaded), shown as its EXIF orientation says.
@@ -984,7 +1066,7 @@ fn image_source(
                 return Ok(None);
             };
             let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
-            Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean }))
+            Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean, space: Space::Srgb }))
         }
         _ => Err(not_source()),
     }
@@ -1053,7 +1135,7 @@ fn make_bitmap<'s>(s: &Scope<'s>, a: Args<'s>) -> JsResult<Value<'s>> {
     } else {
         None
     };
-    bitmap_triple(s, ImageHandle { pixmap, width: w, height: h, clean: source.clean })
+    bitmap_triple(s, ImageHandle { pixmap, width: w, height: h, clean: source.clean, space: source.space })
 }
 
 /// A copy of the bytes of a typed array (an `ImageData`'s data).
@@ -1103,7 +1185,7 @@ fn paint_of(s: &Scope<'_>, c: &ContextData, style: &Style) -> JsResult<Option<(P
         }
     }
     let made = if record.get_atom("stops")?.is_object() {
-        gradient_paint(record)?.map(|g| (Paint::Gradient(Arc::new(g)), true))
+        gradient_paint(record, c.space)?.map(|g| (Paint::Gradient(Arc::new(g)), true))
     } else {
         pattern_paint(record)?
     };
@@ -1118,7 +1200,7 @@ fn numbers(array: Object<'_>) -> JsResult<Vec<f64>> {
     (0..len).map(|i| array.get_index(i)?.to_number()).collect()
 }
 
-fn gradient_paint(record: Object<'_>) -> JsResult<Option<pyro_canvas::Gradient>> {
+fn gradient_paint(record: Object<'_>, space: Space) -> JsResult<Option<pyro_canvas::Gradient>> {
     let kind = record.get_atom("kind")?.to_string()?;
     let Some(args) = record.get_atom("args")?.as_object() else { return Ok(None) };
     let v = numbers(args)?;
@@ -1127,7 +1209,14 @@ fn gradient_paint(record: Object<'_>) -> JsResult<Option<pyro_canvas::Gradient>>
     let mut list = Vec::with_capacity(len as usize / 2);
     for i in (0..len).step_by(2) {
         let offset = stops.get_index(i)?.to_number()? as f32;
-        let color = color_of(&stops.get_index(i + 1)?.to_string()?);
+        // Stops keep their serialization (currentcolor is black); painted
+        // in the context's color space.
+        let stop = stops.get_index(i + 1)?.to_string()?;
+        let color = match space {
+            Space::Srgb => color_of(&stop),
+            _ => pyro_dom::canvas_color::parse_in(&stop, [0.0, 0.0, 0.0, 1.0], space)
+                .map_or(Color::BLACK, |c| Color::new(c.rgba)),
+        };
         list.push((offset, color));
     }
     let p = |i: usize| Point::new(v[i], v[i + 1]);
@@ -1359,6 +1448,8 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     let Some(source) = image_source(s, &c.page, a.get(0), what, false, Some(c.target))? else { return Ok(s.undefined()) };
     let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
     let Some(v) = v else { return Ok(s.undefined()) };
+    // HTML: the source is converted to the canvas's color space.
+    let source = handle_in(source, c.space);
     let (sw, sh) = (f64::from(source.width), f64::from(source.height));
     let (src, dst) = match v.len() {
         2 => (Rect::new(0.0, 0.0, sw, sh), Rect::new(v[0], v[1], v[0] + sw, v[1] + sh)),
@@ -1402,21 +1493,8 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
             format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
         ));
     }
-    let space = if a.get(4).is_object() {
-        let settings = a.get(4).as_object().expect("object").get_atom("colorSpace")?;
-        if settings.is_undefined() {
-            "srgb".to_owned()
-        } else {
-            dom_string(settings)?
-        }
-    } else {
-        "srgb".to_owned()
-    };
-    if space != "srgb" && space != "display-p3" {
-        return Err(JsError::Type(format!(
-            "The provided value '{space}' is not a valid enum value of type PredefinedColorSpace."
-        ).into()));
-    }
+    // ImageDataSettings.colorSpace: the context's when absent.
+    let space = space_member(a.get(4), c.space)?;
     if !c.clean.get() {
         return Err(security_error());
     }
@@ -1432,9 +1510,10 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
         return Err(JsError::Range("Out of memory at ImageData creation.".into()));
     }
     c.sync_size();
-    let pixels = c.surface.borrow_mut().get_image_data(x, y, w as u32, h as u32);
+    let mut pixels = c.surface.borrow_mut().get_image_data(x, y, w as u32, h as u32);
+    pyro_dom::canvas_color::convert_pixels(&mut pixels, c.space, space);
     let data = clamped_array(s, &pixels)?;
-    module_helper(s, c, "imageDataOf", &[data, s.number(w as f64), s.number(h as f64), s.string(&space)])
+    module_helper(s, c, "imageDataOf", &[data, s.number(w as f64), s.number(h as f64), s.string(space.name())])
 }
 
 /// `putImageData(imagedata, dx, dy, dirtyX, dirtyY, dirtyWidth, dirtyHeight)`.
@@ -1474,7 +1553,11 @@ fn put_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     if bw <= 0 || bh <= 0 {
         return Ok(s.undefined());
     }
-    let data = typed_bytes(s, info.get_index(2)?)?;
+    let mut data = typed_bytes(s, info.get_index(2)?)?;
+    // The ImageData's values are converted to the canvas's color space.
+    let from = info.get_index(3)?;
+    let from = if from.is_string() { Space::parse(&from.to_string()?) } else { None };
+    pyro_dom::canvas_color::convert_pixels(&mut data, from.unwrap_or_default(), c.space);
     c.sync_size();
     c.surface.borrow_mut().put_image_data(
         &data,
@@ -1710,10 +1793,10 @@ impl ContextData {
             Target::Element(canvas) => node_value(s, &c.page, Some(canvas)),
             Target::Offscreen => Ok(s.get_hidden(this, OFFSCREEN)?.unwrap_or_else(|| s.null())),
         });
-        def.method("getContextAttributes", 0, |s, _c, _a| {
+        def.method("getContextAttributes", 0, |s, c, _a| {
             let o = s.object();
             o.set_atom("alpha", s.boolean(true))?;
-            o.set_atom("colorSpace", s.string("srgb"))?;
+            o.set_atom("colorSpace", s.string(c.space.name()))?;
             o.set_atom("desynchronized", s.boolean(false))?;
             o.set_atom("willReadFrequently", s.boolean(false))?;
             Ok(o.value())
@@ -1836,7 +1919,9 @@ impl ContextData {
             |s, c| Ok(s.string(&c.state.borrow().shadow_color)),
             |_s, c, v| {
                 if let Some(color) = context_color(c, &dom_string(v)?) {
-                    c.state.borrow_mut().shadow_color = color.css;
+                    let mut state = c.state.borrow_mut();
+                    state.shadow_rgba = Color::new(color.rgba);
+                    state.shadow_color = color.css;
                 }
                 Ok(())
             },
@@ -2179,7 +2264,7 @@ impl ContextData {
                 }
             };
             let Some(source) = source else { return Ok(s.null()) };
-            let handle = handle_object(s, source)?;
+            let handle = handle_object(s, handle_in(source, c.space))?;
             module_helper(s, c, "pattern", &[s.string(repetition), handle.value()])
         });
 
@@ -2206,7 +2291,19 @@ impl ContextData {
                     format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
                 ));
             }
-            module_helper(s, c, "imageData", &[s.number(w.abs() as f64), s.number(h.abs() as f64), a.get(2)])
+            // ImageDataSettings.colorSpace: the context's when absent.
+            let explicit = match a.get(2).as_object() {
+                Some(o) => !o.get_atom("colorSpace")?.is_undefined(),
+                None => false,
+            };
+            let settings = if explicit {
+                a.get(2)
+            } else {
+                let settings = s.object();
+                settings.set_atom("colorSpace", s.string(c.space.name()))?;
+                settings.value()
+            };
+            module_helper(s, c, "imageData", &[s.number(w.abs() as f64), s.number(h.abs() as f64), settings])
         });
         def.method("getImageData", 4, get_image_data);
         def.method("putImageData", 3, put_image_data);
@@ -2432,7 +2529,8 @@ pub(crate) fn make_canvas_object<'s>(s: &Scope<'s>, object: &CanvasObject) -> Js
     page.canvas_used.set(true);
     match object {
         CanvasObject::Bitmap { pixmap, width, height } => {
-            let handle = ImageHandle { pixmap: pixmap.clone(), width: *width, height: *height, clean: true };
+            let handle =
+                ImageHandle { pixmap: pixmap.clone(), width: *width, height: *height, clean: true, space: Space::Srgb };
             let made = bitmap_triple(s, handle)?;
             MODULE.helper(s, &page, "bitmapOf", &[made])
         }
