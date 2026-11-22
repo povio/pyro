@@ -514,8 +514,15 @@ select[size]:not([size="0"], [size="1"], [size=""]) optgroup option {
     padding-inline-start: 20px;
 }
 
-source {
-    display: none;
+/* pyro: `source` is not hidden (HTML § 15.3.1): it computes inline, like `track`, and has no
+   content to render. */
+
+/* https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements: a hidden embed (any
+   `hidden` value) is an inline box of no size. */
+embed[hidden] {
+    display: inline;
+    height: 0;
+    width: 0;
 }
 
 /* To ensure http://www.w3.org/TR/REC-html40/struct/dirlang.html#style-bidi:

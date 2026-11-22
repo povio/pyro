@@ -449,7 +449,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +473,45 @@
+@@ -169,12 +473,56 @@
      padding-inline-end: 2px;
  }
  
@@ -470,8 +470,10 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    min-block-size: 1.2em;
 +    /* Chromium: not the bolder weight of an enclosing optgroup. */
 +    font-weight: normal;
-+}
-+
+ }
+ 
+-source {
+-    display: none;
 +optgroup {
 +    display: block;
 +    font-weight: bolder;
@@ -493,10 +495,21 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +select[multiple] optgroup option,
 +select[size]:not([size="0"], [size="1"], [size=""]) optgroup option {
 +    padding-inline-start: 20px;
++}
++
++/* pyro: `source` is not hidden (HTML § 15.3.1): it computes inline, like `track`, and has no
++   content to render. */
++
++/* https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements: a hidden embed (any
++   `hidden` value) is an inline box of no size. */
++embed[hidden] {
++    display: inline;
++    height: 0;
++    width: 0;
  }
  
- source {
-@@ -186,13 +527,15 @@
+ /* To ensure http://www.w3.org/TR/REC-html40/struct/dirlang.html#style-bidi:
+@@ -186,13 +534,15 @@
   * inherited value) to the transformed element."
   *
   * and the rules in http://dev.w3.org/html5/spec/rendering.html#rendering
@@ -513,7 +526,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  caption,
  center,
  col,
-@@ -202,7 +545,6 @@
+@@ -202,7 +552,6 @@
  div,
  dl,
  dt,
@@ -521,7 +534,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  figcaption,
  figure,
  footer,
-@@ -216,7 +558,6 @@
+@@ -216,7 +565,6 @@
  header,
  hgroup,
  hr,
@@ -529,7 +542,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  legend,
  li,
  listing,
-@@ -249,15 +590,17 @@
+@@ -249,15 +597,17 @@
      unicode-bidi: isolate;
  }
  
@@ -552,7 +565,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -287,9 +630,20 @@
+@@ -287,9 +637,20 @@
      margin: 8px;
  }
  
@@ -575,7 +588,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      display: block;
      margin-block-start: 1em;
      margin-block-end: 1em;
-@@ -569,6 +923,19 @@
+@@ -569,6 +930,19 @@
      text-align: center;
  }
  
@@ -595,7 +608,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -762,6 +1129,14 @@
+@@ -762,6 +1136,14 @@
      text-align: match-parent;
  }
  
@@ -610,7 +623,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* nested lists have no top/bottom margins */
  :is(ul, ol, dir, menu, dl) ul,
  :is(ul, ol, dir, menu, dl) ol,
-@@ -832,16 +1207,49 @@
+@@ -832,16 +1214,49 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -660,7 +673,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1259,34 @@
+@@ -851,8 +1266,34 @@
      user-select: none;
  }
  
@@ -695,7 +708,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1320,15 @@
+@@ -886,14 +1327,15 @@
      display: none;
  }
  
@@ -714,7 +727,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1357,11 @@
+@@ -922,6 +1364,11 @@
      display: none !important;
  }
  
@@ -726,7 +739,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,11 +1432,18 @@
+@@ -992,11 +1439,18 @@
      height: -moz-fit-content;
  }
  
@@ -746,7 +759,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1017,6 +1464,8 @@
+@@ -1017,6 +1471,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -755,7 +768,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1531,9 @@
+@@ -1082,9 +1538,9 @@
      font-size: unset;
  }
  
@@ -767,7 +780,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1577,68 @@
+@@ -1128,37 +1584,68 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -58334,7 +58347,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2403,59 @@
+@@ -1367,154 +2397,67 @@
+                 }
+             }
+ 
+-            if *name == local_name!("hidden") {
++            // pyro: not an `embed`, which HTML keeps inline at 0x0 when hidden (the UA sheet's
++            // `embed[hidden]`; WPT html/rendering hidden-elements).
++            if *name == local_name!("hidden") && *tag != local_name!("embed") {
+                 use style::values::specified::Display;
+                 push_style(PropertyDeclaration::Display(Display::None));
              }
          }
  
@@ -58522,7 +58544,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2468,47 @@
+@@ -1527,6 +2470,47 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -58570,7 +58592,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2516,208 @@
+@@ -1534,11 +2518,208 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -58779,7 +58801,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2725,269 @@
+@@ -1546,14 +2727,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -59049,7 +59071,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3031,12 @@
+@@ -1597,6 +3033,12 @@
      }
  }
  
@@ -59062,7 +59084,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3109,41 @@
+@@ -1669,12 +3111,41 @@
                      .push(pe_node_id);
              }
          }
@@ -59104,7 +59126,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3158,46 @@
+@@ -1689,24 +3160,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -59159,7 +59181,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3228,842 @@
+@@ -1737,3 +3230,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

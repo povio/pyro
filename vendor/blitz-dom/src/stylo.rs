@@ -2397,7 +2397,9 @@ impl Node {
                 }
             }
 
-            if *name == local_name!("hidden") {
+            // pyro: not an `embed`, which HTML keeps inline at 0x0 when hidden (the UA sheet's
+            // `embed[hidden]`; WPT html/rendering hidden-elements).
+            if *name == local_name!("hidden") && *tag != local_name!("embed") {
                 use style::values::specified::Display;
                 push_style(PropertyDeclaration::Display(Display::None));
             }
