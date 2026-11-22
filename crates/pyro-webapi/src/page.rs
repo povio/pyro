@@ -1459,6 +1459,10 @@ impl PageDom {
     pub fn set_completely_loaded(&self) {
         self.completely_loaded.set(true);
     }
+    /// Whether this document has completely finished loading.
+    pub fn is_completely_loaded(&self) -> bool {
+        self.completely_loaded.get()
+    }
     /// A navigation this document starts now replaces its own entry: HTML
     /// has `location` and form submissions do so while the document is not
     /// completely loaded and the user has not interacted with it (a script
@@ -2358,6 +2362,8 @@ impl PageDom {
         // Drawing changes no DOM: offscreen frames are committed whether or
         // not the task was otherwise quiet (one empty-list check without).
         crate::canvas::commit_frames(self);
+        // Scrolling changes no DOM: deferred lazy media are checked whatever the task did.
+        crate::media::lazy_after_task(self);
         if self.quiet_since_last_task() {
             return;
         }

@@ -134,6 +134,8 @@ struct MediaState {
     pending_play: Vec<(WeakRealm, Deferred)>,
     /// HTML "can autoplay flag".
     can_autoplay: bool,
+    /// The lazy load check let this `loading=lazy` element's next resource selection run.
+    lazy_approved: bool,
     /// `preload=none` stopped the load before fetching: what to fetch once
     /// playback is requested, and the `<source>` it came from.
     suspended: Option<(Resource, Option<NodeId>)>,
@@ -210,6 +212,7 @@ impl Default for MediaState {
             src_object: None,
             pending_play: Vec::new(),
             can_autoplay: true,
+            lazy_approved: false,
             suspended: None,
             fetch: None,
             fetching: false,
@@ -308,6 +311,11 @@ pub(crate) struct MediaElements {
     sweep_at: Cell<usize>,
     /// Elements whose delaying-the-load-event flag is set.
     delaying_load: Cell<usize>,
+    /// `loading=lazy` elements whose resource selection waits for the lazy load check.
+    lazy: RefCell<Vec<NodeId>>,
+    /// The observation stamp (DOM, style, viewport, scroll) and completely-loaded state at the
+    /// last lazy load check.
+    lazy_checked: Cell<Option<(((u64, u64, u32, u32), u64), bool)>>,
 }
 
 impl PageDom {
@@ -858,6 +866,9 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
 /// HTML "resource selection algorithm": the synchronous part, then a task
 /// for the rest (after "await a stable state").
 fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
+    if defer_lazy(page, node) {
+        return;
+    }
     let generation = with(page, node, |st| {
         st.network = NETWORK_NO_SOURCE;
         st.awaiting_source = false;
@@ -865,6 +876,71 @@ fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
     });
     set_delaying(page, node, true);
     queue(page, node, generation, move |page| select(page, node, generation));
+}
+
+/// HTML "will lazy load element steps" for a media element (`loading=lazy`, scripting
+/// enabled): resource selection waits for the lazy load check (`lazy_after_task`), the
+/// element staying at NETWORK_EMPTY without delaying the load event. False when the check let
+/// it go, or it is not lazy.
+fn defer_lazy(page: &Rc<PageDom>, node: NodeId) -> bool {
+    if page.scripting_disabled() || !is_lazy_media(&page.dom.borrow(), node) {
+        return false;
+    }
+    if with(page, node, |st| std::mem::take(&mut st.lazy_approved)) {
+        return false;
+    }
+    let mut lazy = page.media.lazy.borrow_mut();
+    if !lazy.contains(&node) {
+        lazy.push(node);
+    }
+    page.media.lazy_checked.set(None);
+    true
+}
+
+fn is_lazy_media(dom: &pyro_dom::Dom, node: NodeId) -> bool {
+    dom.element(node).is_ok_and(|e| {
+        e.is_html()
+            && matches!(&*e.name.local, "video" | "audio")
+            && e.attr("loading").is_some_and(|l| l.eq_ignore_ascii_case("lazy"))
+    })
+}
+
+/// After each task: the deferred lazy media elements that stopped being lazy, or that
+/// intersect the viewport expanded by the lazy load margin once the document has completely
+/// loaded, run resource selection.
+pub(crate) fn lazy_after_task(page: &Rc<PageDom>) {
+    if page.media.lazy.borrow().is_empty() || page.is_disposed() {
+        return;
+    }
+    let loaded = page.is_completely_loaded();
+    // The layout first: it may sync the viewport, which touches the DOM.
+    let stamp = || {
+        let layout = page.layout();
+        let dom = page.dom.try_borrow().ok()?;
+        Some((layout.observation_stamp(&dom), loaded))
+    };
+    let Some(now) = stamp() else { return };
+    if page.media.lazy_checked.get() == Some(now) {
+        return;
+    }
+    let nodes: Vec<NodeId> = page.media.lazy.borrow().clone();
+    for node in nodes {
+        let (alive, connected, lazy) = {
+            let dom = page.dom.borrow();
+            (dom.is_alive(node), dom.is_connected(node).unwrap_or(false), is_lazy_media(&dom, node))
+        };
+        if !alive {
+            page.media.lazy.borrow_mut().retain(|n| *n != node);
+            continue;
+        }
+        let go = !lazy || (connected && loaded && crate::intersection_observer::lazy_load_intersects(page, node));
+        if go {
+            page.media.lazy.borrow_mut().retain(|n| *n != node);
+            with(page, node, |st| st.lazy_approved = true);
+            resource_selection(page, node);
+        }
+    }
+    page.media.lazy_checked.set(stamp());
 }
 
 fn select(page: &Rc<PageDom>, node: NodeId, generation: u32) {
