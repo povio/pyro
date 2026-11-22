@@ -10,6 +10,7 @@ use pyro_dom::{position, Dom, NodeId, NodeType};
 use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::collections::NodeHold;
+use crate::editing;
 use crate::node::{node_arg, wrap_node, Node};
 use crate::page::PageDom;
 use crate::util::*;
