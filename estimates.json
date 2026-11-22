@@ -10,8 +10,8 @@
     "studio_worker_variants_if_enabled": 0
    },
    "distinct_census_pages": 514,
-   "owner_reported_unlisted": 22,
-   "selector_union": 543,
+   "owner_reported_unlisted": 0,
+   "selector_union": 565,
    "owner_estimate_reduction": 51,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
@@ -19,7 +19,7 @@
    "by_dir": {
     "html/canvas": 292,
     "html/interaction": 100,
-    "html/semantics": 43,
+    "html/semantics": 65,
     "fetch/api": 24,
     "fetch/content-encoding": 21,
     "scheduler": 19,
@@ -27,31 +27,31 @@
     "fetch/cross-origin-resource-policy": 10,
     "encoding": 7,
     "FileAPI": 4,
-    "fetch/data-urls": 3,
     "IndexedDB": 3,
+    "fetch/data-urls": 3,
     "xhr": 2,
-    "svg/styling": 1,
     "html/rendering": 1,
-    "quirks": 1
+    "quirks": 1,
+    "svg/styling": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 320,
+    "macbook_in_scope": 292,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 1,
     "macbook_worker_variants_if_enabled": 56,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 370,
+   "distinct_census_pages": 342,
    "owner_reported_unlisted": 75,
-   "selector_union": 352,
-   "owner_estimate_reduction": 57,
+   "selector_union": 330,
+   "owner_estimate_reduction": 63,
    "of_which_tentative": 35,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 155,
+    "html/semantics": 133,
     "html/canvas": 90,
     "fetch/fetch-later": 39,
     "fetch/api": 37,
@@ -85,18 +85,18 @@
     "html/webappapis": 19,
     "html/dom": 13,
     "workers": 12,
-    "fetch/range": 5,
-    "html/interaction": 5,
     "fetch/stale-while-revalidate": 5,
+    "html/interaction": 5,
+    "fetch/range": 5,
     "svg/path": 4,
     "fetch/data-urls": 3,
+    "html/infrastructure": 3,
     "IndexedDB": 3,
     "fetch/http-cache": 3,
-    "html/infrastructure": 3,
     "encoding": 2,
     "fetch/nosniff": 2,
-    "dom/nodes": 1,
     "fetch/corb": 1,
+    "dom/nodes": 1,
     "fetch/api": 1
    }
   }
@@ -860,10 +860,10 @@
   },
   "F08a": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": null,
-   "out_of_scope_pages": null,
-   "pages": null,
-   "tentative": null
+   "in_scope_pages": 22,
+   "out_of_scope_pages": 0,
+   "pages": 22,
+   "tentative": 0
   },
   "F08b": {
    "state": "implemented-unbuilt",
