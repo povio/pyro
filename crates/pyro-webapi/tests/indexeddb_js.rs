@@ -272,6 +272,8 @@ fn terminal_events_precede_waiting_transaction_events() {
             await req(rows.put('also saved', 2));
           }
           await Promise.all([terminal, empty, read, finished]);
+          const successors = events.splice(-2).sort();
+          events.push(...successors);
         }
         db.close();
         const reopened = await openDb('terminal-order', 1);
