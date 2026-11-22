@@ -81,6 +81,8 @@ pub enum NodeListSource {
     Children(NodeHold),
     /// Live controls of the held form with this id or name (`RadioNodeList`).
     FormNamed(NodeHold, String),
+    /// Live elements of the held root's collection kind (`getElementsByName`).
+    Members(NodeHold, CollectionKind),
 }
 
 pub struct NodeListData {
@@ -110,6 +112,7 @@ impl NodeListData {
                 c.1.clone()
             }
             NodeListSource::FormNamed(h, name) => form_candidates(&h.page, dom, h.id, name),
+            NodeListSource::Members(h, kind) => shared_members(&h.page, dom, h.id, kind).to_vec(),
         }
     }
     fn len(&self) -> usize {
@@ -117,6 +120,7 @@ impl NodeListData {
             NodeListSource::Static(v) => v.as_ref().map_or(0, |h| h.ids.len()),
             NodeListSource::Children(h) => h.page.dom.borrow().child_count(h.id).unwrap_or(0) as usize,
             NodeListSource::FormNamed(h, _) => self.items(&h.page.dom.borrow()).len(),
+            NodeListSource::Members(h, kind) => shared_members(&h.page, &h.page.dom.borrow(), h.id, kind).len(),
         }
     }
     /// Member `i` and the page it belongs to (borrowed: an indexed read
@@ -138,6 +142,10 @@ impl NodeListData {
             NodeListSource::FormNamed(h, _) => {
                 let items = self.items(&h.page.dom.borrow());
                 items.get(i).map(|&id| (&h.page, id))
+            }
+            NodeListSource::Members(h, kind) => {
+                let id = *shared_members(&h.page, &h.page.dom.borrow(), h.id, kind).get(i)?;
+                Some((&h.page, id))
             }
         }
     }
@@ -261,6 +269,16 @@ pub fn static_node_list<'s>(s: &Scope<'s>, page: &PageDom, ids: impl Into<Box<[N
     )
 }
 
+/// `document.getElementsByName(name)`: a live `NodeList`.
+pub fn elements_by_name<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, name: String) -> JsResult<Object<'s>> {
+    let page = page_rc(s)?;
+    let data = NodeListData {
+        source: NodeListSource::Members(NodeHold::new(&page, root)?, CollectionKind::Name(name)),
+        cache: RefCell::new((u64::MAX, Vec::new())),
+    };
+    s.wrap::<NodeList>(data, None)
+}
+
 pub fn child_nodes<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
     let key = coll_identity(page, 1, id);
     if let Some(o) = s.lookup_identity(key) {
@@ -381,7 +399,8 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                     names.split_ascii_whitespace().all(|w| c.split_ascii_whitespace().any(|h| same(h, w)))
                 })
         }
-        CollectionKind::Name(n) => e.attr("name") == Some(n.as_str()),
+        // DOM getElementsByName: HTML elements only.
+        CollectionKind::Name(n) => html && e.attr("name") == Some(n.as_str()),
         CollectionKind::WindowNamed(n) => {
             e.id() == Some(n.as_str())
                 || (html && matches!(local, "embed" | "form" | "img" | "object") && e.attr("name") == Some(n.as_str()))

@@ -2133,7 +2133,7 @@ impl JsClass for Document {
         });
         def.pure_method("getElementsByName", 1, |s, n, a| {
             let name = arg_string(&a, 0, "getElementsByName")?;
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::Name(name))?.value())
+            Ok(collections::elements_by_name(s, n.page(), n.id, name)?.value())
         });
         def.method("createElement", 1, |s, n, a| {
             a.require(1, "Document.createElement")?;
