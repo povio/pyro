@@ -420,7 +420,7 @@ impl WireMessage {
         WireMessage { ports: vec![port], listed_ports: 1, ..Self::empty() }
     }
     /// What the message holds in memory while queued.
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.text.len()
             + self.buffers.iter().map(Vec::len).sum::<usize>()
             + self.blobs.iter().map(bytes::Bytes::len).sum::<usize>()
