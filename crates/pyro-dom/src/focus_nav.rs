@@ -106,6 +106,7 @@ struct FocusNavigation<'a> {
     dom: &'a Dom,
     layout: Option<&'a crate::layout::Layout>,
     flows: std::cell::RefCell<FxHashMap<u32, ReadingFlow>>,
+    grid_contents: std::cell::RefCell<rustc_hash::FxHashSet<u32>>,
 }
 
 impl std::ops::Deref for FocusNavigation<'_> {
@@ -115,26 +116,86 @@ impl std::ops::Deref for FocusNavigation<'_> {
 
 impl<'a> FocusNavigation<'a> {
     fn new(dom: &'a Dom, layout: Option<&'a crate::layout::Layout>) -> Self {
-        Self { dom, layout, flows: Default::default() }
+        Self { dom, layout, flows: Default::default(), grid_contents: Default::default() }
     }
 
     fn flow(&self, i: u32) -> ReadingFlow {
         let Some(layout) = self.layout else { return ReadingFlow::Normal };
-        if i == NIL || !self.n(i).is_element() { return ReadingFlow::Normal; }
-        if let Some(flow) = self.flows.borrow().get(&i) { return *flow; }
-        let style = layout.style().stylo_style(self.dom, self.id_of(i));
-        let flow = style.as_ref().map_or(ReadingFlow::Normal, |s| {
-            let display = s.get_box().display;
-            match (s.get_position().reading_flow, display.inside()) {
-                (ReadingFlow::SourceOrder, DisplayInside::Flow) if display.outside() == DisplayOutside::Block => ReadingFlow::SourceOrder,
-                (ReadingFlow::SourceOrder, DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid) => ReadingFlow::SourceOrder,
-                (f @ (ReadingFlow::FlexFlow | ReadingFlow::FlexVisual), DisplayInside::Flex) => f,
-                (f @ (ReadingFlow::GridOrder | ReadingFlow::GridRows | ReadingFlow::GridColumns), DisplayInside::Grid) => f,
-                _ => ReadingFlow::Normal,
+        let mut i = i;
+        let mut contents = Vec::new();
+        let result = loop {
+            if i == NIL || !self.n(i).is_element() { break ReadingFlow::Normal; }
+            if let Some(flow) = self.flows.borrow().get(&i) { break *flow; }
+            let style = layout.style().stylo_style(self.dom, self.id_of(i));
+            if style.as_ref().is_some_and(|s| s.get_box().display.inside() == DisplayInside::Contents) {
+                contents.push(i);
+                i = self.flat_parent(i);
+                continue;
             }
-        });
-        self.flows.borrow_mut().insert(i, flow);
-        flow
+            let flow = style.as_ref().map_or(ReadingFlow::Normal, |s| {
+                let display = s.get_box().display;
+                match (s.get_position().reading_flow, display.inside()) {
+                    (ReadingFlow::SourceOrder, DisplayInside::Flow) if display.outside() == DisplayOutside::Block => ReadingFlow::SourceOrder,
+                    (ReadingFlow::SourceOrder, DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid) => ReadingFlow::SourceOrder,
+                    (f @ (ReadingFlow::FlexFlow | ReadingFlow::FlexVisual), DisplayInside::Flex) => f,
+                    (f @ (ReadingFlow::GridOrder | ReadingFlow::GridRows | ReadingFlow::GridColumns), DisplayInside::Grid) => f,
+                    _ => ReadingFlow::Normal,
+                }
+            });
+            self.flows.borrow_mut().insert(i, flow);
+            break flow;
+        };
+        if contents.is_empty() { return result; }
+        let inherited = if result == ReadingFlow::GridOrder { result } else { ReadingFlow::Normal };
+        for item in contents {
+            self.flows.borrow_mut().insert(item, inherited);
+            if inherited == ReadingFlow::GridOrder { self.grid_contents.borrow_mut().insert(item); }
+        }
+        inherited
+    }
+
+    fn flat_parent(&self, i: u32) -> u32 {
+        if let Some(slot) = self.find_slot(i, false) { return slot; }
+        let parent = self.n(i).parent;
+        if parent != NIL {
+            if let NodeKind::Fragment(f) = &self.n(parent).kind {
+                if f.shadow.is_some() { return f.host; }
+            }
+        }
+        parent
+    }
+
+    fn is_grid_contents(&self, i: u32) -> bool {
+        self.flow(i) == ReadingFlow::GridOrder && self.grid_contents.borrow().contains(&i)
+    }
+
+    fn roots(&self, owner: u32) -> Vec<u32> {
+        if let Some(host) = self.n(owner).element().filter(|e| e.shadow_root != NIL) {
+            return self.child_idx_iter(host.shadow_root).collect();
+        }
+        if self.is_slot(owner) {
+            let assigned = self.slot_assigned(owner);
+            if !assigned.is_empty() { return assigned; }
+        }
+        self.child_idx_iter(owner).collect()
+    }
+
+    // A contents wrapper has no grid item. Give its focus scope the earliest
+    // order of its generated children, keeping the scope's descendants together.
+    fn contents_order(&self, root: u32, layout: &crate::layout::Layout) -> Option<(i32, i32)> {
+        let mut pending = self.roots(root);
+        let mut first = None;
+        while let Some(i) = pending.pop() {
+            if !self.n(i).is_element() { continue; }
+            if self.is_grid_contents(i) { pending.extend(self.roots(i)); continue; }
+            if let Some(style) = layout.style().stylo_style(self.dom, self.id_of(i)) {
+                if style.get_box().display.inside() != DisplayInside::None {
+                    let key = (style.get_position().reading_order, style.get_position().order);
+                    first = Some(first.map_or(key, |old: (i32, i32)| old.min(key)));
+                }
+            }
+        }
+        first
     }
 
     fn order_roots(&self, owner: u32, roots: &mut [u32], flow: ReadingFlow) {
@@ -164,6 +225,9 @@ impl<'a> FocusNavigation<'a> {
         roots.sort_by_cached_key(|&i| {
             let id = self.id_of(i);
             let style = layout.style().stylo_style(self.dom, id);
+            if flow == ReadingFlow::GridOrder && style.as_ref().is_some_and(|s| s.get_box().display.inside() == DisplayInside::Contents) {
+                if let Some((reading, order)) = self.contents_order(i, layout) { return (reading, (0, 0), order); }
+            }
             let reading = style.as_ref().map_or(0, |s| s.get_position().reading_order);
             let order = if flow == ReadingFlow::SourceOrder { 0 } else { style.as_ref().map_or(0, |s| s.get_position().order) };
             let position = placements.get(&crate::snapshot::render_key(id)).copied().unwrap_or_default();
@@ -174,24 +238,23 @@ impl<'a> FocusNavigation<'a> {
     fn is_scope_owner(&self, i: u32) -> bool {
         self.n(i).element().is_some_and(|e| e.shadow_root != NIL) || self.is_slot(i)
             || self.flow(i) != ReadingFlow::Normal || self.flow(self.n(i).parent) != ReadingFlow::Normal
+            || self.flow(self.flat_parent(i)) == ReadingFlow::GridOrder
     }
 
     /// The elements of `owner`'s scope, tabindex-ordered.
     fn scope_items(&self, owner: u32) -> Vec<u32> {
         let flow = self.flow(owner);
-        let mut roots: Vec<u32> = match &self.n(owner).kind {
-            NodeKind::Document(_) => self.child_idx_iter(owner).collect(),
-            NodeKind::Element(e) if e.shadow_root != NIL => self.child_idx_iter(e.shadow_root).collect(),
-            _ if self.is_slot(owner) => {
-                let assigned = self.slot_assigned(owner);
-                if assigned.is_empty() {
-                    self.child_idx_iter(owner).collect()
-                } else {
-                    assigned
-                }
+        let mut roots = self.roots(owner);
+        if flow == ReadingFlow::GridOrder && roots.iter().any(|&i| self.is_slot(i) && self.is_grid_contents(i)) {
+            let mut expanded = Vec::new();
+            let mut pending = roots.into_iter().rev().collect::<Vec<_>>();
+            while let Some(i) = pending.pop() {
+                if self.is_slot(i) && self.is_grid_contents(i) {
+                    pending.extend(self.roots(i).into_iter().rev());
+                } else { expanded.push(i); }
             }
-            _ => self.child_idx_iter(owner).collect(),
-        };
+            roots = expanded;
+        }
         if flow != ReadingFlow::Normal {
             roots.retain(|&i| self.n(i).is_element());
             self.order_roots(owner, &mut roots, flow);
@@ -230,6 +293,7 @@ impl<'a> FocusNavigation<'a> {
         let mut x = el;
         loop {
             if let Some(slot) = self.find_slot(x, false) {
+                if self.is_grid_contents(slot) { x = slot; continue; }
                 return Some(slot);
             }
             let p = self.n(x).parent;
@@ -240,6 +304,7 @@ impl<'a> FocusNavigation<'a> {
                 NodeKind::Document(_) => return Some(p),
                 NodeKind::Fragment(f) if f.shadow.is_some() => return Some(f.host),
                 NodeKind::Element(e) if e.shadow_root != NIL => return None,
+                NodeKind::Element(_) if self.is_slot(p) && self.is_grid_contents(p) => x = p,
                 NodeKind::Element(_) if self.is_scope_owner(p) => return Some(p),
                 NodeKind::Element(_) => x = p,
                 _ => return None,

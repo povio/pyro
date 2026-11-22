@@ -1356,3 +1356,24 @@ fn flex_visual_tab_order_uses_resolved_lines_and_tracks_reversal() {
     eval(root, "box.style.flexWrap='wrap-reverse';start.focus()");
     assert_eq!([tab(), tab(), tab(), tab()], ["d","c","b","a"]);
 }
+
+#[test]
+fn grid_focus_interleaves_boxless_slot_assignments_and_shadow_siblings() {
+    use pyro_webapi::input::{dispatch_key, KeyInput, KeyKind, Modifiers};
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let frame = &thread.browser.page(page).unwrap().main_frame;
+    let root = frame.main_realm().unwrap();
+    let bindings = frame.page_dom.as_ref().unwrap();
+    eval(root, r#"
+        document.body.innerHTML='<button id=start></button><div id=host><button id=a style="order:3"></button><button id=b style="order:1"></button></div><button id=end></button>';
+        host.attachShadow({mode:'open'}).innerHTML='<div style="display:grid;reading-flow:grid-order"><button id=c style="order:2"></button><slot></slot></div>';
+        start.focus();
+    "#);
+    let tab = |backward| {
+        dispatch_key(bindings, KeyKind::KeyDown, &KeyInput { key:"Tab".into(), code:"Tab".into(), modifiers: Modifiers {shift:backward,..Default::default()}, ..Default::default() });
+        eval(root, "(host.shadowRoot.activeElement || document.activeElement).id")
+    };
+    assert_eq!([tab(false), tab(false), tab(false), tab(false)], ["b","c","a","end"]);
+    assert_eq!([tab(true), tab(true), tab(true), tab(true)], ["a","c","b","start"]);
+}
