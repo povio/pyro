@@ -11454,8 +11454,9 @@ fn an_opener_adding_a_style_sheet_to_its_popup_loads_it() {
 }
 
 /// A server answering a few paths (a thread that stops once the test ends): `/` an empty page,
-/// `/worklet.js` a redirect to `/final/worklet.js`, a module that imports `./dep.js`, and
-/// `/final/dep.js`, which registers a painter (`/dep.js`, what the wrong base resolves to, is a 404).
+/// `/worklet.js` a redirect to `/final/worklet.js`, a module that imports `./dep.js` and checks its
+/// own URL, and `/final/dep.js`, which registers a painter (`/dep.js`, what the wrong base resolves
+/// to, is a 404).
 fn serve_worklet_modules() -> std::net::SocketAddr {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -11476,9 +11477,14 @@ fn serve_worklet_modules() -> std::net::SocketAddr {
             let path = line.split_whitespace().nth(1).unwrap_or("/").to_owned();
             let (status, ty, body, location) = match path.as_str() {
                 "/worklet.js" => ("302 Found", "text/plain", String::new(), Some("/final/worklet.js")),
-                // (No `throw` on a wrong `import.meta.url`: an evaluation error no longer rejects
-                // addModule(). A wrong base fetches `/dep.js`, whose 404 fails the graph's load.)
-                "/final/worklet.js" => ("200 OK", "text/javascript", "import './dep.js';".to_owned(), None),
+                // A wrong base fetches `/dep.js`, whose 404 fails the graph's load; a wrong
+                // `import.meta.url` throws, which is reported (addModule() still fulfills).
+                "/final/worklet.js" => (
+                    "200 OK",
+                    "text/javascript",
+                    "import './dep.js'; if (!import.meta.url.endsWith('/final/worklet.js')) throw new Error('evaluated at ' + import.meta.url);".to_owned(),
+                    None,
+                ),
                 "/final/dep.js" => ("200 OK", "text/javascript", "registerPaint('dep', class { paint() {} });".to_owned(), None),
                 "/dep.js" => ("404 Not Found", "text/plain", "wrong base".to_owned(), None),
                 _ => ("200 OK", "text/html", "<!doctype html><p>page</p>".to_owned(), None),
@@ -11507,11 +11513,16 @@ fn paint_worklet_modules_load_their_imports_at_the_final_url() {
     if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
         h.until_event(|m| m["method"] == "Page.loadEventFired");
     }
-    let r = h.page(
+    h.page("Runtime.enable", json!({}));
+    let mut seen = h.page_with_events(
         "Runtime.evaluate",
         json!({"expression": r#"CSS.paintWorklet.addModule('/worklet.js').then(() => 'loaded', (e) => 'rejected: ' + e)"#, "awaitPromise": true, "returnByValue": true}),
     );
+    let r = seen.iter().find(|m| m["id"].is_u64() && m.get("result").is_some()).cloned().expect("evaluate response");
     assert_eq!(r["result"]["result"]["value"], json!("loaded"), "{r}");
+    // The module's `import.meta.url` check: its throw (reported, not rejecting) never happened.
+    seen.extend(h.drain());
+    assert!(!seen.iter().any(|m| m["method"] == "Runtime.exceptionThrown" && m.to_string().contains("evaluated at")), "{seen:#?}");
 }
 
 /// CSS.paintWorklet.addModule()'s credentials mode applies to the whole module graph: with "omit",
