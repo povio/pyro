@@ -1,0 +1,296 @@
+{
+  "observed": {
+    "omitted": "absent",
+    "default": "absent",
+    "hardware": "absent",
+    "one": "absent",
+    "odd": "absent",
+    "frac": "absent",
+    "zero": "absent",
+    "neg": "absent",
+    "nan": "absent",
+    "inf": "absent",
+    "wrap": "absent",
+    "negWrap": "absent",
+    "str": "absent",
+    "nil": "absent",
+    "bool": "absent",
+    "obj": "absent",
+    "boxed": "absent",
+    "boxedString": "absent",
+    "array": "absent",
+    "big": "absent",
+    "sym": "absent",
+    "max": "absent",
+    "above": "absent",
+    "access": "absent",
+    "gets": [
+      "sampleRate",
+      "sampleRate",
+      "latencyHint",
+      "latencyHint",
+      "latencyHint"
+    ],
+    "inherited": "absent",
+    "throwGetter": "EvalError",
+    "descriptor": null,
+    "brand": "no throw",
+    "latency32000/129": 0.01,
+    "latency32000/512": 0.01,
+    "latency44100/129": 0.01,
+    "latency44100/512": 0.01,
+    "latency48000/129": 0.01,
+    "latency48000/512": 0.01,
+    "latency96000/129": 0.01,
+    "latency96000/512": 0.01
+  },
+  "diffs": [
+    "omitted",
+    "default",
+    "hardware",
+    "one",
+    "odd",
+    "frac",
+    "zero",
+    "neg",
+    "nan",
+    "inf",
+    "wrap",
+    "negWrap",
+    "str",
+    "nil",
+    "bool",
+    "obj",
+    "boxed",
+    "boxedString",
+    "array",
+    "big",
+    "sym",
+    "max",
+    "above",
+    "access",
+    "gets",
+    "inherited",
+    "throwGetter",
+    "descriptor",
+    "brand",
+    "latency32000/129",
+    "latency32000/512",
+    "latency44100/129",
+    "latency44100/512",
+    "latency48000/129",
+    "latency48000/512",
+    "latency96000/129",
+    "latency96000/512"
+  ],
+  "clock": {
+    "128/32000": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        128,
+        128,
+        0
+      ],
+      [
+        256,
+        256,
+        1
+      ],
+      256,
+      384,
+      384
+    ],
+    "128/48000": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        128,
+        128,
+        0
+      ],
+      [
+        256,
+        256,
+        1
+      ],
+      256,
+      384,
+      384
+    ],
+    "129/32000": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        128,
+        128,
+        0
+      ],
+      [
+        256,
+        256,
+        1
+      ],
+      256,
+      384,
+      384
+    ],
+    "129/48000": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        128,
+        128,
+        0
+      ],
+      [
+        256,
+        256,
+        1
+      ],
+      256,
+      384,
+      384
+    ],
+    "512/32000": [
+      [
+        128,
+        128,
+        0
+      ],
+      [
+        384,
+        384,
+        1
+      ],
+      [
+        512,
+        512,
+        1
+      ],
+      [
+        1024,
+        1024,
+        1
+      ],
+      1024,
+      1536,
+      1536
+    ],
+    "512/48000": [
+      [
+        128,
+        128,
+        0
+      ],
+      [
+        384,
+        384,
+        1
+      ],
+      [
+        512,
+        512,
+        1
+      ],
+      [
+        1024,
+        1024,
+        1
+      ],
+      1024,
+      1536,
+      1536
+    ],
+    "2048/32000": [
+      [
+        896,
+        896,
+        0
+      ],
+      [
+        1920,
+        1920,
+        1
+      ],
+      [
+        2048,
+        2048,
+        1
+      ],
+      [
+        4096,
+        4096,
+        1
+      ],
+      4096,
+      6144,
+      6144
+    ],
+    "2048/48000": [
+      [
+        896,
+        896,
+        0
+      ],
+      [
+        1920,
+        1920,
+        1
+      ],
+      [
+        2048,
+        2048,
+        1
+      ],
+      [
+        4096,
+        4096,
+        1
+      ],
+      4096,
+      6144,
+      6144
+    ]
+  },
+  "clockDiffs": [
+    "129/32000",
+    "129/48000",
+    "512/32000",
+    "512/48000",
+    "2048/32000",
+    "2048/48000"
+  ]
+}
