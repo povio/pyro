@@ -109,6 +109,9 @@ pub struct WindowData {
     /// Calls a timer callback whose nesting resets for microtasks, made on
     /// the first deeply nested timer ([`call_nested_timer`]).
     nested_timer_call: RefCell<Option<Persistent>>,
+    /// Defines a new Location object's [LegacyUnforgeable] members, whose
+    /// prototype gave them up (install.js `locationUnforgeables`).
+    location_install: RefCell<Option<Persistent>>,
 }
 
 impl WindowData {
@@ -152,6 +155,7 @@ impl WindowData {
             idle_module: RefCell::new(None),
             idle_period_end: Cell::new(None),
             nested_timer_call: RefCell::new(None),
+            location_install: RefCell::new(None),
         }
     }
 
@@ -164,6 +168,7 @@ impl WindowData {
         to.frame_index_count.set(self.frame_index_count.get());
         *to.idle_module.borrow_mut() = self.idle_module.take();
         *to.nested_timer_call.borrow_mut() = self.nested_timer_call.take();
+        *to.location_install.borrow_mut() = self.location_install.take();
         to.next_handle.set(self.next_handle.get());
     }
     pub(crate) fn for_frame(
@@ -226,6 +231,34 @@ impl pyro_webapi::WindowHost for WindowData {
     fn event_target(&self) -> &pyro_webapi::EventTargetData {
         &self.target
     }
+}
+
+/// The realm's Location object, with its [LegacyUnforgeable] own members
+/// once made ([`init_location_unforgeables`]).
+fn location_object<'s>(s: &Scope<'s>, w: &WindowData) -> JsResult<Object<'s>> {
+    let key = IdentityKey(KEY_LOCATION, 0);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let location = s.wrap::<Location>(w.nav.clone(), Some(key))?;
+    let install = w.location_install.borrow().as_ref().map(|p| p.get(s));
+    if let Some(install) = install.and_then(|v| v.as_object()) {
+        install.call(None, &[location.value()])?;
+    }
+    Ok(location)
+}
+
+/// HTML: every member of Location is [LegacyUnforgeable], an own property
+/// of each Location object. Before page script runs: Location.prototype
+/// gives its members up once populated, and each new Location object gets
+/// them (`location_object`).
+pub(crate) fn init_location_unforgeables(s: &Scope<'_>, helpers: Object<'_>) -> JsResult<()> {
+    let Some(w) = s.global_data::<Window>() else { return Ok(()) };
+    let Some(make) = helpers.get_atom("locationUnforgeables")?.as_object() else { return Ok(()) };
+    let Some(pair) = make.call(None, &[])?.as_object() else { return Ok(()) };
+    let (Some(hook), install) = (pair.get_index(0)?.as_object(), pair.get_index(1)?) else { return Ok(()) };
+    *w.location_install.borrow_mut() = Some(Persistent::new(s, install));
+    s.after_populate::<Location>(hook)
 }
 
 /// The realm's `performance` ([SameObject] and an EventTarget: the wrapper
@@ -297,11 +330,10 @@ impl JsClass for Window {
         });
         def.accessor(
             "location",
-            |s, w| Ok(s.wrap::<Location>(w.nav.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?.value()),
+            |s, w| Ok(location_object(s, w)?.value()),
             |s, w, v| {
                 // `window.location = url` assigns href.
-                let loc = s.wrap::<Location>(w.nav.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?;
-                loc.set("href", v)
+                location_object(s, w)?.set("href", v)
             },
         );
         def.getter("history", |s, w| Ok(s.wrap::<History>(w.nav.clone(), Some(IdentityKey(KEY_HISTORY, 0)))?.value()));

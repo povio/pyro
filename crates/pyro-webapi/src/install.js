@@ -10,6 +10,7 @@
   const create = Object.create, setPrototypeOf = Object.setPrototypeOf, getPrototypeOf = Object.getPrototypeOf;
   const freeze = Object.freeze, ownKeys = Reflect.ownKeys, apply = Reflect.apply;
   const symbolIterator = Symbol.iterator, toStringTag = Symbol.toStringTag, symbolUnscopables = Symbol.unscopables;
+  const symbolToPrimitive = Symbol.toPrimitive, objectValueOf = Object.prototype.valueOf;
   const TypeError_ = TypeError, RangeError_ = RangeError, String_ = String, isFinite_ = Number.isFinite;
   const Uint8Array_ = Uint8Array, arraySort = Array.prototype.sort, arrayPush = Array.prototype.push;
   const iteratorPrototypeOfArrays = getPrototypeOf(getPrototypeOf([][symbolIterator]()));
@@ -390,6 +391,38 @@
     return out;
   };
 
+  // pyro-browser's Location: every member is [LegacyUnforgeable] (HTML), an
+  // own, non-configurable property of each Location object and none of
+  // Location.prototype, plus own `valueOf` (%Object.prototype.valueOf%) and
+  // `@@toPrimitive` (undefined). `[hook, install]`: `hook` (the class's
+  // populate hook) moves the members off the prototype, `install` defines
+  // them on a new Location object.
+  const locationUnforgeables = () => {
+    const members = [];
+    const hook = (proto) => {
+      const keys = ownKeys(proto);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        if (key === 'constructor' || key === toStringTag) continue;
+        const d = getOwnPropertyDescriptor(proto, key);
+        setPrototypeOf(d, null);
+        d.configurable = false;
+        if (d.get === undefined && d.set === undefined) d.writable = false;
+        delete proto[key];
+        append(members, key);
+        append(members, d);
+      }
+      append(members, 'valueOf');
+      append(members, { __proto__: null, value: objectValueOf, writable: false, enumerable: false, configurable: false });
+      append(members, symbolToPrimitive);
+      append(members, { __proto__: null, value: undefined, writable: false, enumerable: false, configurable: false });
+    };
+    const install = (location) => {
+      for (let i = 0; i < members.length; i += 2) defineProperty(location, members[i], members[i + 1]);
+    };
+    return [hook, install];
+  };
+
   return {
     blobParts,
     encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, privateDecoderView, chunkTransferList, copyChunkInput, copyChunkTo, webIdlNumber: value => +value },
@@ -409,5 +442,6 @@
     // An enumerable, configurable getter on the global (pyro-browser's
     // `window[0]`.. frame indices).
     accessor: (global, key, get) => defineProperty(global, key, { get, enumerable: true, configurable: true }),
+    locationUnforgeables,
   };
 }

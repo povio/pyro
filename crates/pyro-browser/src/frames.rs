@@ -663,6 +663,7 @@ impl FrameHost {
                 scope.eval(crate::clock::DATE_SCRIPT, Some("pyro://internal/clock.js"), 1)?;
             }
             window::init_frame_indices(&scope, helpers.get_atom("accessor")?)?;
+            window::init_location_unforgeables(&scope, helpers)?;
         }
         loader::install_module_fetcher(self.sched.clone(), key, realm);
         Ok(())
