@@ -742,7 +742,8 @@ impl FrameHost {
         sandbox.scripts_disabled |= ancestor.sandbox.scripts_disabled;
         sandbox.automatic_features_blocked |= ancestor.sandbox.automatic_features_blocked;
         sandbox.popups_blocked |= ancestor.sandbox.popups_blocked;
-        if self.children.borrow().len() >= 128 {
+        // Blink's Page::kMaxNumberOfFrames: a page holds at most 1000 subframes.
+        if self.children.borrow().len() >= 1000 {
             return Err(JsError::Range("child frame limit reached".into()));
         }
         let mut depth = 0;
