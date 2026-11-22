@@ -1490,6 +1490,89 @@ fn resolve_relative_bold(page: &PageDom, dom: &mut Dom, span: NodeId, bold: Node
     Some(())
 }
 
+/// The old anchor's authored presentation belongs to its original text
+/// run. Convert its declarations into independent formatting around that run.
+fn link_style_shell(dom: &mut Dom, doc: NodeId, mut child: NodeId, style: &str) -> Option<NodeId> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let mut css = DeclarationBlock::parse(style);
+    if !dom.document_data(doc).ok()?.style_with_css {
+        let color = pyro_dom::color_well::editing_color(&css.value("color")).and_then(|(_, hex)| hex);
+        for (property, value, tag) in [("font-style", "italic", "i"), ("font-weight", "bold", "b")] {
+            if css.value(property) == value {
+                css.remove(property);
+                let el = dom.create_element(doc, tag).ok()?;
+                dom.append_child(el, child).ok()?;
+                child = el;
+            }
+        }
+        if let Some(hex) = color {
+            css.remove("color");
+            let font = dom.create_element(doc, "font").ok()?;
+            dom.set_attribute(font, "color", &hex).ok()?;
+            dom.append_child(font, child).ok()?;
+            child = font;
+        }
+    }
+    if !css.is_empty() {
+        let span = dom.create_element(doc, "span").ok()?;
+        dom.set_attribute(span, "style", &css.css_text()).ok()?;
+        dom.append_child(span, child).ok()?;
+        child = span;
+    }
+    Some(child)
+}
+
+/// Replace the selected part of an existing link. The original anchor
+/// retains its suffix, while an unselected prefix keeps the ID.
+fn relink_text(dom: &mut Dom, host: NodeId, text: NodeId, href: &str, entire_run: Option<NodeId>) -> Option<NodeId> {
+    let anchor = ancestor_named(dom, text, host, &["a"])?;
+    let parent = dom.parent_element(anchor).ok()??;
+    let branch = alignment::split_edge(dom, anchor, text, false, &mut [])?;
+    alignment::split_edge(dom, anchor, text, true, &mut [])?;
+    let doc = dom.node_document(anchor).ok()?;
+    let replacement = dom.create_element(doc, "a").ok()?;
+    dom.set_attribute(replacement, "href", href).ok()?;
+    let style = dom.get_attribute(anchor, "style").ok()?.map(str::to_owned);
+    if dom.prev_sibling(branch).ok()?.is_some() {
+        let prefix = dom.clone_node(anchor, false, None).ok()?;
+        dom.insert_before(parent, prefix, Some(anchor)).ok()?;
+        while let Some(child) = dom.first_child(anchor).ok()?.filter(|&n| n != branch) {
+            dom.append_child(prefix, child).ok()?;
+        }
+    }
+    dom.remove_attribute(anchor, "id").ok()?;
+    let outside = if let Some(style) = style.as_deref().filter(|_| entire_run == Some(anchor)) {
+        // A selection confined to this link inherits the old presentation
+        // outside the new link. Its own link color can therefore take effect.
+        dom.append_child(replacement, branch).ok()?;
+        link_style_shell(dom, doc, replacement, style)?
+    } else {
+        let content = match style.as_deref() {
+            Some(style) => link_style_shell(dom, doc, branch, style)?,
+            None => branch,
+        };
+        dom.append_child(replacement, content).ok()?;
+        replacement
+    };
+    dom.insert_before(parent, outside, Some(anchor)).ok()?;
+    if dom.child_count(anchor).ok()? == 0 { dom.remove_node(anchor).ok()?; }
+    Some(replacement)
+}
+
+/// Move the left link's children into a matching right link. Keep their
+/// text nodes intact so the selection can still address its original text.
+fn join_plain_links(dom: &mut Dom, left: NodeId, right: NodeId, href: &str) {
+    let compatible = |n| dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "a")
+        && dom.attributes(n).is_ok_and(|attrs| attrs.len() == 1)
+        && dom.get_attribute(n, "href").ok().flatten() == Some(href);
+    if !compatible(left) || !compatible(right) { return; }
+    while let Ok(Some(child)) = dom.last_child(left) {
+        let first = dom.first_child(right).ok().flatten();
+        if dom.insert_before(right, child, first).is_err() { return; }
+    }
+    let _ = dom.remove_node(left);
+}
+
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
@@ -1526,7 +1609,17 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             };
             let mut last_wrapper: Option<NodeId> = None;
             let use_css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
+            let single_link = href.and_then(|_| {
+                let link = ancestor_named(&dom, *texts.first()?, host, &["a"])?;
+                dom.contains(link, *texts.last()?).ok()?.then_some(link)
+            });
             for &t in &texts {
+                if let Some(value) = href.filter(|_| !collapsed) {
+                    if let Some(link) = relink_text(&mut dom, host, t, value, single_link) {
+                        last_wrapper = Some(link);
+                        continue;
+                    }
+                }
                 let prepared = if tag == "b" { prepare_numeric_bold(page, &mut dom, host, t, use_css) } else { None };
                 let carried = prepared.unwrap_or_else(|| carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some()));
                 if carried {
@@ -1572,6 +1665,13 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 let _ = dom.append_child(w, t);
                 if tag == "b" && !use_css { resolve_relative_bold(page, &mut dom, parent, w); }
                 last_wrapper = Some(w);
+            }
+            if let Some(value) = href.filter(|_| !collapsed) {
+                for &t in &texts {
+                    let Some(link) = ancestor_named(&dom, t, host, &["a"]) else { continue };
+                    if let Ok(Some(left)) = dom.prev_sibling(link) { join_plain_links(&mut dom, left, link, value); }
+                    if let Ok(Some(right)) = dom.next_sibling(link) { join_plain_links(&mut dom, link, right, value); }
+                }
             }
             texts
         };
