@@ -1273,9 +1273,17 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         _ => {
             let Some((tag, carriers, input_type)) = format_of(&cmd) else { return false };
             let (start, end) = editing::host_range(page, host);
-            if start == end && matches!(tag, "u" | "strike") {
-                inline_value::toggle_decoration(page, start, tag);
-                return true;
+            if matches!(tag, "u" | "strike") {
+                let pending = start == end || {
+                    let dom = page.dom.borrow();
+                    !accepts_html_formatting(&dom, start.0) && !accepts_html_formatting(&dom, end.0)
+                        && (start.0 == end.0 || texts_in(&dom, host, start, end).into_iter()
+                            .all(|t| !accepts_html_formatting(&dom, t)))
+                };
+                if pending {
+                    inline_value::toggle_decoration(page, (start, end), tag);
+                    return true;
+                }
             }
             if start == end && matches!(tag, "b" | "i" | "sub" | "sup") {
                 let enabled = !format_state(page, &cmd).1;
@@ -1366,10 +1374,20 @@ fn inline_css(tag: &str) -> Option<(&'static str, &'static str)> {
     })
 }
 
-/// HTML formatting wrappers cannot represent a run of text inside SVG.
+/// SVG renders character data under text and its inline text elements.
+/// A foreignObject's HTML descendants use ordinary HTML editing.
 fn accepts_html_formatting(dom: &Dom, text: NodeId) -> bool {
-    dom.parent_element(text).ok().flatten().and_then(|p| dom.element(p).ok())
-        .is_some_and(|el| el.namespace() != &markup5ever::ns!(svg))
+    let mut parent = dom.parent_element(text).ok().flatten();
+    while let Some(node) = parent {
+        let Ok(el) = dom.element(node) else { return false };
+        if el.namespace() != &markup5ever::ns!(svg) { return true; }
+        match el.local_name().as_ref() {
+            "text" => return true,
+            "tspan" | "textPath" | "a" => parent = dom.parent_element(node).ok().flatten(),
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
@@ -2084,13 +2102,13 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
 /// inline style of `command`, by computed style as Chromium reads it.
 fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
     let Some((start, end)) = editing::selection_range(page) else { return (false, false) };
+    if let Some((tag @ ("u" | "strike"), _, _)) = format_of(command) {
+        if let Some(active) = inline_value::decoration_state(page, (start, end), tag) {
+            return (active, active);
+        }
+    }
     if start == end {
         if let Some((tag, _, _)) = format_of(command) {
-            if matches!(tag, "u" | "strike") {
-                if let Some(active) = inline_value::decoration_state(page, start, tag) {
-                    return (active, active);
-                }
-            }
             if matches!(tag, "sub" | "sup") {
                 if let Some(active) = inline_value::caret_script_state(page, start, tag) {
                     return (active, active);
