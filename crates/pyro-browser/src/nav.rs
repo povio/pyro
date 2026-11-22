@@ -1780,12 +1780,22 @@ impl JsClass for History {
         // Browsers accept an unbound receiver here; TanStack History calls
         // `(push ? history.pushState : history.replaceState)(state, "", url)`.
         def.global_receiver(|s| s.global_data::<crate::Window>().map(|w| w.nav()));
-        def.getter("length", |s, n| Ok(s.number(n.history_length() as f64)));
-        def.getter("state", |s, n| PageNav::state_value(n, s));
+        def.getter("length", |s, n| {
+            require_fully_active(n, "length")?;
+            Ok(s.number(n.history_length() as f64))
+        });
+        def.getter("state", |s, n| {
+            require_fully_active(n, "state")?;
+            PageNav::state_value(n, s)
+        });
         def.accessor(
             "scrollRestoration",
-            |s, n| Ok(s.string(if n.state.borrow().scroll_restoration_manual { "manual" } else { "auto" })),
+            |s, n| {
+                require_fully_active(n, "scrollRestoration")?;
+                Ok(s.string(if n.state.borrow().scroll_restoration_manual { "manual" } else { "auto" }))
+            },
             |_s, n, v| {
+                require_fully_active(n, "scrollRestoration")?;
                 match v.to_string()?.as_str() {
                     "manual" => n.state.borrow_mut().scroll_restoration_manual = true,
                     "auto" => n.state.borrow_mut().scroll_restoration_manual = false,
