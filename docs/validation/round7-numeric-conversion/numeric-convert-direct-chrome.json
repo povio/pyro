@@ -1,0 +1,19 @@
+{
+  "version": "158.0.8127.37",
+  "results": {
+    "reciprocal": 0.25,
+    "product": 4000.000000000001,
+    "clamp": 9,
+    "simple": 3,
+    "mixed": 88,
+    "incompatible": {
+      "error": "TypeError"
+    },
+    "authored": [
+      "calc(1in + 1px)",
+      "calc(1in + 1px)",
+      2,
+      97
+    ]
+  }
+}

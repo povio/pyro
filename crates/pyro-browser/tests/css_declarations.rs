@@ -1278,3 +1278,21 @@ fn numeric_math_percent_hints_survive_inversion_and_dimension_cancellation() {
     "#);
     assert_eq!(actual, "1|-1|length||length|2|5cm");
 }
+
+#[test]
+fn numeric_conversion_reduces_compound_units_and_preserves_authored_objects() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const sum = new CSSMathSum(CSS.in(1), CSS.px(1));
+        const quotient = new CSSMathProduct(CSS.s(2), CSS.cm(3), new CSSMathInvert(CSS.mm(15)));
+        const clamp = new CSSMathClamp(CSS.px(9), CSS.px(3), CSS.px(4));
+        let incompatible = false;
+        try { new CSSMathProduct(CSS.px(2), new CSSMathInvert(CSS.em(2))).to('number'); }
+        catch(e) { incompatible = e instanceof TypeError; }
+        [CSSNumericValue.parse('calc(1px + 1in)').values.length,
+         CSSNumericValue.parse('calc(1in - 8px)').to('px').value,
+         sum.values.length, sum.to('px').value, Math.round(quotient.to('ms').value),
+         clamp.to('px').value, incompatible].join('|')
+    "#);
+    assert_eq!(actual, "1|88|2|97|4000|9|true");
+}

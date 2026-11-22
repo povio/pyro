@@ -1,0 +1,397 @@
+{
+ "start": "2026-11-22T00:14:06.960Z",
+ "end": "2026-11-22T00:14:11.786Z",
+ "preciseHost": {
+  "durationSeconds": 4.826,
+  "hostBusyPct": 85.137
+ },
+ "perArm": {
+  "numeric-convert-base-cc4f21a5e": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 2.131,
+   "weightedHostBusyPct": 84.15
+  },
+  "numeric-convert-381839e90": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 2.695,
+   "weightedHostBusyPct": 85.92
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:14:06.960Z",
+   "end": "2026-11-22T00:14:07.782Z",
+   "durationSeconds": 0.822,
+   "hostBusyPct": 100.0
+  },
+  {
+   "order": 2,
+   "binary": "numeric-convert-381839e90",
+   "start": "2026-11-22T00:14:07.782Z",
+   "end": "2026-11-22T00:14:08.613Z",
+   "durationSeconds": 0.831,
+   "hostBusyPct": 100.0
+  },
+  {
+   "order": 3,
+   "binary": "numeric-convert-381839e90",
+   "start": "2026-11-22T00:14:08.613Z",
+   "end": "2026-11-22T00:14:09.556Z",
+   "durationSeconds": 0.943,
+   "hostBusyPct": 99.703
+  },
+  {
+   "order": 4,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:14:09.556Z",
+   "end": "2026-11-22T00:14:10.197Z",
+   "durationSeconds": 0.641,
+   "hostBusyPct": 99.0
+  },
+  {
+   "order": 5,
+   "binary": "numeric-convert-381839e90",
+   "start": "2026-11-22T00:14:10.197Z",
+   "end": "2026-11-22T00:14:10.632Z",
+   "durationSeconds": 0.435,
+   "hostBusyPct": 59.093
+  },
+  {
+   "order": 6,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:14:10.632Z",
+   "end": "2026-11-22T00:14:10.969Z",
+   "durationSeconds": 0.337,
+   "hostBusyPct": 50.1
+  },
+  {
+   "order": 7,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:14:10.969Z",
+   "end": "2026-11-22T00:14:11.300Z",
+   "durationSeconds": 0.331,
+   "hostBusyPct": 50.698
+  },
+  {
+   "order": 8,
+   "binary": "numeric-convert-381839e90",
+   "start": "2026-11-22T00:14:11.300Z",
+   "end": "2026-11-22T00:14:11.786Z",
+   "durationSeconds": 0.486,
+   "hostBusyPct": 59.1
+  }
+ ],
+ "benchmarkSHA256": "2e78f40cbdb92ed7e3fac91bf8dc8f0e2ad8d22897ee0027a518ab3b1e9d917a",
+ "minOneSecondBusyPct": 50.1,
+ "maxOneSecondBusyPct": 100,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-22T00:14:06.268Z",
+   "end": "2026-11-22T00:14:07.270Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:14:07.270Z",
+   "end": "2026-11-22T00:14:08.274Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:14:08.274Z",
+   "end": "2026-11-22T00:14:09.276Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:14:09.276Z",
+   "end": "2026-11-22T00:14:10.277Z",
+   "cpuBusyPct": 99
+  },
+  {
+   "start": "2026-11-22T00:14:10.277Z",
+   "end": "2026-11-22T00:14:11.278Z",
+   "cpuBusyPct": 50.1
+  },
+  {
+   "start": "2026-11-22T00:14:11.278Z",
+   "end": "2026-11-22T00:14:12.280Z",
+   "cpuBusyPct": 59.1
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-22T00:14:16.053Z",
+   "elapsedMs": 30002,
+   "cpuBusyPct": 88.1,
+   "load": [
+    26.38134765625,
+    22.89892578125,
+    22.73583984375
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1138,
+     "pctCpu": 40,
+     "rssMiB": 35959
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 104
+    },
+    "independent-feature": {
+     "n": 19,
+     "pctCpu": 0.1,
+     "rssMiB": 1159
+    },
+    "other-build": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 122
+    },
+    "css-values": {
+     "n": 1,
+     "pctCpu": 94.2,
+     "rssMiB": 1156
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-22T00:13:46.056Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:13:17.078731+00:00",
+    "hostSlots": 4,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 2,
+    "diagnostics": 1,
+    "ordinary": 1,
+    "policy": "Lead direct START dedicated CSS QA 381839e90 ten-page/mutation only; CSS native 2/2 and compiler released. I directly admitted general editing 3b3e3a3c0 one serial WPT/controls after its PGID release, and sole IDB owner 1e45cafb exact parent\u21925963a228d one Cargo using available private retired target. Ordinary only other compiler remains before corrected b4ae59083. CSS perf queued separately."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [
+      {
+       "pid": 71578,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 70953,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "1"
+      },
+      {
+       "pid": 70961,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 71068,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 7.8
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 70820,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 70825,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0.1
+    },
+    "idb": {
+     "processes": [
+      {
+       "pid": 71951,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 241.4
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T00:14:15.990Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:13:17.078731+00:00",
+    "hostSlots": 4,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 2,
+    "diagnostics": 1,
+    "ordinary": 1,
+    "policy": "Lead direct START dedicated CSS QA 381839e90 ten-page/mutation only; CSS native 2/2 and compiler released. I directly admitted general editing 3b3e3a3c0 one serial WPT/controls after its PGID release, and sole IDB owner 1e45cafb exact parent\u21925963a228d one Cargo using available private retired target. Ordinary only other compiler remains before corrected b4ae59083. CSS perf queued separately."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [
+      {
+       "pid": 71578,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 73973,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 75970,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 95
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 70820,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 70825,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0.1
+    },
+    "idb": {
+     "processes": [
+      {
+       "pid": 76359,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 90
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-22T00:12:59.333088+00:00",
+ "qaEnd": "2026-11-22T00:12:59.603088+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process."
+}
