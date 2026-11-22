@@ -317,6 +317,21 @@ where
     def.getter("frameElement", |s, _w| Ok(s.null()));
     def.getter("opener", |s, _w| Ok(s.null()));
     def.getter("closed", |s, _w| Ok(s.boolean(false)));
+    // `status`: the empty string until a script sets it (no status bar shows it); a set value
+    // reads back, as an own data property of the window.
+    def.accessor(
+        "status",
+        |s, _w| Ok(s.string("")),
+        |s, w, v| {
+            let v = s.string(&crate::util::dom_string(v)?);
+            // The own property goes on the calling realm's global: only a window's own script
+            // can store one (another window's assignment is dropped).
+            if !crate::target::page_of(s).is_ok_and(|p| Rc::ptr_eq(&p, w.page())) {
+                return Ok(());
+            }
+            replace_window_attribute(s, w.page(), "status", v)
+        },
+    );
     def.getter("length", |s, _w| Ok(s.number(0.0)));
     // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it with
     // an own data property; the document's origin is left as it is.
