@@ -13,11 +13,11 @@ pub(crate) enum OriginValue {
 }
 
 impl OriginValue {
-    fn fresh() -> Self {
+    pub(crate) fn fresh() -> Self {
         Self::Url(UrlOrigin::new_opaque())
     }
 
-    fn from_key(key: String) -> Option<Self> {
+    pub(crate) fn from_key(key: String) -> Option<Self> {
         if key.starts_with("opaque:") || key.starts_with("opaque-document:") {
             return Some(Self::Environment(key));
         }
@@ -68,9 +68,8 @@ fn extract(s: &Scope<'_>, value: Value<'_>) -> JsResult<OriginValue> {
     if let Some((url, creator)) = crate::origin_urls::object_url(s, value) {
         return Ok(OriginValue::from_url(url, creator));
     }
-    crate::origin_globals::global_origin_key(s, value)
-        .or_else(|| crate::event::message_origin_key(s, value))
-        .and_then(OriginValue::from_key)
+    crate::event::message_origin(s, value)
+        .or_else(|| crate::origin_globals::global_origin_key(s, value).and_then(OriginValue::from_key))
         .ok_or_else(|| JsError::Type("The value has no extractable origin.".into()))
 }
 

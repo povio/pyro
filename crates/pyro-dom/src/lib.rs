@@ -4,6 +4,8 @@
 
 pub mod animation;
 mod attr_node;
+mod blob_hyperlinks;
+pub use blob_hyperlinks::BlobOriginRegistration;
 pub mod color_well;
 pub mod computed;
 pub mod direction;
