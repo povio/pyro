@@ -771,6 +771,14 @@ impl ElementData {
         }
     }
 
+    /// pyro: an HTML-in-Canvas canvas: a `<canvas>` whose `content` attribute is `drawable`
+    /// (ASCII case-insensitive). Its children are laid out (`BaseDocument::layout_drawable_canvas_children`)
+    /// but not painted in place (blitz-paint `render_element_clipped`).
+    pub fn is_drawable_canvas(&self) -> bool {
+        self.name.local == local_name!("canvas")
+            && self.attr(local_name!("content")).is_some_and(|value| value.eq_ignore_ascii_case("drawable"))
+    }
+
     pub fn canvas_data(&self) -> Option<&CanvasData> {
         match &self.special_data {
             SpecialElementData::Canvas(data) => Some(data),

@@ -1230,6 +1230,22 @@ canvas {
     user-select: none;
 }
 
+/* pyro: HTML-in-Canvas (WICG html-in-canvas, Chrome's UA rules): a canvas with content=drawable
+   contains its children's painting (they are drawn only by drawElementImage), its children are
+   laid out in flow, and every drawable element in it is an isolated group. Only such a canvas
+   matches. */
+canvas[content="drawable" i] {
+    contain: paint;
+}
+
+canvas[content="drawable" i] > * {
+    position: static ! important;
+}
+
+canvas[content="drawable" i] [drawable] {
+    isolation: isolate ! important;
+}
+
 :focus-visible {
     outline: auto 1px;
 }

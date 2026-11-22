@@ -1106,6 +1106,18 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             return;
         }
 
+        // pyro: HTML-in-Canvas: a child of a canvas with content=drawable is laid out but not
+        // painted in place (only `drawElementImage` paints it). Other elements are unaffected.
+        if node
+            .layout_parent
+            .get()
+            .and_then(|parent| self.dom.as_ref().tree().get(parent))
+            .and_then(|parent| parent.element_data())
+            .is_some_and(|parent| parent.is_drawable_canvas())
+        {
+            return;
+        }
+
         // pyro: a top-layer element paints above the document
         // (`paint_top_layer`), not here.
         if !self.top_layer.is_empty()
@@ -6862,6 +6874,11 @@ impl ElementCx<'_, '_> {
         });
         // The clip layers open, outermost first: node, transform, whether the layer was pushed.
         let mut open: Vec<(NodeId, Affine, bool)> = Vec::new();
+        // pyro: HTML-in-Canvas: what is hoisted to a canvas with content=drawable is its children's
+        // content, which it does not paint in place (`render_element_clipped`).
+        if self.element.is_drawable_canvas() {
+            return;
+        }
         for hoisted_child in children {
             if self.multicol_skips(hoisted_child.node_id) {
                 continue;

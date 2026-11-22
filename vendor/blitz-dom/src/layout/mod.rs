@@ -965,7 +965,16 @@ impl LayoutPassState<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
         match self.leaf_layout_or_algorithm(node_id, inputs) {
-            ChildLayout::Done(output) => output,
+            ChildLayout::Done(output) => {
+                // pyro: HTML-in-Canvas: a canvas with content=drawable keeps its replaced box and
+                // lays its children out inside it. Any other leaf returns its output as before.
+                if inputs.run_mode == taffy::RunMode::PerformLayout
+                    && self.nodes[dom_node_id(node_id)].element_data().is_some_and(|element| element.is_drawable_canvas())
+                {
+                    self.layout_drawable_canvas_children(node_id, output.size);
+                }
+                output
+            }
             ChildLayout::Block => compute_block_layout(self, node_id, inputs, block_ctx),
             ChildLayout::FlowRoot => compute_block_layout(self, node_id, inputs, None),
             ChildLayout::Inline => self.inline_layout(node_id, inputs, block_ctx),
@@ -973,6 +982,32 @@ impl LayoutPassState<'_> {
             ChildLayout::Grid => self.grid_layout(node_id, inputs),
             ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
             ChildLayout::Multicol { inline_root } => self.compute_multicol_layout(node_id, inputs, inline_root),
+        }
+    }
+
+    /// pyro: HTML-in-Canvas: lays out the children of a canvas with content=drawable (whose own
+    /// box is the replaced one, `size`) in flow inside that box, as a block container (an inline
+    /// root for inline content) of exactly that size. They paint only through
+    /// `drawElementImage`, not in place (blitz-paint `render_element_clipped`).
+    #[inline(never)]
+    fn layout_drawable_canvas_children(&mut self, node_id: NodeId, size: taffy::Size<f32>) {
+        let inputs = taffy::LayoutInput {
+            run_mode: taffy::RunMode::PerformLayout,
+            sizing_mode: taffy::SizingMode::InherentSize,
+            axis: taffy::RequestedAxis::Both,
+            known_dimensions: taffy::Size { width: Some(size.width), height: Some(size.height) },
+            known_dimensions_are_definite: taffy::Size { width: true, height: true },
+            parent_size: taffy::Size { width: Some(size.width), height: Some(size.height) },
+            available_space: taffy::Size {
+                width: taffy::AvailableSpace::Definite(size.width),
+                height: taffy::AvailableSpace::Definite(size.height),
+            },
+            vertical_margins_are_collapsible: taffy::Line::FALSE,
+        };
+        if self.nodes[dom_node_id(node_id)].flags.is_inline_root() {
+            let _ = self.inline_layout(node_id, inputs, None);
+        } else {
+            let _ = compute_block_layout(self, node_id, inputs, None);
         }
     }
 
