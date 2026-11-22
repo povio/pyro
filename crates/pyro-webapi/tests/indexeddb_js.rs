@@ -456,6 +456,38 @@ fn key_generator_exhausts_after_2_pow_53() {
 }
 
 #[test]
+fn request_callback_exception_respects_explicit_commit() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        let db = await openDb('callbacks', 1, db => db.createObjectStore('rows'));
+        const log = [];
+        for (const mode of ['before', 'inside', 'implicit', 'duplicate']) {
+          const tx = db.transaction('rows', 'readwrite');
+          const rows = tx.objectStore('rows');
+          const first = rows.add(mode, mode);
+          if (mode === 'duplicate') rows.add('replacement', 'before');
+          else first.onsuccess = () => {
+            if (mode === 'inside') tx.commit();
+            throw new Error('listener');
+          };
+          if (mode === 'before' || mode === 'duplicate') tx.commit();
+          log.push(await done(tx).catch(error => error.name));
+        }
+        db.close();
+        db = await openDb('callbacks');
+        log.push((await req(db.transaction('rows').objectStore('rows').getAll())).join(','));
+        db.close();
+        out = log.join('|');
+    "#,
+    );
+    assert_eq!(got, "complete|complete|AbortError|ConstraintError|before,inside");
+}
+
+#[test]
 fn aborts_roll_back_data_generators_and_upgrades() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");
