@@ -1541,6 +1541,12 @@ fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsRe
         return Ok(());
     }
     let target = parse_location(nav, input)?;
+    // HTML "navigate": a navigable whose active document's unload counter is above 0 (its
+    // `beforeunload`, `pagehide` or `unload` listeners are running) ignores the navigation, so
+    // a `beforeunload` listener cannot start one of its own (WPT navigation-within-beforeunload).
+    if nav.page_dom.borrow().upgrade().is_some_and(|page| page.in_unload()) {
+        return Ok(());
+    }
     if target.scheme() == "javascript" {
         // Located at the calling script, for a blocked URL's violation.
         let initiator =
