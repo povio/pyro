@@ -1231,6 +1231,27 @@ impl PositionAreaKeyword {
         Self::from_u8(new_track as u8 | ((new_axis as u8) << AXIS_SHIFT)).unwrap()
     }
 
+    /// pyro: the physical axis (`true` for horizontal) and the track, counted from the left or
+    /// top, that this keyword selects; an inferred axis resolves to `inferred`. None for an
+    /// axis-less keyword (`center`, `span-all`, `none`), whose axis its partner decides.
+    pub fn physical_track(
+        self,
+        cb_wm: WritingMode,
+        self_wm: WritingMode,
+        inferred: LogicalAxis,
+    ) -> Option<(bool, PositionAreaTrack)> {
+        if self.axis() == PositionAreaAxis::None {
+            return None;
+        }
+        let physical = self.to_physical(cb_wm, self_wm, inferred);
+        let horizontal = match physical.axis() {
+            PositionAreaAxis::Horizontal => true,
+            PositionAreaAxis::Vertical => false,
+            _ => return None,
+        };
+        Some((horizontal, physical.track()?))
+    }
+
     fn flip_track(self) -> Self {
         let Some(old_track) = self.track() else {
             return self;
@@ -1460,9 +1481,13 @@ impl PositionArea {
     }
 
     fn flip_logical_axis(&mut self, wm: WritingMode, axis: LogicalAxis) {
+        // pyro: flip the keyword on that axis only. An axis-less keyword (`center`, `span-all`)
+        // flips to itself, so `span-all top` under `flip-inline` stays put rather than flipping
+        // `top`: `flip-inline flip-block` used to undo itself (WPT css-anchor-position
+        // `container-queries/anchored-fallback-try-tactic`).
         if self.first.axis().to_logical(wm, LogicalAxis::Block) == Some(axis) {
             self.first = self.first.flip_track();
-        } else {
+        } else if self.second.axis().to_logical(wm, LogicalAxis::Inline) == Some(axis) {
             self.second = self.second.flip_track();
         }
     }

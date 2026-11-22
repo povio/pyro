@@ -7,6 +7,7 @@
 //! [mq]: https://drafts.csswg.org/mediaqueries/
 //! [cq]: https://drafts.csswg.org/css-contain-3/#container-rule
 
+pub mod anchored;
 pub mod condition;
 
 #[macro_use]

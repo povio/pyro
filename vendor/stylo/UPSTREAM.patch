@@ -1064,25 +1064,30 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
 diff -ruN a/dom.rs b/dom.rs
 --- a/dom.rs	2026-11-11 19:55:57
-+++ b/dom.rs	2026-11-22 20:26:27
-@@ -499,6 +499,11 @@
++++ b/dom.rs	2026-11-22 21:21:26
+@@ -498,6 +498,11 @@
+ 
      /// Get this element's style attribute.
      fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>>;
- 
++
 +    /// Original input of the parsed inline block, when the embedder reparses CSS.
 +    fn style_attribute_source(&self) -> Option<&str> {
 +        None
 +    }
-+
+ 
      /// Get this element's SMIL override declarations.
      fn smil_override(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-         None
-@@ -952,6 +957,15 @@
+@@ -951,7 +956,20 @@
+         &self,
          display: &Display,
      ) -> euclid::default::Size2D<Option<app_units::Au>>;
- 
++
 +    /// Last layout's selected fallback, if any.
 +    fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
+ 
++    /// pyro: the writing mode of this element's containing block at the last layout, for
++    /// `anchored()` container queries; None before a layout placed it.
++    fn query_anchored_containing_block_writing_mode(&self) -> Option<crate::logical_geometry::WritingMode> { None }
 +
 +    /// pyro: the edges this element, as a scroll-state query container, can be scrolled towards
 +    /// at the last layout's scroll position (the `scrollable` scroll-state feature).
@@ -1093,7 +1098,7 @@ diff -ruN a/dom.rs b/dom.rs
      /// Returns true if the element has all of specified selector flags.
      fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
  
-@@ -974,6 +988,9 @@
+@@ -974,6 +992,9 @@
      /// Return the value of the given custom attribute if it exists.
      fn get_attr(&self, attr: &LocalName, namespace: &Namespace) -> Option<String>;
  
@@ -1103,7 +1108,7 @@ diff -ruN a/dom.rs b/dom.rs
      /// Traverse the siblings of the element, returning the element's sibling-index()
      /// and sibling-count(). Also populates `caches` with the sibling-index() and
      /// sibling-count() values for all siblings of this element.
-@@ -1003,7 +1020,16 @@
+@@ -1003,7 +1024,16 @@
  
  /// Provides element-level context needed during style computation.
  pub trait ElementContext {
@@ -1121,7 +1126,7 @@ diff -ruN a/dom.rs b/dom.rs
      fn opaque_element(&self) -> Option<OpaqueElement>;
  
      /// Opaque handle to the element's parent node.
-@@ -1023,6 +1049,24 @@
+@@ -1023,6 +1053,24 @@
  }
  
  impl<T: TElement> ElementContext for T {
@@ -5459,15 +5464,365 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
          Ok(Self {
              name: self.name.clone(),
              value,
+diff -ruN a/queries/anchored.rs b/queries/anchored.rs
+--- a/queries/anchored.rs	1970-01-01 00:00:00.000000000 +0000
++++ b/queries/anchored.rs	2026-11-22 21:20:45
+@@ -0,0 +1,346 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++//! pyro: `anchored()` container queries.
++//!
++//! https://drafts.csswg.org/css-anchor-position-2/#anchored-container-queries
++
++use super::condition::Operator;
++use crate::derives::*;
++use crate::logical_geometry::{LogicalAxis, WritingMode};
++use crate::parser::{Parse, ParserContext};
++use crate::values::specified::position::{
++    DashedIdentAndOrTryTactic, PositionArea, PositionAreaAxis, PositionAreaKeyword,
++    PositionAreaTrack, PositionAreaType, PositionTryFallbacksItem,
++};
++use cssparser::Parser;
++use std::fmt::{self, Write};
++use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
++
++/// One `<position-area>` keyword slot of an `anchored(fallback: ...)` query: a keyword, or `any`,
++/// which matches whatever the applied fallback selects on that axis.
++#[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToShmem)]
++pub enum AnchoredAreaSlot {
++    /// `any`
++    Any,
++    /// A `<position-area>` keyword other than `none`.
++    Keyword(PositionAreaKeyword),
++}
++
++impl AnchoredAreaSlot {
++    fn parse(input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|i| i.expect_ident_matching("any")).is_ok() {
++            return Ok(Self::Any);
++        }
++        let keyword = PositionAreaKeyword::parse(input)?;
++        if keyword.is_none() {
++            return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
++        }
++        Ok(Self::Keyword(keyword))
++    }
++}
++
++impl ToCss for AnchoredAreaSlot {
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        match *self {
++            Self::Any => dest.write_str("any"),
++            Self::Keyword(keyword) => keyword.to_css(dest),
++        }
++    }
++}
++
++/// The value of a `fallback: <value>` feature.
++#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
++pub enum AnchoredFallback {
++    /// `none`: no fallback option is applied.
++    None,
++    /// `<dashed-ident> || <try-tactic>`
++    Tactic(DashedIdentAndOrTryTactic),
++    /// A `<position-area>` whose keywords may be `any`; a missing second keyword is `any` too,
++    /// unless the first has no axis of its own.
++    Area(AnchoredAreaSlot, Option<AnchoredAreaSlot>),
++}
++
++impl AnchoredFallback {
++    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
++            return Ok(Self::None);
++        }
++        if let Ok(tactic) = input.try_parse(|i| DashedIdentAndOrTryTactic::parse(context, i)) {
++            return Ok(Self::Tactic(tactic));
++        }
++        let first = AnchoredAreaSlot::parse(input)?;
++        let second = input.try_parse(AnchoredAreaSlot::parse).ok();
++        if let (AnchoredAreaSlot::Keyword(first), Some(AnchoredAreaSlot::Keyword(second))) =
++            (first, second)
++        {
++            // Two keywords pair up as in `position-area`.
++            if (PositionArea { first, second }).get_type() == PositionAreaType::None {
++                return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
++            }
++        }
++        Ok(Self::Area(first, second))
++    }
++
++    fn matches(&self, applied: &PositionTryFallbacksItem, self_wm: WritingMode, cb_wm: WritingMode) -> bool {
++        match (self, applied) {
++            // Chrome matches the ident and the tactic list as written: `flip-block flip-inline`
++            // does not match an applied `flip-inline flip-block`, nor `flip-y` a `flip-block`
++            // (WPT `container-queries/anchored-fallback-try-tactic`).
++            (Self::Tactic(query), PositionTryFallbacksItem::IdentAndOrTactic(applied)) => query == applied,
++            (Self::Area(first, second), PositionTryFallbacksItem::PositionArea(applied)) => {
++                let second = second.unwrap_or_else(|| match *first {
++                    AnchoredAreaSlot::Keyword(keyword) if has_axis(keyword) => AnchoredAreaSlot::Any,
++                    other => other,
++                });
++                let query = Cells::resolve(*first, second, self_wm, cb_wm);
++                let applied = Cells::of_area(applied, self_wm, cb_wm);
++                Cells::axis_matches(query.x, applied.x) && Cells::axis_matches(query.y, applied.y)
++            },
++            _ => false,
++        }
++    }
++}
++
++impl ToCss for AnchoredFallback {
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        match *self {
++            Self::None => dest.write_str("none"),
++            Self::Tactic(ref tactic) => tactic.to_css(dest),
++            Self::Area(ref first, ref second) => {
++                first.to_css(dest)?;
++                if let Some(second) = second {
++                    dest.write_char(' ')?;
++                    second.to_css(dest)?;
++                }
++                Ok(())
++            },
++        }
++    }
++}
++
++/// Whether the keyword names its own axis (`top`, `block-end`, `self-x-start`...), rather than
++/// taking it from its place in the pair (`start`, `self-end`) or from its partner (`center`,
++/// `span-all`).
++fn has_axis(keyword: PositionAreaKeyword) -> bool {
++    !matches!(keyword.axis(), PositionAreaAxis::Inferred | PositionAreaAxis::None)
++}
++
++/// A keyword slot resolved to the physical grid.
++#[derive(Clone, Copy)]
++enum Resolved {
++    Any,
++    /// An axis-less keyword's track (`center`, `span-all`): on the axis its partner leaves.
++    Free(PositionAreaTrack),
++    /// A track on the horizontal (`true`) or vertical axis, counted from the left or top.
++    Fixed(bool, PositionAreaTrack),
++}
++
++/// The physical cells a `<position-area>` selects: tracks counted from the left (`x`) and the top
++/// (`y`); None is `any`.
++struct Cells {
++    x: Option<PositionAreaTrack>,
++    y: Option<PositionAreaTrack>,
++}
++
++impl Cells {
++    /// The first keyword is on the block axis and the second on the inline one when their own
++    /// keywords leave it open. Logical keywords resolve against the containing block's writing
++    /// mode and `self-*` ones against the anchored element's; the querying element's does not
++    /// matter.
++    fn resolve(first: AnchoredAreaSlot, second: AnchoredAreaSlot, self_wm: WritingMode, cb_wm: WritingMode) -> Self {
++        let resolve = |slot: AnchoredAreaSlot, axis: LogicalAxis| match slot {
++            AnchoredAreaSlot::Any => Resolved::Any,
++            AnchoredAreaSlot::Keyword(keyword) => match keyword.physical_track(cb_wm, self_wm, axis) {
++                Some((horizontal, track)) => Resolved::Fixed(horizontal, track),
++                None => keyword.track().map_or(Resolved::Any, Resolved::Free),
++            },
++        };
++        let slot_horizontal = |axis: LogicalAxis| (axis == LogicalAxis::Inline) != cb_wm.is_vertical();
++        let mut cells = Self { x: None, y: None };
++        let mut place = |horizontal: bool, track: PositionAreaTrack| {
++            if horizontal {
++                cells.x = Some(track);
++            } else {
++                cells.y = Some(track);
++            }
++        };
++        use Resolved::*;
++        match (resolve(first, LogicalAxis::Block), resolve(second, LogicalAxis::Inline)) {
++            (Fixed(h1, t1), Fixed(h2, t2)) => {
++                place(h1, t1);
++                place(h2, t2);
++            },
++            (Fixed(h, t), Free(u)) | (Free(u), Fixed(h, t)) => {
++                place(h, t);
++                place(!h, u);
++            },
++            (Fixed(h, t), Any) | (Any, Fixed(h, t)) => place(h, t),
++            (Free(u), Free(v)) => {
++                place(slot_horizontal(LogicalAxis::Block), u);
++                place(slot_horizontal(LogicalAxis::Inline), v);
++            },
++            (Free(u), Any) => place(slot_horizontal(LogicalAxis::Block), u),
++            (Any, Free(v)) => place(slot_horizontal(LogicalAxis::Inline), v),
++            (Any, Any) => {},
++        }
++        cells
++    }
++
++    /// The cells of an applied `<position-area>` fallback, whose missing second keyword is
++    /// `span-all` (or a copy of an axis-less or inferred first one).
++    fn of_area(area: &PositionArea, self_wm: WritingMode, cb_wm: WritingMode) -> Self {
++        let second = if !area.second.is_none() {
++            area.second
++        } else if has_axis(area.first) {
++            PositionAreaKeyword::SpanAll
++        } else {
++            area.first
++        };
++        let mut cells = Self::resolve(
++            AnchoredAreaSlot::Keyword(area.first),
++            AnchoredAreaSlot::Keyword(second),
++            self_wm,
++            cb_wm,
++        );
++        // An applied area selects all three tracks on an axis it leaves open.
++        cells.x.get_or_insert(PositionAreaTrack::SpanAll);
++        cells.y.get_or_insert(PositionAreaTrack::SpanAll);
++        cells
++    }
++
++    fn axis_matches(query: Option<PositionAreaTrack>, applied: Option<PositionAreaTrack>) -> bool {
++        query.is_none() || query == applied
++    }
++}
++
++/// An `<anchored-query>`: `fallback`, `fallback: <value>`, and `not`/`and`/`or` conditions of
++/// them in parentheses.
++#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
++pub enum AnchoredQuery {
++    /// `fallback` (whether a fallback option is applied) or `fallback: <value>`.
++    Fallback(Option<AnchoredFallback>),
++    /// `not <anchored-in-parens>`
++    Not(Box<AnchoredQuery>),
++    /// `<anchored-in-parens> [and|or <anchored-in-parens>]+`
++    Operation(Box<[AnchoredQuery]>, Operator),
++    /// `( <anchored-query> )`
++    InParens(Box<AnchoredQuery>),
++}
++
++impl AnchoredQuery {
++    /// Parses the contents of `anchored( ... )`.
++    pub fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if let Ok(feature) = input.try_parse(|i| Self::parse_whole_feature(context, i)) {
++            return Ok(feature);
++        }
++        Self::parse_condition(context, input)
++    }
++
++    fn parse_whole_feature(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        input.expect_ident_matching("fallback")?;
++        if input.is_exhausted() {
++            return Ok(Self::Fallback(None));
++        }
++        input.expect_colon()?;
++        let value = AnchoredFallback::parse(context, input)?;
++        input.expect_exhausted()?;
++        Ok(Self::Fallback(Some(value)))
++    }
++
++    fn parse_condition(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|i| i.expect_ident_matching("not")).is_ok() {
++            return Ok(Self::Not(Box::new(Self::parse_in_parens(context, input)?)));
++        }
++        let first = Self::parse_in_parens(context, input)?;
++        let operator = match input.try_parse(Operator::parse) {
++            Ok(operator) => operator,
++            Err(..) => return Ok(first),
++        };
++        let mut conditions = vec![first, Self::parse_in_parens(context, input)?];
++        let delimiter = match operator {
++            Operator::And => "and",
++            Operator::Or => "or",
++        };
++        while input.try_parse(|i| i.expect_ident_matching(delimiter)).is_ok() {
++            conditions.push(Self::parse_in_parens(context, input)?);
++        }
++        Ok(Self::Operation(conditions.into_boxed_slice(), operator))
++    }
++
++    fn parse_in_parens(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        input.expect_parenthesis_block()?;
++        let inner = input.parse_nested_block(|i| Self::parse(context, i))?;
++        Ok(Self::InParens(Box::new(inner)))
++    }
++
++    /// Whether the query matches an anchored query container whose applied fallback option is
++    /// `applied`. `self_wm` is the container's writing mode, `cb_wm` its containing block's.
++    /// Every leaf is known once there is a container, so the Kleene and/or/not of the caller
++    /// reduce to plain booleans here.
++    pub fn matches(
++        &self,
++        applied: Option<&PositionTryFallbacksItem>,
++        self_wm: WritingMode,
++        cb_wm: WritingMode,
++    ) -> bool {
++        match *self {
++            Self::Fallback(None) => applied.is_some(),
++            Self::Fallback(Some(AnchoredFallback::None)) => applied.is_none(),
++            Self::Fallback(Some(ref value)) => applied.is_some_and(|applied| value.matches(applied, self_wm, cb_wm)),
++            Self::Not(ref inner) => !inner.matches(applied, self_wm, cb_wm),
++            Self::InParens(ref inner) => inner.matches(applied, self_wm, cb_wm),
++            Self::Operation(ref conditions, Operator::And) => {
++                conditions.iter().all(|c| c.matches(applied, self_wm, cb_wm))
++            },
++            Self::Operation(ref conditions, Operator::Or) => {
++                conditions.iter().any(|c| c.matches(applied, self_wm, cb_wm))
++            },
++        }
++    }
++}
++
++impl ToCss for AnchoredQuery {
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        match *self {
++            Self::Fallback(ref value) => {
++                dest.write_str("fallback")?;
++                if let Some(value) = value {
++                    dest.write_str(": ")?;
++                    value.to_css(dest)?;
++                }
++                Ok(())
++            },
++            Self::Not(ref inner) => {
++                dest.write_str("not ")?;
++                inner.to_css(dest)
++            },
++            Self::InParens(ref inner) => {
++                dest.write_char('(')?;
++                inner.to_css(dest)?;
++                dest.write_char(')')
++            },
++            Self::Operation(ref conditions, operator) => {
++                let mut iter = conditions.iter();
++                iter.next().unwrap().to_css(dest)?;
++                for condition in iter {
++                    dest.write_char(' ')?;
++                    operator.to_css(dest)?;
++                    dest.write_char(' ')?;
++                    condition.to_css(dest)?;
++                }
++                Ok(())
++            },
++        }
++    }
++}
 diff -ruN a/queries/condition.rs b/queries/condition.rs
 --- a/queries/condition.rs	2026-11-11 19:55:57
-+++ b/queries/condition.rs	2026-11-22 21:10:56
++++ b/queries/condition.rs	2026-11-22 21:21:12
 @@ -25,6 +25,8 @@
  use crate::substitution;
  use crate::substitution::AttrTaint;
  use crate::values::{AtomString, DashedIdent, computed};
 +use crate::values::computed::ToComputedValue;
-+use crate::values::specified::position::PositionTryFallbacksItem;
++use super::anchored::AnchoredQuery;
  use crate::{error_reporting::ContextualParseError, parser::Parse, parser::ParserContext};
  use cssparser::{
      Parser, SourceLocation, SourcePosition, Token, match_ignore_ascii_case, parse_important,
@@ -5540,12 +5895,10 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              } else {
                  let value = custom_properties::SpecifiedValue::parse(context, input)?;
                  // `!important` is allowed (but ignored) after the value.
-@@ -417,6 +428,34 @@
-             StyleFeatureValue::Value(None)
-         };
+@@ -419,6 +430,34 @@
          Ok(Self { name, value })
-+    }
-+
+     }
+ 
 +    fn matches_element(&self, context: &substitution::SubstitutionReplacementContext, attr_tainted: &mut bool) -> bool {
 +        let ctx = context.computed_context;
 +        let registration = context.stylist.get_custom_property_registration(&self.name);
@@ -5572,9 +5925,11 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +            StyleFeatureValue::Keyword(CSSWideKeyword::Unset) => current == initial,
 +            StyleFeatureValue::Keyword(_) => false,
 +        }
-     }
- 
++    }
++
      // Substitute custom-property references in `value`, then re-parse and compute it,
+     // and compare against `current_value`.
+     fn substitute_and_compare(
 @@ -479,6 +518,7 @@
              .inherited_custom_properties()
              .get(registration, &self.name);
@@ -5587,8 +5942,8 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
      InParens(Box<QueryCondition>),
      /// A <style> query.
      Style(StyleQuery),
-+    /// A fallback query, optionally comparing against none or a descriptor.
-+    Anchored(Option<Option<PositionTryFallbacksItem>>),
++    /// pyro: an `anchored()` query on the applied fallback option (CSS Anchor Positioning 2).
++    Anchored(AnchoredQuery),
 +    /// pyro: a `scroll-state()` query: its condition, and whether that is a bare
 +    /// `<scroll-state-feature>` (`scroll-state(scrollable: top)`), which serializes without
 +    /// parentheses.
@@ -5596,19 +5951,13 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
      /// A -moz-pref() query.
      MozPref(MozPrefFeature),
      /// [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
-@@ -709,6 +755,25 @@
+@@ -709,6 +755,19 @@
                  c.to_css(dest)?;
                  dest.write_char(')')
              },
 +            Self::Anchored(ref query) => {
-+                dest.write_str("anchored(fallback")?;
-+                if let Some(value) = query {
-+                    dest.write_str(": ")?;
-+                    match value {
-+                        Some(item) => item.to_css(dest)?,
-+                        None => dest.write_str("none")?,
-+                    }
-+                }
++                dest.write_str("anchored(")?;
++                query.to_css(dest)?;
 +                dest.write_char(')')
 +            },
 +            Self::ScrollState(ref c, bare) => {
@@ -5622,7 +5971,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              Self::MozPref(ref c) => {
                  dest.write_str("-moz-pref(")?;
                  c.to_css(dest)?;
-@@ -755,6 +820,8 @@
+@@ -755,6 +814,8 @@
              | Self::Feature(..)
              | Self::GeneralEnclosed(..)
              | Self::Style(..)
@@ -5631,7 +5980,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              | Self::MozPref(..) => {},
              Self::Not(ref cond) => cond.visit(visitor),
              Self::Operation(ref conds, _op) => {
-@@ -766,12 +833,32 @@
+@@ -766,12 +827,32 @@
          }
      }
  
@@ -5664,29 +6013,25 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              Self::Feature(f) => result.insert(f.feature_flags()),
              Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
              _ => {},
-@@ -834,6 +921,11 @@
+@@ -834,6 +915,11 @@
              Self::InParens(ref c) => c.matches(context, custom, attribute_tracker),
              Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
              Self::Style(ref c) => c.matches(context, attribute_tracker),
 +            Self::Anchored(ref query) => context.container_info.as_ref().map_or(KleeneValue::Unknown, |info| {
-+                query.as_ref().map_or_else(|| info.fallback.is_some(), |value| value == &info.fallback).into()
++                query.matches(info.fallback.as_ref(), info.wm, info.anchored_cb_wm).into()
 +            }),
 +            // pyro: its features read the container's scroll state (`ContainerInfo::scrollable`).
 +            Self::ScrollState(ref c, _) => c.matches(context, custom, attribute_tracker),
              Self::MozPref(ref c) => c.matches(context),
              Self::Operation(ref conditions, op) => {
                  debug_assert!(!conditions.is_empty(), "We never create an empty op");
-@@ -962,6 +1054,39 @@
+@@ -962,6 +1048,35 @@
              },
              Token::Function(ref name) => {
                  match_ignore_ascii_case! { name,
 +                    "anchored" if feature_type == FeatureType::Container => {
 +                        if let Some(query) = try_parse_block(context, input, start, start_location, |input| {
-+                            input.expect_ident_matching("fallback")?;
-+                            if input.is_exhausted() { return Ok(None); }
-+                            input.expect_colon()?;
-+                            if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() { return Ok(Some(None)); }
-+                            PositionTryFallbacksItem::parse(context, input).map(|item| Some(Some(item)))
++                            AnchoredQuery::parse(context, input)
 +                        }) { return Ok(Self::Anchored(query)); }
 +                        flags.insert(FeatureFlags::ANCHORED);
 +                    },
@@ -5716,7 +6061,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
                      "style" if StyleQuery::enabled(feature_type) => {
                          let query = try_parse_block(context, input, start, start_location, |input| {
                              StyleQuery::parse(context, input, feature_type)
-@@ -1000,3 +1125,159 @@
+@@ -1000,3 +1115,159 @@
          Self::Operation(conditions, operator)
      }
  }
@@ -6155,6 +6500,17 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
              })
      }
  
+diff -ruN a/queries/mod.rs b/queries/mod.rs
+--- a/queries/mod.rs	2026-11-11 19:55:57
++++ b/queries/mod.rs	2026-11-22 21:21:12
+@@ -7,6 +7,7 @@
+ //! [mq]: https://drafts.csswg.org/mediaqueries/
+ //! [cq]: https://drafts.csswg.org/css-contain-3/#container-rule
+ 
++pub mod anchored;
+ pub mod condition;
+ 
+ #[macro_use]
 diff -ruN a/queries/values.rs b/queries/values.rs
 --- a/queries/values.rs	2026-11-11 19:55:57
 +++ b/queries/values.rs	2026-11-22 20:25:45
@@ -8089,7 +8445,7 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
 --- a/stylesheets/container_rule.rs	2026-11-11 19:55:57
-+++ b/stylesheets/container_rule.rs	2026-11-22 21:10:56
++++ b/stylesheets/container_rule.rs	2026-11-22 21:21:26
 @@ -8,11 +8,11 @@
  
  use crate::computed_value_flags::ComputedValueFlags;
@@ -8143,38 +8499,72 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
          if !available_axes.contains(self.flags.container_axes()) {
              return TraversalResult::InProgress;
          }
-@@ -290,6 +303,8 @@
+@@ -287,18 +300,29 @@
+ 
+         let size = potential_container.query_container_size(box_style.get_display());
+         let style = style.to_arc();
++        let inherited_style = potential_container.traversal_parent().and_then(|parent| {
++            parent
++                .borrow_data()
++                .and_then(|data| data.styles.get_primary().cloned())
++        });
++        // pyro: `anchored()` resolves logical `<position-area>` keywords against the containing
++        // block's writing mode; the parent's stands in until a layout found the containing block.
++        let anchored_cb_wm = if anchored {
++            potential_container.query_anchored_containing_block_writing_mode().unwrap_or_else(|| {
++                inherited_style.as_ref().map_or(wm, |parent| parent.writing_mode)
++            })
++        } else {
++            wm
++        };
          TraversalResult::Done(ContainerLookupResult {
              element: potential_container,
              info: ContainerInfo {
 +                fallback: if anchored { potential_container.query_anchored_fallback() } else { None },
++                anchored_cb_wm,
 +                scrollable: if scroll_state { potential_container.query_scrollable_edges() } else { ScrollableEdges::empty() },
                  size,
                  wm,
-                 inherited_style: {
-@@ -350,6 +365,11 @@
-         // element from not matching to matching.
+-                inherited_style: {
+-                    potential_container.traversal_parent().and_then(|parent| {
+-                        parent
+-                            .borrow_data()
+-                            .and_then(|data| data.styles.get_primary().cloned())
+-                    })
+-                },
++                inherited_style,
+             },
+             style,
+         })
+@@ -351,6 +375,11 @@
          if self.flags.contains(FeatureFlags::STYLE) {
              invalidation_flags.insert(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY);
-+        }
+         }
 +        // pyro: CSS Conditional 5 § 7.1: a container query with unknown or unsupported features
 +        // selects no query container (`((width) or (unknown))` is false, as in Chrome).
 +        if self.has_unknown {
 +            return KleeneValue::False;
-         }
++        }
          let (container, info) = match result {
              Some(r) => (r.element, (r.info, r.style)),
-@@ -442,6 +462,9 @@
+             None => {
+@@ -442,8 +471,14 @@
  /// Information needed to evaluate an individual container query.
  #[derive(Clone)]
  pub struct ContainerInfo {
 +    pub(crate) fallback: Option<crate::values::specified::position::PositionTryFallbacksItem>,
++    /// pyro: the writing mode of an anchored query container's containing block, which logical
++    /// `<position-area>` keywords in `anchored(fallback: ...)` resolve against.
++    pub(crate) anchored_cb_wm: WritingMode,
 +    /// pyro: the edges a scroll-state container can be scrolled towards (`scrollable`).
 +    pub(crate) scrollable: ScrollableEdges,
      size: Size2D<Option<Au>>,
-     wm: WritingMode,
+-    wm: WritingMode,
++    pub(crate) wm: WritingMode,
      inherited_style: Option<Arc<ComputedValues>>,
-@@ -502,6 +525,72 @@
+ }
+ 
+@@ -502,6 +537,72 @@
      KleeneValue::from(Orientation::eval(size, value))
  }
  
@@ -16242,7 +16632,7 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/position.rs b/values/specified/position.rs
 --- a/values/specified/position.rs	2026-11-11 19:55:57
-+++ b/values/specified/position.rs	2026-11-20 12:13:18
++++ b/values/specified/position.rs	2026-11-22 21:18:58
 @@ -427,6 +427,15 @@
  );
  
@@ -16283,10 +16673,55 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
          /// no-overflow
          const NO_OVERFLOW = 1 << 2;
      }
-@@ -2166,6 +2175,38 @@
-     BorderBox,
- }
+@@ -1220,6 +1229,27 @@
+             PositionAreaAxis::Horizontal
+         };
+         Self::from_u8(new_track as u8 | ((new_axis as u8) << AXIS_SHIFT)).unwrap()
++    }
++
++    /// pyro: the physical axis (`true` for horizontal) and the track, counted from the left or
++    /// top, that this keyword selects; an inferred axis resolves to `inferred`. None for an
++    /// axis-less keyword (`center`, `span-all`, `none`), whose axis its partner decides.
++    pub fn physical_track(
++        self,
++        cb_wm: WritingMode,
++        self_wm: WritingMode,
++        inferred: LogicalAxis,
++    ) -> Option<(bool, PositionAreaTrack)> {
++        if self.axis() == PositionAreaAxis::None {
++            return None;
++        }
++        let physical = self.to_physical(cb_wm, self_wm, inferred);
++        let horizontal = match physical.axis() {
++            PositionAreaAxis::Horizontal => true,
++            PositionAreaAxis::Vertical => false,
++            _ => return None,
++        };
++        Some((horizontal, physical.track()?))
+     }
  
+     fn flip_track(self) -> Self {
+@@ -1451,9 +1481,13 @@
+     }
+ 
+     fn flip_logical_axis(&mut self, wm: WritingMode, axis: LogicalAxis) {
++        // pyro: flip the keyword on that axis only. An axis-less keyword (`center`, `span-all`)
++        // flips to itself, so `span-all top` under `flip-inline` stays put rather than flipping
++        // `top`: `flip-inline flip-block` used to undo itself (WPT css-anchor-position
++        // `container-queries/anchored-fallback-try-tactic`).
+         if self.first.axis().to_logical(wm, LogicalAxis::Block) == Some(axis) {
+             self.first = self.first.flip_track();
+-        } else {
++        } else if self.second.axis().to_logical(wm, LogicalAxis::Inline) == Some(axis) {
+             self.second = self.second.flip_track();
+         }
+     }
+@@ -2164,6 +2198,38 @@
+ pub enum BoxSizing {
+     ContentBox,
+     BorderBox,
++}
++
 +/// pyro: `frame-sizing` (css-sizing-4 responsive iframes): whether an iframe takes its natural size from
 +/// its embedded document's content.
 +/// https://drafts.csswg.org/css-sizing-4/#frame-sizing
@@ -16317,11 +16752,9 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
 +    ContentHeight,
 +    ContentBlockSize,
 +    ContentInlineSize,
-+}
-+
+ }
+ 
  /// https://drafts.csswg.org/css-images/#propdef-object-fit
- #[allow(missing_docs)]
- #[derive(
 diff -ruN a/values/specified/random.rs b/values/specified/random.rs
 --- a/values/specified/random.rs	2026-11-11 19:55:57
 +++ b/values/specified/random.rs	2026-11-21 18:57:31

@@ -960,6 +960,10 @@ pub trait TElement:
     /// Last layout's selected fallback, if any.
     fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
 
+    /// pyro: the writing mode of this element's containing block at the last layout, for
+    /// `anchored()` container queries; None before a layout placed it.
+    fn query_anchored_containing_block_writing_mode(&self) -> Option<crate::logical_geometry::WritingMode> { None }
+
     /// pyro: the edges this element, as a scroll-state query container, can be scrolled towards
     /// at the last layout's scroll position (the `scrollable` scroll-state feature).
     fn query_scrollable_edges(&self) -> crate::stylesheets::container_rule::ScrollableEdges {
