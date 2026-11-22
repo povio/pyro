@@ -1661,7 +1661,8 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 } else { t };
                 let prepared = if tag == "b" { prepare_numeric_bold(page, &mut dom, host, t, use_css) } else { None };
                 let carried = prepared.unwrap_or_else(|| carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some()));
-                if carried && !mixed_italic {
+                if carried && (!mixed_italic || dom.parent_element(t).ok().flatten().is_some_and(|el|
+                    FontToggle::Italic.active(&page.layout().computed_style_value(&dom, el, "font-style")))) {
                     continue;
                 }
                 let Ok(Some(parent)) = dom.parent(unit) else {
