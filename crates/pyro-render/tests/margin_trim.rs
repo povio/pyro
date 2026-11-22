@@ -116,3 +116,32 @@ fn block_end_trims_every_margin_of_collapsed_through_children() {
     );
     check(&img, &[(50, 15, WHITE), (50, 25, GREEN), (50, 45, GREEN), (50, 55, WHITE)]);
 }
+
+/// The page of the two tests below: a zero-height `position: relative` box with 50px block margins
+/// after a 50px green box, two blocks deep in a flow root; the blue box it holds marks where it is.
+fn nested_self_collapsing_child(trim: &str) -> RgbaImage {
+    render(&format!(
+        "<div style='display:flow-root;width:100px;{trim}'><div><div>\
+           <div style='height:50px;background:green'></div>\
+           <div style='position:relative;margin:50px 0'>\
+             <div style='position:absolute;top:0;width:100px;height:20px;background:blue'></div>\
+           </div>\
+         </div></div></div>"
+    ))
+}
+
+/// `margin-trim: block-end` trims the margins that collapse through the bottom edges of the last
+/// child and of its own last child, so the self-collapsing box among them moves up to the green
+/// box's bottom (WPT `margin-trim/block-container-block-end-self-collapsing-children-nested-*`).
+#[test]
+fn block_end_trims_self_collapsing_boxes_nested_at_the_bottom() {
+    let img = nested_self_collapsing_child("margin-trim:block-end");
+    check(&img, &[(50, 45, GREEN), (50, 55, BLUE), (50, 65, BLUE), (50, 75, WHITE), (50, 105, WHITE)]);
+}
+
+/// Without the property the box stays after its top margin (the control of the test above).
+#[test]
+fn self_collapsing_boxes_nested_at_the_bottom_keep_margins_without_margin_trim() {
+    let img = nested_self_collapsing_child("");
+    check(&img, &[(50, 45, GREEN), (50, 55, WHITE), (50, 105, BLUE), (50, 115, BLUE), (50, 125, WHITE)]);
+}

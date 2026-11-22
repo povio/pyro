@@ -76,6 +76,14 @@ bottom margin of the last in-flow child and the collapsed-through children after
 out-of-flow boxes keep their margins. The container's own margins are not trimmed. The trimmed margins are
 reported as zero in the children's `Layout::margin`. Covered by `crates/pyro-render/tests/margin_trim.rs` and
 WPT `css/css-box/margin-trim` (42 of 42 reftests).
+The `end` trim reaches into the last child that is not collapsed through when the margins of its own last
+children collapse through its bottom edge: that child is laid out again with `BlockContext::trims_block_end`
+(stored as `BlockItem::trim_relayout`), which trims them as its own `end` would, and so on down. Its size is
+unchanged; its self-collapsing last children move up to the bottom of its last child with a height. Such a
+layout is not cached (`compute_block_child_layout` here and in blitz-dom clear the node's cache around it), and
+it is skipped when the formatting context has floats, which it would place again. WPT
+`block-container-block-end-self-collapsing-children-nested-*`, `-offsets-nested-*` and
+`-nested-last-child-with-border` (`block_end_trims_self_collapsing_boxes_nested_at_the_bottom`).
 
 `compute/block.rs`, `compute/grid/alignment.rs`, `style/mod.rs`, `style/block.rs`: `aspect-ratio` as
 css-sizing-4 §5 has it, in block layout (`RatioSizes`, `resolve_sizes_with_aspect_ratio`). Upstream applied

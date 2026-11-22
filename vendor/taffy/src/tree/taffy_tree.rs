@@ -496,6 +496,14 @@ where
         inputs: LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
+        // pyro: a layout with the parent's block-end margin trimming reaching into the block is
+        // not keyed by the cache: computed afresh and not kept.
+        if block_ctx.as_ref().is_some_and(|ctx| ctx.trims_block_end()) {
+            self.cache_clear(node_id);
+            let output = self.compute_child_layout(node_id, inputs, block_ctx);
+            self.cache_clear(node_id);
+            return output;
+        }
         self.compute_child_layout(node_id, inputs, block_ctx)
     }
 }

@@ -3319,6 +3319,15 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             self.clear_layout_cache_of(node_id);
             return self.compute_child_layout_internal(node_id, inputs, block_ctx);
         }
+        // A block laid out with its parent's block-end margin trimming reaching into it (taffy's
+        // `BlockContext::trims_block_end`) is laid out afresh and not cached either: the cache
+        // does not key on it.
+        if block_ctx.as_ref().is_some_and(|ctx| ctx.trims_block_end()) {
+            self.clear_layout_cache_of(node_id);
+            let output = self.compute_child_layout_internal(node_id, inputs, block_ctx);
+            self.clear_layout_cache_of(node_id);
+            return output;
+        }
         let output = compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             tree.compute_child_layout_internal(node_id, inputs, block_ctx.as_deref_mut())
         });

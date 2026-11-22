@@ -72,6 +72,7 @@ impl BlockFormattingContext {
             adjoining_floats: [false, false],
             #[cfg(feature = "float_layout")]
             top_adjoining_floats: None,
+            trims_block_end: false,
         }
     }
 }
@@ -127,6 +128,10 @@ pub struct BlockContext<'bfc> {
     /// `None` if no in-flow content has been committed yet.
     #[cfg(feature = "float_layout")]
     top_adjoining_floats: Option<[bool; 2]>,
+    /// pyro: the parent trims the block-end margins that collapse through this block's bottom
+    /// edge (`margin-trim: block-end` on it or on an ancestor whose block-end margin trimming
+    /// reaches this block; see [`Self::set_trims_block_end`]).
+    trims_block_end: bool,
 }
 
 impl BlockContext<'_> {
@@ -146,12 +151,26 @@ impl BlockContext<'_> {
             adjoining_floats: self.adjoining_floats,
             #[cfg(feature = "float_layout")]
             top_adjoining_floats: None,
+            trims_block_end: false,
         }
     }
 
     /// Returns whether this block is the root block of it's Block Formatting Context
     pub fn is_bfc_root(&self) -> bool {
         self.is_root
+    }
+
+    /// pyro: whether the parent trims the block-end margins that collapse through this block's
+    /// bottom edge (css-box-4 §3.3: they collapse with the trimmed block-end margin of the
+    /// parent's last in-flow box). A layout made with it set depends on more than its
+    /// `LayoutInput`, so it must not be cached.
+    pub fn trims_block_end(&self) -> bool {
+        self.trims_block_end
+    }
+
+    /// pyro: see [`Self::trims_block_end`].
+    pub fn set_trims_block_end(&mut self, trims: bool) {
+        self.trims_block_end = trims;
     }
 }
 
@@ -505,6 +524,10 @@ struct BlockItem {
     inline_static_x: Option<f32>,
     /// Whether margins can be collapsed through this item
     can_be_collapsed_through: bool,
+    /// pyro: for an in-flow item of the same BFC laid out in `RunMode::PerformLayout`, its inputs
+    /// and the y offset and insets of its block context: block-end margin trimming lays it out
+    /// again with them when its last children's margins collapse with the trimmed margin.
+    trim_relayout: Option<(LayoutInput, f32, FloatInsets)>,
 
     /// Pending layout for in-flow non-floated items. Held back from `set_unrounded_layout` so the
     /// post-loop `align-content` pass in `compute_inner` can shift `location.y` before commit.
@@ -1588,6 +1611,7 @@ fn generate_item_list(
                 is_inline_level_oof: position.is_out_of_flow() && child_style.original_display_is_inline(),
                 inline_static_x: None,
                 can_be_collapsed_through: false,
+                trim_relayout: None,
                 final_layout: None,
                 oof_candidates: OofCandidates::new(),
             }
@@ -2149,6 +2173,11 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
     // collapses with them: the margins their descendants collapse through them, and both margins
     // of a box that is collapsed through, after which the next box is at the edge.
     let mut trims_start_margin = margin_trim.start;
+    // pyro: a block whose bottom margin collapses with its children's and that the parent trims
+    // at that edge trims them too: they collapse with the parent's trimmed margin (WPT
+    // `margin-trim/block-container-block-end-self-collapsing-children-nested-*`).
+    let margin_trim =
+        Line { start: margin_trim.start, end: margin_trim.end || (block_ctx.trims_block_end() && own_margins_collapse_with_children.end) };
     // pyro: `margin-trim: block-end`: the bottom of the last in-flow box that is not collapsed
     // through, and whether there is one.
     let mut last_solid_item_bottom: Option<f32> = None;
@@ -2612,6 +2641,8 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                     + active_collapsible_margin_set.collapse_with_margin(item_non_auto_margin.top).resolve();
                 let mut child_block_ctx = block_ctx.sub_context(estimated_y.max(clear_pos), insets);
                 let output = tree.compute_block_child_layout(item.node_id, inputs, Some(&mut child_block_ctx));
+                item.trim_relayout = (margin_trim.end && inputs.run_mode == RunMode::PerformLayout)
+                    .then_some((inputs, estimated_y.max(clear_pos), insets));
 
                 // Extract float contribution from child block context
                 #[cfg(feature = "float_layout")]
@@ -3017,6 +3048,20 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             let Some(layout) = item.final_layout.as_mut() else { continue };
             layout.margin.bottom = 0.0;
             if !collapsed_through {
+                // pyro: the margins that collapse through this item's bottom edge from its own last
+                // children are trimmed too, and its self-collapsing last children move up to the
+                // bottom of its last one that is not collapsed through. Laid out again with the trim:
+                // the item's size does not change (those margins are outside it). Not when the BFC
+                // has floats, which the second layout would place again.
+                #[cfg(feature = "float_layout")]
+                let relayout_places_floats = block_ctx.has_floats();
+                #[cfg(not(feature = "float_layout"))]
+                let relayout_places_floats = false;
+                if let Some((inputs, y_offset, insets)) = item.trim_relayout.filter(|_| !relayout_places_floats) {
+                    let mut child_block_ctx = block_ctx.sub_context(y_offset, insets);
+                    child_block_ctx.set_trims_block_end(true);
+                    tree.compute_block_child_layout(item.node_id, inputs, Some(&mut child_block_ctx));
+                }
                 break;
             }
             layout.location.y = edge + inset_offset.y;
