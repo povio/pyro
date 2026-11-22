@@ -909,6 +909,12 @@ pub trait GeometrySource {
     fn mandatory_snap_containers(&self) -> Vec<u64> {
         Vec::new()
     }
+    /// pyro: the keys of the elements styled `scroll-initial-target: nearest`, in tree order (CSS
+    /// Scroll Snap 2 § 3: their nearest scroll container starts scrolled to them); empty when no
+    /// element was ever styled so, as of the last sync.
+    fn initial_scroll_targets(&self) -> Vec<u64> {
+        Vec::new()
+    }
     /// pyro: the target of the scroll marker at the document point (`x`, `y`): its element's key,
     /// or its multi-column container's and the column's index.
     fn scroll_marker_at(&self, _x: f64, _y: f64) -> Option<(u64, Option<u32>)> {
@@ -923,6 +929,11 @@ pub trait GeometrySource {
     /// pyro: whether an element was ever styled with a `scroll-snap-type`, as of the last sync
     /// (no snapping to look for otherwise).
     fn uses_scroll_snap(&self) -> bool {
+        false
+    }
+    /// pyro: whether an element was ever styled `scroll-initial-target: nearest`, as of the last
+    /// sync (no initial scroll target to look for otherwise).
+    fn uses_scroll_initial_target(&self) -> bool {
         false
     }
     /// pyro: the keys of the elements whose `::scroll-marker-group` scrolled to keep its active

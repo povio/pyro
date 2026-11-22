@@ -319,6 +319,9 @@ pub struct Layout {
     pseudo_scroll: FxHashMap<(NodeId, u8), (i32, i32)>,
     /// pyro: whether the viewport took its initial snap position.
     viewport_initially_snapped: bool,
+    /// pyro: the scroll containers (`None`: the viewport) that took their initial scroll position
+    /// from a `scroll-initial-target` ([`Self::scroll_to_initial_targets`]): once each.
+    initially_targeted: rustc_hash::FxHashSet<Option<NodeId>>,
     /// pyro: the scroll offset script last gave an element on each axis in its CSS px (x, y), with
     /// the whole layout px it was kept as: read back while the offset is still that one, as a
     /// zoomed element's fractional offset ([`Self::css_scroll`]).
@@ -610,6 +613,7 @@ impl Layout {
             initially_snapped: Default::default(),
             pseudo_scroll: FxHashMap::default(),
             viewport_initially_snapped: false,
+            initially_targeted: Default::default(),
             css_scroll: FxHashMap::default(),
             initial_snap_checked: Default::default(),
             external,
@@ -3754,10 +3758,22 @@ impl Layout {
     /// pyro: CSS Scroll Snap 1 § 6.3: a scroll container that snaps mandatorily and was not
     /// scrolled starts at a snap position (Chromium snaps it at its first layout). Looked for once
     /// per DOM version. Whether a scroll offset changed.
+    ///
+    /// pyro: CSS Scroll Snap 2 § 3 first: a scroll container not yet scrolled starts scrolled to
+    /// its `scroll-initial-target` ([`Self::scroll_to_initial_targets`]), from where it then snaps.
     pub fn snap_initial_positions(&mut self, dom: &Dom) -> bool {
-        // pyro: free for a document no element of which was styled with a `scroll-snap-type` as
-        // of the last sync (looked for again after the next: the version is not marked checked).
-        if !self.external.as_ref().filter(|s| s.active()).is_some_and(|s| s.uses_scroll_snap()) {
+        // pyro: free for a document no element of which was styled with a `scroll-snap-type` or
+        // a `scroll-initial-target` as of the last sync (looked for again after the next: the
+        // version is not marked checked).
+        let Some((snap, targets)) = self
+            .external
+            .as_ref()
+            .filter(|s| s.active())
+            .map(|s| (s.uses_scroll_snap(), s.uses_scroll_initial_target()))
+        else {
+            return false;
+        };
+        if !snap && !targets {
             return false;
         }
         let version = dom.version();
@@ -3766,6 +3782,12 @@ impl Layout {
         }
         let Some(source) = self.synced_geometry_source(dom).cloned() else { return false };
         let mut moved = false;
+        if targets {
+            moved |= self.scroll_to_initial_targets(dom, &source);
+        }
+        if !snap {
+            return moved;
+        }
         for key in source.mandatory_snap_containers() {
             let Some(el) = crate::geometry::node_of(dom, key) else { continue };
             // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
@@ -3790,6 +3812,87 @@ impl Layout {
             if mandatory {
                 self.viewport_initially_snapped = true;
                 moved |= self.window_scroll_to(dom, Some(0), Some(0));
+            }
+        }
+        moved
+    }
+
+    /// pyro: CSS Scroll Snap 2 § 3: each element styled `scroll-initial-target: nearest` scrolls
+    /// its nearest scroll container (or the viewport) to it, aligned to its start edges in the
+    /// container's writing mode (its `scroll-snap-align` where the container snaps that axis), as
+    /// Chromium does. Only a container nobody scrolled yet, once, by its first target in tree order
+    /// (a script or user scroll before it keeps its own offset). Whether a scroll offset changed.
+    fn scroll_to_initial_targets(&mut self, dom: &Dom, source: &Rc<dyn GeometrySource>) -> bool {
+        let mut moved = false;
+        for key in source.initial_scroll_targets() {
+            let Some(el) = crate::geometry::node_of(dom, key) else { continue };
+            if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) || self.layout_box(dom, el).is_none() {
+                continue;
+            }
+            let mut container = None;
+            let mut cur = flat_parent_element(dom, el);
+            while let Some(node) = cur {
+                if self.is_root_container(dom, node) {
+                    break;
+                }
+                if self.is_scroll_container(dom, node) {
+                    container = Some(node);
+                    break;
+                }
+                cur = flat_parent_element(dom, node);
+            }
+            if self.initially_targeted.contains(&container) {
+                continue;
+            }
+            let alignment = RevealAlignment::Logical { block: ScrollAlign::Start, inline: ScrollAlign::Start };
+            let target = self.scroll_margin_rect(dom, el);
+            match container {
+                Some(node) => {
+                    // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
+                    if self.element_scroll.get(&node).is_some_and(|&o| o != (0, 0)) {
+                        self.initially_targeted.insert(container);
+                        continue;
+                    }
+                    let (offset_x, offset_y) =
+                        alignment.offsets(|| self.style.stylo_style(dom, node).map(|style| style.writing_mode));
+                    let (offset_x, offset_y) = self.snap_aligned_offsets(dom, node, el, offset_x, offset_y);
+                    let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
+                    let (port_width, port_height) = (self.client_width(dom, node), self.client_height(dom, node));
+                    let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, Some(node), port_width, port_height);
+                    let left = offset_x(x - pl, width, (port_width - pl - pr).max(0.0), self.scroll_left(node) as i64);
+                    let top = offset_y(y - pt, height, (port_height - pt - pb).max(0.0), self.scroll_top(node) as i64);
+                    self.initially_targeted.insert(container);
+                    // (It snaps from there: `element_scroll_to` lands on a snap position.)
+                    if self.element_scroll_to(dom, node, left, top) {
+                        self.initially_snapped.insert(node);
+                        moved = true;
+                    }
+                }
+                None => {
+                    if self.window_scroll != (0, 0) {
+                        self.initially_targeted.insert(None);
+                        continue;
+                    }
+                    if self.layout_box(dom, el).is_some_and(|b| b.fixed) {
+                        continue;
+                    }
+                    let [gl, gt, gr, gb] =
+                        self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()).unwrap_or([0.0; 4]);
+                    let (offset_x, offset_y) = alignment.offsets(|| {
+                        self.viewport_style_element(dom).and_then(|node| self.style.stylo_style(dom, node)).map(|style| style.writing_mode)
+                    });
+                    let (width, height) = (self.inner_width() as f64 - gl - gr, self.inner_height() as f64 - gt - gb);
+                    let root = dom.document_element(self.document()).ok().flatten();
+                    let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, root, width, height);
+                    let left = offset_x(target.left() - gl - pl, target.width, (width - pl - pr).max(0.0), self.window_scroll.0 as i64);
+                    let top = offset_y(target.top() - gt - pt, target.height, (height - pt - pb).max(0.0), self.window_scroll.1 as i64);
+                    self.initially_targeted.insert(None);
+                    // (It snaps from there: `window_scroll_to` lands on a snap position.)
+                    if self.window_scroll_to(dom, left, top) {
+                        self.viewport_initially_snapped = true;
+                        moved = true;
+                    }
+                }
             }
         }
         moved
@@ -4429,21 +4532,7 @@ impl Layout {
         // pyro: up the flat tree: a slotted element's slot (and a shadow root's host) are
         // ancestors whose scroll containers scroll it (WPT cssom-view
         // `scrollIntoView-should-treat-slot-as-scroll-container`).
-        let flat_parent = |node: NodeId| -> Option<NodeId> {
-            // (A closed shadow root's slot too: script's `assignedSlot` hides it.)
-            if let Some(slot) = dom.flat_tree_slot(node) {
-                return Some(slot);
-            }
-            match dom.parent_element(node).ok().flatten() {
-                Some(parent) => Some(parent),
-                None => dom
-                    .parent(node)
-                    .ok()
-                    .flatten()
-                    .filter(|&frag| dom.is_shadow_root(frag).unwrap_or(false))
-                    .and_then(|root| dom.fragment_host(root).ok().flatten()),
-            }
-        };
+        let flat_parent = |node: NodeId| flat_parent_element(dom, node);
         let mut cur = flat_parent(el);
         while let Some(node) = cur {
             if self.is_root_container(dom, node) {
@@ -5138,6 +5227,23 @@ impl ScrollAlign {
             ScrollAlign::End => end_scroll_offset,
             ScrollAlign::Nearest => nearest_scroll_offset,
         }
+    }
+}
+
+/// pyro: the parent of `node` in the flat tree: its slot when slotted (a closed shadow root's
+/// too: script's `assignedSlot` hides it), else its parent element, or a shadow root's host.
+fn flat_parent_element(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    if let Some(slot) = dom.flat_tree_slot(node) {
+        return Some(slot);
+    }
+    match dom.parent_element(node).ok().flatten() {
+        Some(parent) => Some(parent),
+        None => dom
+            .parent(node)
+            .ok()
+            .flatten()
+            .filter(|&frag| dom.is_shadow_root(frag).unwrap_or(false))
+            .and_then(|root| dom.fragment_host(root).ok().flatten()),
     }
 }
 

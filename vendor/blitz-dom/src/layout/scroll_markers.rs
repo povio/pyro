@@ -1325,6 +1325,30 @@ impl BaseDocument {
             .collect()
     }
 
+    /// pyro: the elements styled `scroll-initial-target: nearest` (CSS Scroll Snap 2 § 3: their
+    /// nearest scroll container starts scrolled to them), in tree order.
+    pub fn initial_scroll_targets(&self) -> Vec<NodeId> {
+        use style::values::computed::ScrollInitialTarget;
+        if !self.scroll_initial_target_styles {
+            return Vec::new();
+        }
+        let mut found = Vec::new();
+        let mut stack = vec![self.root_node().id];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else { continue };
+            if node.is_element()
+                && node.primary_styles().is_some_and(|style| {
+                    style.get_box().slow_clone_scroll_initial_target() == ScrollInitialTarget::Nearest
+                })
+            {
+                found.push(id);
+            }
+            // (A shadow host's children are its shadow tree's: a target in one counts too.)
+            stack.extend(node.children.iter().rev().copied());
+        }
+        found
+    }
+
     /// pyro: the target of the `::scroll-marker` box at the document point (`x`, `y`): its
     /// element, or its multi-column container and column (CSS Overflow 5 § 3.2: activating a
     /// marker scrolls to its target; WPT css-overflow `column-scroll-marker-002`).
@@ -1393,6 +1417,11 @@ impl BaseDocument {
     /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.
     pub fn uses_scroll_snap(&self) -> bool {
         self.scroll_snap_styles
+    }
+
+    /// pyro: whether an element of the document was ever styled `scroll-initial-target: nearest`.
+    pub fn uses_scroll_initial_target(&self) -> bool {
+        self.scroll_initial_target_styles
     }
 
     /// pyro: whether the document has scroll pseudo-elements (markers, groups, buttons).

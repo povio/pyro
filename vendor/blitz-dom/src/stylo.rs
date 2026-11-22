@@ -223,6 +223,9 @@ impl crate::document::BaseDocument {
             if traverser.scroll_snap_styles.into_inner() {
                 self.scroll_snap_styles = true;
             }
+            if traverser.scroll_initial_target_styles.into_inner() {
+                self.scroll_initial_target_styles = true;
+            }
             if traverser.column_span_styles.into_inner() {
                 self.column_span_styles = true;
             }
@@ -2409,6 +2412,9 @@ pub struct RecalcStyle<'a> {
     column_span_styles: std::sync::atomic::AtomicBool,
     /// pyro: an element was styled with a `scroll-snap-type` (`BaseDocument::scroll_snap_styles`).
     scroll_snap_styles: std::sync::atomic::AtomicBool,
+    /// pyro: an element was styled `scroll-initial-target: nearest`
+    /// (`BaseDocument::scroll_initial_target_styles`).
+    scroll_initial_target_styles: std::sync::atomic::AtomicBool,
     /// pyro: the document evaluates counters and quotes: restyles note whether they changed
     /// any (`counters_changed`).
     track_counters: bool,
@@ -2435,6 +2441,7 @@ impl<'a> RecalcStyle<'a> {
             text_box_trim_styles: std::sync::atomic::AtomicBool::new(false),
             column_span_styles: std::sync::atomic::AtomicBool::new(false),
             scroll_snap_styles: std::sync::atomic::AtomicBool::new(false),
+            scroll_initial_target_styles: std::sync::atomic::AtomicBool::new(false),
             track_counters: false,
             counters_changed: std::sync::atomic::AtomicBool::new(false),
         }
@@ -2795,6 +2802,9 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 }
                 if style.get_box().scroll_snap_type != style::values::computed::ScrollSnapType::none() {
                     self.scroll_snap_styles.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                if style.get_box().slow_clone_scroll_initial_target() != style::values::computed::ScrollInitialTarget::None {
+                    self.scroll_initial_target_styles.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 // pyro: list items number their markers with the `list-item` counter
                 // (`layout::counters`).

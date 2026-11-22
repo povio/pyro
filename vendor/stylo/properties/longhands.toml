@@ -2033,6 +2033,16 @@ spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
 animation_type = "discrete"
 affects = "paint"
 
+[scroll-initial-target]
+type = "ScrollInitialTarget"
+initial = "computed::ScrollInitialTarget::None"
+struct = "box"
+engine = "servo"
+animation_type = "discrete"
+servo_restyle_damage = "repaint"
+spec = "https://drafts.csswg.org/css-scroll-snap-2/#scroll-initial-target"
+affects = "paint"
+
 [scroll-marker-group]
 type = "ScrollMarkerGroup"
 initial = "computed::ScrollMarkerGroup::NONE"

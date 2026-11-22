@@ -751,6 +751,7 @@ class Longhand(Property):
                 "ScrollSnapAlign",
                 "ScrollSnapAxis",
                 "ScrollSnapStop",
+                "ScrollInitialTarget",
                 "ScrollSnapStrictness",
                 "ScrollSnapType",
                 "TextAlign",

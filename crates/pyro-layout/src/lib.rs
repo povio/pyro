@@ -1261,8 +1261,16 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.uses_scroll_snap(self.page))))
     }
 
+    fn uses_scroll_initial_target(&self) -> bool {
+        RENDERER.with(|r| r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.uses_scroll_initial_target(self.page))))
+    }
+
     fn mandatory_snap_containers(&self) -> Vec<u64> {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.mandatory_snap_containers(self.page))).unwrap_or_default())
+    }
+
+    fn initial_scroll_targets(&self) -> Vec<u64> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.initial_scroll_targets(self.page))).unwrap_or_default())
     }
 
     fn take_scroll_group_moves(&self) -> Vec<u64> {
