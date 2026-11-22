@@ -44,6 +44,80 @@
     return false;
   }
 
+  // Web IDL accessor and operation functions: `get <name>` getters, and
+  // Promise-typed attributes that reject rather than throw on a bad `this`.
+  const getter = (name, read) => Object.getOwnPropertyDescriptor({ get [name]() { return read(this); } }, name).get;
+  const accessor = (get) => ({ get, enumerable: true, configurable: true });
+  const method = (value) => ({ value, writable: true, enumerable: true, configurable: true });
+  const requireArgument = (count, interfaceName, name) => {
+    if (!count) throw new TypeError(`Failed to execute '${name}' on '${interfaceName}': 1 argument required, but only 0 present.`);
+  };
+
+  // `ViewTransitionTypeSet` (setlike<DOMString>): an interface object whose
+  // instances keep their members in a backing Set.
+  const typeSets = new WeakMap();
+  const SetCtor = Set;
+  const setProto = Set.prototype;
+  const setAdd = setProto.add, setDelete = setProto.delete, setHas = setProto.has, setClear = setProto.clear;
+  const setValues = setProto.values, setEntries = setProto.entries, setForEach = setProto.forEach;
+  const setSize = Object.getOwnPropertyDescriptor(setProto, 'size').get;
+  const ViewTransitionTypeSet = function ViewTransitionTypeSet() {
+    throw new TypeError('Illegal constructor');
+  };
+  const members = (self, name) => {
+    const set = typeSets.get(self);
+    if (set === undefined) throw new TypeError(`Illegal invocation: ViewTransitionTypeSet.${name}`);
+    return set;
+  };
+  const typeSetMethods = {
+    entries() { return setEntries.call(members(this, 'entries')); },
+    keys() { return setValues.call(members(this, 'keys')); },
+    values() { return setValues.call(members(this, 'values')); },
+    forEach(callback) {
+      const set = members(this, 'forEach');
+      requireArgument(arguments.length, 'ViewTransitionTypeSet', 'forEach');
+      if (!isFunction(callback)) throw new TypeError("Failed to execute 'forEach' on 'ViewTransitionTypeSet': The callback provided as parameter 1 is not a function.");
+      const thisArg = arguments[1], self = this;
+      setForEach.call(set, (value) => { callback.call(thisArg, value, value, self); });
+    },
+    has(value) {
+      const set = members(this, 'has');
+      requireArgument(arguments.length, 'ViewTransitionTypeSet', 'has');
+      return setHas.call(set, String(value));
+    },
+    add(value) {
+      const set = members(this, 'add');
+      requireArgument(arguments.length, 'ViewTransitionTypeSet', 'add');
+      setAdd.call(set, String(value));
+      return this;
+    },
+    delete(value) {
+      const set = members(this, 'delete');
+      requireArgument(arguments.length, 'ViewTransitionTypeSet', 'delete');
+      return setDelete.call(set, String(value));
+    },
+    clear() { setClear.call(members(this, 'clear')); },
+  };
+  Object.defineProperties(ViewTransitionTypeSet.prototype, {
+    entries: method(typeSetMethods.entries),
+    keys: method(typeSetMethods.keys),
+    values: method(typeSetMethods.values),
+    forEach: method(typeSetMethods.forEach),
+    has: method(typeSetMethods.has),
+    add: method(typeSetMethods.add),
+    delete: method(typeSetMethods.delete),
+    clear: method(typeSetMethods.clear),
+    size: accessor(getter('size', (self) => setSize.call(members(self, 'size')))),
+    [Symbol.iterator]: { value: typeSetMethods.values, writable: true, configurable: true },
+    [Symbol.toStringTag]: { value: 'ViewTransitionTypeSet', configurable: true },
+  });
+  Object.defineProperty(ViewTransitionTypeSet, 'prototype', { writable: false });
+  function typeSet(types) {
+    const self = Object.create(ViewTransitionTypeSet.prototype);
+    typeSets.set(self, new SetCtor(types));
+    return self;
+  }
+
   const ViewTransition = function ViewTransition() {
     throw new TypeError('Illegal constructor');
   };
@@ -52,32 +126,36 @@
     if (st === undefined) throw new TypeError(`Illegal invocation: ViewTransition.${name}`);
     return st;
   };
+  const promiseGetter = (name) => getter(name, (self) => {
+    const st = states.get(self);
+    return st === undefined ? PromiseCtor.reject(new TypeError(`Illegal invocation: ViewTransition.${name}`)) : st[name].promise;
+  });
   Object.defineProperties(ViewTransition.prototype, {
-    updateCallbackDone: { get() { return state(this, 'updateCallbackDone').updateCallbackDone.promise; }, enumerable: true, configurable: true },
-    ready: { get() { return state(this, 'ready').ready.promise; }, enumerable: true, configurable: true },
-    finished: { get() { return state(this, 'finished').finished.promise; }, enumerable: true, configurable: true },
-    types: { get() { return state(this, 'types').types; }, enumerable: true, configurable: true },
-    transitionRoot: { get() { return state(this, 'transitionRoot').root; }, enumerable: true, configurable: true },
-    waitUntil: {
-      value: function waitUntil(promise) {
+    updateCallbackDone: accessor(promiseGetter('updateCallbackDone')),
+    ready: accessor(promiseGetter('ready')),
+    finished: accessor(promiseGetter('finished')),
+    types: accessor(getter('types', (self) => state(self, 'types').types)),
+    transitionRoot: accessor(getter('transitionRoot', (self) => state(self, 'transitionRoot').root)),
+    waitUntil: method({
+      waitUntil(promise) {
         const st = state(this, 'waitUntil');
-        if (!arguments.length) throw new TypeError('waitUntil requires a promise');
+        requireArgument(arguments.length, 'ViewTransition', 'waitUntil');
         if (st.phase === 'done') return;
         if (st.waiting >= 1024) throw new DOMException('Too many pending promises', 'QuotaExceededError');
         ++st.waiting;
         const settled = () => { --st.waiting; finish(st); };
         promiseThen.call(PromiseCtor.resolve(promise), settled, settled);
-      }, writable: true, enumerable: true, configurable: true,
-    },
-    skipTransition: {
-      value: function skipTransition() {
+      },
+    }.waitUntil),
+    skipTransition: method({
+      skipTransition() {
         const st = state(this, 'skipTransition');
         if (st.phase !== 'done') skip(st, abortError('Transition was skipped'));
       },
-      writable: true, enumerable: true, configurable: true,
-    },
+    }.skipTransition),
     [Symbol.toStringTag]: { value: 'ViewTransition', configurable: true },
   });
+  Object.defineProperty(ViewTransition, 'prototype', { writable: false });
 
   // "Skip the view transition": `ready` rejects with `reason` unless it has
   // settled, the update callback still runs, `finished` follows it.
@@ -150,7 +228,7 @@
     const self = Object.create(ViewTransition.prototype);
     const st = {
       self, scope, root, update, phase: 'pending-capture', called: false, readySettled: false,
-      types: new Set(types), timer: null, waiting: 0, animationDone: false,
+      types: typeSet(types), timer: null, waiting: 0, animationDone: false,
       updateCallbackDone: deferred(), ready: deferred(), finished: deferred(),
     };
     handled(st.ready.promise);
@@ -184,5 +262,5 @@
     return self;
   }
 
-  return { start, ViewTransition, active: scope => active.get(scope) || null };
+  return { start, ViewTransition, ViewTransitionTypeSet, active: scope => active.get(scope) || null };
 })

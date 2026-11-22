@@ -315,3 +315,45 @@ fn view_transition_active_scope_and_interface_identity() {
     assert_eq!(eval(&environment.main, "const pending = new Promise(() => {}); let accepted = 0; try { for (; accepted < 1025; ++accepted) transition.waitUntil(pending); } catch (error) { if (error.name !== 'QuotaExceededError') throw error; } accepted"), "1024");
     assert_eq!(eval(&environment.main, "transition.skipTransition(); document.activeViewTransition === null"), "true");
 }
+
+#[test]
+fn view_transition_idl_accessors_and_type_set_setlike() {
+    let environment = env("<!doctype html><html><body></body></html>");
+    let r = &environment.main;
+    eval(r, "globalThis.requestAnimationFrame = () => 1; globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};");
+    // Interface objects: non-writable `prototype`, `get <name>` getters, and
+    // Promise attributes that reject (not throw) on a bad receiver.
+    assert_eq!(eval(r, r#"(() => {
+        const proto = ViewTransition.prototype;
+        const names = ['updateCallbackDone', 'ready', 'finished', 'types', 'transitionRoot']
+            .map(name => Object.getOwnPropertyDescriptor(proto, name).get.name).join('/');
+        const promises = ['updateCallbackDone', 'ready', 'finished'].map(name => proto[name] instanceof Promise).join('/');
+        let threw; try { proto.types; } catch (error) { threw = error.name; }
+        return [Object.getOwnPropertyDescriptor(ViewTransition, 'prototype').writable,
+                Object.getOwnPropertyDescriptor(ViewTransitionTypeSet, 'prototype').writable,
+                Object.getPrototypeOf(ViewTransitionTypeSet) === Function.prototype,
+                names, promises, threw, proto.waitUntil.length].join();
+    })()"#), "false,false,true,get updateCallbackDone/get ready/get finished/get types/get transitionRoot,true/true/true,TypeError,1");
+    // Every setlike member has its Web IDL name, length and attributes.
+    assert_eq!(eval(r, r#"(() => {
+        const proto = ViewTransitionTypeSet.prototype;
+        const methods = ['entries', 'keys', 'values', 'forEach', 'has', 'add', 'delete', 'clear'].map(name => {
+            const d = Object.getOwnPropertyDescriptor(proto, name);
+            return `${d.value.name}:${d.value.length}:${d.enumerable && d.writable && d.configurable}`;
+        }).join(' ');
+        const size = Object.getOwnPropertyDescriptor(proto, 'size');
+        const iterator = Object.getOwnPropertyDescriptor(proto, Symbol.iterator);
+        let ctor; try { new ViewTransitionTypeSet(); } catch (error) { ctor = error.name; }
+        return [methods, size.get.name, size.enumerable, size.set, iterator.value === proto.values, iterator.enumerable,
+                Object.prototype.toString.call(proto), ctor].join();
+    })()"#), "entries:0:true keys:0:true values:0:true forEach:1:true has:1:true add:1:true delete:1:true clear:0:true,get size,true,,true,false,[object ViewTransitionTypeSet],TypeError");
+    // `types` is one live ViewTransitionTypeSet of strings per transition.
+    assert_eq!(eval(r, r#"(() => {
+        const transition = document.startViewTransition({types: ['a', 1]});
+        const types = transition.types;
+        types.add('b').add('a'); types.delete('1'); types.add(2);
+        const seen = []; types.forEach(function (value, key, set) { seen.push(value === key && set === types && this.tag); }, {tag: 'x'});
+        return [types === transition.types, types instanceof ViewTransitionTypeSet, types.size, [...types].join('|'),
+                types.has('2'), seen.join('|')].join();
+    })()"#), "true,true,3,a|b|2,true,x|x|x");
+}
