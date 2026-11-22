@@ -336,6 +336,22 @@ where
     });
     def.method("blur", 0, |s, _w, _a| Ok(s.undefined()));
     def.method("print", 0, |s, _w, _a| Ok(s.undefined()));
+    // pyro: css-sizing-4 responsive iframes: a responsively embedded document (one that opted in with
+    // `<meta name="responsive-embedded-sizing">`) in a child frame asks its iframe to take its
+    // content's size again. That size is read whenever the embedder reads its layout or renders
+    // (`PageDom::sync_responsive_frames`), so nothing is queued; anything else throws (WPT css-sizing
+    // `responsive-iframe/responsive-iframe-request-resize-error`).
+    def.method("requestResize", 0, |s, w, _a| {
+        let page = w.page();
+        let embedded = page.is_nested_frame() && page.dom.borrow().is_responsively_embedded(page.document());
+        if !embedded {
+            return Err(JsError::dom(
+                "NotAllowedError",
+                "Failed to execute 'requestResize' on 'Window': The document is not responsively embedded.",
+            ));
+        }
+        Ok(s.undefined())
+    });
     // The embedder may block until the dialog is answered (CDP with a
     // session that has Page enabled); otherwise each returns what a
     // dismissed one gives (Chrome's results when Playwright auto-dismisses)

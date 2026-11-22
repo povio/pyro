@@ -135,7 +135,7 @@ pub fn engine_marked(nonce: &str, _element: &crate::node::ElementData) -> bool {
 /// under their canonical names; a render snapshot's travel under nonce names only.
 pub const ENGINE_FIELDS: &[&str] = &[
     "data-pyro-frame",
-    "data-pyro-frame-content-height",
+    "data-pyro-frame-content-size",
     "data-pyro-sheet",
     "data-pyro-sheet-referrer-policy",
     "data-pyro-scroll-left",

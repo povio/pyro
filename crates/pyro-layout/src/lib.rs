@@ -1147,6 +1147,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.document_size(self.page))
     }
 
+    fn document_content_size(&self) -> Option<(f64, f64)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.document_content_size(self.page))
+    }
+
     fn viewport_gutters(&self) -> Option<[f64; 4]> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.viewport_gutters(self.page))
     }

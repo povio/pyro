@@ -1194,10 +1194,18 @@ impl LayoutPassState<'_> {
         let content_sized = node.primary_styles().is_some_and(|style| {
             style.get_ui().field_sizing == style::values::computed::FieldSizing::Content
         });
-        // pyro: `frame-sizing: content-height` (see the iframe step below)
-        let frame_sizing_content_height = node.primary_styles().is_some_and(|style| {
+        // pyro: the physical axes (width, height) `frame-sizing` sizes from the content: `content-width`,
+        // `content-height`, or a logical value in the iframe's own writing mode (see the iframe step below)
+        let frame_sizing_axes = node.primary_styles().map_or((false, false), |style| {
             use style::values::computed::FrameSizing;
-            matches!(style.get_position().frame_sizing, FrameSizing::ContentHeight | FrameSizing::ContentBlockSize)
+            let vertical = style.writing_mode.is_vertical();
+            match style.get_position().frame_sizing {
+                FrameSizing::Auto => (false, false),
+                FrameSizing::ContentWidth => (true, false),
+                FrameSizing::ContentHeight => (false, true),
+                FrameSizing::ContentBlockSize => (vertical, !vertical),
+                FrameSizing::ContentInlineSize => (!vertical, vertical),
+            }
         });
         match &mut node.data {
             NodeData::Text(data) => {
@@ -1721,18 +1729,30 @@ impl LayoutPassState<'_> {
                         _ => (intrinsic_sizes, default_object_size),
                     };
 
-                    // pyro: an iframe of `frame-sizing: content-height` showing a responsively embedded
-                    // document is as tall as its content (css-sizing-4; the height comes from pyro through the
-                    // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
+                    // pyro: an iframe of `frame-sizing: content-height` (`content-width`, or a logical value)
+                    // showing a responsively embedded document takes its content's size on that axis
+                    // (css-sizing-4; the size, width and height, comes from pyro through the render tree's
+                    // `data-pyro-frame-content-size`; WPT css-sizing `responsive-iframe/*`). The other axis
+                    // keeps the default object size.
                     let (intrinsic_sizes, default_object_size) = match element_data
-                        .reserved_attr("data-pyro-frame-content-height")
+                        .reserved_attr("data-pyro-frame-content-size")
                         .filter(|_| crate::engine_marked(&frames.nonce, element_data))
-                        .and_then(|value| value.parse::<f32>().ok())
-                    {
-                        Some(height)
-                            if element_data.name.local == local_name!("iframe") && frame_sizing_content_height =>
+                        .and_then(|value| {
+                            let (width, height) = value.split_once(',')?;
+                            Some((width.parse::<f32>().ok()?, height.parse::<f32>().ok()?))
+                        }) {
+                        Some((width, height))
+                            if element_data.name.local == local_name!("iframe")
+                                && (frame_sizing_axes.0 || frame_sizing_axes.1) =>
                         {
-                            (IntrinsicSizes { width: None, height: Some(height.max(0.0)), ratio: None }, default_object_size)
+                            (
+                                IntrinsicSizes {
+                                    width: frame_sizing_axes.0.then_some(width.max(0.0)),
+                                    height: frame_sizing_axes.1.then_some(height.max(0.0)),
+                                    ratio: None,
+                                },
+                                default_object_size,
+                            )
                         }
                         _ => (intrinsic_sizes, default_object_size),
                     };

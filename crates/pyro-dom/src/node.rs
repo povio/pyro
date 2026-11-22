@@ -163,6 +163,9 @@ pub struct DocumentData {
     /// iframe of `frame-sizing: content-height` showing it takes its content's height (css-sizing-4
     /// responsive iframes; `Dom::is_responsively_embedded`).
     pub(crate) responsive_embedded: bool,
+    /// The `content` of that `<meta>` (its `allow-origins=` list: the embedders that may take the
+    /// document's size; `Dom::responsive_embedding_policy`).
+    pub(crate) responsive_embedding_policy: Option<Box<str>>,
     /// The language its response's `Content-Language` header gave
     /// (`Dom::set_content_language`): the last fallback of `:lang()`.
     pub(crate) content_language: Option<Box<str>>,

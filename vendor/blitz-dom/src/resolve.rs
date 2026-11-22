@@ -3480,6 +3480,25 @@ impl BaseDocument {
     }
 }
 
+impl BaseDocument {
+    /// pyro: the size of the document's content (CSS px): its root element's border box and the
+    /// overflow it scrolls to, measured from the root's own edges and not widened to the viewport. A
+    /// document scrolled from the right ([`Self::viewport_scrolls_leftward`]) counts what overflows the
+    /// root leftward, not rightward. (A responsively embedded document's natural size, css-sizing-4
+    /// `frame-sizing`, which pyro gives its iframe.) `None` without a document element.
+    pub fn document_content_size(&self) -> Option<(f64, f64)> {
+        let root = self.try_root_element()?;
+        let (size, overflow) =
+            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / self.viewport().scale_f64()));
+        let width = if self.viewport_scrolls_leftward() {
+            (size.width as f64) - overflow.x0.min(0.0)
+        } else {
+            (size.width as f64).max(overflow.x1)
+        };
+        Some((width, (size.height as f64).max(overflow.y1)))
+    }
+}
+
 /// pyro: whether a document in writing mode `wm` has its horizontal scroll origin on the right:
 /// its content overflows the viewport leftward (`direction: rtl` in horizontal writing, blocks
 /// flowing right to left in `vertical-rl`).

@@ -2055,6 +2055,39 @@ impl Layout {
         self.synced_geometry_source(dom).and_then(|s| s.document_size()).unwrap_or((0.0, 0.0))
     }
 
+    /// pyro: the size of `doc`'s content (its root element's border box and the overflow it scrolls
+    /// to; [`GeometrySource::document_content_size`]), not widened to the viewport: the natural size
+    /// a responsively embedded document gives its iframe (css-sizing-4 `frame-sizing`). Without the
+    /// engine's, the root element's border box.
+    pub fn document_content_size(&self, dom: &Dom, doc: NodeId) -> Option<(f64, f64)> {
+        let root = dom.document_element(doc).ok().flatten()?;
+        let border_box = (self.offset_width(dom, root), self.offset_height(dom, root));
+        match self.synced_geometry_source(dom).and_then(|s| s.document_content_size()) {
+            Some((width, height)) => Some((width.max(border_box.0), height.max(border_box.1))),
+            None => Some(border_box),
+        }
+    }
+
+    /// pyro: the physical axes (width, height) on which the iframe `el` takes its natural size from
+    /// a responsively embedded document (css-sizing-4 `frame-sizing`: `content-width`,
+    /// `content-height`, or the logical values in its writing mode), each `true` only while its
+    /// preferred size on that axis is `auto` (otherwise the content cannot change it).
+    pub fn frame_sizing_axes(&self, dom: &Dom, el: NodeId) -> (bool, bool) {
+        use style::values::computed::FrameSizing;
+        let Some(style) = self.style.stylo_style(dom, el) else { return (false, false) };
+        let vertical = style.writing_mode.is_vertical();
+        let (width, height) = match style.get_position().frame_sizing {
+            FrameSizing::Auto => (false, false),
+            FrameSizing::ContentWidth => (true, false),
+            FrameSizing::ContentHeight => (false, true),
+            FrameSizing::ContentBlockSize => (vertical, !vertical),
+            FrameSizing::ContentInlineSize => (!vertical, vertical),
+        };
+        let position = style.get_position();
+        let auto = |size: &style::values::computed::Size| matches!(size, style::values::generics::length::GenericSize::Auto);
+        (width && auto(&position.width), height && auto(&position.height))
+    }
+
     /// `Document.scrollSize` (Document.zig:548-556): the document, at least
     /// viewport-sized.
     pub fn document_scroll_size(&self, dom: &Dom) -> (f64, f64) {
