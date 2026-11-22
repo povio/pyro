@@ -664,6 +664,8 @@
     get height() { return img(this).height; }
     get data() { return img(this).data; }
     get colorSpace() { return img(this).colorSpace; }
+    // pyro: only 8-bit RGBA data is made.
+    get pixelFormat() { img(this); return 'rgba-unorm8'; }
   }
   webidl(ImageData, 'ImageData');
 
