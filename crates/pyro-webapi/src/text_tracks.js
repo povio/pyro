@@ -278,7 +278,8 @@
       if (changed.length) {
         // A mode change queues `change` at the list and runs "time marches on", so the
         // newly shown tracks' active cues are current without waiting for a playback tick.
-        queue(mediaLists.get(l.media),new E('change'));
+        const list=mediaLists.get(l.media);
+        if (list) queue(list,new E('change'));
         updatePlayback(l,false);
       }
     }
