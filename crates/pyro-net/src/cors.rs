@@ -180,6 +180,11 @@ fn list(headers: &HeaderMap, name: header::HeaderName) -> Vec<String> {
         .collect()
 }
 
+/// An HTTP token (RFC 9110 `tchar`s), as a method or header field name.
+fn is_token(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+}
+
 #[derive(Clone, Debug)]
 struct PreflightEntry {
     methods: Vec<String>,
@@ -198,6 +203,11 @@ fn validate_preflight(status: u16, resp: &HeaderMap, req: &Request, origin: &str
     let methods = list(resp, header::ACCESS_CONTROL_ALLOW_METHODS);
     let headers: Vec<String> =
         list(resp, header::ACCESS_CONTROL_ALLOW_HEADERS).into_iter().map(|h| h.to_ascii_lowercase()).collect();
+    // Fetch "CORS-preflight fetch": either list failing to parse (`#method`, `#field-name`:
+    // tokens) is a network error.
+    if let Some(bad) = methods.iter().chain(&headers).find(|t| !is_token(t)) {
+        return Err(format!("Invalid token '{bad}' in the preflight response's allow lists"));
+    }
     let wildcard_ok = req.credentials != Credentials::Include;
     let any_method = wildcard_ok && methods.iter().any(|m| m == "*");
     let any_header = wildcard_ok && headers.iter().any(|h| h == "*");
