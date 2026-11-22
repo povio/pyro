@@ -1,0 +1,378 @@
+[
+  {
+    "fixture": {
+      "shape": "span-css",
+      "css": false,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-css",
+      "css": false,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "redone",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-css",
+      "css": false,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-css",
+      "css": false,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "redone",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "font-css",
+      "css": true,
+      "reverse": false,
+      "selection": "full"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent",
+      "second"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "font-css",
+      "css": true,
+      "reverse": false,
+      "selection": "full"
+    },
+    "stage": "redone",
+    "field": "connected",
+    "previous": [
+      "parent",
+      "second"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-css",
+      "css": true,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-css",
+      "css": true,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "redone",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "font-css",
+      "css": true,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent",
+      "second"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "font-css",
+      "css": true,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "redone",
+    "field": "connected",
+    "previous": [
+      "parent",
+      "second"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "font-css",
+      "css": true,
+      "reverse": true,
+      "selection": "full"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent",
+      "second"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "font-css",
+      "css": true,
+      "reverse": true,
+      "selection": "full"
+    },
+    "stage": "redone",
+    "field": "connected",
+    "previous": [
+      "parent",
+      "second"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-css",
+      "css": true,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-css",
+      "css": true,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "redone",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "font-css",
+      "css": true,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent",
+      "second"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "font-css",
+      "css": true,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "redone",
+    "field": "connected",
+    "previous": [
+      "parent",
+      "second"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  }
+]

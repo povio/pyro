@@ -1,0 +1,278 @@
+[
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": false,
+      "reverse": false,
+      "selection": "full"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": false,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "onceUndo",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": false,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": false,
+      "reverse": true,
+      "selection": "full"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": false,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "onceUndo",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": false,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": true,
+      "reverse": false,
+      "selection": "full"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": true,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "onceUndo",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": true,
+      "reverse": false,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": true,
+      "reverse": true,
+      "selection": "full"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": true,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "onceUndo",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "fixture": {
+      "shape": "span-same",
+      "css": true,
+      "reverse": true,
+      "selection": "part"
+    },
+    "stage": "restored",
+    "field": "connected",
+    "previous": [
+      "parent"
+    ],
+    "candidate": [
+      false,
+      false,
+      false
+    ],
+    "signed": [
+      true,
+      true,
+      true
+    ]
+  }
+]

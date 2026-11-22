@@ -487,14 +487,19 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
     let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
     let mut run = text;
     if let Some(carrier) = value_carrier(dom, text, host, fmt) {
-        if fmt.kind == Kind::Size && editing::local(dom, carrier) == "font"
-            && dom.get_attribute(carrier, "size").ok()? == fmt.legacy.as_deref()
-            && equivalent(fmt, &effective(page, dom, Kind::Size, text))
+        if matches!(fmt.kind, Kind::Size | Kind::Family) && editing::local(dom, carrier) == "font"
+            && equivalent(fmt, &effective(page, dom, fmt.kind, text))
         {
-            // Only a plain legacy FONT at the end of its run can absorb a
-            // following selection without spreading unrelated styling.
-            return (legacy.is_some() && dom.attributes(carrier).ok()?.len() == 1
-                && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
+            let authored = dom.get_attribute(carrier, fmt.kind.html_attr()?).ok()?;
+            let exact = authored == fmt.legacy.as_deref();
+            if exact || fmt.kind == Kind::Family && authored.zip(fmt.legacy.as_deref())
+                .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
+            {
+                // Equivalent family spelling preserves the existing carrier.
+                // Extending it to new text also requires the same literal face.
+                return (exact && legacy.is_some() && dom.attributes(carrier).ok()?.len() == 1
+                    && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
+            }
         }
         let outer = dom.parent_element(carrier).ok()??;
         let mut points = [(text, 0), (text, editing::len(dom, text))];
@@ -513,8 +518,25 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
             run = middle;
         }
     }
-    // Preserve the selected SPAN's paint when legacy sizing needs an inner FONT.
-    if fmt.kind == Kind::Size && legacy.is_some() && run != text && editing::local(dom, run) == "span" {
+    if fmt.kind == Kind::Family {
+        let outer = dom.parent_element(run).ok()??;
+        if outer != host && editing::local(dom, outer) == "font" && dom.child_count(outer).ok()? == 1
+            && dom.has_attribute(outer, "face").ok()?
+        {
+            let plain = dom.attributes(outer).ok()?.len() == 1;
+            if run == text && (legacy.is_some() || !plain) {
+                dom.remove_attribute(outer, "face").ok()?;
+                apply_to(dom, outer, fmt, legacy);
+                return (plain && legacy.is_some()).then_some(outer);
+            }
+            if plain {
+                super::indentation::unwrap(dom, outer, &mut [(text, 0), (text, editing::len(dom, text))])?;
+            }
+        }
+    }
+    // Keep the SPAN around an isolated legacy FONT when it carries other styling.
+    if (fmt.kind == Kind::Size || fmt.kind == Kind::Family && single) && legacy.is_some()
+        && run != text && editing::local(dom, run) == "span" {
         run = text;
     }
     let parent = dom.parent_element(run).ok()??;
@@ -570,15 +592,29 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
         let dom = page.dom.borrow();
         nodes.iter().map(|&n| !equivalent(&fmt, &effective(page, &dom, kind, n))).collect()
     };
-    let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size) && {
+    let italic_family = if kind == Kind::Family && nodes.len() == 1 {
+        let dom = page.dom.borrow();
+        let text = nodes[0];
+        dom.parent_element(text).ok().flatten().filter(|&el| el != host && editing::local(&dom, el) == "i"
+            && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
+            && dom.child_count(el).ok() == Some(1)
+            && (start == (el, 0) || start == (text, 0))
+            && (end == (el, 1) || end == (text, editing::len(&dom, text)))
+            && (needs[0] || !DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten()
+                .unwrap_or("")).value("font-family").is_empty()))
+    } else { None };
+    let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size | Kind::Family) && {
         let dom = page.dom.borrow();
         nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| {
             value_carrier(&dom, n, host, &fmt).is_some_and(|carrier| {
                 kind == Kind::Foreground || needs.contains(&true) || editing::local(&dom, carrier) == "span"
+                    || kind == Kind::Family && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
+                        && !DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok().flatten().unwrap_or(""))
+                            .value("font-family").is_empty()
             })
         })
     };
-    if !rewrite_runs && !needs.contains(&true) {
+    if italic_family.is_none() && !rewrite_runs && !needs.contains(&true) {
         return true;
     }
     super::record_host_edit(page, host, fmt.input_type());
@@ -598,7 +634,15 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     let mut changed = false;
     let mut previous = None;
     for (&n, needs_format) in nodes.iter().zip(needs) {
-        if rewrite_runs {
+        if let Some(el) = italic_family {
+            // Reapply to the fully selected inline element in CSS mode.
+            let mut style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+            if style.remove("font-family") {
+                let _ = dom.set_attribute(el, "style", &style.css_text());
+            }
+            apply_to(&mut dom, el, &fmt, None);
+            changed = true;
+        } else if rewrite_runs {
             previous = format_run(page, &mut dom, host, n, &fmt, previous, nodes.len() == 1);
             changed = true;
         } else if needs_format {
