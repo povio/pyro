@@ -1528,9 +1528,18 @@ fn ancestor_origins<'s>(s: &Scope<'s>, nav: &Rc<PageNav>, this: pyro_js::Object<
     let mut origins = Vec::new();
     if active {
         if let Some((host, mut frame)) = window.and_then(|w| Some((w.frame_host()?, w.frame_key()?))) {
-            while let Some(parent) = host.frame(frame).and_then(|f| f.parent).and_then(|id| host.key(&id)) {
+            while let Some(f) = host.frame(frame) {
+                let Some(parent) = f.parent.and_then(|id| host.key(&id)) else { break };
                 let Some(origin) = host.frame(parent).map(|f| f.origin) else { break };
-                origins.push(s.string(&origin));
+                // HTML "ancestor origins list": a container with `referrerpolicy=no-referrer`
+                // masks its document's origin as "null" (the levels above keep their own masks).
+                // Gap: HTML snapshots this when the navigation starts; read here, a later change
+                // of the attribute is seen.
+                let masked = f.owner.is_some_and(|owner| {
+                    crate::loader::element_referrer_policy(&host.dom.borrow(), owner)
+                        == Some(pyro_net::ReferrerPolicy::NoReferrer)
+                });
+                origins.push(s.string(if masked { "null" } else { &origin }));
                 frame = parent;
             }
         }
