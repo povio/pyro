@@ -117,11 +117,7 @@ impl Registry {
         is.filter(|is| of(is)).cloned()
     }
 
-    /// The constructor of [`Self::def_key`]'s definition.
-    fn ctor_for<'s>(&self, s: &Scope<'s>, realm: RegistryKey, local: &LocalName, is: Option<&LocalName>) -> Option<Value<'s>> {
-        let name = self.def_key(realm, local, is)?;
-        self.defs.get(&(realm, name)).map(|d| d.ctor.get(s))
-    }
+
 }
 
 /// `el`'s local name and is value.
@@ -324,17 +320,20 @@ pub(crate) fn construct_html_element<'s>(s: &Scope<'s>, new_target: Object<'s>, 
 /// stack + `new ctor()`, then `attributeChangedCallback` for the observed
 /// attributes it had, `connectedCallback` when it was connected, and the
 /// form-associated callbacks.
-fn upgrade<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -> JsResult<()> {
-    upgrade_with(s, page, el, ctor, |name| {
+struct UpgradeDefinition {
+    owner: Rc<PageDom>,
+    key: RegistryKey,
+    name: LocalName,
+}
+
+fn upgrade<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, definition: UpgradeDefinition) -> JsResult<()> {
+    upgrade_with(s, page, el, definition, |name| {
         JsError::Type(format!("Failed to upgrade \"{name}\": the constructor did not return the element it upgraded.").into())
     })
 }
 
-/// The parser's synchronous construction of `el` (HTML "create an element
-/// for a token"): the upgrade of the element it made for the token, whose
-/// constructor must return that element (else `NotSupportedError`).
-fn construct_for_parser<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, ctor: Value<'s>) -> JsResult<()> {
-    upgrade_with(s, page, el, ctor, |name| {
+fn construct_for_parser<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, definition: UpgradeDefinition) -> JsResult<()> {
+    upgrade_with(s, page, el, definition, |name| {
         JsError::dom(
             "NotSupportedError",
             format!("The result of constructing a custom element \"{name}\" must be the element the parser created."),
@@ -346,22 +345,19 @@ fn upgrade_with<'s>(
     s: &Scope<'s>,
     page: &Rc<PageDom>,
     el: NodeId,
-    ctor: Value<'s>,
+    definition: UpgradeDefinition,
     mismatch: impl FnOnce(&LocalName) -> JsError,
 ) -> JsResult<()> {
-    // Reentrant upgrade() during construction and candidates made stale by
-    // an earlier callback must not invoke the same element's constructor twice.
+    // A reaction names its definition when it is enqueued. Earlier constructors
+    // can move a later candidate to another document before its reaction runs.
+    let UpgradeDefinition { owner, key, name } = definition;
     if page.dom.borrow().custom_definition_owner(el).js()?.is_some() {
         return Ok(());
     }
-    let (owner, key) = registry_for_node(s, page, el)
-        .ok_or_else(|| JsError::Type("The element has no custom element registry.".into()))?;
-    let (local, is) = element_names(page, el).ok_or_else(|| JsError::Type("not an element".into()))?;
-    let (name, observed, face) = {
-        let r = owner.custom_elements.borrow();
-        let name = r.def_key(key, &local, is.as_ref()).ok_or_else(|| JsError::Type("Missing element definition.".into()))?;
-        let d = &r.defs[&(key, name.clone())];
-        (name, d.observed.clone(), d.form_associated)
+    let (ctor, local, observed, face) = {
+        let registry = owner.custom_elements.borrow();
+        let d = registry.defs.get(&(key, name.clone())).ok_or_else(|| JsError::Type("Missing element definition.".into()))?;
+        (d.ctor.get(s), d.local_name.clone(), d.observed.clone(), d.form_associated)
     };
     // The reactions the upgrade enqueues before it constructs.
     let (attributes, connected) = {
@@ -563,7 +559,13 @@ pub(crate) fn run_upgrades(page: &Rc<PageDom>) {
         for candidate in batch {
             match candidate {
                 pyro_dom::upgrade::UpgradeCandidate::Connected(el) => try_upgrade(page, el),
-                pyro_dom::upgrade::UpgradeCandidate::Created(el) => try_upgrade_element(page, el),
+                pyro_dom::upgrade::UpgradeCandidate::Created { node, document, registry, name } => {
+                    let main = page.main_world_realm().map(|r| r.id()).unwrap_or(RealmId(0));
+                    if let Some((owner, key)) = registry_owner(page, document, registry, main) {
+                        run_selected_upgrade(page, node, owner, key, name);
+                    }
+                    page.dom.borrow_mut().finish_created_upgrade(node, document, registry);
+                }
             }
         }
     }
@@ -580,6 +582,7 @@ fn try_upgrade(page: &Rc<PageDom>, el: NodeId) {
 fn try_upgrade_element(page: &Rc<PageDom>, el: NodeId) {
     let (local, is) = {
         let dom = page.dom.borrow();
+        if dom.has_pending_created_upgrade(el) { return }
         let Ok(e) = dom.element(el) else { return };
         use pyro_dom::node::element_flags::{CUSTOM_DEFINED, CUSTOM_FAILED};
         if !e.is_html() || e.flags & (CUSTOM_DEFINED | CUSTOM_FAILED) != 0
@@ -587,15 +590,26 @@ fn try_upgrade_element(page: &Rc<PageDom>, el: NodeId) {
         (e.local_name().clone(), e.is_value.clone())
     };
     let main = page.main_world_realm().map(|r| r.id()).unwrap_or(RealmId(0));
-    let Some((owner, mut key)) = registry_for_node_realm(page, el, main) else { return };
+    let Some((owner, key)) = registry_for_node_realm(page, el, main) else { return };
+    let state = owner.custom_elements.borrow();
+    let name = state.def_key(key, &local, is.as_ref()).or_else(|| {
+        if key.scoped.is_some() { return None }
+        state.defs.keys().filter(|(candidate, _)| candidate.scoped.is_none())
+            .filter_map(|(candidate, _)| state.def_key(*candidate, &local, is.as_ref()).map(|name| (candidate.realm, name)))
+            .min_by_key(|(realm, _)| *realm).map(|(_, name)| name)
+    });
+    drop(state);
+    if let Some(name) = name { run_selected_upgrade(page, el, owner, key, name); }
+}
+
+fn run_selected_upgrade(page: &Rc<PageDom>, el: NodeId, owner: Rc<PageDom>, mut key: RegistryKey, name: LocalName) {
+    // Isolated worlds have distinct global registries. Honor the main world
+    // first, then preserve a definition supplied by an isolated world.
     if key.scoped.is_none() {
         let state = owner.custom_elements.borrow();
-        if state.def_key(key, &local, is.as_ref()).is_none() {
-            // Preserve definitions installed in an isolated world when the main
-            // world has no definition for the element.
-            let alternate = state.defs.keys().map(|(candidate, _)| *candidate)
-                .filter(|candidate| candidate.scoped.is_none() && state.def_key(*candidate, &local, is.as_ref()).is_some())
-                .min_by_key(|candidate| candidate.realm);
+        if !state.defs.contains_key(&(key, name.clone())) {
+            let alternate = state.defs.keys().filter(|(candidate, n)| candidate.scoped.is_none() && n == &name)
+                .map(|(candidate, _)| *candidate).min_by_key(|candidate| candidate.realm);
             let Some(found) = alternate else { return };
             key = found;
         }
@@ -603,8 +617,7 @@ fn try_upgrade_element(page: &Rc<PageDom>, el: NodeId) {
     let realm = owner.realms.borrow().get(&key.realm).and_then(|r| r.upgrade());
     let Some(realm) = realm.filter(|r| !r.is_disposed() || (key.scoped.is_some() && r.is_lingering())) else { return };
     let Ok(s) = realm.scope() else { return };
-    let Some(ctor) = with_registry(&owner, |r| r.ctor_for(&s, key, &local, is.as_ref())) else { return };
-    if let Err(e) = upgrade(&s, page, el, ctor) {
+    if let Err(e) = upgrade(&s, page, el, UpgradeDefinition { owner, key, name }) {
         s.report_exception(&e);
     }
 }
@@ -643,13 +656,27 @@ pub(crate) fn create_element_value<'s>(
                 let e = dom.element(el).js()?;
                 let registry = owner.custom_elements.borrow();
                 registry.def_key(key, e.local_name(), e.is_value.as_ref()).map(|name| {
-                    let ctor = registry.defs[&(key, name.clone())].ctor.get(s);
                     let fallback = (name == *e.local_name()).then(|| e.name.clone());
-                    (ctor, fallback)
+                    (name, fallback)
                 })
             };
-            if let Some((ctor, fallback)) = definition {
-                if let Err(error) = upgrade(s, page, el, ctor) {
+            if let Some((name, fallback)) = definition {
+                let result = upgrade(s, page, el, UpgradeDefinition { owner: owner.clone(), key, name }).and_then(|()| {
+                    if let Some(expected) = &fallback {
+                        let mut dom = page.dom.borrow_mut();
+                        let element = dom.element(el).js()?;
+                        if element.name.ns != expected.ns || element.name.local != expected.local
+                            || !element.attrs.is_empty() || dom.first_child(el).js()?.is_some()
+                            || dom.parent(el).js()?.is_some() || dom.node_document(el).js()? != doc
+                        {
+                            return Err(JsError::dom("NotSupportedError", "The constructor did not return a fresh element of the requested name and document."));
+                        }
+                        dom.set_is_value(el, None).js()?;
+                        dom.set_registry_association(el, key.association()).js()?;
+                    }
+                    Ok(())
+                });
+                if let Err(error) = result {
                     // Synchronous construction reports failures in the
                     // definition's realm. An autonomous constructor can
                     // retain its own partially constructed element; DOM
@@ -730,13 +757,13 @@ impl ParserCustomElements for ParserHooks {
         let realm = owner.realms.borrow().get(&key.realm).and_then(|w| w.upgrade());
         let Some(realm) = realm.filter(|r| !r.is_disposed() || (key.scoped.is_some() && r.is_lingering())) else { return ParserConstruct::NotDefined };
         let Ok(s) = realm.scope() else { return ParserConstruct::NotDefined };
-        let Some(ctor) = with_registry(&owner, |r| r.ctor_for(&s, key, &name.0, name.1.as_ref())) else {
+        let Some(name) = with_registry(&owner, |r| r.def_key(key, &name.0, name.1.as_ref())) else {
             return ParserConstruct::NotDefined;
         };
         // "Perform a microtask checkpoint" (no script runs here).
         crate::mutation_observer::checkpoint(&page);
         Self::counted(&page, || {
-            let outcome = match construct_for_parser(&s, &page, el, ctor) {
+            let outcome = match construct_for_parser(&s, &page, el, UpgradeDefinition { owner, key, name }) {
                 Ok(()) => {
                     if let Err(e) = page.dom.borrow_mut().append_parser_attributes(el, attrs) {
                         s.report_exception(&dom_err(e));

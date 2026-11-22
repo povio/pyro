@@ -452,3 +452,48 @@ fn registry_initialization_does_not_replace_other_definitions() {
          second instanceof B, second.customElementRegistry === b].join(',')
     "#), "true,true,true,true");
 }
+
+#[test]
+fn fragment_upgrade_keeps_definition_chosen_before_sibling_adoption() {
+    let e = env(PAGE);
+    assert_eq!(eval(&e.main, r#"
+        const inert = document.implementation.createHTMLDocument('inert');
+        const host = document.createElement('div');
+        const calls = [];
+        let adopted;
+        class First extends HTMLElement {
+            constructor() {
+                super();
+                calls.push('first');
+                adopted = inert.adoptNode(this.nextElementSibling);
+            }
+        }
+        class Next extends HTMLElement {
+            constructor() { super(); calls.push('next'); }
+        }
+        customElements.define('x-first', First);
+        customElements.define('x-next', Next);
+        host.innerHTML = '<x-first></x-first><x-next></x-next>';
+        [calls.join(','), adopted.ownerDocument === inert, adopted instanceof Next,
+         adopted.customElementRegistry === null].join('|')
+    "#), "first,next|true|true|true");
+}
+
+#[test]
+fn synchronous_autonomous_construction_reports_and_returns_a_fresh_failed_element() {
+    let e = env(PAGE);
+    assert_eq!(eval(&e.main, r#"
+        const registry = new CustomElementRegistry(), errors = [];
+        let partial;
+        window.onerror = (message, file, line, column, error) => {
+            errors.push(error.name); return true;
+        };
+        class WithAttribute extends HTMLElement {
+            constructor() { super(); partial = this; this.title = 'changed'; }
+        }
+        registry.define('x-with-attribute', WithAttribute);
+        const result = document.createElement('x-with-attribute', {customElementRegistry: registry});
+        [errors.join(','), partial !== result, partial.title, result instanceof HTMLUnknownElement,
+         result.title, result.customElementRegistry === registry, result.matches(':defined')].join('|')
+    "#), "NotSupportedError|true|changed|true||true|false");
+}

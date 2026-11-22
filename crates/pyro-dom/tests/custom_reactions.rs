@@ -155,6 +155,42 @@ fn detached_fragment_creation_queues_only_its_registry_definition() {
         let child = dom.first_child(frag).unwrap().unwrap();
         assert_eq!(dom.registry_association(child).unwrap(), registry);
         let queued = dom.take_upgrade_reactions();
-        if expected { assert_eq!(queued, [UpgradeCandidate::Created(child)]); } else { assert!(queued.is_empty()); }
+        if expected {
+            assert_eq!(queued, [UpgradeCandidate::Created { node: child, document: doc, registry, name: name.clone() }]);
+            dom.finish_created_upgrade(child, doc, registry);
+        } else {
+            assert!(queued.is_empty());
+        }
     }
+}
+
+#[test]
+fn created_upgrade_keeps_its_definition_when_a_sibling_is_adopted() {
+    use pyro_dom::upgrade::UpgradeCandidate;
+    let (dom, source) = doc("<main></main>");
+    let target = parse_document(&dom, "http://other.test/", "<main></main>");
+    let mut dom = dom.borrow_mut();
+    dom.set_document_active(target, true).unwrap();
+    dom.enable_custom_upgrades();
+    let name = LocalName::from("x-movable");
+    for document in [source, target] {
+        dom.note_registry_definition(document, RegistryAssociation::Default, &name, &name, vec![]);
+    }
+    let parent = dom.document_element(source).unwrap().unwrap();
+    let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, parent, "<x-movable></x-movable><x-movable></x-movable>").unwrap();
+    let first = dom.first_child(frag).unwrap().unwrap();
+    let later = dom.next_sibling(first).unwrap().unwrap();
+    let queued = dom.take_upgrade_reactions();
+    assert_eq!(queued.len(), 2);
+    let new_parent = dom.document_element(target).unwrap().unwrap();
+    dom.append_child(new_parent, later).unwrap();
+    assert!(!dom.has_upgrade_candidates());
+    assert!(dom.has_pending_created_upgrade(later));
+    assert_eq!(dom.node_document(later).unwrap(), target);
+    for (reaction, expected) in queued.into_iter().zip([first, later]) {
+        let UpgradeCandidate::Created { node, document, registry, name: captured } = reaction else { panic!("expected creation reaction") };
+        assert_eq!((node, document, registry, captured), (expected, source, RegistryAssociation::Default, name.clone()));
+        dom.finish_created_upgrade(node, document, registry);
+    }
+    assert!(!dom.has_pending_created_upgrade(later));
 }

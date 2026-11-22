@@ -238,14 +238,14 @@ impl Dom {
         self.reactions.registry_definitions.insert((owner, registry, name.clone(), local.clone()));
     }
 
-    pub(crate) fn fragment_definition_exists(&self, i: u32) -> bool {
+    pub(crate) fn fragment_definition_name(&self, i: u32) -> Option<LocalName> {
         let registry = self.registry_idx(i);
-        if registry == crate::RegistryAssociation::Null { return false; }
+        if registry == crate::RegistryAssociation::Null { return None; }
         let owner = (registry == crate::RegistryAssociation::Default).then(|| self.id_of(self.n(i).owner_doc));
         let el = self.n(i).element().unwrap();
         let local = el.local_name();
         let found = |name: &LocalName| self.reactions.registry_definitions.contains(&(owner, registry, name.clone(), local.clone()));
-        found(local) || el.is_value.as_ref().is_some_and(found)
+        if found(local) { Some(local.clone()) } else { el.is_value.as_ref().filter(|is| found(is)).cloned() }
     }
 
     pub(crate) fn forget_registry_definitions(&mut self, registry: crate::RegistryAssociation, document: Option<NodeId>) {

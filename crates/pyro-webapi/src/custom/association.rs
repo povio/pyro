@@ -176,6 +176,12 @@ pub(super) fn registry_for_node_realm(
         association = dom.registry_association(doc).ok()?;
     }
     drop(dom);
+    registry_owner(page, doc, association, realm)
+}
+
+pub(super) fn registry_owner(
+    page: &Rc<PageDom>, doc: NodeId, association: RegistryAssociation, realm: RealmId,
+) -> Option<(Rc<PageDom>, RegistryKey)> {
     match association {
         RegistryAssociation::Null => None,
         RegistryAssociation::Default => {

@@ -1553,6 +1553,7 @@ impl Dom {
     pub fn live_scoped_registries(&self) -> FxHashSet<u64> {
         self.registry_associations.values().copied()
             .chain(self.custom_definition_owners.values().map(|d| d.registry))
+            .chain(self.upgrades.pending_creations.values().copied())
             .filter_map(|association| match association {
                 RegistryAssociation::Scoped(id) => Some(id),
                 _ => None,
@@ -1764,18 +1765,7 @@ impl Dom {
                     | "p"
                     | "section"
                     | "span"
-            ) || (el.name.local.contains('-')
-                && !matches!(
-                    &*el.name.local,
-                    "annotation-xml"
-                        | "color-profile"
-                        | "font-face"
-                        | "font-face-src"
-                        | "font-face-uri"
-                        | "font-face-format"
-                        | "font-face-name"
-                        | "missing-glyph"
-                )));
+            ) || is_valid_custom_element_name(&el.name.local));
         if !valid_host {
             return Err(DomError::new(DomErrorKind::NotSupported, "This element does not support attachShadow"));
         }
