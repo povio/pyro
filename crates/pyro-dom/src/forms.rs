@@ -482,9 +482,50 @@ struct StepRange {
     base: f64,
 }
 
+/// `x`'s shortest decimal form as (mantissa, exponent): `x == mantissa * 10^exponent`.
+fn decimal_parts(x: f64) -> Option<(i128, i32)> {
+    if !x.is_finite() {
+        return None;
+    }
+    let text = format!("{x:e}");
+    let (mantissa, exponent) = text.split_once('e')?;
+    let mut exponent: i32 = exponent.parse().ok()?;
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, mantissa),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    exponent -= i32::try_from(frac.len()).ok()?;
+    let digits: i128 = format!("{int}{frac}").parse().ok()?;
+    Some((sign * digits, exponent))
+}
+
+/// Whether `value - base` is not an integral multiple of `step`, computed exactly in decimal;
+/// `None` when the scaled numbers do not fit an i128.
+fn decimal_step_mismatch(value: f64, base: f64, step: f64) -> Option<bool> {
+    let parts = [decimal_parts(value)?, decimal_parts(base)?, decimal_parts(step)?];
+    let low = parts.iter().map(|&(_, e)| e).min()?;
+    let mut scaled = [0i128; 3];
+    for (slot, &(m, e)) in scaled.iter_mut().zip(parts.iter()) {
+        let shift = u32::try_from(e - low).ok().filter(|&s| s <= 36)?;
+        *slot = m.checked_mul(10i128.checked_pow(shift)?)?;
+    }
+    let [v, b, s] = scaled;
+    if s == 0 {
+        return None;
+    }
+    Some(v.checked_sub(b)?.rem_euclid(s.abs()) != 0)
+}
+
 impl StepRange {
     fn mismatch(&self, v: f64) -> bool {
         let Some(step) = self.step else { return false };
+        // Chrome checks the step with decimal arithmetic: done exactly on the numbers' shortest
+        // decimal forms when they fit, so a tiny step (3e-15 against 17) is not lost to
+        // binary rounding.
+        if let Some(mismatch) = decimal_step_mismatch(v, self.base, step) {
+            return mismatch;
+        }
         let d = v - self.base;
         let q = d / step;
         // A step too small (or too large) to count steps in binary floating
