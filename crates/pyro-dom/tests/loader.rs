@@ -223,3 +223,23 @@ fn an_undeclared_encoding_falls_back_to_the_inherited_one() {
     let x = d.get_element_by_id(doc, "x").unwrap().unwrap();
     assert_eq!(d.text_content(x).unwrap().unwrap(), "ж");
 }
+
+#[test]
+fn json_document_keeps_utf8_text_across_chunks_and_charset_hints() {
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = dom.borrow_mut().create_document(DocumentKind::Html, "http://test/data");
+    let mut parser = DocumentParser::new_json(dom.clone(), doc, "application/problem+json").unwrap();
+    parser.set_fallback_charset(Some("windows-1251"));
+    parser.set_transport_charset(Some("windows-1252"));
+    let text = r#"{"text":"雪 <b> &amp;"}"#;
+    for byte in b"\xef\xbb\xbf".iter().chain(text.as_bytes()) {
+        parser.feed_bytes(std::slice::from_ref(byte));
+    }
+    parser.finish_bytes();
+    parser.end();
+    let dom = dom.borrow();
+    let data = dom.document_data(doc).unwrap();
+    assert_eq!(data.content_type, "application/problem+json");
+    assert_eq!(data.charset, "UTF-8");
+    assert_eq!(dom.text_content(dom.body(doc).unwrap().unwrap()).unwrap().as_deref(), Some(text));
+}

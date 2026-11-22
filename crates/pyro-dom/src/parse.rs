@@ -1005,6 +1005,18 @@ impl DocumentParser {
     /// A text/plain document uses the normal decoder, but never interprets
     /// markup or character references from the response as HTML.
     pub fn new_plaintext(dom: DomRef, doc: NodeId) -> DomResult<Self> {
+        Self::new_text_document(dom, doc, "text/plain", None)
+    }
+
+    /// JSON exchanged between systems uses UTF-8 irrespective of the parent
+    /// encoding or a Content-Type charset parameter (RFC 8259 §§8.1, 11).
+    pub fn new_json(dom: DomRef, doc: NodeId, mime: &str) -> DomResult<Self> {
+        Self::new_text_document(dom, doc, mime, Some(encoding_rs::UTF_8))
+    }
+
+    fn new_text_document(
+        dom: DomRef, doc: NodeId, mime: &str, encoding: Option<&'static encoding_rs::Encoding>,
+    ) -> DomResult<Self> {
         let mut parser = Self::new(dom.clone(), doc, false)?;
         parser.plaintext = true;
         // The synthetic LF consumes HTML's <pre> first-LF rule; response bytes
@@ -1016,7 +1028,11 @@ impl DocumentParser {
         let mut dom = dom.borrow_mut();
         let index = dom.check(doc)?;
         if let NodeKind::Document(data) = &mut dom.n_mut(index).kind {
-            data.content_type = "text/plain".into();
+            data.content_type = mime.into();
+            if let Some(encoding) = encoding {
+                data.charset = encoding.name();
+                parser.decoder = Some(encoding.new_decoder_with_bom_removal());
+            }
         }
         Ok(parser)
     }
