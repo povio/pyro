@@ -991,7 +991,13 @@ impl JsClass for WorkerGlobalScope {
             },
             |s, g, v| crate::lazy_module::replace(s, &g.target.page, "Notification", v),
         );
-        def.getter("origin", |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
+        // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it
+        // with an own data property; the realm's origin is left as it is.
+        def.accessor(
+            "origin",
+            |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))),
+            |s, g, value| crate::window::replace_window_attribute(s, &g.target.page, "origin", value),
+        );
         // The worker's URL stands for its owner's context: a same-origin
         // script, or a blob:/data: URL whose origin is the creator's.
         def.getter("isSecureContext", |s, g| Ok(s.boolean(g.secure)));
@@ -1128,7 +1134,12 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
         crate::canvas::define_video_globals(def);
-        def.getter("name", |s, g| Ok(s.string(&g.name)));
+        // [Replaceable]: assignment shadows it; the worker's name stays.
+        def.accessor(
+            "name",
+            |s, g| Ok(s.string(&g.name)),
+            |s, g, value| crate::window::replace_window_attribute(s, &g.target.page, "name", value),
+        );
         def.method("postMessage", 1, |s, g, a| {
             a.require(1, "DedicatedWorkerGlobalScope.postMessage")?;
             let message = encode_message(s, a.get(0), a.get(1))?;
@@ -1176,7 +1187,12 @@ impl JsClass for SharedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, g| Ok(s.string(&g.name)));
+        // [Replaceable]: assignment shadows it; the worker's name stays.
+        def.accessor(
+            "name",
+            |s, g| Ok(s.string(&g.name)),
+            |s, g, value| crate::window::replace_window_attribute(s, &g.target.page, "name", value),
+        );
         def.method("close", 0, |s, g, _a| {
             g.shared.closing.store(true, Ordering::Release);
             let id = g.id;

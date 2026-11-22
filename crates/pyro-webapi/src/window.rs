@@ -89,8 +89,8 @@ fn window_scroll(page: &Rc<PageDom>, a: &pyro_js::Args<'_>, by: bool) -> JsResul
     Ok(())
 }
 
-/// Setter of a [Replaceable] Window attribute: assignment shadows it with an
-/// own data property.
+/// Setter of a [Replaceable] attribute of a window or worker global:
+/// assignment shadows it with an own data property.
 pub fn replace_window_attribute<'s>(
     s: &pyro_js::Scope<'s>,
     page: &crate::page::PageDom,
