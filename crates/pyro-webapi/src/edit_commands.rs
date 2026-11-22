@@ -1613,12 +1613,23 @@ fn format_block_endpoint(dom: &Dom, point: Point, host: NodeId) -> NodeId {
     if editing::is_text(dom, point.0) {
         return point.0;
     }
-    let next = editing::deep_forward(dom, point);
-    if next != point && editing::editing_host(dom, next.0) == Some(host) {
-        return next.0;
+    // Empty paragraphs and whitespace-only blocks have no rendered text
+    // position. An explicit BR, in contrast, supplies a caret position.
+    let usable = |n| {
+        if editing::editing_host(dom, n) != Some(host) { return false; }
+        if editing::is_text(dom, n) {
+            return dom.char_data(n).is_ok_and(|s| !s.is_empty());
+        }
+        !editing::is_container(dom, n) || dom.child_count(n).ok() != Some(0)
+    };
+    let count = editing::len(dom, point.0);
+    for index in point.1..count {
+        let next = editing::deep_forward(dom, (point.0, index));
+        if next.0 == point.0 || editing::editing_host(dom, next.0) != Some(host) { break; }
+        if usable(next.0) { return next.0; }
     }
     let previous = editing::deep_backward(dom, point);
-    if editing::editing_host(dom, previous.0) == Some(host) { previous.0 } else { point.0 }
+    if usable(previous.0) { previous.0 } else { point.0 }
 }
 
 fn format_block_value(page: &PageDom) -> Option<String> {
@@ -1645,32 +1656,93 @@ fn format_block_value(page: &PageDom) -> Option<String> {
 /// host without blocks is wrapped in one).
 fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
     let (start, end) = editing::host_range(page, host);
+    let backward = editing::selection(page).is_some_and(|(a, _)| a == end && start != end);
     editing::apply_edit(page, host, "formatBlock", None, None, |page| {
         let selection = {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
-            let blocks = selected_blocks(&dom, host, start, end);
-            for b in blocks {
-                let Ok(new) = dom.create_element(doc, tag) else { continue };
-                let kids: Vec<NodeId> = dom.children(b).map(|c| c.collect()).unwrap_or_default();
-                for k in kids {
-                    let _ = dom.append_child(new, k);
-                }
-                if b == host {
-                    let _ = dom.append_child(host, new);
-                } else if let Ok(Some(p)) = dom.parent(b) {
-                    let _ = dom.insert_before(p, new, Some(b));
-                    let _ = dom.remove_child(p, b);
-                }
+            let mut first = editing::deep_forward(&dom, start);
+            let mut last = editing::deep_backward(&dom, end);
+            if start == end {
+                first = if last.0 != start.0 { last } else { first };
+                last = first;
             }
-            let live = |p: Point| dom.is_connected(p.0).unwrap_or(false);
-            (live(start) && live(end)).then_some((start, end))
+            let whole_child = (start.0 == end.0 && end.1.checked_sub(start.1) == Some(1))
+                .then(|| dom.child_at(start.0, start.1).ok().flatten()).flatten();
+            if let Some(table) = whole_child.filter(|&n| editing::local(&dom, n) == "table") {
+                let Ok(wrapper) = dom.create_element(doc, tag) else { return };
+                if dom.insert_before(start.0, wrapper, Some(table)).is_err() || dom.append_child(wrapper, table).is_err() { return; }
+                Some(((wrapper, 0), (wrapper, 1)))
+            } else {
+                let mut blocks = selected_blocks(&dom, host, start, end);
+                // Address is a paragraph for formatBlock even though Enter
+                // inside it uses a soft line break.
+                if let Some(address) = ancestor_named(&dom, first.0, host, &["address"]) {
+                    if dom.contains(address, last.0).unwrap_or(false) { blocks = vec![address]; }
+                }
+                let mut group = None;
+                let mut previous = None;
+                let mut first_content = None;
+                for b in blocks {
+                    let old_tag = editing::local(&dom, b);
+                    let children = dom.children(b).map(|v| v.collect::<Vec<_>>()).unwrap_or_default();
+                    if b != host && FORMAT_BLOCKS.contains(&old_tag.as_str()) && children.iter().all(|&n| {
+                        dom.char_data(n).is_ok_and(|text| text.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r')))
+                    }) && start != end {
+                        continue;
+                    }
+                    if first_content.is_none() { first_content = Some(editing::deep_forward(&dom, (b, 0))); }
+                    if b != host && old_tag == tag {
+                        group = None;
+                        previous = None;
+                        continue;
+                    }
+                    if b == host {
+                        let mut child = first.0;
+                        while child != host && dom.parent(child).ok().flatten() != Some(host) {
+                            let Some(parent) = dom.parent(child).ok().flatten() else { break };
+                            child = parent;
+                        }
+                        let index = dom.index_in_parent(child).ok().unwrap_or(start.1) as usize;
+                        let mut begin = index.min(children.len());
+                        let mut finish = begin;
+                        while begin > 0 && !editing::is_block(&dom, children[begin - 1]) { begin -= 1; }
+                        while finish < children.len() && !editing::is_block(&dom, children[finish]) { finish += 1; }
+                        let Ok(wrapper) = dom.create_element(doc, tag) else { return };
+                        if dom.insert_before(host, wrapper, children.get(begin).copied()).is_err() { return; }
+                        for &n in &children[begin..finish] { let _ = dom.append_child(wrapper, n); }
+                        group = None;
+                        previous = None;
+                        continue;
+                    }
+                    let Some(parent) = dom.parent(b).ok().flatten() else { continue };
+                    let next = dom.next_sibling(b).ok().flatten();
+                    let wrapper = if let Some(wrapper) = group.filter(|_| previous == Some(b)) {
+                        let Ok(br) = dom.create_element(doc, "br") else { return };
+                        let _ = dom.append_child(wrapper, br);
+                        wrapper
+                    } else {
+                        let Ok(wrapper) = dom.create_element(doc, tag) else { return };
+                        if dom.insert_before(parent, wrapper, Some(b)).is_err() { return; }
+                        wrapper
+                    };
+                    for k in children { let _ = dom.append_child(wrapper, k); }
+                    let _ = dom.remove_child(parent, b);
+                    group = Some(wrapper);
+                    previous = next;
+                }
+                if !editing::is_text(&dom, first.0) || dom.char_data(first.0).is_ok_and(|s| s.trim().is_empty()) {
+                    if let Some(p) = first_content { first = p; }
+                }
+                let live = |p: Point| dom.is_connected(p.0).unwrap_or(false);
+                (live(first) && live(last)).then_some((first, last))
+            }
         };
         let (s, e) = selection.unwrap_or_else(|| {
             let p = editing::host_start(&page.dom.borrow(), host);
             (p, p)
         });
-        editing::set_selection(page, s, e);
+        if backward { editing::set_selection(page, e, s); } else { editing::set_selection(page, s, e); }
     });
 }
 
