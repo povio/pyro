@@ -221,7 +221,7 @@ fn range_text(r: &RangeData, rendered: bool) -> JsResult<String> {
 
 // ----- content methods (DOM "clone the contents", "extract", "delete") -----
 
-fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> JsResult<NodeId> {
+pub(crate) fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> JsResult<NodeId> {
     let mut cur = Some(a);
     while let Some(c) = cur {
         if dom.contains(c, b).js()? {

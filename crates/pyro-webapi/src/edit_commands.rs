@@ -1607,6 +1607,104 @@ fn selected_blocks(dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<Nod
     out
 }
 
+/// Resolve an element boundary to the text or leaf under its caret. Do not
+/// walk outside the editing host when a boundary lies directly in the host.
+fn format_block_endpoint(dom: &Dom, point: Point, host: NodeId) -> NodeId {
+    if editing::is_text(dom, point.0) {
+        return point.0;
+    }
+    // Empty paragraphs and whitespace-only blocks have no rendered text
+    // position. An explicit BR, in contrast, supplies a caret position.
+    let usable = |n| {
+        if editing::editing_host(dom, n) != Some(host) { return false; }
+        if editing::is_text(dom, n) {
+            return dom.char_data(n).is_ok_and(|s| !s.is_empty());
+        }
+        !editing::is_container(dom, n) || dom.child_count(n).ok() != Some(0)
+    };
+    let count = editing::len(dom, point.0);
+    for index in point.1..count {
+        let next = editing::deep_forward(dom, (point.0, index));
+        if next.0 == point.0 || editing::editing_host(dom, next.0) != Some(host) { break; }
+        if usable(next.0) { return next.0; }
+    }
+    let previous = editing::deep_backward(dom, point);
+    if usable(previous.0) { previous.0 } else { point.0 }
+}
+
+fn format_block_value(page: &PageDom) -> Option<String> {
+    let (start, end) = editing::selection_range(page)?;
+    let dom = page.dom.borrow();
+    let host = editing::editing_host(&dom, start.0)?;
+    if editing::editing_host(&dom, end.0) != Some(host) {
+        return None;
+    }
+    let a = format_block_endpoint(&dom, start, host);
+    let b = if start == end { a } else { format_block_endpoint(&dom, end, host) };
+    let mut node = crate::range::common_ancestor(&dom, a, b).ok()?;
+    while node != host {
+        let tag = editing::local(&dom, node);
+        if FORMAT_BLOCKS.contains(&tag.as_str()) && dom.element(node).is_ok_and(|el| el.is_html()) {
+            return Some(tag);
+        }
+        node = dom.parent(node).ok()??;
+    }
+    None
+}
+
+/// A paragraph may be an explicit block or a contiguous run of inline
+/// children of the host. Capture its boundaries before moving any nodes.
+#[derive(PartialEq)]
+enum FormatLine {
+    Block(NodeId),
+    Inline(Vec<NodeId>),
+}
+
+fn format_lines(page: &PageDom, dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<FormatLine> {
+    let mut nodes = texts_in(dom, host, start, end);
+    if nodes.is_empty() {
+        nodes.push(format_block_endpoint(dom, start, host));
+    }
+    let mut lines = Vec::new();
+    for node in nodes {
+        if !rich_node(dom, node) { continue; }
+        let mut child = node;
+        let block = loop {
+            if child == host { break None; }
+            if dom.element(child).is_ok() {
+                let display = page.layout().computed_style_value(dom, child, "display");
+                if matches!(display.as_str(), "block" | "list-item" | "table-cell") { break Some(child); }
+            }
+            let Some(parent) = dom.parent(child).ok().flatten() else { break None };
+            if parent == host { break None; }
+            child = parent;
+        };
+        let line = if let Some(block) = block {
+            FormatLine::Block(block)
+        } else {
+            if matches!(lines.last(), Some(FormatLine::Inline(kids)) if kids.contains(&child)) { continue; }
+            let inline = |n| {
+                if editing::is_text(dom, n) { return true; }
+                let display = page.layout().computed_style_value(dom, n, "display");
+                display == "inline" || display.starts_with("inline-") || display == "contents"
+            };
+            let mut first = child;
+            while let Some(prev) = dom.prev_sibling(first).ok().flatten().filter(|&n| inline(n)) { first = prev; }
+            let mut kids = Vec::new();
+            if child != host {
+                let mut next = Some(first);
+                while let Some(n) = next {
+                    kids.push(n);
+                    next = dom.next_sibling(n).ok().flatten().filter(|&n| inline(n));
+                }
+            }
+            FormatLine::Inline(kids)
+        };
+        if lines.last() != Some(&line) { lines.push(line); }
+    }
+    lines
+}
+
 /// formatBlock: the selected blocks become `tag` elements (content of a
 /// host without blocks is wrapped in one).
 fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
@@ -1615,22 +1713,77 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
         let selection = {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
-            let blocks = selected_blocks(&dom, host, start, end);
-            for b in blocks {
-                let Ok(new) = dom.create_element(doc, tag) else { continue };
-                let kids: Vec<NodeId> = dom.children(b).map(|c| c.collect()).unwrap_or_default();
-                for k in kids {
-                    let _ = dom.append_child(new, k);
-                }
-                if b == host {
-                    let _ = dom.append_child(host, new);
-                } else if let Ok(Some(p)) = dom.parent(b) {
-                    let _ = dom.insert_before(p, new, Some(b));
-                    let _ = dom.remove_child(p, b);
-                }
+            let mut first = editing::deep_forward(&dom, start);
+            let mut last = editing::deep_backward(&dom, end);
+            if start == end {
+                first = if last.0 != start.0 { last } else { first };
+                last = first;
             }
-            let live = |p: Point| dom.is_connected(p.0).unwrap_or(false);
-            (live(start) && live(end)).then_some((start, end))
+            let whole_child = (start.0 == end.0 && end.1.checked_sub(start.1) == Some(1))
+                .then(|| dom.child_at(start.0, start.1).ok().flatten()).flatten();
+            if let Some(table) = whole_child.filter(|&n| editing::local(&dom, n) == "table") {
+                let Ok(wrapper) = dom.create_element(doc, tag) else { return };
+                if dom.insert_before(start.0, wrapper, Some(table)).is_err() || dom.append_child(wrapper, table).is_err() { return; }
+                Some(((wrapper, 0), (wrapper, 1)))
+            } else {
+                let lines = format_lines(page, &dom, host, start, end);
+                let mut group = None;
+                let mut first_content = None;
+                for line in lines {
+                    let (parent, before, children, remove) = match line {
+                        FormatLine::Block(b) => {
+                            let kids: Vec<_> = dom.children(b).map(|v| v.collect()).unwrap_or_default();
+                            let old_tag = editing::local(&dom, b);
+                            if FORMAT_BLOCKS.contains(&old_tag.as_str()) && start != end && kids.iter().all(|&n| {
+                                dom.char_data(n).is_ok_and(|s| s.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r')))
+                            }) { continue; }
+                            if old_tag == tag {
+                                first_content.get_or_insert_with(|| editing::deep_forward(&dom, (b, 0)));
+                                group = None;
+                                continue;
+                            }
+                            // Table cells and list items are structural containers.
+                            // Format their contents without replacing the container.
+                            if matches!(old_tag.as_str(), "td" | "th" | "li") {
+                                (b, kids.first().copied(), kids, None)
+                            } else {
+                                let Some(p) = dom.parent(b).ok().flatten() else { continue };
+                                // CSS display can create a paragraph boundary on
+                                // a custom or preformatted element. Wrap that
+                                // element intact unless its tag is replaceable.
+                                if dom.element(b).is_ok_and(|el| el.is_html()) && FORMAT_BLOCKS.contains(&old_tag.as_str()) {
+                                    (p, Some(b), kids, Some(b))
+                                } else {
+                                    (p, Some(b), vec![b], None)
+                                }
+                            }
+                        }
+                        FormatLine::Inline(kids) => (host, kids.first().copied(), kids, None),
+                    };
+                    if first_content.is_none() {
+                        first_content = children.first().map(|&n| editing::deep_forward(&dom, (n, 0)));
+                    }
+                    let wrapper = if let Some(w) = group.filter(|&w| dom.parent(w).ok().flatten() == Some(parent)
+                        && before.is_some() && dom.next_sibling(w).ok().flatten() == before)
+                    {
+                        let Ok(br) = dom.create_element(doc, "br") else { return };
+                        let _ = dom.append_child(w, br);
+                        w
+                    } else {
+                        let Ok(w) = dom.create_element(doc, tag) else { return };
+                        if dom.insert_before(parent, w, before).is_err() { return; }
+                        w
+                    };
+                    for n in children { let _ = dom.append_child(wrapper, n); }
+                    if let Some(b) = remove { let _ = dom.remove_child(parent, b); }
+                    group = Some(wrapper);
+                }
+                if !editing::is_text(&dom, first.0) || dom.char_data(first.0).is_ok_and(|s| s.trim().is_empty()) {
+                    if let Some(p) = first_content { first = p; }
+                }
+                let live = |p: Point| dom.is_connected(p.0).unwrap_or(false);
+                (live(first) && live(last)).then_some((first, last))
+            }
         };
         let (s, e) = selection.unwrap_or_else(|| {
             let p = editing::host_start(&page.dom.borrow(), host);
@@ -1831,16 +1984,7 @@ pub(crate) fn query_value(page: &PageDom, doc: NodeId, command: &str) -> String 
             if editing::selection_range(page).is_none() { return String::new(); }
             alignment::selected_values(page).first().copied().unwrap_or("left").to_owned()
         }
-        "formatblock" => {
-            let Some((start, _)) = editing::selection_range(page) else {
-                return String::new();
-            };
-            let dom = page.dom.borrow();
-            let Some(host) = editing::editing_host(&dom, start.0) else {
-                return String::new();
-            };
-            ancestor_named(&dom, start.0, host, FORMAT_BLOCKS).map(|b| editing::local(&dom, b)).unwrap_or_default()
-        }
+        "formatblock" => format_block_value(page).unwrap_or_default(),
         "defaultparagraphseparator" => {
             page.dom.borrow().document_data(doc).map(|d| d.default_paragraph_separator.to_owned()).unwrap_or_default()
         }
