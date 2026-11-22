@@ -600,9 +600,8 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
             && dom.child_count(el).ok() == Some(1)
             && (start == (el, 0) || start == (text, 0))
             && (end == (el, 1) || end == (text, editing::len(&dom, text)))
-            && dom.attributes(el).is_ok_and(|attrs| attrs.is_empty() || attrs.len() == 1
-                && attrs[0].name.local == markup5ever::local_name!("style")
-                && DeclarationBlock::parse(&attrs[0].value).names() == ["font-family"]))
+            && (needs[0] || !DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten()
+                .unwrap_or("")).value("font-family").is_empty()))
     } else { None };
     let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size | Kind::Family) && {
         let dom = page.dom.borrow();
@@ -637,8 +636,10 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     for (&n, needs_format) in nodes.iter().zip(needs) {
         if let Some(el) = italic_family {
             // Reapply to the fully selected inline element in CSS mode.
-            // The only allowed declaration here is the family being replaced.
-            let _ = dom.remove_attribute(el, "style");
+            let mut style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+            if style.remove("font-family") {
+                let _ = dom.set_attribute(el, "style", &style.css_text());
+            }
             apply_to(&mut dom, el, &fmt, None);
             changed = true;
         } else if rewrite_runs {
