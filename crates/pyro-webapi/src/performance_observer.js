@@ -201,5 +201,19 @@
   // observe(optional PerformanceObserverInit options = {}).
   operations(PerformanceObserver, { observe: 0 });
 
-  return { PerformanceObserver, PerformanceObserverEntryList };
+  // A worker global holds both names as lazy accessors on its prototype. The
+  // first read of either settles the other too (own data properties, as
+  // WebIDL interface objects), once per realm and only while the global has
+  // no own property of that name: a value the page defined or a deletion
+  // made before is kept.
+  const hasOwn = O.hasOwn;
+  let settledOther = false;
+  const otherToSettle = (global, name) => {
+    if (settledOther) return undefined;
+    settledOther = true;
+    const other = name === 'PerformanceObserver' ? 'PerformanceObserverEntryList' : 'PerformanceObserver';
+    return hasOwn(global, other) ? undefined : other;
+  };
+
+  return { PerformanceObserver, PerformanceObserverEntryList, otherToSettle };
 })
