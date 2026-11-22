@@ -2,69 +2,70 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 348,
-   "owner_reported_unlisted": 55,
-   "selector_union": 299,
-   "owner_estimate_reduction": 6,
-   "of_which_tentative": 4,
+   "distinct_census_pages": 363,
+   "owner_reported_unlisted": 0,
+   "selector_union": 393,
+   "owner_estimate_reduction": 30,
+   "of_which_tentative": 98,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
     "html/canvas": 263,
+    "html/interaction": 94,
     "html/syntax": 12,
     "html/semantics": 5,
-    "fetch/api": 4,
     "FileAPI": 4,
+    "fetch/api": 4,
     "fetch/data-urls": 3,
     "encoding": 2,
     "xhr": 2,
+    "svg/styling": 1,
     "html/rendering": 1,
-    "quirks": 1,
     "dom/collections": 1,
-    "svg/styling": 1
+    "quirks": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 564,
+   "distinct_census_pages": 511,
    "owner_reported_unlisted": 0,
-   "selector_union": 619,
-   "owner_estimate_reduction": 55,
-   "of_which_tentative": 196,
+   "selector_union": 525,
+   "owner_estimate_reduction": 14,
+   "of_which_tentative": 102,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/semantics": 177,
     "html/canvas": 138,
-    "html/interaction": 108,
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
+    "html/interaction": 14,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
-    "shadow-dom": 7,
     "selection": 7,
+    "shadow-dom": 7,
     "navigation-api": 6,
+    "uievents": 5,
     "html/editing": 5,
     "intersection-observer": 5,
-    "uievents": 5,
     "svg/types": 4,
-    "mathml": 3,
-    "close-watcher": 3,
     "event-timing": 3,
+    "mathml": 3,
     "inert": 3,
-    "html/rendering": 2,
-    "svg/animations": 2,
-    "fetch/fetch-later": 2,
+    "close-watcher": 3,
     "dom/nodes": 2,
-    "soft-navigation-heuristics": 2,
     "resource-timing": 2,
-    "editing": 1,
-    "custom-elements": 1,
-    "document-picture-in-picture": 1,
+    "html/rendering": 2,
+    "soft-navigation-heuristics": 2,
+    "fetch/fetch-later": 2,
+    "svg/animations": 2,
     "pointerlock": 1,
-    "html/browsers": 1
+    "custom-elements": 1,
+    "html/browsers": 1,
+    "document-picture-in-picture": 1,
+    "editing": 1
    }
   },
   "queued": {
@@ -554,13 +555,23 @@
   },
   "F02": {
    "state": "claimed",
-   "pages": 108,
-   "tentative": 108
+   "pages": 14,
+   "tentative": 14
   },
   "F02a": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 60,
+   "tentative": 60
+  },
+  "F02b": {
+   "state": "implemented-unbuilt",
+   "pages": 13,
+   "tentative": 13
+  },
+  "F02c": {
+   "state": "implemented-unbuilt",
+   "pages": 21,
+   "tentative": 21
   },
   "F03": {
    "state": "claimed",
@@ -703,7 +714,7 @@
    "tentative": 3
   }
  },
- "implemented_total_estimate": 386,
+ "implemented_total_estimate": 401,
  "milestones_reached": [
   250
  ]
