@@ -1007,7 +1007,11 @@ fn gradient_paint(g: &Gradient, alpha: f32) -> Option<peniko::Gradient> {
         }
         GradientKind::Conic { center, angle } => {
             let a = angle as f32;
-            peniko::Gradient::new_sweep(center, a, a + std::f32::consts::TAU)
+            // pyro: vello measures the angle in [0, 2π) and pads outside [start, start + 2π],
+            // so any start other than 0 left part of the turn at an end stop (WPT
+            // 2d.gradient.conic.positive.rotation); a conic gradient is one full turn from any
+            // start, which repeating gives.
+            peniko::Gradient::new_sweep(center, a, a + std::f32::consts::TAU).with_extend(Extend::Repeat)
         }
     };
     let mut gradient = gradient.with_stops(&stops[..]);
