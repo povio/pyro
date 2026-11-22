@@ -40,6 +40,8 @@ struct PendingToggle {
     old_open: bool,
     new_open: bool,
     source: Option<NodeId>,
+    /// The queued task that fires it (a later toggle cancels it and queues its own).
+    seq: u64,
 }
 
 /// Per-page state of popovers, dialogs and invokers.
@@ -48,6 +50,8 @@ pub(crate) struct PopoverState {
     /// Pending `toggle` events by element and kind: a dialog's (`true`) are coalesced apart from
     /// its popover's (HTML gives each its own toggle task tracker).
     toggles: RefCell<FxHashMap<(NodeId, bool), PendingToggle>>,
+    /// Numbers the queued toggle tasks (`PendingToggle::seq`).
+    toggle_seq: Cell<u64>,
     /// The element focused when a dialog or an auto/hint popover was shown.
     previously_focused: RefCell<FxHashMap<NodeId, NodeId>>,
     /// Popovers being shown or hidden ("popover showing or hiding").
@@ -157,19 +161,26 @@ fn queue_toggle_of(
     new_open: bool,
     source: Option<NodeId>,
 ) {
+    // HTML "queue a ... toggle event task": a pending one is cancelled, its old state kept, and
+    // the event queued again, after the tasks queued since.
+    let seq = page.popover.toggle_seq.get().wrapping_add(1);
+    page.popover.toggle_seq.set(seq);
     {
         let mut toggles = page.popover.toggles.borrow_mut();
-        if let Some(t) = toggles.get_mut(&(el, dialog)) {
-            t.new_open = new_open;
-            t.source = source;
-            return;
-        }
-        toggles.insert((el, dialog), PendingToggle { old_open, new_open, source });
+        let old_open = toggles.get(&(el, dialog)).map_or(old_open, |t| t.old_open);
+        toggles.insert((el, dialog), PendingToggle { old_open, new_open, source, seq });
     }
     let weak = Rc::downgrade(page);
     page.post_task(Box::new(move || {
         let Some(page) = weak.upgrade() else { return };
-        let Some(t) = page.popover.toggles.borrow_mut().remove(&(el, dialog)) else { return };
+        let t = {
+            let mut toggles = page.popover.toggles.borrow_mut();
+            if toggles.get(&(el, dialog)).is_none_or(|t| t.seq != seq) {
+                return;
+            }
+            toggles.remove(&(el, dialog))
+        };
+        let Some(t) = t else { return };
         fire_toggle(&page, el, "toggle", t.old_open, t.new_open, false, t.source);
     }));
 }
