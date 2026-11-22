@@ -358,10 +358,33 @@ impl BaseDocument {
         use style::values::computed::Size;
         let node = self.get_node(node_id)?;
         let live = node.primary_styles()?;
-        let (mut basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
         if !live.writing_mode.is_horizontal() { return None; }
         let (live, sampled) = (live.get_position(), sampled.get_position());
         let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
+        if matches!(sizes.0.prepared_size(), Size::LengthPercentage(length) if length.0.to_length().is_some()) {
+            use style::values::computed::MaxSize;
+            let (minimum, maximum) = if width { (&live.min_width, &live.max_width) } else { (&live.min_height, &live.max_height) };
+            if !minimum.is_auto() || !matches!(maximum, MaxSize::None) { return None; }
+            let size = sizes.1.prepared_size();
+            let calculation = match size {
+                Size::CalcSizeAuto(value) | Size::CalcSizeFitContent(value) | Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeStretch(value) => value,
+                _ => return None,
+            };
+            let parent = self.get_node(node.layout_parent.get()?)?;
+            let parent_style = parent.primary_styles()?;
+            let parent_position = parent_style.get_position();
+            let parent_size = if width { &parent_position.width } else { &parent_position.height };
+            if !matches!(parent_size, Size::LengthPercentage(length) if length.0.to_length().is_some()) { return None; }
+            let layout = self.physical_unrounded_layout(parent.id);
+            let percent = if width { layout.content_box_width() } else { layout.content_box_height() };
+            let basis = self.sampled_basis_in_block_flow(node_id, width, Some(percent), size)?;
+            let layout = self.physical_unrounded_layout(node_id);
+            let floor = if live.box_sizing != BoxSizing::BorderBox { 0.0 } else if width {
+                layout.padding.left + layout.padding.right + layout.border.left + layout.border.right
+            } else { layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom };
+            return Some(calculation.0.resolve_size(CSSPixelLength::new(basis), CSSPixelLength::new(percent)).px().max(floor));
+        }
+        let (mut basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
         let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
             (Size::CalcSizeAny(_) | Size::CalcSizePercentage(_), Size::CalcSizeAny(value) | Size::CalcSizePercentage(value)) => value,
             (Size::CalcSizeAny(_), Size::CalcSizeAuto(value) | Size::CalcSizeStretch(value) | Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeFitContent(value)) => {

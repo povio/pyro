@@ -500,6 +500,21 @@ fn sampled_intrinsic_block_height_uses_fixed_child_not_endpoint() {
 }
 
 #[test]
+fn sampled_keyword_basis_with_plain_length_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="width:50px;height:50px"><div style="width:100px;height:100px"></div></div></div><div id=sample style="width:calc-size(auto,size * 0.25 + 37.5px);height:calc-size(auto,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, expected) in [("width", "87.5px"), ("height", "62.5px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), expected);
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
 fn sampled_intrinsic_width_uses_fixed_child_border_box() {
     let page = Page::new(r#"<!doctype html><div style="width:200px"><div id=live style="width:calc-size(any,50px);box-sizing:border-box;padding:5px"><div style="width:80px;border:5px solid"></div></div></div><div id=min style="width:calc-size(min-content,size * 0.25 + 37.5px)"></div><div id=max style="width:calc-size(max-content,size * 0.25 + 37.5px)"></div><div id=fit style="width:calc-size(fit-content,size * 0.25 + 37.5px)"></div>"#);
     let dom = page.dom.borrow();
