@@ -232,7 +232,7 @@ where
     crate::streams::define_globals(def);
     crate::scheduler::define_global(def);
     crate::observable::define_globals(def);
-    crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition");
+    crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition", "ViewTransitionTypeSet");
     crate::crypto::define_globals(def);
     crate::storage_manager::define_globals(def);
     crate::storage_manager::define_file_system_globals(def);
