@@ -158,6 +158,8 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) top_layer: Vec<NodeId>,
     /// The top-layer element being painted as such (not skipped).
     pub(crate) top_layer_root: std::cell::Cell<Option<NodeId>>,
+    /// pyro: HTML-in-Canvas privacy (`paint_element_subtree`): `None` for every other paint.
+    pub(crate) privacy: Option<Privacy>,
     pub(crate) transition_children: Option<&'a HashSet<NodeId>>,
     pub(crate) capture_budget: Option<&'a crate::capture::Budget>,
     /// Scrollbar hover/drag state, resolved once per scene like the root element
@@ -338,6 +340,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 Vec::new()
             },
             top_layer_root: std::cell::Cell::new(None),
+            privacy: None,
             transition_children: None,
             capture_budget: None,
             #[cfg(feature = "scrollbars")]
@@ -2586,6 +2589,25 @@ fn svg_viewport_affine(svg: &blitz_dom::node::SvgImageData, width: f32, height: 
 }
 
 /// Ensure that the `resized_image` field has a correctly sized image
+/// pyro: HTML-in-Canvas privacy, while `paint_element_subtree` paints an element for a canvas a page
+/// can read back: images from another origin than the document's are left out (CSS image layers,
+/// `<img>`), and the pixels of those from its own origin are recorded as allowed. What this cannot
+/// classify is drawn and makes the paint taint the canvas (`subtree_may_taint`).
+#[derive(Default)]
+pub(crate) struct Privacy {
+    /// `Blob::id`s of the images drawn that are of the document's origin.
+    pub(crate) allowed: std::cell::RefCell<Vec<u64>>,
+    /// Something was drawn whose origin could not be told.
+    pub(crate) unclassified: std::cell::Cell<bool>,
+}
+
+impl Privacy {
+    /// Whether `url` may be drawn: of the document's origin (`document`), or a `data:` URL.
+    pub(crate) fn same_origin(document: &blitz_traits::net::Url, url: &blitz_traits::net::Url) -> bool {
+        url.scheme() == "data" || url.origin() == document.origin()
+    }
+}
+
 fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> peniko::ImageBrush {
     peniko::ImageBrush {
         image: ImageData {
@@ -7638,6 +7660,29 @@ impl ElementCx<'_, '_> {
                 self.draw_broken_image_icon(scene, Point::new(content.x0 + 2.0 * line, content.y0 + 2.0 * line), content);
             }
             return;
+        }
+        // pyro: HTML-in-Canvas privacy: an image of another origin is left out; one of the
+        // document's own is allowed; one whose source cannot be told (`srcset`, `<picture>`,
+        // generated content) is drawn and taints.
+        if let Some(privacy) = &self.context.privacy {
+            let dom = self.context.dom.as_ref();
+            let source = self.element.attr(local_name!("src")).and_then(|src| dom.base_url().join(src).ok());
+            let chosen = self.element.attr(local_name!("srcset")).is_some()
+                || self
+                    .node
+                    .parent
+                    .and_then(|parent| dom.get_node(parent))
+                    .and_then(|parent| parent.element_data())
+                    .is_some_and(|parent| parent.name.local == local_name!("picture"));
+            match source {
+                Some(url) if !chosen && !Privacy::same_origin(dom.url(), &url) => return,
+                Some(_) if !chosen => {
+                    if let Some(image) = self.element.raster_image_data() {
+                        privacy.allowed.borrow_mut().push(image.data.id());
+                    }
+                }
+                _ => privacy.unclassified.set(true),
+            }
         }
         if let Some(image) = self.element.raster_image_data() {
             let width = self.frame.content_box.width() as u32;

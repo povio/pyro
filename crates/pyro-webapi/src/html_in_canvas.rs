@@ -289,6 +289,7 @@ pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId)
         }
         cur = parent(&dom, a);
     }
+    // (The rect query syncs the renderer's document, which the painting below reads.)
     let rect = layout.bounding_client_rect(&dom, element);
     let key = pyro_dom::snapshot::render_key(element);
     let painted = layout.synced_geometry_source(&dom).and_then(|source| source.element_image(key, 1.0));

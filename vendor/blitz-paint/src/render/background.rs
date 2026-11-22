@@ -684,6 +684,13 @@ impl ElementCx<'_, '_> {
         area: Rect,
         current_color: &style::color::AbsoluteColor,
     ) {
+        // pyro: HTML-in-Canvas privacy: an image layer other than a URL or a gradient (a
+        // cross-fade, an image set) is not classified by origin: it taints (`Privacy`).
+        if let Some(privacy) = &self.context.privacy
+            && !matches!(layer.stylo_image, GenericImage::None | GenericImage::Gradient(_) | GenericImage::Url(_))
+        {
+            privacy.unclassified.set(true);
+        }
         match layer.stylo_image {
             GenericImage::None => {
                 // Do nothing
@@ -692,6 +699,17 @@ impl ElementCx<'_, '_> {
                 self.draw_gradient_layer(scene, gradient, layer, area, current_color)
             }
             GenericImage::Url(_) => {
+                // pyro: HTML-in-Canvas privacy: a layer image of another origin is left out, one
+                // of the document's own is allowed (`Privacy`).
+                if let Some(privacy) = &self.context.privacy {
+                    let Some(data) = layer.image_data else { return };
+                    if !super::Privacy::same_origin(self.context.dom.as_ref().url(), &data.url) {
+                        return;
+                    }
+                    if let ImageData::Raster(raster) = &data.image {
+                        privacy.allowed.borrow_mut().push(raster.data.id());
+                    }
+                }
                 self.draw_raster_image_layer(scene, layer, area);
                 #[cfg(feature = "svg")]
                 self.draw_svg_image_layer(scene, layer, area);

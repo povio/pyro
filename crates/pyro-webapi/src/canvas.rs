@@ -1642,8 +1642,9 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     let Target::Element(canvas) = c.target else {
         return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The canvas has no drawable content."));
     };
-    let image = crate::html_in_canvas::element_image(&c.page, canvas, element)?;
+    // WebIDL: the numbers are converted (their valueOf run) before the method's steps can throw.
     let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
+    let image = crate::html_in_canvas::element_image(&c.page, canvas, element)?;
     let Some(v) = v else { return Ok(s.undefined()) };
     let (w, h) = (image.width, image.height);
     let (src, dst) = match v.len() {

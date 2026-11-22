@@ -138,7 +138,8 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
     doc.ensure_paint_tree();
     let (width, height) = doc.viewport().window_size;
     let widgets = HashMap::new();
-    let painter = BlitzDomPainter::new(doc, scale, width, height, 0.0, 0.0, &widgets);
+    let mut painter = BlitzDomPainter::new(doc, scale, width, height, 0.0, 0.0, &widgets);
+    painter.privacy = Some(render::Privacy::default());
     let node = doc.get_node(id)?;
     let size = node.final_layout().size;
     let parent = painter.node_transform(node, kurbo::Affine::IDENTITY).inverse();
@@ -148,20 +149,27 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
     painter.top_layer_root.set(Some(id));
     let mut scene = Scene::new();
     painter.render_element(&mut scene, id, parent, kurbo::Rect::new(-1e7, -1e7, 1e7, 1e7));
-    let taints = subtree_may_taint(doc, id, &scene);
+    let privacy = painter.privacy.take().unwrap_or_default();
+    let taints = privacy.unclassified.get() || subtree_may_taint(doc, id, &scene, &privacy.allowed.borrow());
     Some((scene, kurbo::Size::new(size.width as f64 * scale, size.height as f64 * scale), taints))
 }
 
 /// pyro: HTML-in-Canvas privacy: whether the paint of `id`'s subtree (`scene`) may show content a
-/// page must not read back from a canvas: any image (an `<img>`, a CSS image, a video frame, a
-/// nested canvas, an SVG `<image>` or `feImage`), whose origin this cannot tell, or a nested
-/// document, an embedded plugin or media element, or a visited link (whose colours reveal
-/// history). The canvas drawn into is then no longer origin-clean.
-fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene) -> bool {
+/// page must not read back from a canvas, after `render::Privacy` left out the images of other
+/// origins it can classify: any other image (a video frame, a nested canvas, an SVG `<image>`, an
+/// `feImage`, one whose pixels are not among the `allowed` same-origin ones), a border, mask or
+/// list-style image of another origin, a nested document, an embedded plugin or media element, or a
+/// visited link (whose colours reveal history). The canvas drawn into is then no longer
+/// origin-clean.
+fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u64]) -> bool {
     use anyrender::Paint;
     use anyrender::filters::FilterEffect;
     use anyrender::recording::RenderCommand;
-    let image = |paint: &Paint| !matches!(paint, Paint::Solid(_) | Paint::Gradient(_));
+    let image = |paint: &Paint| match paint {
+        Paint::Solid(_) | Paint::Gradient(_) => false,
+        Paint::Image(brush) => !allowed.contains(&brush.image.data.id()),
+        _ => true,
+    };
     let filter_image = |filter: &Option<std::sync::Arc<anyrender::Filter>>| {
         filter.as_ref().is_some_and(|f| f.nodes().iter().any(|node| matches!(node.effect, FilterEffect::Image(_))))
     };
@@ -181,11 +189,18 @@ fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene) -> bool {
         if doc.is_visited_link(n) {
             return true;
         }
-        if let Some(element) = node.element_data()
-            && (element.sub_doc_data().is_some()
-                || matches!(&*element.name.local, "iframe" | "frame" | "embed" | "object" | "video" | "audio"))
-        {
-            return true;
+        if let Some(element) = node.element_data() {
+            if element.sub_doc_data().is_some()
+                || matches!(&*element.name.local, "iframe" | "frame" | "embed" | "object" | "video" | "audio")
+            {
+                return true;
+            }
+            let foreign = |images: &[Option<blitz_dom::node::ImageResourceData>]| {
+                images.iter().flatten().any(|image| !render::Privacy::same_origin(doc.url(), &image.url))
+            };
+            if foreign(&element.border_images) || foreign(&element.mask_images) || foreign(&element.list_style_images) {
+                return true;
+            }
         }
         stack.extend(node.children.iter().copied());
         if let Some(children) = node.layout_children.borrow().as_ref() {
