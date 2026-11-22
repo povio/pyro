@@ -1628,7 +1628,15 @@ where
 
             Token::Tag(tag @ tag!(<>)) => self.foreign_start_tag(tag),
 
-            // FIXME(#118): </script> in SVG
+            // pyro: "An end tag whose name is script, if the current node is an SVG script
+            // element": pop it and process it (the parser yields it like an HTML script).
+            Token::Tag(tag @ tag!(</>))
+                if tag.name == local_name!("script")
+                    && self.current_node_in(|n| n == expanded_name!(svg "script")) =>
+            {
+                ProcessResult::Script(self.pop())
+            },
+
             Token::Tag(tag @ tag!(</>)) => {
                 let mut first = true;
                 let mut stack_idx = self.open_elems.borrow().len() - 1;

@@ -1912,7 +1912,18 @@ where
         }
         self.adjust_foreign_attributes(&mut tag);
         if tag.self_closing {
-            // FIXME(#118): <script /> in SVG
+            // pyro: `<script/>` in SVG acknowledges the flag and acts as its end tag: the element
+            // is pushed, popped and processed (the parser yields it like an HTML script).
+            if current_ns == ns!(svg) && tag.name == local_name!("script") {
+                self.insert_element(
+                    PushFlag::Push,
+                    current_ns,
+                    tag.name,
+                    tag.attrs,
+                    tag.had_duplicate_attributes,
+                );
+                return ProcessResult::Script(self.pop());
+            }
             self.insert_element(
                 PushFlag::NoPush,
                 current_ns,

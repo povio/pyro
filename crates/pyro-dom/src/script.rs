@@ -341,8 +341,13 @@ impl Dom {
         self.media_after_attr(idx, local);
         // HTML: a connected script is prepared when it gets a `src` it did
         // not have. No other attribute change (`type`, a changed or removed
-        // `src`) prepares it again.
-        let script_src = local == "src" && added && self.script_steps_due(idx);
+        // `src`) prepares it again. An SVG script's source is its `href`
+        // (`xlink:href`), as in Chrome.
+        let source_attr = match self.n(idx).element() {
+            Some(e) if e.name.ns == ns!(svg) => "href",
+            _ => "src",
+        };
+        let script_src = local == source_attr && added && self.script_steps_due(idx);
         let meta = matches!(local, "name" | "content") && self.is_html_meta(idx);
         if meta {
             self.process_referrer_meta(idx);
@@ -527,6 +532,19 @@ impl Dom {
                 _ => ScriptKind::Classic,
             },
         };
+        // An SVG script's source is its `href`, else its `xlink:href` (SVG 2), and it has no
+        // `async`, `defer` or `nomodule` (Chrome: SVGScriptElement is never async or deferred).
+        let svg = e.name.ns == ns!(svg);
+        let src = if svg {
+            e.attr_local(&local_name!("href")).or_else(|| {
+                e.attrs
+                    .iter()
+                    .find(|a| a.name.ns == ns!(xlink) && a.name.local == local_name!("href"))
+                    .map(|a| &*a.value)
+            })
+        } else {
+            e.attr_local(&local_name!("src"))
+        };
         let mut inline_text = String::new();
         for c in self.child_idx_iter(i) {
             // "Child text content": Text and (XML) CDATA section children.
@@ -536,10 +554,10 @@ impl Dom {
         }
         Ok(ScriptInfo {
             kind,
-            src: e.attr_local(&local_name!("src")).map(str::to_owned),
-            async_: e.attr_local(&local_name!("async")).is_some(),
-            defer: e.attr_local(&local_name!("defer")).is_some(),
-            nomodule: e.attr_local(&local_name!("nomodule")).is_some(),
+            src: src.map(str::to_owned),
+            async_: !svg && e.attr_local(&local_name!("async")).is_some(),
+            defer: !svg && e.attr_local(&local_name!("defer")).is_some(),
+            nomodule: !svg && e.attr_local(&local_name!("nomodule")).is_some(),
             parser_inserted: e.flags & element_flags::PARSER_INSERTED != 0,
             already_started: e.flags & element_flags::SCRIPT_ALREADY_STARTED != 0,
             inline_text,

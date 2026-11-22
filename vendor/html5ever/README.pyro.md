@@ -52,3 +52,16 @@ selectedcontent" (WPT html/syntax/parsing `webkit02.dat`). Upstream calls the si
   keeps the trait's no-op.
 
 Tests: `crates/pyro-dom/tests/html_selectedcontent_parsing.rs`.
+
+## The change: SVG script elements yield to the script runner
+
+Upstream leaves "FIXME(#118)": an SVG `<script>` in HTML never reached the sink as a script, so no SVG script in an
+HTML document ran (WPT html/semantics/scripting-1/the-script-element/execution-timing `131`–`146`).
+
+- `src/tree_builder/rules.rs`: in foreign content, an end tag `script` whose current node is an SVG script element pops
+  it and returns `ProcessResult::Script`, as the `</script>` of an HTML script does in the text insertion mode.
+- `src/tree_builder/mod.rs`: a self-closing `<script/>` in SVG is inserted, pushed and popped and returns
+  `ProcessResult::Script` (the HTML Standard: acknowledge the flag and act as for the end tag).
+- The sinks see the same `TokenizerResult::Script` as for an HTML script; drivers that ignore scripts keep resuming.
+
+Tests: `crates/pyro-dom/tests/svg_script_parsing.rs`.
