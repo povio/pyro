@@ -1960,7 +1960,8 @@ simple_class!(HtmlBodyElement, "HTMLBodyElement", HtmlElement, |def| {
 simple_class!(HtmlTitleElement, "HTMLTitleElement", HtmlElement, |def| {
     def.accessor(
         "text",
-        |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
+        // HTML: the element's child text content (its Text children only).
+        |s, n| Ok(s.string(&n.page().dom.borrow().child_text_content(n.id))),
         |_s, n, v| {
             let arg0 = dom_string(v)?;
             n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
