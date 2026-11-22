@@ -904,6 +904,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // recorded after its callbacks, on the layout they leave (WPT css-sizing
     // `contain-intrinsic-size/auto-006`: two frames, then skipping uses the size).
     pyro_webapi::layout_api::record_remembered_sizes(&w.target.page);
+    // HTML "update the rendering": the focused element loses focus when it is no longer
+    // rendered (the focus fixup rule, after the frame's style update).
+    pyro_webapi::input::run_rendering_focus_fixup(&w.target.page);
     // HTML-in-Canvas: the `paint` events of `<canvas content=drawable>` (none without one).
     pyro_webapi::html_in_canvas::run_paint_step(&w.target.page);
     w.target.page.sync_frame_resources();
