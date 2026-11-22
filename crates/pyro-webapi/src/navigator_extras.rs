@@ -453,7 +453,7 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     extras.as_object().ok_or_else(|| JsError::Type("navigator extras".into()))
 }
 
-fn permission_state(page: &PageDom, name: &str) -> PermissionSetting {
+pub(crate) fn permission_state(page: &PageDom, name: &str) -> PermissionSetting {
     let origin = crate::storage::document_origin(page);
     page.context_services().state(origin.as_deref(), name)
 }

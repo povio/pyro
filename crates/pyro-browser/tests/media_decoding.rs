@@ -198,6 +198,29 @@ fn decode_audio_data_decodes_resamples_and_detaches() {
 }
 
 #[test]
+fn playback_stats_window_binding() {
+    let (mut thread, page) = setup("<!doctype html>", &[]);
+    assert_eq!(eval(&thread, page, "new AudioContext(); 'AudioPlaybackStats' in globalThis"), "false");
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("https://audio.test/", "text/html", "<!doctype html>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader));
+    thread.browser.navigate(page, NavigateOpts::address_bar("https://audio.test/")).unwrap();
+    settle(&mut thread);
+    thread.browser.page(page).unwrap().main_frame.page_dom.as_ref().unwrap().notify_user_activation();
+    assert_eq!(eval(&thread, page, r#"
+        const ctor = AudioPlaybackStats, context = new AudioContext(), stats = context.playbackStats;
+        let illegal = false;
+        try { new ctor(); } catch (error) { illegal = error instanceof TypeError; }
+        [illegal, Object.getPrototypeOf(stats) === ctor.prototype, context.playbackStats === stats,
+         stats.toJSON().totalDuration === 0, !('playbackStats' in OfflineAudioContext.prototype)].every(Boolean);
+    "#), "true");
+    settle(&mut thread);
+    thread.browser.advance_time_explicit(Duration::from_millis(1500)).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "stats.totalDuration >= 1 && stats.totalDuration <= context.currentTime"), "true");
+}
+
+#[test]
 fn realtime_context_needs_activation_and_runs_on_the_page_clock() {
     let (mut thread, page) = setup("<!doctype html>", &[]);
     eval(

@@ -40,6 +40,7 @@ where
         MODULE,
         "BaseAudioContext",
         "AudioContext",
+        "AudioPlaybackStats",
         "OfflineAudioContext",
         "AudioBuffer",
         "AudioParam",
@@ -129,6 +130,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.boolean(page.has_sticky_activation()))
     })?;
     natives.set_atom("activated", activated.value())?;
+    let can_update_stats = s.function("canUpdatePlaybackStats", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.boolean((page.is_fully_active() && !page.is_hidden()) || matches!(
+            crate::navigator_extras::permission_state(&page, "microphone"),
+            crate::navigator_extras::PermissionSetting::Granted
+        )))
+    })?;
+    natives.set_atom("canUpdatePlaybackStats", can_update_stats.value())?;
     // A timer that does not keep the page busy (a real-time context's
     // sources end on it, as media playback timers do): (ms, fn) -> id.
     let timer = s.function("timer", |s, _this, a| {

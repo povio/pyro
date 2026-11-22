@@ -2168,6 +2168,46 @@
     return options;
   }
 
+  const playbackContexts = new WeakMap();
+  function statsContext(self) {
+    const c = playbackContexts.get(self);
+    if (!c) throw invocation();
+    return c;
+  }
+  function refreshDuration(c) {
+    const stamp = now();
+    if (c.state === 'running' && stamp - c.statsStamp >= 1000 && natives.canUpdatePlaybackStats?.()) {
+      c.statsDuration = c.time();
+      c.statsStamp = stamp;
+    }
+  }
+  function statsDuration(self) {
+    const c = statsContext(self);
+    if (!c.statsLocked) {
+      refreshDuration(c);
+      c.statsLocked = true;
+      queueMicrotaskC(() => { c.statsLocked = false; });
+    }
+    return c.statsDuration;
+  }
+  class AudioPlaybackStats {
+    constructor(...args) {
+      if (args[0] !== secret) throw illegal();
+      playbackContexts.set(this, args[1]);
+    }
+    get underrunDuration() { statsDuration(this); return 0; }
+    get underrunEvents() { statsDuration(this); return 0; }
+    get totalDuration() { return statsDuration(this); }
+    get averageLatency() { statsDuration(this); return 0; }
+    get minimumLatency() { statsDuration(this); return 0; }
+    get maximumLatency() { statsDuration(this); return 0; }
+    resetLatency() { statsContext(this); }
+    toJSON() {
+      return { underrunDuration: 0, underrunEvents: 0, totalDuration: statsDuration(this), averageLatency: 0, minimumLatency: 0, maximumLatency: 0 };
+    }
+  }
+  webidl(AudioPlaybackStats, 'AudioPlaybackStats');
+
   // A real-time context: no output device, a clock while running.
   class AudioContext extends BaseAudioContext {
     constructor(options) {
@@ -2188,6 +2228,8 @@
       c.started = 0; // document time the clock (re)started at
       c.timer = undefined;
       c.pendingResumes = [];
+      c.statsStamp = now();
+      c.statsDuration = 0;
       c.currentFrames = () => {
         if (c.state !== 'running') return c.frames;
         const elapsed = (now() - c.started) / 1000 * c.rate;
@@ -2200,6 +2242,7 @@
         c.scheduleEnds();
       };
       c.halt = (state) => {
+        if (!c.statsLocked) refreshDuration(c);
         if (c.state === 'running') c.frames = c.currentFrames();
         if (c.timer !== undefined) { clearClock(c.timer); c.timer = undefined; }
         setState(c, state);
@@ -2231,6 +2274,11 @@
       return max(DEFAULT_QUANTUM, ceil(256 * c.rate / 48000), c.quantum) / c.rate;
     }
     get outputLatency() { ctxOf(this); return 0; }
+    get playbackStats() {
+      const c = ctxOf(this);
+      if (c.offline) throw invocation();
+      return c.playbackStats ??= new AudioPlaybackStats(secret, c);
+    }
     getOutputTimestamp() {
       const c = ctxOf(this);
       return { contextTime: c.time(), performanceTime: c.state === 'running' ? now() : 0 };
@@ -2462,7 +2510,7 @@
   webidl(OfflineAudioCompletionEvent, 'OfflineAudioCompletionEvent');
 
   return {
-    localImpulseInfo, BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
+    localImpulseInfo, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, PeriodicWave,
     ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, DynamicsCompressorNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
