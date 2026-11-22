@@ -340,6 +340,16 @@ fn remove_format_keeps_foreign_elements_and_the_original_suffix() {
 }
 
 #[test]
+fn font_size_replaces_only_the_selected_part_of_an_existing_font() {
+    let e = env("<body><div id=ed contenteditable><font size=1>abcd</font></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, carrier=ed.firstChild, t=carrier.firstChild; getSelection().setBaseAndExtent(t,3,t,1)");
+    assert_eq!(eval(r, "document.execCommand('styleWithCSS',false,true); document.execCommand('fontSize',false,'4'); ed.innerHTML"), "<font size=\"1\">a</font><span style=\"font-size: large;\">bc</span><font size=\"1\">d</font>");
+    assert_eq!(eval(r, "[ed.firstChild===carrier,getSelection().toString(),getSelection().direction].join()"), "true,bc,backward");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn remove_format_preserves_deletions_and_splits_ids_only_once() {
     let e = env("<body><div id=ed contenteditable><del>deleted</del><cite id=work>abcd</cite></div></body>");
     let r = &e.main;
