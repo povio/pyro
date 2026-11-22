@@ -565,7 +565,7 @@ impl<A: DomAccess> Sink<A> {
         let is_details = name.local == local_name!("details") && name.ns == markup5ever::ns!(html);
         let is_style = name.local == local_name!("style") && name.ns == markup5ever::ns!(html);
         match name.local {
-            local_name!("audio") | local_name!("video") => d.media_seen = true,
+            local_name!("audio") | local_name!("video") | local_name!("track") => d.media_seen = true,
             local_name!("canvas") => d.canvas_seen = true,
             local_name!("animate") if name.ns == markup5ever::ns!(svg) => d.smil_seen = true,
             _ => {}

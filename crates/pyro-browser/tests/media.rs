@@ -438,3 +438,34 @@ fn removing_the_current_source_keeps_the_pointer_in_place() {
         "http://site.test/c.mp4,4,http://site.test/c.mp4,4"
     );
 }
+
+#[test]
+fn track_fetches_use_the_media_parent_and_keep_completed_cues_on_reattachment() {
+    let (mut thread, page, loader) = setup_with(
+        r#"<!doctype html><video id="media"><track id="captions" default src="lyrics.vtt"></video>"#,
+        &[
+            ("lyrics.vtt", "text/vtt", b"WEBVTT\n\none\n00:00.000 --> 00:02.000\nhello\n".to_vec(), Duration::ZERO),
+            ("next.vtt", "text/vtt", b"WEBVTT\n\ntwo\n00:02.000 --> 00:04.000\nagain\n".to_vec(), Duration::ZERO),
+        ],
+    );
+    assert_eq!(eval(&thread, page,
+        "globalThis.video = document.querySelector('video'); globalThis.caption = document.querySelector('track'); \
+         globalThis.firstCue = caption.track.cues[0]; [caption.readyState, firstCue.id, firstCue.text].join('|')"),
+        "2|one|hello");
+    eval(&thread, page, "caption.src = './lyrics.vtt'");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "[caption.readyState, caption.track.cues[0] === firstCue].join('|')"), "2|true");
+    eval(&thread, page, "caption.remove(); caption.src = 'lyrics.vtt'; video.appendChild(caption)");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "[caption.readyState, caption.track.cues[0] === firstCue, video.textTracks.length].join('|')"), "2|true|1");
+    assert_eq!(loader.log.borrow().iter().filter(|url| url.ends_with("/lyrics.vtt")).count(), 1);
+    eval(&thread, page, "caption.remove(); caption.src = 'next.vtt'; video.appendChild(caption)");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "[caption.readyState, caption.track.cues.length, caption.track.cues[0].id].join('|')"), "2|1|two");
+    assert_eq!(loader.log.borrow().iter().filter(|url| url.ends_with("/next.vtt")).count(), 1);
+    // Without a CORS setting the track destination uses same-origin mode.
+    eval(&thread, page, "globalThis.errorSeen = false; caption.onerror = () => { errorSeen = true }; caption.src='https://other.test/captions.vtt'");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "[caption.readyState, caption.track.cues.length, errorSeen].join('|')"), "3|0|true");
+    assert!(!loader.log.borrow().iter().any(|url| url.starts_with("https://other.test/")));
+}

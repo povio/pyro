@@ -1,0 +1,59 @@
+{
+  "values": {
+    "cue": "function",
+    "region": "undefined",
+    "fragment": [
+      11,
+      "#document-fragment",
+      null,
+      [
+        [
+          3,
+          "#text",
+          "A ",
+          []
+        ],
+        [
+          7,
+          "timestamp",
+          "00:00:02.500",
+          []
+        ],
+        [
+          1,
+          "RUBY",
+          null,
+          [
+            [
+              3,
+              "#text",
+              "字",
+              []
+            ],
+            [
+              1,
+              "RT",
+              null,
+              [
+                [
+                  3,
+                  "#text",
+                  "ji",
+                  []
+                ]
+              ]
+            ]
+          ]
+        ],
+        [
+          3,
+          "#text",
+          " & B",
+          []
+        ]
+      ]
+    ],
+    "fresh": true
+  },
+  "requests": []
+}

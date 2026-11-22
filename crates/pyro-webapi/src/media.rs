@@ -29,6 +29,10 @@
 //!
 //! TimeRanges, MediaError and TextTrackList are made in JS (media.js) on a
 //! realm's first use.
+#[path = "track_load.rs"]
+mod track_load;
+pub(crate) use track_load::{check_track_resource, track_ready_state, track_url};
+
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -59,7 +63,8 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    lazy_globals!(def, MODULE, "TimeRanges", "MediaError", "TextTrackList", "VideoPlaybackQuality");
+    crate::text_tracks::define_globals(def);
+    lazy_globals!(def, MODULE, "TimeRanges", "MediaError", "VideoPlaybackQuality");
 }
 
 const NETWORK_EMPTY: u8 = 0;
@@ -285,6 +290,7 @@ fn add_range(ranges: &mut Vec<(f64, f64)>, start: f64, end: f64) {
 #[derive(Default)]
 pub(crate) struct MediaElements {
     elements: RefCell<FxHashMap<NodeId, MediaState>>,
+    track_loads: track_load::Loads,
     /// Entry count at which those of collected elements are dropped.
     sweep_at: Cell<usize>,
     /// Elements whose delaying-the-load-event flag is set.
@@ -456,6 +462,7 @@ fn source_removed(page: &PageDom, node: NodeId, source: NodeId, previous: Option
 /// Releases everything the page's media elements hold: timers, fetches,
 /// DOM references. Called by `PageDom::dispose` while hooks still exist.
 pub(crate) fn dispose(page: &PageDom) {
+    page.media.track_loads.clear();
     let states = std::mem::take(&mut *page.media.elements.borrow_mut());
     page.media.delaying_load.set(0);
     let hooks = page.hooks();
@@ -482,6 +489,16 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
         return;
     }
     match event.change {
+        MediaChange::TrackChildrenChanged(track) => {
+            track_load::sync_parent(page, node);
+            check_track_resource(page, track);
+        }
+        MediaChange::TrackChanged => {
+            if let Some(parent) = track_load::media_parent(page, node) {
+                track_load::sync_parent(page, parent);
+            }
+            check_track_resource(page, node);
+        }
         MediaChange::Src => load(page, node),
         MediaChange::Inserted => {
             let (empty, has_object) = peek(page, node, |st| (st.network == NETWORK_EMPTY, st.src_object.is_some()));
@@ -597,7 +614,7 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
                 } else {
                     f64::INFINITY
                 };
-                plan = Some((remaining.min(TIMEUPDATE_MS), st.timer_serial));
+                plan = Some((remaining.min(TIMEUPDATE_MS), st.timer_serial, st.position, st.rate));
             }
         }
         (old, plan)
@@ -607,7 +624,9 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
         hooks.clear_media_timer(id);
     }
     want_frame(page, node);
-    let Some((delay, serial)) = plan else { return };
+    let Some((delay, serial, position, rate)) = plan else { return };
+    let cue_delay = (crate::text_tracks::next_pause(page, node, position) - position) / rate * 1000.;
+    let delay = delay.min(cue_delay);
     let weak = Rc::downgrade(page);
     let task: Box<dyn FnOnce()> = Box::new(move || {
         if let Some(page) = weak.upgrade() {
@@ -645,6 +664,10 @@ fn tick(page: &Rc<PageDom>, node: NodeId, serial: u32) {
         None => {}
         Some(true) => reached_end(page, node),
         Some(false) => {
+            if crate::text_tracks::playback(page, node, true) {
+                internal_pause(page, node);
+                return;
+            }
             crate::input::fire_simple(page, node, "timeupdate", false, false);
             sync_clock(page, node);
         }
@@ -668,6 +691,7 @@ fn reached_end(page: &Rc<PageDom>, node: NodeId) {
     if let (Some(id), Some(hooks)) = (timer, page.hooks()) {
         hooks.clear_media_timer(id);
     }
+    if crate::text_tracks::playback(page, node, true) { internal_pause(page, node); }
     if !fire(page, node, generation, "timeupdate") {
         return;
     }
@@ -702,6 +726,7 @@ fn seek(page: &Rc<PageDom>, node: NodeId, to: f64) {
         (st.seek_serial, st.generation)
     });
     sync_clock(page, node);
+    crate::text_tracks::playback(page, node, false);
     queue_event(page, node, generation, "seeking");
     // Every byte is at hand: the seek completes in the next task.
     queue(page, node, generation, move |page| {
@@ -724,6 +749,7 @@ fn notify_playing(page: &Rc<PageDom>, node: NodeId, generation: u32) {
     if !fire(page, node, generation, "playing") {
         return;
     }
+    crate::text_tracks::playback(page, node, false);
     let pending = with(page, node, |st| std::mem::take(&mut st.pending_play));
     resolve_all(pending);
 }
@@ -1423,15 +1449,10 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         });
         time_ranges(s, n, &ranges)
     });
-    def.getter("textTracks", |s, n| {
-        let wrapper = node_value(s, n.page(), Some(n.id))?;
-        let wrapper = wrapper.as_object().ok_or(JsError::ContextDestroyed)?;
-        if let Some(list) = s.get_hidden(wrapper, "__lpTextTracks")? {
-            return Ok(list);
-        }
-        let list = MODULE.helper(s, n.page(), "textTrackList", &[])?;
-        s.set_hidden(wrapper, "__lpTextTracks", list)?;
-        Ok(list)
+    def.getter("textTracks", |s, n| crate::text_tracks::element_helper(s, n, "syncMedia", &[]));
+    def.method("addTextTrack", 1, |s, n, a| {
+        a.require(1, "addTextTrack")?;
+        crate::text_tracks::element_helper(s, n, "addTextTrack", &[a.get(0), a.get(1), a.get(2)])
     });
     def.accessor(
         "currentTime",

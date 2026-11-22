@@ -1,0 +1,31 @@
+{
+  "values": {
+    "available": "function",
+    "attached": {
+      "state": 2,
+      "sameTrack": true,
+      "sameCue": true,
+      "count": 2,
+      "firstId": "a",
+      "events": [
+        "load"
+      ],
+      "listLength": 1
+    },
+    "detached": {
+      "state": 2,
+      "sameTrack": true,
+      "sameCue": true,
+      "count": 2,
+      "firstId": "a",
+      "events": [
+        "load"
+      ],
+      "listLength": 1
+    }
+  },
+  "requests": [
+    "/a.vtt",
+    "/a.vtt"
+  ]
+}

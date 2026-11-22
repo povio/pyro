@@ -100,6 +100,41 @@ struct Hooks {
     frames: std::rc::Weak<crate::frames::FrameHost>,
 }
 
+impl Hooks {
+    fn queue_media_fetch(
+        &self, request: crate::media::ElementRequest, done: crate::media::MediaDone,
+    ) -> Option<pyro_webapi::MediaFetchHandle> {
+        let handle = crate::media::MediaFetch {
+            cancelled: Rc::new(std::cell::Cell::new(false)),
+            cancel: Rc::new(std::cell::RefCell::new(None)),
+        };
+        let (cancelled, slot) = (handle.cancelled.clone(), handle.cancel.clone());
+        // A finished request has nothing to cancel.
+        let finished = slot.clone();
+        let done: crate::media::MediaDone = Box::new(move |result| {
+            let cancel = finished.borrow_mut().take();
+            if let Some(cancel) = cancel {
+                cancel.disarm();
+            }
+            done(result);
+        });
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Networking, move |b| {
+            if cancelled.get() || !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                return;
+            }
+            let cancel = b.fetch_media(page, loader, request, done);
+            if cancelled.get() {
+                drop(cancel);
+            } else {
+                *slot.borrow_mut() = cancel;
+            }
+        });
+        Some(Box::new(handle))
+    }
+}
+
 impl PageHooks for Hooks {
     fn container(&self) -> pyro_webapi::FrameContainer {
         use pyro_webapi::FrameContainer;
@@ -230,34 +265,13 @@ impl PageHooks for Hooks {
         request: pyro_webapi::MediaRequest,
         done: Box<dyn FnOnce(Result<pyro_webapi::MediaResponse, String>)>,
     ) -> Option<pyro_webapi::MediaFetchHandle> {
-        let handle = crate::media::MediaFetch {
-            cancelled: Rc::new(std::cell::Cell::new(false)),
-            cancel: Rc::new(std::cell::RefCell::new(None)),
-        };
-        let (cancelled, slot) = (handle.cancelled.clone(), handle.cancel.clone());
-        // A finished request has nothing to cancel.
-        let finished = slot.clone();
-        let done: crate::media::MediaDone = Box::new(move |result| {
-            let cancel = finished.borrow_mut().take();
-            if let Some(cancel) = cancel {
-                cancel.disarm();
-            }
-            done(result);
-        });
-        let page = self.page;
-        let loader = self.loader.clone();
-        self.sched.post(TaskSource::Networking, move |b| {
-            if cancelled.get() || !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
-                return;
-            }
-            let cancel = b.fetch_media(page, loader, request, done);
-            if cancelled.get() {
-                drop(cancel);
-            } else {
-                *slot.borrow_mut() = cancel;
-            }
-        });
-        Some(Box::new(handle))
+        self.queue_media_fetch(crate::media::ElementRequest::Media(request), done)
+    }
+
+    fn fetch_text_track(
+        &self, url: String, crossorigin: Option<String>, done: crate::media::MediaDone,
+    ) -> Option<pyro_webapi::MediaFetchHandle> {
+        self.queue_media_fetch(crate::media::ElementRequest::Track { url, crossorigin }, done)
     }
 
     fn set_media_timer(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) -> Option<u64> {

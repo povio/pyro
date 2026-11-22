@@ -49,6 +49,7 @@ pub enum Initiator {
     Iframe,
     Video,
     Audio,
+    Track,
     Other,
 }
 
@@ -65,6 +66,7 @@ impl Initiator {
             Initiator::Iframe => "iframe",
             Initiator::Video => "video",
             Initiator::Audio => "audio",
+            Initiator::Track => "track",
             Initiator::Other => "other",
         }
     }
