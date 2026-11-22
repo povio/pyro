@@ -708,6 +708,13 @@ impl PageNav {
     }
 
     fn navigate(&self, url: String, history: HistoryHandling) {
+        self.navigate_from(url, history, None);
+    }
+
+    /// `navigate` with the referrer of the source document (HTML "navigate": the document of
+    /// the script that navigates, e.g. a parent calling a child frame's `location.assign`);
+    /// `None`: the navigated frame's own document.
+    fn navigate_from(&self, url: String, history: HistoryHandling, source_referrer: Option<String>) {
         if let Some(page) = self.page_dom.borrow().upgrade() {
             page.note_navigation_request();
         }
@@ -737,7 +744,7 @@ impl PageNav {
                 reason: NavigationReason::Script,
                 cdp_request_id: None,
                 // The document that navigates (`location`, `window.open`).
-                referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
+                referrer: source_referrer.or_else(|| b.doc(page).map(|p| p.main_frame.url.clone())),
                 referrer_policy: None,
             };
             if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
@@ -1528,8 +1535,19 @@ fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsRe
     // HTML "Location-object navigate": a document that has not completely
     // loaded, with no user gesture, replaces its entry.
     let loading = nav.page_dom.borrow().upgrade().is_some_and(|page| page.navigates_by_replacing());
+    // HTML "Location-object navigate": the source document is the incumbent's (the calling
+    // script's document, `pyro_js::entry_realm` as for the URL), whose URL is the request's
+    // referrer: a parent navigating its child frame sends the parent's URL, not the child's
+    // (initial about:blank) one.
+    let source_referrer = pyro_js::entry_realm()
+        .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()))
+        .or_else(|| pyro_webapi::target::page_of(s).ok())
+        .and_then(|page| {
+            let dom = page.dom.borrow();
+            dom.document_data(page.document()).ok().map(|d| d.url.to_string())
+        });
     if nav.rate_limit_allows() {
-        navigate_to(nav, target, replace || loading);
+        navigate_to_from(nav, target, replace || loading, source_referrer);
     }
     Ok(())
 }
@@ -1554,7 +1572,12 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
 /// HTML "navigate" from script (Location, `navigation.navigate`): a
 /// fragment change is same-document, anything else loads. Returns whether
 /// it stayed in the document.
-fn navigate_to(nav: &PageNav, mut target: Url, replace: bool) -> bool {
+fn navigate_to(nav: &PageNav, target: Url, replace: bool) -> bool {
+    navigate_to_from(nav, target, replace, None)
+}
+
+/// `navigate_to` with the source document's URL as the referrer of a loading navigation.
+fn navigate_to_from(nav: &PageNav, mut target: Url, replace: bool, source_referrer: Option<String>) -> bool {
     let current = Url::parse(&nav.url()).ok();
     if current.as_ref().is_some_and(|current| same_document_except_fragment(current, &target)) {
         nav.take_fragment_directive(&mut target);
@@ -1581,7 +1604,11 @@ fn navigate_to(nav: &PageNav, mut target: Url, replace: bool) -> bool {
             true
         }
         _ => {
-            nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push });
+            nav.navigate_from(
+                target.to_string(),
+                if replace { HistoryHandling::Replace } else { HistoryHandling::Push },
+                source_referrer,
+            );
             false
         }
     }
