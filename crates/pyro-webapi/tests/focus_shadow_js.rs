@@ -366,6 +366,13 @@ fn focus_visible_follows_input_modality_and_active_tracks_the_press() {
         eval(r, "[getComputedStyle(t).color === 'rgb(1, 2, 3)', b.matches(':focus-visible')].join()"),
         "false,false"
     );
+    // A press on nothing focusable clears focus with no focus type: script focus after it
+    // shows the ring again (Chrome; WPT focus-visible-script-focus-006).
+    mouse(&e.page, input::MouseKind::Pressed, 400.0, 200.0, 1);
+    mouse(&e.page, input::MouseKind::Released, 400.0, 200.0, 0);
+    assert_eq!(eval(r, "document.activeElement === document.body"), "true");
+    eval(r, "c.focus()");
+    assert_eq!(eval(r, state), "c,true");
 }
 
 #[test]

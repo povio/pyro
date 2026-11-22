@@ -2624,7 +2624,6 @@ fn dispatch_mouse_inner(
         }
         MouseKind::Pressed => {
             crate::popover::light_dismiss(page, target, m.x, m.y, true);
-            page.pointer_modality.set(true);
             if touch.is_none() {
                 let mut c = page.mouse_capture.get();
                 c.buttons_down = true;
@@ -2666,8 +2665,16 @@ fn dispatch_mouse_inner(
                     // focusable ancestor can move that content between press
                     // and release, turning the click into an ancestor click.
                     // Explicit script focus keeps its own scroll policy.
-                    Some(f) => focus_element_with_options(page, f, true),
+                    // Chrome's last focus type: a press that focuses an element makes it
+                    // "mouse" (later script focus shows no ring); one that focuses nothing
+                    // clears focus with no type, so later script focus shows the ring again
+                    // (WPT css/selectors `focus-visible-script-focus-002`, `-006`, `-016`).
+                    Some(f) => {
+                        page.pointer_modality.set(true);
+                        focus_element_with_options(page, f, true)
+                    }
                     None => {
+                        page.pointer_modality.set(false);
                         let focused = page.dom.borrow().focused(page.document()).ok().flatten();
                         if let Some(f) = focused {
                             blur_element(page, f);
