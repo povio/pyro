@@ -2647,7 +2647,7 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
             page.dom.borrow_mut().set_value(n.id, &arg0).js()?;
             // `value = ''` on a file input empties its selected files too.
             if page.dom.borrow().input_type(n.id).js()? == InputType::File {
-                page.files.borrow_mut().remove(&n.id);
+                page.clear_input_files(n.id);
             }
             Ok(())
         },

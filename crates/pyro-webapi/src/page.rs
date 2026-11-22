@@ -499,6 +499,10 @@ pub struct PageDom {
     used_font_families: RefCell<Option<(u64, std::collections::HashSet<String>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
+    /// The generation of each file input's selection (`files_changed`): its
+    /// `files` returns the same FileList while it stays.
+    pub(crate) file_generations: RefCell<FxHashMap<NodeId, u64>>,
+    file_generation: Cell<u64>,
     /// Faux layout + style engine of the displayed document. Read it with
     /// [`PageDom::layout`], which first sizes a child frame's viewport.
     pub layout: RefCell<pyro_dom::layout::Layout>,
@@ -1143,6 +1147,8 @@ impl PageDom {
             created: std::time::Instant::now(),
             used_font_families: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
+            file_generations: RefCell::new(FxHashMap::default()),
+            file_generation: Cell::new(0),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
             responsive_frames: RefCell::new(None),
@@ -3275,7 +3281,21 @@ impl PageDom {
         let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
         self.dom.borrow_mut().set_file_names(input, &names)?;
         self.files.borrow_mut().insert(input, files);
+        self.files_changed(input);
         Ok(())
+    }
+
+    /// Empties a file input's selection.
+    pub(crate) fn clear_input_files(&self, input: NodeId) {
+        if self.files.borrow_mut().remove(&input).is_some() {
+            self.files_changed(input);
+        }
+    }
+
+    fn files_changed(&self, input: NodeId) {
+        let g = self.file_generation.get() + 1;
+        self.file_generation.set(g);
+        self.file_generations.borrow_mut().insert(input, g);
     }
 
     /// Number of wrappers pinned for listeners (diagnostics/tests).

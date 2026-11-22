@@ -83,6 +83,10 @@ impl Store {
     }
 }
 
+/// The FileList `files` returned last and the file entry ids it was made from.
+const FILES_LIST: &str = "__lpDataTransferFiles";
+const FILES_KEY: &str = "__lpDataTransferFilesKey";
+
 /// `setData`/`getData`/`clearData` format normalization.
 fn normalize_format(format: &str) -> String {
     match format.to_ascii_lowercase().as_str() {
@@ -196,15 +200,30 @@ impl JsClass for DataTransfer {
             }
             Ok(array.value())
         });
-        def.getter("files", |s, d| {
+        // The same FileList while the store's files stay the same.
+        def.getter_this("files", |s, d, this| {
             let entries = d.store.entries.borrow();
+            let readable = d.store.readable();
+            let key: String = entries
+                .iter()
+                .filter(|e| readable && matches!(e.kind, Kind::File { .. }))
+                .map(|e| format!("{},", e.id))
+                .collect();
+            if let (Some(list), Some(k)) = (s.get_hidden(this, FILES_LIST)?, s.get_hidden(this, FILES_KEY)?) {
+                if k.as_string().is_some_and(|k| k == key) {
+                    return Ok(list);
+                }
+            }
             let mut files = FileListBuilder::new(s)?;
-            for e in entries.iter().filter(|_| d.store.readable()) {
+            for e in entries.iter().filter(|_| readable) {
                 if let Some(f) = d.store.file(s, e)? {
                     files.push(f.value())?;
                 }
             }
-            files.finish(s)
+            let list = files.finish(s)?;
+            s.set_hidden(this, FILES_LIST, list)?;
+            s.set_hidden(this, FILES_KEY, s.string(&key))?;
+            Ok(list)
         });
         def.pure_method("getData", 1, |s, d, a| {
             let format = normalize_format(&arg_string(&a, 0, "DataTransfer.getData")?);

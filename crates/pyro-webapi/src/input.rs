@@ -1184,7 +1184,7 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
         let _ = dom.reset_control(c);
         // A file input's selected files are emptied.
         if dom.input_type(c).ok() == Some(InputType::File) && local(&dom, c).as_deref() == Some("input") {
-            page.files.borrow_mut().remove(&c);
+            page.clear_input_files(c);
         }
     }
     // A select's reset updates its selectedcontent elements.
