@@ -237,6 +237,23 @@ macro_rules! reflect_action {
     };
 }
 
+/// `getSVGDocument()` of an iframe, embed or object: the element's content
+/// document when it is an SVG document (`image/svg+xml`), else null; null for
+/// a cross-origin document, which the content document already is.
+fn svg_document<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+    let document = match n.page().frame_document_value(s, n.id)? {
+        Some(document) => document,
+        None => node_value(s, n.page(), n.page().frame_document(n.id))?,
+    };
+    let Some(object) = document.as_object() else { return Ok(s.null()) };
+    let content_type = object.get_atom("contentType")?;
+    if content_type.is_string() && content_type.to_string()? == "image/svg+xml" {
+        Ok(document)
+    } else {
+        Ok(s.null())
+    }
+}
+
 macro_rules! simple_class {
     ($name:ident, $js:literal, $parent:ty) => {
         simple_class!($name, $js, $parent, |_def| {});
@@ -3281,6 +3298,7 @@ simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
         let doc = n.page().frame_document(n.id);
         node_value(s, n.page(), doc)
     });
+    def.method("getSVGDocument", 0, |s, n, _a| svg_document(s, n));
     def.getter("contentWindow", |s, n| {
         // Child browsing contexts are owned by pyro-browser; the hook returns
         // the child window proxy when one exists.
@@ -3607,6 +3625,7 @@ simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {
     reflect_url!(def, "codeBase", "codebase");
     reflect_str!(def, "codeType", "codetype");
     reflect_str_nn!(def, "border", "border");
+    def.method("getSVGDocument", 0, |s, n, _a| svg_document(s, n));
     // An object showing a document has a child navigable, as an iframe does (null otherwise).
     def.getter("contentDocument", |s, n| {
         if let Some(document) = n.page().frame_document_value(s, n.id)? {
@@ -3627,6 +3646,7 @@ simple_class!(HtmlEmbedElement, "HTMLEmbedElement", HtmlElement, |def| {
     reflect_str!(def, "height", "height");
     reflect_str!(def, "align", "align");
     reflect_str!(def, "name", "name");
+    def.method("getSVGDocument", 0, |s, n, _a| svg_document(s, n));
 });
 simple_class!(HtmlMapElement, "HTMLMapElement", HtmlElement, |def| {
     reflect_str!(def, "name", "name");
