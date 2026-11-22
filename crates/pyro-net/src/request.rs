@@ -385,6 +385,40 @@ pub fn is_javascript_mime(essence: &str) -> bool {
     )
 }
 
+/// Fetch "determine nosniff": the first value of the combined
+/// `X-Content-Type-Options` header list is `nosniff`, ASCII
+/// case-insensitively, once HTTP tab and space are stripped.
+pub fn is_nosniff(headers: &HeaderMap) -> bool {
+    // The first header line's first comma-separated value is the combined
+    // list's first value.
+    headers
+        .get("x-content-type-options")
+        .and_then(|v| v.as_bytes().split(|&b| b == b',').next())
+        .is_some_and(|t| trim_tab_space(t).eq_ignore_ascii_case(b"nosniff"))
+}
+
+/// `v` without HTTP tab or space (not every ASCII whitespace) at either end.
+fn trim_tab_space(v: &[u8]) -> &[u8] {
+    let ws = |b: &u8| *b == b' ' || *b == b'\t';
+    let start = v.iter().position(|b| !ws(b)).unwrap_or(v.len());
+    let end = v.iter().rposition(|b| !ws(b)).map_or(start, |e| e + 1);
+    &v[start..end]
+}
+
+/// Fetch's checks of a response to a script-like request (a classic
+/// script, a worker's script, `importScripts`): "should response to request
+/// be blocked due to nosniff?" (a JavaScript MIME type is required) and
+/// "... due to its MIME type?" (`audio/*`, `image/*`, `video/*`,
+/// `text/csv`). `essence` is lowercased, as [`parse_content_type`] returns
+/// it; empty when there is no Content-Type.
+pub fn script_response_blocked(essence: &str, nosniff: bool) -> bool {
+    (nosniff && !is_javascript_mime(essence))
+        || essence.starts_with("audio/")
+        || essence.starts_with("image/")
+        || essence.starts_with("video/")
+        || essence == "text/csv"
+}
+
 /// MIME Sniffing "JSON MIME type" for a lowercased essence: a valid MIME type
 /// whose essence is `application/json` or `text/json`, or whose subtype ends
 /// in `+json`.

@@ -880,6 +880,14 @@ fn fetch_script(
                     net.cancel(id);
                     return Err(format!("HTTP status {}", head.status.as_u16()));
                 }
+                // Fetch: a script-like response is blocked by nosniff or an
+                // audio/image/video/CSV MIME type (a worker's script, importScripts).
+                if destination == Destination::Script
+                    && pyro_net::script_response_blocked(&head.mime, pyro_net::is_nosniff(&head.headers))
+                {
+                    net.cancel(id);
+                    return Err(format!("MIME type ('{}') is not executable", head.mime));
+                }
                 if main {
                     page.set_referrer_policy_header(pyro_net::ReferrerPolicy::from_header(
                         head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),

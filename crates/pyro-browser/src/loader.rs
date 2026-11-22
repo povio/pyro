@@ -611,11 +611,7 @@ impl ResourceLoader for NetLoader {
                         timing: timing(&h),
                         partial: None,
                         opaque: h.kind == pyro_net::ResponseKind::Opaque,
-                        nosniff: h
-                            .headers
-                            .get("x-content-type-options")
-                            .and_then(|v| v.to_str().ok())
-                            .is_some_and(|v| v.split(',').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("nosniff"))),
+                        nosniff: pyro_net::is_nosniff(&h.headers),
                         url: h.url.to_string(),
                         status: h.status.as_u16(),
                         mime: h.mime,
@@ -2031,6 +2027,17 @@ impl Browser {
                             })
                             .or_else(|| {
                                 module.and_then(|ty| pyro_webapi::module_script::mime_error(ty, &r.mime, &r.url))
+                            })
+                            .or_else(|| {
+                                // Fetch: a classic script is blocked by nosniff
+                                // or an audio/image/video/CSV MIME type.
+                                (kind == ResourceKind::Script && pyro_net::script_response_blocked(&r.mime, r.nosniff))
+                                    .then(|| {
+                                        format!(
+                                            "Refused to execute script from '{}': MIME type ('{}') is not executable",
+                                            r.url, r.mime
+                                        )
+                                    })
                             });
                         match blocked {
                             Some(e) => Err(e),
