@@ -84,10 +84,12 @@ pub enum Composite {
     Saturation,
     Color,
     Luminosity,
+    /// Porter-Duff clear (Fa = 0, Fb = 0).
+    Clear,
 }
 
 impl Composite {
-    pub const ALL: [(&'static str, Composite); 26] = [
+    pub const ALL: [(&'static str, Composite); 27] = [
         ("source-over", Composite::SourceOver),
         ("source-in", Composite::SourceIn),
         ("source-out", Composite::SourceOut),
@@ -114,6 +116,7 @@ impl Composite {
         ("saturation", Composite::Saturation),
         ("color", Composite::Color),
         ("luminosity", Composite::Luminosity),
+        ("clear", Composite::Clear),
     ];
 
     pub fn from_name(name: &str) -> Option<Composite> {
@@ -504,25 +507,8 @@ impl Surface {
     /// `drawImage`: the `src` rectangle of `image` into the `dst` rectangle
     /// (user space). `src` is clipped to the image, `dst` with it.
     pub fn draw_image(&mut self, image: &Bitmap, src: Rect, dst: Rect, state: &DrawState<'_>) {
-        let bounds = Rect::new(0.0, 0.0, f64::from(image.width()), f64::from(image.height()));
-        let (src, dst) = (src.abs(), dst.abs());
-        if src.width() == 0.0 || src.height() == 0.0 || dst.width() == 0.0 || dst.height() == 0.0 {
-            return;
-        }
-        let clipped = src.intersect(bounds);
-        if clipped.width() <= 0.0 || clipped.height() <= 0.0 {
-            return;
-        }
-        let (sx, sy) = (dst.width() / src.width(), dst.height() / src.height());
-        let dst = Rect::new(
-            dst.x0 + (clipped.x0 - src.x0) * sx,
-            dst.y0 + (clipped.y0 - src.y0) * sy,
-            dst.x0 + (clipped.x1 - src.x0) * sx,
-            dst.y0 + (clipped.y1 - src.y0) * sy,
-        );
-        let to_dst = Affine::translate(dst.origin().to_vec2())
-            * Affine::scale_non_uniform(sx, sy)
-            * Affine::translate(-clipped.origin().to_vec2());
+        let size = (f64::from(image.width()), f64::from(image.height()));
+        let Some((dst, to_dst)) = image_placement(size, src, dst) else { return };
         let pattern = Pattern { image: image.clone(), repeat_x: false, repeat_y: false, transform: to_dst };
         let paint = Paint::Pattern(Arc::new(pattern));
         let t = state.transform;
@@ -531,6 +517,24 @@ impl Surface {
         }
         // The destination as a device path, guarded like any other.
         let path = guard_path(&(t * dst.to_path(0.1)), self.width, self.height);
+        self.draw(&paint, state, Affine::IDENTITY, &mut |ctx, _| ctx.fill_path(&path));
+    }
+
+    /// `drawImage` of a `width` by `height` source without a bitmap (a canvas
+    /// with no context, or one not drawn on yet): transparent black pixels,
+    /// which change the bitmap only under operators that a transparent source
+    /// does not leave alone (`copy`, `source-in`, ...).
+    pub fn draw_transparent_image(&mut self, width: u32, height: u32, src: Rect, dst: Rect, state: &DrawState<'_>) {
+        if composite::bounded(state.composite) && state.filter.is_none() {
+            return;
+        }
+        let Some((dst, _)) = image_placement((f64::from(width), f64::from(height)), src, dst) else { return };
+        let t = state.transform;
+        if !invertible(t) {
+            return;
+        }
+        let path = guard_path(&(t * dst.to_path(0.1)), self.width, self.height);
+        let paint = Paint::Color(Color::from_rgba8(0, 0, 0, 0));
         self.draw(&paint, state, Affine::IDENTITY, &mut |ctx, _| ctx.fill_path(&path));
     }
 
@@ -784,6 +788,31 @@ fn coverage(w: u16, h: u16, draw: &mut dyn FnMut(&mut RenderContext)) -> Vec<u8>
     ctx.flush();
     ctx.render(&mut pixmap, &mut resources);
     pixmap.data_as_u8_slice().chunks_exact(4).map(|p| p[3]).collect()
+}
+
+/// Where `drawImage` puts an image of `size`: `src` clipped to the image and
+/// `dst` with it, and the image-to-user transform; `None` when nothing is drawn.
+fn image_placement(size: (f64, f64), src: Rect, dst: Rect) -> Option<(Rect, Affine)> {
+    let bounds = Rect::new(0.0, 0.0, size.0, size.1);
+    let (src, dst) = (src.abs(), dst.abs());
+    if src.width() == 0.0 || src.height() == 0.0 || dst.width() == 0.0 || dst.height() == 0.0 {
+        return None;
+    }
+    let clipped = src.intersect(bounds);
+    if clipped.width() <= 0.0 || clipped.height() <= 0.0 {
+        return None;
+    }
+    let (sx, sy) = (dst.width() / src.width(), dst.height() / src.height());
+    let dst = Rect::new(
+        dst.x0 + (clipped.x0 - src.x0) * sx,
+        dst.y0 + (clipped.y0 - src.y0) * sy,
+        dst.x0 + (clipped.x1 - src.x0) * sx,
+        dst.y0 + (clipped.y1 - src.y0) * sy,
+    );
+    let to_dst = Affine::translate(dst.origin().to_vec2())
+        * Affine::scale_non_uniform(sx, sy)
+        * Affine::translate(-clipped.origin().to_vec2());
+    Some((dst, to_dst))
 }
 
 /// How much `t` stretches lengths at most (a bound on its largest singular
