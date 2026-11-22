@@ -1,0 +1,764 @@
+{
+  "measuredHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "inspectedIntegrationHead": "4ebaf69178ea80f6b59bb9cd8b9a03995ef13fb4",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "chrome": "signed Google stable 158.0.8127.37, original macOS arm64 receipts",
+  "matchedURLs": 30179,
+  "newlyWithheld": 179,
+  "historicallyWithheld": 1469,
+  "scope": "Only previously collected v2 eligible observations. No browser runs, no input replay and no product edits. Ranking is a shortlist, not an exhaustive attribution of the gap.",
+  "frozenAsymmetry": {
+    "chromeOnly": 71522,
+    "lpOnly": 12630,
+    "netChromeLead": 58892,
+    "chromeOnlyStrictPages": 9301,
+    "lpOnlyStrictPages": 653
+  },
+  "inputs": {
+    "combinedSnapshotSHA256SUMS": "0e37a85d307412d83d92f59b16a749306bde56624a07703819d536130f78e0d0",
+    "directionalNamedSHA256": "9d432e5f0aa901c0fb39b3e4784a9e9c8d234a0718b6473681b5567c7b4b95be",
+    "directionalReceiptsSHA256": "184bc17f871adbb3366bfa071e41d843ad7af10c02eba91e04895730469c7716"
+  },
+  "rankingRules": [
+    "Rows are ranked by distinct Chrome-only occurrences (URL, canonical name, occurrence), with an independent practical priority order. A row is assigned to at most one ranked family. Pages may span families and strict-page bounds must not be summed.",
+    "Direct named prerequisite counts use original named diagnostics naming the missing binding/operation or unsupported algorithm family, including wrong exceptions from an unsupported primitive. They show the first observed blocker, not guaranteed gains. Page setup counts use the page error when the name is absent. Other rows are file/name-correlated, including cases without diagnostic evidence and timeout/not-run statuses.",
+    "Strict page bound counts use matched current/Chrome page sets. An otherwise-strict page is Chrome-strict, currently complete/OK, nonempty, and every currently reported nonpassing name is in that family. Correcting the upstream blocker can reveal new names or failures.",
+    "The paint family includes only rows with an explicit missing canvas.requestPaint diagnostic, and not arbitrary canvas pixel mismatches. Crypto family assignment prioritizes hybrid labels, then ML-KEM and ML-DSA file/name labels. Unlabeled shared modern-algorithm cases are left unassigned."
+  ],
+  "practicalPriorityOrder": [
+    "cookie",
+    "origin",
+    "ml-kem",
+    "ml-dsa",
+    "shadow-reference",
+    "svg-length",
+    "paint",
+    "video-encoder",
+    "hybrid-kem",
+    "webnn",
+    "webgl",
+    "text-track"
+  ],
+  "rankedByNamedSurface": [
+    {
+      "id": "webnn",
+      "mechanism": "Real WebNN context, graph builder, tensor storage, validation and numerical execution",
+      "deliveryClass": "New subsystem",
+      "chromeOnlyOccurrences": 13093,
+      "matchedURLs": 608,
+      "attribution": {
+        "source-correlated, missing named observation": 8412,
+        "direct named prerequisite": 3929,
+        "source-correlated, other diagnostic": 740,
+        "page setup prerequisite": 12
+      },
+      "currentNamedStatus": {
+        "unobserved": 8424,
+        "Fail": 4507,
+        "Not Run": 147,
+        "Timeout": 15
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 569,
+        "error": 33,
+        "timeout": 6
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 548,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 224,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 224
+      },
+      "branchOccurrences": {
+        "operation vector: optional": 258,
+        "operation vector: required": 7383,
+        "conformance setup/other": 864,
+        "builder descriptor/operand validation": 3746,
+        "other WebNN": 16,
+        "IDL": 826
+      },
+      "deviceVariantOccurrences": {
+        "cpu": 4097,
+        "gpu": 4057,
+        "npu": 4097,
+        "none": 842
+      },
+      "topDiagnostics": [
+        {
+          "count": 2678,
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: MLGraphBuilder\""
+        },
+        {
+          "count": 645,
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'context.opSupportLimits')\""
+        },
+        {
+          "count": 404,
+          "diagnostic": "assert_equals: Unexpected exception when evaluating object expected null but got object \"ReferenceError: Can't find variable: builder\""
+        }
+      ],
+      "examples": [
+        {
+          "url": "webnn/conformance_tests/abs.https.any.html?cpu",
+          "name": "[optional] abs float16 6D tensor",
+          "diagnostic": ""
+        },
+        {
+          "url": "webnn/validation_tests/elementwise-binary.https.any.html?op=sub&device=npu",
+          "name": "[sub] Test bidirectionally broadcastable dimensions.",
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: MLGraphBuilder\""
+        },
+        {
+          "url": "webnn/conformance_tests/operations-with-special-names.https.any.html?cpu",
+          "name": "'add' nodes with special character name '\u0000node_a' and '\u0000node_b'",
+          "diagnostic": ""
+        }
+      ],
+      "source": "webnn/resources/utils.js:1450",
+      "implementationAndLimits": "No registered MLGraphBuilder or navigator.ml API found in the frozen product bindings. webnn/resources/utils.js:1450 takes a single missing-navigator.ml assertion branch. On the alternate path it requests the selected context, checks opSupportLimits, executes graphs and compares tensor values; CPU/GPU/NPU variants are separate URLs. Implement and report actual device support, starting with a real backend. Do not count gated or optional vectors as recovered when registration changes."
+    },
+    {
+      "id": "webgl",
+      "mechanism": "WebGL/WebGL2 context and complete IDL-backed rendering objects",
+      "deliveryClass": "New subsystem",
+      "chromeOnlyOccurrences": 4248,
+      "matchedURLs": 20,
+      "attribution": {
+        "direct named prerequisite": 4229,
+        "source-correlated, other diagnostic": 13,
+        "source-correlated, missing named observation": 6
+      },
+      "currentNamedStatus": {
+        "Fail": 4242,
+        "unobserved": 6
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 20
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 17,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 17,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 9
+      },
+      "branchOccurrences": {
+        "ordinary rendering/context behavior": 66,
+        "IDL interface shape": 4182
+      },
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 2524,
+          "diagnostic": "assert_own_property: self does not have own property \"WebGL2RenderingContext\" expected property \"WebGL2RenderingContext\" missing"
+        },
+        {
+          "count": 1452,
+          "diagnostic": "assert_own_property: self does not have own property \"WebGLRenderingContext\" expected property \"WebGLRenderingContext\" missing"
+        },
+        {
+          "count": 18,
+          "diagnostic": "assert_own_property: self does not have own property \"WebGLActiveInfo\" expected property \"WebGLActiveInfo\" missing"
+        }
+      ],
+      "examples": [
+        {
+          "url": "webgl/framebuffer-without-color-attachment.html",
+          "name": "webgl2: clear",
+          "diagnostic": "null is not an object (evaluating 'gl.createRenderbuffer')"
+        },
+        {
+          "url": "webgl/bufferSubData.html",
+          "name": "bufferSubData",
+          "diagnostic": "assert_true: Should be able to get a context. expected true got false"
+        },
+        {
+          "url": "webgl/compressedTexImage2D.html",
+          "name": "Calling function() {\n    gl.compressedTexImage2D(gl.TEXTURE_2D, 0, COMPRESSED_RGB_S3TC_DXT1_EXT, 4, 4, 0, new Uint8Array(8));\n  } should generate a 1280 error.",
+          "diagnostic": ""
+        }
+      ],
+      "source": "crates/pyro-webapi/src/canvas.rs:507",
+      "implementationAndLimits": "HTMLCanvasElement.getContext explicitly returns null for every type other than 2d. Implement real contexts, buffer/resource lifetimes, validation and drawing; 4,182 IDL assertions largely depend on names/prototypes and are not evidence of correct rendering."
+    },
+    {
+      "id": "ml-kem",
+      "mechanism": "ML-KEM-512/768/1024 CryptoKey lifecycle and encapsulation",
+      "deliveryClass": "Library/backend decision",
+      "chromeOnlyOccurrences": 2184,
+      "matchedURLs": 16,
+      "attribution": {
+        "direct named prerequisite": 2156,
+        "source-correlated, other diagnostic": 28
+      },
+      "currentNamedStatus": {
+        "Fail": 2184
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 16
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 0,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 0,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 0
+      },
+      "branchOccurrences": {
+        "encapsulate/decapsulate": 172,
+        "wrong exception on invalid usage": 896,
+        "generate": 640,
+        "other": 44,
+        "import/export": 432
+      },
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 896,
+          "diagnostic": "assert_equals: Bad usages not supported expected \"SyntaxError\" but got \"NotSupportedError\""
+        },
+        {
+          "count": 216,
+          "diagnostic": "assert_unreached: Threw an unexpected error: NotSupportedError: Algorithm 'ML-KEM-1024' is not supported for importKey Reached unreachable code"
+        },
+        {
+          "count": 216,
+          "diagnostic": "assert_unreached: Threw an unexpected error: NotSupportedError: Algorithm 'ML-KEM-768' is not supported for importKey Reached unreachable code"
+        }
+      ],
+      "examples": [
+        {
+          "url": "WebCryptoAPI/modern-algos/encap_decap/encap_decap_keys.https.any.html",
+          "name": "ML-KEM-1024 decapsulateKey with AES-CBC-256 (extractable=false)",
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"NotSupportedError: Algorithm 'ML-KEM-1024' is not supported for generateKey\""
+        },
+        {
+          "url": "WebCryptoAPI/modern-algos/supports-modern.https.any.html",
+          "name": "supports(decapsulateBits, ML-KEM-1024)",
+          "diagnostic": "assert_true: ML-KEM-1024 should support decapsulateBits expected true got false"
+        }
+      ],
+      "source": "crates/pyro-webapi/src/crypto_subtle.rs:472",
+      "implementationAndLimits": "Need supported, reviewed primitive/library plus generate/import/export and key type, usages, extractability and encapsulation/decapsulation. Frozen 25519/EC/RSA plumbing exists; no supported ML-KEM binding found. Validation-only exception rewriting does not implement the primitive."
+    },
+    {
+      "id": "ml-dsa",
+      "mechanism": "ML-DSA-44/65/87 key lifecycle and sign/verify",
+      "deliveryClass": "Library/backend decision",
+      "chromeOnlyOccurrences": 1260,
+      "matchedURLs": 14,
+      "attribution": {
+        "direct named prerequisite": 1218,
+        "source-correlated, other diagnostic": 42
+      },
+      "currentNamedStatus": {
+        "Fail": 1260
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 14
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 10,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 10,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 10
+      },
+      "branchOccurrences": {
+        "wrong exception on invalid usage": 480,
+        "generate": 240,
+        "import/export": 360,
+        "other": 66,
+        "sign/verify": 114
+      },
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 480,
+          "diagnostic": "assert_equals: Bad usages not supported expected \"SyntaxError\" but got \"NotSupportedError\""
+        },
+        {
+          "count": 120,
+          "diagnostic": "assert_unreached: Threw an unexpected error: NotSupportedError: Algorithm 'ML-DSA-44' is not supported for importKey Reached unreachable code"
+        },
+        {
+          "count": 120,
+          "diagnostic": "assert_unreached: Threw an unexpected error: NotSupportedError: Algorithm 'ML-DSA-65' is not supported for importKey Reached unreachable code"
+        }
+      ],
+      "examples": [
+        {
+          "url": "WebCryptoAPI/modern-algos/generateKey/failures_ML-DSA.https.any.worker.html",
+          "name": "Bad usages: generateKey(ML-DSA-44, true, [decapsulateBits])",
+          "diagnostic": "assert_equals: Bad usages not supported expected \"SyntaxError\" but got \"NotSupportedError\""
+        },
+        {
+          "url": "WebCryptoAPI/modern-algos/supports-modern.https.any.html",
+          "name": "supports validates ML-DSA-44 sign context length",
+          "diagnostic": "assert_true: ML-DSA-44 sign supports a 255-byte context expected true got false"
+        }
+      ],
+      "source": "crates/pyro-webapi/src/crypto_subtle.rs",
+      "implementationAndLimits": "Review a standards-conformant implementation and key formats, then integrate actual signing, verification, key generation, usage validation and import/export. With a backend selected this family covers ten otherwise strictly passable signed pages in the snapshot."
+    },
+    {
+      "id": "hybrid-kem",
+      "mechanism": "MLKEM768-X25519 composite KEM and key representation",
+      "deliveryClass": "Depends on ML-KEM",
+      "chromeOnlyOccurrences": 1016,
+      "matchedURLs": 14,
+      "attribution": {
+        "direct named prerequisite": 1002,
+        "source-correlated, other diagnostic": 14
+      },
+      "currentNamedStatus": {
+        "Fail": 1016
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 14
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 0,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 0,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 0
+      },
+      "branchOccurrences": {
+        "wrong exception on invalid usage": 448,
+        "generate": 320,
+        "encapsulate/decapsulate": 86,
+        "other": 18,
+        "import/export": 144
+      },
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 448,
+          "diagnostic": "assert_equals: Bad usages not supported expected \"SyntaxError\" but got \"NotSupportedError\""
+        },
+        {
+          "count": 144,
+          "diagnostic": "assert_unreached: Threw an unexpected error: NotSupportedError: Algorithm 'MLKEM768-X25519' is not supported for importKey Reached unreachable code"
+        },
+        {
+          "count": 104,
+          "diagnostic": "assert_unreached: exportKey threw an unexpected error: Error: assert_unreached: generateKey threw an unexpected error: NotSupportedError: Algorithm 'MLKEM768-X25519'"
+        }
+      ],
+      "examples": [
+        {
+          "url": "WebCryptoAPI/modern-algos/generateKey/failures_Hybrid-KEM.https.any.worker.html",
+          "name": "Bad usages: generateKey(MLKEM768-X25519, true, [decapsulateBits, decapsulateKey, encapsulateBits, encapsulateKey, decapsulateBits, decapsulateKey, decapsulateBits, decapsulateKey, encapsulateBits, encapsulateKey, decrypt])",
+          "diagnostic": "assert_equals: Bad usages not supported expected \"SyntaxError\" but got \"NotSupportedError\""
+        },
+        {
+          "url": "WebCryptoAPI/modern-algos/supports-modern.https.any.html",
+          "name": "supports(decapsulateBits, MLKEM768-X25519)",
+          "diagnostic": "assert_true: MLKEM768-X25519 should support decapsulateBits expected true got false"
+        }
+      ],
+      "source": "crates/pyro-webapi/src/crypto_subtle.rs:472",
+      "implementationAndLimits": "The hybrid construction needs both primitives, a composite key representation and interoperable encoding/derivation. The existing standalone X25519 path is only a dependency; this is distinct from ML-KEM parameterized vectors."
+    },
+    {
+      "id": "cookie",
+      "mechanism": "Cookie Store async CRUD, options, events and worker subscriptions",
+      "deliveryClass": "Bounded existing subsystem",
+      "chromeOnlyOccurrences": 505,
+      "matchedURLs": 72,
+      "attribution": {
+        "direct named prerequisite": 402,
+        "source-correlated, other diagnostic": 103
+      },
+      "currentNamedStatus": {
+        "Fail": 494,
+        "Not Run": 7,
+        "Timeout": 4
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 61,
+        "error": 7,
+        "timeout": 4
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 65,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 54,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 43
+      },
+      "branchOccurrences": {
+        "asynchronous cookie CRUD/encoding": 316,
+        "subscription/change event": 53,
+        "IDL": 136
+      },
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 311,
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: cookieStore\""
+        },
+        {
+          "count": 51,
+          "diagnostic": "assert_equals: wrong typeof object expected \"object\" but got \"undefined\""
+        },
+        {
+          "count": 29,
+          "diagnostic": "assert_own_property: self does not have own property \"CookieStore\" expected property \"CookieStore\" missing"
+        }
+      ],
+      "examples": [
+        {
+          "url": "cookiestore/encoding.https.any.serviceworker.html",
+          "name": "BOM not stripped from name",
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: cookieStore\""
+        },
+        {
+          "url": "cookiestore/cookieStore_special_names.https.any.html",
+          "name": "cookieStore.set with malformed name.",
+          "diagnostic": "assert_equals: cookieStore thrown an incorrect exception - expected \"TypeError\" but got \"ReferenceError\""
+        }
+      ],
+      "source": "crates/pyro-net/src/cookies.rs; crates/pyro-webapi/src/node.rs:2043",
+      "implementationAndLimits": "Use the existing RFC 6265bis cookie store and document.cookie bridge for shared state; add the web-facing async API and its origin/URL/domain/path semantics. Separate subscription/change lifecycle from core CRUD and verify these data-path effects on real HTTP cookies."
+    },
+    {
+      "id": "video-encoder",
+      "mechanism": "VideoEncoder configuration, encode, flush and output lifecycle",
+      "deliveryClass": "Codec/backend decision",
+      "chromeOnlyOccurrences": 491,
+      "matchedURLs": 53,
+      "attribution": {
+        "source-correlated, other diagnostic": 199,
+        "direct named prerequisite": 292
+      },
+      "currentNamedStatus": {
+        "Fail": 305,
+        "Not Run": 170,
+        "Timeout": 10,
+        "Optional Feature Unsupported": 6
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 43,
+        "error": 5,
+        "timeout": 5
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 53,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 43,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 28
+      },
+      "branchOccurrences": {},
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 236,
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+        },
+        {
+          "count": 54,
+          "diagnostic": "Can't find variable: VideoEncoder"
+        },
+        {
+          "count": 13,
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"TypeError: A buffer source is required.\""
+        }
+      ],
+      "examples": [
+        {
+          "url": "webcodecs/video-encoder-flush.https.any.worker.html?h264_avc",
+          "name": "Test new flush after reset in a flush callback",
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"TypeError: A buffer source is required.\""
+        },
+        {
+          "url": "webcodecs/video-encoder-flush.https.any.worker.html?h264_avc",
+          "name": "Test reset during flush",
+          "diagnostic": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+        }
+      ],
+      "source": "crates/pyro-webapi/src/video_decoder.rs; crates/pyro-webapi/src/video_frame.js",
+      "implementationAndLimits": "Frozen product includes VideoDecoder and VideoFrame, with no VideoEncoder registration found. Verify real encoders and supported codecs/configuration, output callbacks, rate control and frame handling. Filter includes only video-encoder/VideoEncoder-named URL families; whole-codecs arithmetic would incorrectly include audio and existing decoder work."
+    },
+    {
+      "id": "origin",
+      "mechanism": "HTML Origin value object, conversion, equality and serialization",
+      "deliveryClass": "Bounded value API",
+      "chromeOnlyOccurrences": 314,
+      "matchedURLs": 21,
+      "attribution": {
+        "direct named prerequisite": 292,
+        "page setup prerequisite": 18,
+        "source-correlated, other diagnostic": 4
+      },
+      "currentNamedStatus": {
+        "Fail": 293,
+        "unobserved": 18,
+        "Timeout": 3
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 17,
+        "error": 2,
+        "timeout": 2
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 20,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 16,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 15
+      },
+      "branchOccurrences": {},
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 273,
+          "diagnostic": "Can't find variable: Origin"
+        },
+        {
+          "count": 18,
+          "diagnostic": "Uncaught ReferenceError: Can't find variable: Origin"
+        },
+        {
+          "count": 8,
+          "diagnostic": "assert_throws_js: function \"_ => Origin.from(invalid)\" threw object \"ReferenceError: Can't find variable: Origin\" (\"ReferenceError\") expected instance of function \"f"
+        }
+      ],
+      "examples": [
+        {
+          "url": "html/browsers/origin/api/origin-from-url.any.worker.html",
+          "name": "Origin.from(\"\") throws a TypeError.",
+          "diagnostic": "assert_throws_js: function \"_ => Origin.from(new URL(invalid))\" threw object \"ReferenceError: Can't find variable: Origin\" (\"ReferenceError\") expected instance of fu"
+        },
+        {
+          "url": "html/browsers/origin/api/origin-from.any.worker.html",
+          "name": "Origin.from(1) throws a TypeError.",
+          "diagnostic": "Uncaught ReferenceError: Can't find variable: Origin"
+        },
+        {
+          "url": "html/browsers/origin/api/origin-from-worker.window.html",
+          "name": "Comparison of `Origin.from(Worker)` for opaque data URL origin.",
+          "diagnostic": "Test timed out"
+        }
+      ],
+      "source": "crates/pyro-webapi/src/storage.rs:380; html/browsers/origin/api/",
+      "implementationAndLimits": "Use the existing origin representation with genuine tuple/opaque identity and correct interface conversion. Detailed eligibility for each input and same-origin Location vs value behavior require explicit normal conformance guards."
+    },
+    {
+      "id": "shadow-reference",
+      "mechanism": "ShadowRoot referenceTarget with element-reference reflection",
+      "deliveryClass": "Bounded reference algorithm",
+      "chromeOnlyOccurrences": 245,
+      "matchedURLs": 15,
+      "attribution": {
+        "source-correlated, other diagnostic": 108,
+        "source-correlated, missing named observation": 135,
+        "direct named prerequisite": 2
+      },
+      "currentNamedStatus": {
+        "Fail": 107,
+        "unobserved": 135,
+        "Not Run": 2,
+        "Timeout": 1
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 14,
+        "error": 1
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 11,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 10,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 0
+      },
+      "branchOccurrences": {},
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 14,
+          "diagnostic": "assert_equals: expected null but got Element node <div id=\"host-id\"></div>"
+        },
+        {
+          "count": 14,
+          "diagnostic": "assert_equals: expected null but got Element node <div id=\"host-id\"> </div>"
+        },
+        {
+          "count": 13,
+          "diagnostic": "assert_equals: expected Element node <div id=\"host-id\"></div> but got null"
+        }
+      ],
+      "examples": [
+        {
+          "url": "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+          "name": "button.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target with imperative setup",
+          "diagnostic": "assert_equals: expected Element node <div id=\"host-id\"></div> but got null"
+        },
+        {
+          "url": "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+          "name": "button.interestForElement has reflection behavior ReflectsHost when pointing to button with reference target with imperative setup",
+          "diagnostic": ""
+        },
+        {
+          "url": "shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html",
+          "name": "shadowRootReferenceTarget getter reflects the shadowrootreferencetarget content attribute",
+          "diagnostic": "assert_equals: The shadowRootReferenceTarget IDL should reflect the content attribute expected (string) \"target\" but got (undefined) undefined"
+        }
+      ],
+      "source": "crates/pyro-webapi/src/node.rs:1638; shadow-dom/reference-target/",
+      "implementationAndLimits": "Implement tree-scoped reference resolution, reflected target identity and dynamic retargeting across real shadow roots; attachShadow and existing reflected-element APIs are neighboring paths. This is mostly inference from focused files; generic assertion errors alone do not prove a particular missing step."
+    },
+    {
+      "id": "paint",
+      "mechanism": "Canvas requestPaint and paint-event lifecycle for DOM-backed canvas content",
+      "deliveryClass": "Rendering integration",
+      "chromeOnlyOccurrences": 157,
+      "matchedURLs": 127,
+      "attribution": {
+        "direct named prerequisite": 157
+      },
+      "currentNamedStatus": {
+        "Fail": 157
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 122,
+        "error": 5
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 127,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 116,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 116
+      },
+      "branchOccurrences": {},
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 157,
+          "diagnostic": "assert_implements: Missing canvas.requestPaint undefined"
+        }
+      ],
+      "examples": [
+        {
+          "url": "html/canvas/element/manual/draw-element-image/privacy/pseudos/first-letter-visited-link-currentcolor-ignored.tentative.html",
+          "name": "drawElementImage does not reveal visited link colors first first-letter",
+          "diagnostic": "assert_implements: Missing canvas.requestPaint undefined"
+        }
+      ],
+      "source": "html/canvas/resources/wait-for-canvas-paint.js:8; crates/pyro-webapi/src/canvas.rs",
+      "implementationAndLimits": "157 direct named diagnostics stop at a shared helper before later visual assertions. Implement paint scheduling and actual subtree rendering/snapshot effects; emitting the event alone cannot be scored as an expected gain. Coordinate render ownership."
+    },
+    {
+      "id": "text-track",
+      "mechanism": "HTML text-track creation and cue/list lifecycle",
+      "deliveryClass": "Media subsystem",
+      "chromeOnlyOccurrences": 134,
+      "matchedURLs": 105,
+      "attribution": {
+        "source-correlated, other diagnostic": 110,
+        "direct named prerequisite": 20,
+        "source-correlated, missing named observation": 4
+      },
+      "currentNamedStatus": {
+        "Fail": 70,
+        "Timeout": 60,
+        "unobserved": 4
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 60,
+        "timeout": 45
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 103,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 58,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 15
+      },
+      "branchOccurrences": {},
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 60,
+          "diagnostic": "Test timed out"
+        },
+        {
+          "count": 21,
+          "diagnostic": "undefined is not an object (evaluating 'track.track.mode = 'showing'')"
+        },
+        {
+          "count": 5,
+          "diagnostic": "video.addTextTrack is not a function. (In 'video.addTextTrack(\"subtitles\")', 'video.addTextTrack' is undefined)"
+        }
+      ],
+      "examples": [
+        {
+          "url": "html/semantics/embedded-content/media-elements/track/track-element/cors/024.html",
+          "name": "track CORS: Use Credentials, not same-origin, with headers, redirects to same-origin, no headers",
+          "diagnostic": "undefined is not an object (evaluating 'track.track.mode = 'showing'')"
+        },
+        {
+          "url": "html/semantics/embedded-content/media-elements/track/track-element/track-mode.html",
+          "name": "TextTrack mode attribute",
+          "diagnostic": "undefined is not an object (evaluating 'textTrack.mode')"
+        },
+        {
+          "url": "html/semantics/embedded-content/media-elements/track/track-element/track-webvtt-class-markup.html",
+          "name": "Check cues from resources/class-bad.vtt",
+          "diagnostic": ""
+        }
+      ],
+      "source": "crates/pyro-webapi/src/media.rs:1429",
+      "implementationAndLimits": "The current API supplies TextTrackList but there is no matching addTextTrack method in the product lookup. Timed-out cue parsing/loading/event assertions have heterogeneous causes. Separate synchronous add/list/mode, WebVTT parse, scheduling and events."
+    },
+    {
+      "id": "svg-length",
+      "mechanism": "SVGLengthList/SVGAnimatedLengthList identity and unit-aware mutation",
+      "deliveryClass": "Bounded existing subsystem",
+      "chromeOnlyOccurrences": 56,
+      "matchedURLs": 21,
+      "attribution": {
+        "direct named prerequisite": 40,
+        "source-correlated, other diagnostic": 16
+      },
+      "currentNamedStatus": {
+        "Fail": 56
+      },
+      "currentPageOutcomeOnAffectedURLs": {
+        "complete": 21
+      },
+      "strictPageBounds": {
+        "chromeStrictCurrentNotStrict": 17,
+        "otherwiseStrictAllCurrentNonpassesInFamily": 14,
+        "otherwiseStrictAllCurrentNonpassesDirectlyDiagnosed": 8
+      },
+      "branchOccurrences": {},
+      "deviceVariantOccurrences": {},
+      "topDiagnostics": [
+        {
+          "count": 15,
+          "diagnostic": "assert_own_property: self does not have own property \"SVGLengthList\" expected property \"SVGLengthList\" missing"
+        },
+        {
+          "count": 8,
+          "diagnostic": "assert_own_property: self does not have own property \"SVGAnimatedLengthList\" expected property \"SVGAnimatedLengthList\" missing"
+        },
+        {
+          "count": 6,
+          "diagnostic": "undefined is not an object (evaluating 'text.x.animVal')"
+        }
+      ],
+      "examples": [
+        {
+          "url": "svg/types/scripted/SVGAnimatedLengthList.html",
+          "name": "SVGAnimatedLengthList interface - utilizing the dx property of SVGTextElement",
+          "diagnostic": "Can't find variable: SVGAnimatedLengthList"
+        },
+        {
+          "url": "svg/animations/svglengthlist-animation-1.html",
+          "name": "Test 'to' animation of SVGLengthList with LengthType number.",
+          "diagnostic": "undefined is not an object (evaluating 'text.x.animVal')"
+        }
+      ],
+      "source": "crates/pyro-dom/src/svg_point_list.rs; crates/pyro-webapi/src/collections.rs",
+      "implementationAndLimits": "Extend existing live SVG list ownership to lengths, including units and viewport/font-relative conversion. Only names explicitly mentioning one of the length-list interfaces are counted. Existing number-list work is in the measured base."
+    }
+  ],
+  "postCensusIntegrated": {
+    "comparison": "first-parent integration inspected through 4ebaf6917. No refreshed scores attributed to later changes.",
+    "knownPaths": [
+      "editing: SVG selection direction and inline formatting boundaries; removeFormat, list conversions and designMode insertion; examples b7f78198a, 47b3a33a2, 66a2501b7, 8e75e8d96",
+      "IDB: open-result ordering, receiver-realm delivery and outer script creation-turn activity; 69fc6fc57, f2a061f41, 400b8aaa8",
+      "render: reparented descendant key preservation, aef03c150"
+    ],
+    "outsideShortlist": [
+      "editing, CSS/render and Audio/IDB active or separately assigned lanes; avoid recrediting completed text modules, SVG number lists, window.open, scoped registries and OPFS",
+      "MathML had 2,568 Chrome-only names including 1,516 under relations/css-styling; route geometry/styling through its owner. WebAudio 1,386, editing 3,237 are whole-area counts, not estimates for one fix.",
+      "CSP and sanitizer suites are outside this bounded ordinary shortlist; the measured directional set remains intact. No native fault or vulnerable fixture was rerun."
+    ]
+  },
+  "webnnDeviceCaveat": "CPU/GPU/NPU query strings are requested context variants, not independent proof that the corresponding hardware executed. Observed signed required/optional operation names arise after supported-feature filtering and actual expected tensor output comparison. No backend/device counters were present in these receipts; context registration or fallback alone cannot claim numerical parity.",
+  "practicalPriorityRationale": "Start bounded browser API work with Cookie Store and the Origin value API. Library-backend review for ML-KEM/ML-DSA can proceed independently with known-answer and usage/format controls. Keep WebNN and WebGL as separate subsystem feasibility decisions, and coordinate canvas or media changes with the relevant owner."
+}

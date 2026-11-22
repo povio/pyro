@@ -13,3 +13,5 @@ Both raw-part archives and receipt paths are pinned in raw-receipts.json. See su
 | Signed Chrome stable | 1,754,948 / 1,802,021 | 24,385 |
 
 Against previous LP, 5,844 names gained and 221 lost passing status. Against signed Chrome, 12,630 names passed only LP and 71,522 passed only Chrome. Coverage and all non-OK pages are separately recorded.
+
+followup-ranking.json ranks ordinary remaining causes from the saved directional ledgers and static source at integration 4ebaf6917. It separates missing prerequisites, available direct diagnostic evidence and strict-page bounds from projected feature gains. No new WPT results were credited to the ranking.
