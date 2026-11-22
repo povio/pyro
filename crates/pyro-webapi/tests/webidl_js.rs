@@ -10,6 +10,19 @@ fn env() -> Env {
 }
 
 #[test]
+fn playback_stats_window_binding() {
+    let secure = Env::new("https://audio.test/");
+    assert_eq!(secure.eval(r#"(() => {
+        const ctor = AudioPlaybackStats, context = new AudioContext(), stats = context.playbackStats;
+        let illegal = false;
+        try { new ctor(); } catch (error) { illegal = error instanceof TypeError; }
+        return [illegal, Object.getPrototypeOf(stats) === ctor.prototype, context.playbackStats === stats,
+                stats.toJSON().totalDuration === 0, !('playbackStats' in OfflineAudioContext.prototype)].every(Boolean);
+    })()"#), "true");
+    assert_eq!(env().eval("new AudioContext(); 'AudioPlaybackStats' in globalThis"), "false");
+}
+
+#[test]
 fn style_assignment_put_forwards_to_css_text() {
     let env = env();
     assert_eq!(

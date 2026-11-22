@@ -8,8 +8,9 @@ const [executablePath, wptRoot, modulePath, batch] = process.argv.slice(2);
 const periodic = batch === 'periodic';
 const hold = batch === 'hold';
 const realtime = batch === 'realtime-quantum';
+const playbackStats = batch === 'playback-stats';
 const retro = batch === 'retrospective';
-const directory = '/webaudio/the-audio-api/' + (realtime ? 'the-audiocontext-interface/' : hold || retro ? 'the-audioparam-interface/' : periodic ? '' : 'the-audiobuffersourcenode-interface/');
+const directory = '/webaudio/the-audio-api/' + (realtime || playbackStats ? 'the-audiocontext-interface/' : hold || retro ? 'the-audioparam-interface/' : periodic ? '' : 'the-audiobuffersourcenode-interface/');
 const pages = retro ? ['setValueAtTime', 'setTargetAtTime', 'linearRampToValueAtTime', 'exponentialRampToValueAtTime', 'setValueCurveAtTime'].map(method => `retrospective-${method}.html`) : realtime ? ['audiocontext-rendersizehint.html'] : hold ? ['audioparam-cancel-and-hold.html', 'cancel-scheduled-values.html'] : periodic ? ['the-periodicwave-interface/periodicWave.html', 'the-oscillatornode-interface/ctor-oscillator.html'] : ['sub-sample-scheduling.html', 'audiobuffersource-duration-loop.html', 'audiobuffersource-duration-loop-playbackrate.html'];
 const offlineClose = batch === 'offline-close';
 const offlineQuantum = batch === 'offline-quantum';
@@ -21,11 +22,12 @@ const resampling = batch === 'resampling';
 const batchDirectory = destinationCount ? '/webaudio/the-audio-api/the-destinationnode-interface/' : reverse || detuning ? '/webaudio/the-audio-api/the-oscillatornode-interface/' : compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
 const batchPages = compressor ? ['the-dynamicscompressornode-interface/dynamicscompressor-basic.html', 'the-dynamicscompressornode-interface/ctor-dynamicscompressor.html', 'the-audioparam-interface/k-rate-dynamics-compressor-connections.html'] : offlineQuantum ? ['offlineaudiocontext-rendersizehint.html', 'offlineaudiocontext-suspend-rendersizehint.https.html', 'offlineaudiocontext-close.html'] : offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
 if (reverse) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html');
+if (playbackStats) batchPages.splice(0, batchPages.length, 'audiocontext-playbackstats.html');
 if (destinationCount) batchPages.splice(0, batchPages.length, 'destination.html');
 if (detuning) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html', 'detune-limiting.html');
 if (resampling) batchPages.splice(0, batchPages.length, 'buffer-resampling.html', 'sub-sample-buffer-stitching.html');
 const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
-const browser = await chromium.launch({ executablePath });
+const browser = await chromium.launch({ executablePath, ...(playbackStats ? {args: ['--autoplay-policy=no-user-gesture-required']} : {}) });
 if (hold) allowed.add('/webaudio/resources/audio-param.js');
 if (realtime || offlineQuantum) allowed.add('/webaudio/resources/rendersizehint-testing.js');
 if (retro) allowed.add(directory + 'retrospective-test.js');
@@ -33,7 +35,7 @@ try {
   const page = await browser.newPage();
   if (modulePath) {
     const source = await readFile(modulePath, 'utf8');
-    await page.addInitScript(`{ const audio = (${source})({activated: () => ${realtime}, timer: (delay, fn) => setTimeout(fn, delay), clearTimer: clearTimeout}); ${periodic ? 'delete globalThis.PeriodicWave;' : ''} ${compressor ? 'delete globalThis.DynamicsCompressorNode;' : ''} Object.assign(globalThis, audio); globalThis.installedAudio = audio; }`);
+    await page.addInitScript(`{ const audio = (${source})({activated: () => ${realtime || playbackStats}, canUpdatePlaybackStats: () => document.visibilityState === 'visible', timer: (delay, fn) => setTimeout(fn, delay), clearTimer: clearTimeout}); ${periodic ? 'delete globalThis.PeriodicWave;' : ''} ${compressor ? 'delete globalThis.DynamicsCompressorNode;' : ''} ${playbackStats ? 'delete globalThis.AudioPlaybackStats;' : ''} Object.assign(globalThis, audio); globalThis.installedAudio = audio; }`);
   }
   await page.route('**/*', async route => {
     const path = new URL(route.request().url()).pathname;
