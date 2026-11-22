@@ -630,9 +630,10 @@ body {
     margin: 8px;
 }
 
+/* pyro: not `multicol`, an unknown element in HTML (inline, no margins), as Chromium computes
+   it (WPT html/rendering margin-collapsing-quirks/multicol-*-mode). */
 p,
-dl,
-multicol {
+dl {
     display: block;
     margin-block-start: 1em;
     margin-block-end: 1em;
