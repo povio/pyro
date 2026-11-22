@@ -178,7 +178,16 @@ impl<'a> FocusNavigation<'a> {
             }
             _ => self.child_idx_iter(owner).collect(),
         };
-        if flow != ReadingFlow::Normal { self.order_roots(owner, &mut roots, flow); }
+        if flow != ReadingFlow::Normal {
+            roots.retain(|&i| self.n(i).is_element());
+            self.order_roots(owner, &mut roots, flow);
+            // Direct element children are themselves scope owners by virtue of
+            // their reading-flow parent. Shadow and assigned roots can have a
+            // different DOM parent and still need the regular scope walk.
+            if roots.iter().all(|&i| self.n(i).parent == owner) {
+                return roots;
+            }
+        }
         let mut out = Vec::new();
         let mut stack: Vec<u32> = roots.into_iter().rev().collect();
         while let Some(i) = stack.pop() {
