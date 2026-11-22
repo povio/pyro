@@ -5070,3 +5070,49 @@ fn soft_hyphen_line_breaks_preserve_intrinsic_widths() {
     p.dom.set_attribute(b, "style", "max-width:90px").unwrap();
     assert_eq!(p.metrics("b"), narrow, "narrowing again preserves the same wrapping");
 }
+
+/// An orthogonal in-flow block child's width (its block size) is its content's unless its
+/// `justify-self` resolves to `stretch` (`auto` taking the container's `justify-items`): it then
+/// fills the block container's inline size (WPT css-align `blocks/justify-self-htb-ltr-vrl`,
+/// `-vlr-ltr-htb` and their direction variants: 40px, not the content's 20px).
+#[test]
+fn orthogonal_block_child_stretches_only_for_justify_self_stretch() {
+    let p = page(
+        r#"<!doctype html><style>
+        body{margin:0}
+        .c{display:inline-block;margin:20px;border:solid 4px;width:40px;height:40px}
+        .v{writing-mode:vertical-rl}
+        .vl{writing-mode:vertical-lr}
+        .i::before{width:20px;height:20px;content:'';display:block}
+        </style>
+        <div class=c id=c-stretch><div id=stretch class="i v" style="justify-self:stretch"></div></div>
+        <div class=c id=c-stretch-rtl><div id=stretch-rtl class="i v" style="justify-self:stretch;direction:rtl"></div></div>
+        <div class=c style="justify-items:stretch"><div id=items class="i v"></div></div>
+        <div class=c><div id=normal class="i v" style="justify-self:normal"></div></div>
+        <div class=c><div id=auto class="i v"></div></div>
+        <div class=c><div id=start class="i v" style="justify-self:start"></div></div>
+        <div class=c style="justify-items:stretch"><div id=items-start class="i v" style="justify-self:start"></div></div>
+        <div class="c vl"><div id=v-stretch class=i style="writing-mode:horizontal-tb;justify-self:stretch"></div></div>
+        <div class="c vl"><div id=v-normal class=i style="writing-mode:horizontal-tb"></div></div>"#,
+    );
+    let size = |id: &str| {
+        let m = p.metrics(id);
+        [m[2], m[3]]
+    };
+    // Stretched: as wide as the container's content box (its inline size), offset 0.
+    assert_eq!(size("stretch"), [40.0, 20.0], "justify-self: stretch");
+    assert_eq!(size("stretch-rtl"), [40.0, 20.0], "justify-self: stretch, rtl");
+    assert_eq!(size("items"), [40.0, 20.0], "auto taking justify-items: stretch");
+    for (container, id) in [("c-stretch", "stretch"), ("c-stretch-rtl", "stretch-rtl")] {
+        let (c, m) = (p.metrics(container), p.metrics(id));
+        assert_eq!([m[0] - c[0], m[1] - c[1]], [4.0, 4.0], "{id}: at the content box's start corner");
+    }
+    // Not stretched: its content's block size.
+    assert_eq!(size("normal"), [20.0, 20.0], "justify-self: normal");
+    assert_eq!(size("auto"), [20.0, 20.0], "justify-self: auto, justify-items: normal");
+    assert_eq!(size("start"), [20.0, 20.0], "justify-self: start");
+    assert_eq!(size("items-start"), [20.0, 20.0], "justify-self: start over justify-items: stretch");
+    // A vertical container: the horizontal child's height is its block size.
+    assert_eq!(size("v-stretch"), [20.0, 40.0], "horizontal child in vertical-lr, stretch");
+    assert_eq!(size("v-normal"), [20.0, 20.0], "horizontal child in vertical-lr, normal");
+}
