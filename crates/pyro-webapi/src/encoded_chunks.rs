@@ -88,6 +88,14 @@ macro_rules! encoded_chunk {
 encoded_chunk!(EncodedAudioChunk, false);
 encoded_chunk!(EncodedVideoChunk, true);
 
+pub(crate) fn encoded_video<'s>(
+    s: &Scope<'s>, key: bool, timestamp: i64, duration: Option<u64>, data: Vec<u8>,
+) -> JsResult<Value<'s>> {
+    let cluster = crate::target::page_of(s)?.agent_cluster();
+    let chunk = EncodedChunk { video: true, key, timestamp, duration, data: data.into(), cluster };
+    Ok(s.wrap::<EncodedVideoChunk>(chunk, None)?.value())
+}
+
 pub(crate) fn encoded_audio<'s>(
     s: &Scope<'s>, timestamp: i64, duration: u64, data: Bytes,
 ) -> JsResult<Value<'s>> {
