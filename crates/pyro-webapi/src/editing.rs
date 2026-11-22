@@ -1514,6 +1514,23 @@ fn heading_end(dom: &Dom, block: NodeId, caret: Point) -> Option<Point> {
     }
 }
 
+/// Split the containing list item when its direct paragraph is edited.
+fn list_item_for_paragraph(dom: &Dom, host: NodeId, block: NodeId) -> Option<(NodeId, NodeId)> {
+    let item = dom.parent_element(block).ok()??;
+    if item == host || !dom.element(item).is_ok_and(|el| el.is_html() && &**el.local_name() == "li") {
+        return None;
+    }
+    let list = dom.parent_element(item).ok()??;
+    (dom.element(list).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "ul" | "ol"))
+        && editing_host(dom, list) == Some(host)).then_some((item, list))
+}
+
+fn clone_split_shell(dom: &mut Dom, source: NodeId) -> Option<NodeId> {
+    let clone = dom.clone_node(source, false, None).ok()?;
+    dom.remove_attribute(clone, "id").ok()?;
+    Some(clone)
+}
+
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     // A DOM caret inside an inline void has no child insertion position.
     // Split at the rendered object's edge so it travels with the right line.
@@ -1616,6 +1633,34 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         block = wrapper;
     }
     let tag = local(dom, block);
+    let list_item = if matches!(tag.as_str(), "p" | "div") && display == "block"
+        && is_text(dom, caret.0) && len(dom, caret.0) > 0
+    {
+        list_item_for_paragraph(dom, host, block)
+    } else { None };
+    if let Some((item, list)) = list_item {
+        if caret == deep_forward(dom, (block, 0)) {
+            // At the beginning, insert the empty item before the original.
+            // The original paragraph, caret and surrounding siblings stay put.
+            let Some(left_item) = clone_split_shell(dom, item) else { return caret };
+            let Some(left_block) = clone_split_shell(dom, block) else { return caret };
+            let Ok(br) = dom.create_element(doc, "br") else { return caret };
+            let mut content = br;
+            if formatted_split_edge(dom, block, caret) == Some(false) {
+                let mut ancestor = dom.parent_element(caret.0).ok().flatten();
+                while let Some(el) = ancestor.filter(|&el| el != block) {
+                    let Some(shell) = clone_split_shell(dom, el) else { return caret };
+                    if dom.append_child(shell, content).is_err() { return caret; }
+                    content = shell;
+                    ancestor = dom.parent_element(el).ok().flatten();
+                }
+            }
+            let _ = dom.append_child(left_block, content);
+            let _ = dom.append_child(left_item, left_block);
+            let _ = dom.insert_before(list, left_item, Some(item));
+            return caret;
+        }
+    }
     let mut at_heading_end = false;
     if matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
         if terminal_break && dom.parent(void).ok().flatten() == Some(block) {
@@ -1656,7 +1701,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     // Reconstruct the inline ancestor chain on the right side of the split.
     // The original nodes and their IDs stay in the first paragraph.
     let mut container = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
-    let formatted_edge = if at_heading_end || plaintext_at(dom, host) { formatted_split_edge(dom, block, caret) } else { None };
+    let formatted_edge = if list_item.is_some() || at_heading_end || plaintext_at(dom, host) { formatted_split_edge(dom, block, caret) } else { None };
     let text_parent = container;
     let mut empty_caret = None;
     let mut right_child = None;
@@ -1698,7 +1743,14 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     }
     let parent = dom.parent(block).ok().flatten().unwrap_or(host);
     let next = dom.next_sibling(block).ok().flatten();
-    let _ = dom.insert_before(parent, new_block, next);
+    if let Some((item, list)) = list_item {
+        let Some(right_item) = clone_split_shell(dom, item) else { return caret };
+        let after_item = dom.next_sibling(item).ok().flatten();
+        let _ = dom.append_child(right_item, new_block);
+        let _ = dom.insert_before(list, right_item, after_item);
+    } else {
+        let _ = dom.insert_before(parent, new_block, next);
+    }
     // Duplicating an inline-styled p or div alone does not start a new
     // visual paragraph. Keep its styles and put each half in a block.
     if inline_box && matches!(tag.as_str(), "p" | "div") {
