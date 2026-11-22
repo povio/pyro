@@ -515,3 +515,59 @@ pub(crate) fn clear_geometry(page: &Rc<PageDom>, canvas: NodeId, element: NodeId
     page.html_in_canvas.borrow_mut().transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
     Ok(())
 }
+
+/// `drawElementImage` (without `preserveElementGeometry`): the element's
+/// canvas transform becomes where it was drawn (6 values, 2D).
+pub(crate) fn set_drawn_transform(page: &Rc<PageDom>, canvas: NodeId, element: NodeId, values: Vec<f64>) {
+    let mut state = page.html_in_canvas.borrow_mut();
+    state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
+    state.transforms.push((canvas, element, values));
+}
+
+/// HTML-in-Canvas geometry: the client rect `rect` of `el` as its canvas
+/// transform places it. The element's box (with its own CSS transforms,
+/// relative to its untransformed border-box origin) is mapped by the canvas
+/// transform into the canvas's content box; its laid-out position in the
+/// canvas no longer counts. `rect` itself without a transform.
+pub(crate) fn transformed_rect(page: &PageDom, el: NodeId, rect: pyro_dom::layout::Rect) -> pyro_dom::layout::Rect {
+    let found = {
+        let state = page.html_in_canvas.borrow();
+        if state.transforms.is_empty() {
+            return rect;
+        }
+        state.transforms.iter().find(|(_, e, _)| *e == el).map(|(c, _, v)| (*c, v.clone()))
+    };
+    let Some((canvas, values)) = found else { return rect };
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    if !is_drawable_canvas(&dom, canvas) || !dom.is_connected(el).unwrap_or(false) {
+        return rect;
+    }
+    use pyro_dom::geometry::{LEFT, TOP};
+    let source = layout.synced_geometry_source(&dom);
+    let element_box = |id: NodeId| source.and_then(|source| source.element_box(pyro_dom::snapshot::render_key(id)));
+    // The canvas's content box origin in client coordinates.
+    let canvas_rect = layout.bounding_client_rect(&dom, canvas);
+    let (inset_x, inset_y) =
+        element_box(canvas).map_or((0.0, 0.0), |b| (b.border[LEFT] + b.padding[LEFT], b.border[TOP] + b.padding[TOP]));
+    let origin = (canvas_rect.x + inset_x, canvas_rect.y + inset_y);
+    // Where the element's CSS-transformed box starts relative to its untransformed origin.
+    let local = element_box(el).map_or((0.0, 0.0), |b| match b.layout_origin {
+        Some([ux, uy]) => (b.x - ux, b.y - uy),
+        None => (0.0, 0.0),
+    });
+    // The matrix's 2D part: (a, b, c, d, e, f), from 6 values or the 16 of a 3D matrix.
+    let [a, b, c, d, e, f] = match values.len() {
+        6 => [values[0], values[1], values[2], values[3], values[4], values[5]],
+        16 => [values[0], values[1], values[4], values[5], values[12], values[13]],
+        _ => return rect,
+    };
+    let map = |x: f64, y: f64| (a * x + c * y + e, b * x + d * y + f);
+    let (x0, y0, x1, y1) = (local.0, local.1, local.0 + rect.width, local.1 + rect.height);
+    let corners = [map(x0, y0), map(x1, y0), map(x0, y1), map(x1, y1)];
+    let min_x = corners.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let min_y = corners.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let max_x = corners.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+    let max_y = corners.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    pyro_dom::layout::Rect { x: origin.0 + min_x, y: origin.1 + min_y, width: max_x - min_x, height: max_y - min_y }
+}

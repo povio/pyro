@@ -16,6 +16,8 @@ pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'
     let page = n.page();
     crate::animation_events::layout_flush(page, n.id);
     let r = page.layout().bounding_client_rect(&page.dom.borrow(), n.id);
+    // HTML-in-Canvas: a drawable element's canvas transform places it (none: as laid out).
+    let r = crate::html_in_canvas::transformed_rect(page, n.id, r);
     crate::canvas::rect_value(s, page, false, r.layout_units())
 }
 

@@ -1736,7 +1736,16 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
 /// method reaches the element painting; nothing else in the context changes.
 fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(3, "CanvasRenderingContext2D.drawElementImage")?;
-    let n = a.len();
+    let mut n = a.len();
+    // A trailing DrawElementImageOptions dictionary ({preserveElementGeometry}).
+    let options = (matches!(n, 4 | 6 | 10) && a.get(n - 1).is_object()).then(|| a.get(n - 1));
+    if options.is_some() {
+        n -= 1;
+    }
+    let preserve = match options.and_then(|o| o.as_object()) {
+        Some(o) => o.get("preserveElementGeometry")?.to_bool(),
+        None => false,
+    };
     if !matches!(n, 3 | 5) && n < 9 {
         return Err(JsError::Type(format!("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.").into()));
     }
@@ -1800,6 +1809,10 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
         * Affine::scale_non_uniform(scale(dst.width(), src.width()), scale(dst.height(), src.height()))
         * Affine::translate((-src.x0, -src.y0));
     let [ma, mb, mc, md, me, mf] = (state.transform * place).as_coeffs();
+    // The element's geometry follows where it was drawn, unless asked to keep it.
+    if let (Some(element), false) = (element, preserve) {
+        crate::html_in_canvas::set_drawn_transform(&c.page, canvas, element, vec![ma, mb, mc, md, me, mf]);
+    }
     let args = [ma, mb, mc, md, me, mf].map(|v| s.number(v));
     module_helper(s, c, "matrix", &args)
 }
