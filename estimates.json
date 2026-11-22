@@ -11,14 +11,14 @@
    },
    "distinct_census_pages": 1287,
    "owner_reported_unlisted": 14,
-   "selector_union": 1496,
-   "owner_estimate_reduction": 223,
-   "of_which_tentative": 163,
+   "selector_union": 1502,
+   "owner_estimate_reduction": 229,
+   "of_which_tentative": 164,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 424,
-    "html/semantics": 357,
+    "html/semantics": 363,
     "html/interaction": 115,
     "referrer-policy": 114,
     "html/browsers": 100,
@@ -35,21 +35,21 @@
     "workers": 9,
     "html/infrastructure": 9,
     "encoding": 7,
-    "fetch/corb": 6,
     "fetch/data-urls": 6,
-    "fetch/range": 5,
+    "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "FileAPI": 4,
     "fetch/http-cache": 3,
-    "fetch/nosniff": 3,
     "html/rendering": 3,
-    "fetch/orb": 2,
+    "fetch/nosniff": 3,
     "xhr": 2,
-    "quirks": 1,
+    "fetch/orb": 2,
     "svg/styling": 1,
+    "IndexedDB": 1,
     "fetch/security": 1,
     "fetch/redirect-navigate": 1,
-    "IndexedDB": 1
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -78,8 +78,8 @@
     "fetch/api": 7,
     "IndexedDB": 6,
     "html/browsers": 6,
-    "html/webappapis": 5,
     "html/dom": 5,
+    "html/webappapis": 5,
     "fetch/security": 4,
     "fetch/cross-origin-resource-policy": 2,
     "fetch/http-cache": 1,
@@ -109,8 +109,8 @@
     "webidl": 19,
     "fetch/compression-dictionary": 8,
     "html/interaction": 5,
-    "svg/path": 4,
     "html/semantics": 4,
+    "svg/path": 4,
     "workers": 3,
     "dom/nodes": 1
    }
@@ -895,11 +895,11 @@
    "tentative": 0
   },
   "F03p2": {
-   "state": "deferred",
-   "in_scope_pages": 0,
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 6,
    "out_of_scope_pages": 0,
-   "pages": 0,
-   "tentative": 0
+   "pages": 6,
+   "tentative": 1
   },
   "F03e": {
    "state": "implemented-unbuilt",
