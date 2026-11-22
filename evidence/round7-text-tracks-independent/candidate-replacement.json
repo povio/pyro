@@ -1,0 +1,26 @@
+{
+  "values": {
+    "available": "function",
+    "started": "yes",
+    "new": "loaded",
+    "final": [
+      true,
+      2,
+      1,
+      "new"
+    ],
+    "events": [
+      [
+        "error"
+      ],
+      [
+        "load",
+        "new"
+      ]
+    ]
+  },
+  "requests": [
+    "old",
+    "new"
+  ]
+}
