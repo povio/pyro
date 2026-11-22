@@ -4,8 +4,9 @@
 //!
 //! IDL handlers reuse the ordinary listener slot of
 //! `target::set_event_handler`, so they run in registration order with other
-//! listeners. A handler returning `false` cancels the event (except
-//! `mouseover`/`error` per HTML "process the event handler return value").
+//! listeners. A handler returning `false` cancels the event, except the
+//! Window's `onerror` for an ErrorEvent, which cancels by returning `true`
+//! (HTML "process the event handler return value").
 //!
 //! Content attributes: `setAttribute('onx', body)` compiles `body` as
 //! `function (event) { body }` in the calling realm, with the document, form
