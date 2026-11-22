@@ -215,13 +215,44 @@ fn form_entries_with_charset(
                 }
             }
             "textarea" if !name.is_empty() => {
-                let v = dom.value(c).unwrap_or_default();
+                let mut v = dom.value(c).unwrap_or_default();
+                // HTML "textarea wrapping transformation": wrap="hard" (any case) breaks the
+                // submitted value's lines at the element's cols.
+                if e.attr("wrap").is_some_and(|w| w.eq_ignore_ascii_case("hard")) {
+                    let cols = e
+                        .attr("cols")
+                        .and_then(|c| pyro_dom::forms::parse_html_int(c))
+                        .filter(|&c| c > 0)
+                        .map_or(20, |c| c.min(u32::MAX as i64) as usize);
+                    v = hard_wrap(&v, cols);
+                }
                 out.push((name, EntryValue::Text(v)));
                 push_dirname(&dom, c, &mut out);
             }
             _ if dom.is_form_associated(c) => crate::internals::face_entries(&dom, c, &mut out),
             _ => {}
         }
+    }
+    out
+}
+
+/// Inserts CRLF pairs so that no line of `value` is longer than `cols` characters: after
+/// the last space that fits (as Chrome), else at `cols`.
+fn hard_wrap(value: &str, cols: usize) -> String {
+    let mut out = String::with_capacity(value.len() + value.len() / cols.max(1) * 2);
+    for (i, line) in value.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let mut rest: Vec<char> = line.chars().collect();
+        while rest.len() > cols {
+            let cut = rest[..=cols].iter().rposition(|&c| c == ' ').map_or(cols, |p| p + 1);
+            let cut = if cut == 0 { cols } else { cut };
+            out.extend(&rest[..cut]);
+            out.push_str("\r\n");
+            rest.drain(..cut);
+        }
+        out.extend(&rest);
     }
     out
 }
