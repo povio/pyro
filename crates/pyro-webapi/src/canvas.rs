@@ -1842,6 +1842,52 @@ macro_rules! spacing_state {
     };
 }
 
+/// `drawFocusIfNeeded([path,] element)`: when `element` is focused and is
+/// fallback content of this context's `<canvas>`, the path (the current
+/// one by default) is outlined with a focus ring: a 2 px ring in the
+/// platform focus color (Chromium's auto outline, #101010), inside the
+/// clipping region but without the shadow, global alpha, compositing or
+/// filter.
+fn draw_focus_if_needed<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let what = "CanvasRenderingContext2D.drawFocusIfNeeded";
+    a.require(1, what)?;
+    // One argument is the element: the current path is outlined.
+    let (path, next) = if a.len() >= 2 { path_arg(s, c, &a, what)? } else { (c.path.borrow().bez.clone(), 0) };
+    let not_element = || {
+        JsError::Type(
+            format!("Failed to execute 'drawFocusIfNeeded' on 'CanvasRenderingContext2D': parameter {} is not of type 'Element'.", next + 1)
+                .into(),
+        )
+    };
+    let node = s.unwrap::<crate::node::Node>(a.get(next)).ok_or_else(not_element)?;
+    let Target::Element(canvas) = c.target else { return Ok(s.undefined()) };
+    let shown = {
+        let dom = c.page.dom.borrow();
+        if dom.element(node.id).is_err() {
+            return Err(not_element());
+        }
+        let focused = dom.node_document(node.id).ok().and_then(|doc| dom.focused(doc).ok().flatten());
+        focused == Some(node.id) && node.id != canvas && dom.contains(canvas, node.id).unwrap_or(false)
+    };
+    if !shown || path.elements().is_empty() {
+        return Ok(s.undefined());
+    }
+    c.sync_size();
+    let state = c.state.borrow();
+    let draw = DrawState {
+        transform: Affine::IDENTITY,
+        alpha: 1.0,
+        composite: Composite::SourceOver,
+        clip: &state.clip,
+        shadow: None,
+        smoothing: state.image_smoothing,
+        filter: None,
+    };
+    let ring = Paint::Color(Color::from_rgba8(0x10, 0x10, 0x10, 255));
+    c.surface.borrow_mut().stroke(&path, &kurbo::Stroke::new(2.0), &ring, &draw);
+    Ok(s.undefined())
+}
+
 /// The path argument of `fill`/`stroke`/`clip`/`isPointIn*`: a Path2D at
 /// `a[0]`, or None.
 fn path2d_arg<'s>(s: &Scope<'s>, c: &ContextData, a: &Args<'s>) -> JsResult<Option<Object<'s>>> {
@@ -1941,7 +1987,7 @@ impl JsClass for CanvasRenderingContext2D {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         ContextData::define_members(def);
-        def.method("drawFocusIfNeeded", 1, |s, _c, _a| Ok(s.undefined()));
+        def.method("drawFocusIfNeeded", 1, draw_focus_if_needed);
     }
 }
 
