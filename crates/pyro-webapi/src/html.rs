@@ -466,6 +466,8 @@ const LINK_AS: EnumAttr = EnumAttr {
     missing: "",
     invalid: "",
 };
+/// HTML-in-Canvas `canvas.content`: whether the children are fallback content or drawable.
+const CANVAS_CONTENT: EnumAttr = EnumAttr { keywords: &["fallback", "drawable"], missing: "fallback", invalid: "fallback" };
 const TRACK_KIND: EnumAttr = EnumAttr {
     keywords: &["subtitles", "captions", "descriptions", "chapters", "metadata"],
     missing: "subtitles",
@@ -3406,6 +3408,7 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
         crate::html_in_canvas::request_paint(n.page(), n.id);
         Ok(s.undefined())
     });
+    reflect_enum!(def, "content", "content", CANVAS_CONTENT);
     def.accessor(
         "onpaint",
         |s, n| crate::target::event_handler(s, &n.target, "paint"),
