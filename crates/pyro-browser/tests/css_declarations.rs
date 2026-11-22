@@ -1338,3 +1338,21 @@ fn tab_uses_reading_flow_in_both_directions_and_observes_style_changes() {
     eval(root, "box.style.readingFlow='normal'; start.focus()");
     assert_eq!(tab(false), "a");
 }
+
+#[test]
+fn flex_visual_tab_order_uses_resolved_lines_and_tracks_reversal() {
+    use pyro_webapi::input::{dispatch_key, KeyInput, KeyKind};
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let frame = &thread.browser.page(page).unwrap().main_frame;
+    let root = frame.main_realm().unwrap();
+    let bindings = frame.page_dom.as_ref().unwrap();
+    eval(root, "document.body.innerHTML='<style>#box {display:flex;width:80px;flex-flow:row-reverse wrap;reading-flow:flex-visual}#box button{box-sizing:border-box;flex:none;width:40px}</style><button id=start></button><div id=box><button id=a></button><button id=b></button><button id=c></button><button id=d></button></div>';start.focus()");
+    let tab = || {
+        dispatch_key(bindings, KeyKind::KeyDown, &KeyInput { key:"Tab".into(), code:"Tab".into(), ..Default::default() });
+        eval(root, "document.activeElement.id")
+    };
+    assert_eq!([tab(), tab(), tab(), tab()], ["b","a","d","c"]);
+    eval(root, "box.style.flexWrap='wrap-reverse';start.focus()");
+    assert_eq!([tab(), tab(), tab(), tab()], ["d","c","b","a"]);
+}
