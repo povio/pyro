@@ -5,7 +5,10 @@
 //! gives the realm what the bindings look up through `page_of` (events,
 //! `fetch`, `URL`, base URL and origin), so those run unchanged, each on this
 //! thread with this thread's state. Only the classes in `register` exist here,
-//! which is what makes `document` or `Worker` undefined in a worker.
+//! which is what makes `document` undefined in a worker. A dedicated worker
+//! has `Worker`: its nested workers belong to its `PageDom` (`worker::dispose`
+//! ends them with it), and it waits a bounded time for their threads before
+//! its VM goes (`worker::join_nested`).
 //!
 //! API subset: `self`, `location`, `navigator`, `name`, `postMessage`, `close`,
 //! `onmessage`/`onmessageerror`/`onerror`, `importScripts`, timers,
@@ -61,6 +64,9 @@ const CLOSING_POLL: Duration = Duration::from_millis(50);
 const MAX_BUFFERED_EVENTS: usize = 256;
 /// As on the browser thread: JSC itself bounds its recursion by the stack it finds.
 const STACK_BYTES: usize = 8 * 1024 * 1024;
+/// How long a worker that ends waits for the threads of its nested workers;
+/// each level waits its own, so a chain of them can take this once per level.
+const NESTED_JOIN: Duration = Duration::from_secs(1);
 
 /// What a worker's thread needs from the page side. `Send`.
 pub(crate) struct WorkerStart {
@@ -96,6 +102,14 @@ pub(crate) struct WorkerStart {
     /// module of its realm are fetched with it (HTML "fetch a module worker
     /// script graph"). A classic worker's fetches stay same-origin.
     pub(crate) credentials: Credentials,
+    /// A dedicated worker's main script request: its creator's referrer
+    /// source and policy (HTML "fetch a classic/module worker script" uses
+    /// the outside settings). None: no `Referer` is sent.
+    pub(crate) referrer: Option<(pyro_net::Url, pyro_net::ReferrerPolicy)>,
+    /// A worker started by a worker: its place under
+    /// `worker::MAX_NESTED_WORKERS`, held by the worker's thread until it
+    /// exits (`run`), or given back with this if the thread never starts.
+    pub(crate) nested: Option<crate::worker::NestedSlot>,
     pub(crate) early: Vec<Early>,
     /// A service worker version: its global is a `ServiceWorkerGlobalScope`.
     pub(crate) service: Option<crate::service_worker_scope::ServiceStart>,
@@ -143,6 +157,8 @@ impl WorkerStart {
             web_locks: page.context_services().web_locks.clone(),
             module: false,
             credentials: Credentials::SameOrigin,
+            referrer: None,
+            nested: None,
             early: Vec::new(),
             service: None,
             shared_worker: false,
@@ -191,6 +207,8 @@ impl WorkerStart {
             web_locks: page.context_services().web_locks.clone(),
             module,
             credentials: Credentials::SameOrigin,
+            referrer: None,
+            nested: None,
             early: Vec::new(),
             service: Some(service),
             shared_worker: false,
@@ -482,7 +500,10 @@ impl PageHooks for ScopeHooks {
     }
 }
 
-fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
+fn run(mut start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
+    // A nested worker's place under the cap lasts as long as this thread,
+    // whatever ends it: given back on the way out, after the teardown.
+    let _nested = start.nested.take();
     let event_loop = EventLoop::<WorkerLoop>::new();
     #[cfg(target_os = "macos")]
     let event_loop = {
@@ -647,6 +668,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         started,
         origin_wall_ms,
         performance: Cell::new(None),
+        response_url: RefCell::new(None),
     };
     if start.service.is_some() {
         realm.set_global_data::<ServiceWorkerGlobalScope>(scope)?;
@@ -689,7 +711,13 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     // A synchronous request parks this thread: `terminate()` must still end it.
     let closing = start.shared.clone();
     crate::xhr::set_sync_watch(&page, Box::new(move || closing.closing.load(Ordering::Acquire)));
-    let script = load_main_script(&page, &start);
+    let (script, response_url) = load_main_script(&page, &start);
+    // The URL its nested workers' requests are sent with as their referrer.
+    if let Some(url) = response_url {
+        if let Some(g) = realm.scope()?.global_data::<WorkerGlobalScope>() {
+            *g.response_url.borrow_mut() = Some(url);
+        }
+    }
     let state = WorkerLoop {
         engine,
         page,
@@ -709,7 +737,21 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     Ok((state, script.map(|text| (text, start.url.to_string()))))
 }
 
-fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
+/// The main script request's referrer, in; its response's URL (after
+/// redirects), out.
+struct MainRequest {
+    referrer: Option<(pyro_net::Url, pyro_net::ReferrerPolicy)>,
+    response_url: RefCell<Option<pyro_net::Url>>,
+}
+
+/// The script and, when it was fetched, its response's URL.
+fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> (Option<String>, Option<pyro_net::Url>) {
+    let main = MainRequest { referrer: start.referrer.clone(), response_url: RefCell::new(None) };
+    let script = load_main_bytes(page, start, &main).map(|bytes| script_text(&bytes));
+    (script, main.response_url.take())
+}
+
+fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) -> Option<Bytes> {
     let bytes = match (&start.script, start.url.scheme()) {
         (Some(bytes), _) => bytes.clone(),
         // A revoked or unknown object URL.
@@ -725,6 +767,7 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
                 RequestMode::SameOrigin,
                 script_credentials(start),
                 true,
+                Some(main),
             )
             .ok()?;
             // A module worker's script is a module script: strict MIME
@@ -735,7 +778,7 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
             bytes
         }
     };
-    Some(script_text(&bytes))
+    Some(bytes)
 }
 
 /// The credentials mode of a worker's main script and module fetches.
@@ -949,6 +992,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                     RequestMode::Cors,
                                     credentials,
                                     false,
+                                    None,
                                 )
                             }
                         },
@@ -980,14 +1024,22 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
 fn tear_down(event_loop: EventLoop<WorkerLoop>, state: WorkerLoop) {
     state.events.release();
     crate::service_worker_scope::tear_down();
+    // Ends the nested workers this worker started (`worker::dispose`).
     state.page.dispose();
+    // Their threads were told to stop: wait for them, at most `NESTED_JOIN`
+    // (a thread blocked outside script, in a fetch or a sync XHR, notices
+    // within its poll interval). One still running is handed to the process
+    // (`worker::join_nested`) and joined by `join_stopped`. Nothing they post
+    // back runs now: this loop takes no more tasks.
+    crate::worker::join_nested(NESTED_JOIN);
     drop(event_loop);
     state.engine.set_hooks(None);
     drop(state);
 }
 
 /// Fetches a script, blocking this worker's thread until it ends or the worker
-/// is told to stop, with its MIME type essence. The `main` script's
+/// is told to stop, with its MIME type essence. `main_request`: a main
+/// script's referrer, and where its response URL goes. The `main` script's
 /// `Referrer-Policy` header becomes the worker's policy; an imported
 /// script's does not.
 #[allow(clippy::too_many_arguments)]
@@ -1001,10 +1053,15 @@ fn fetch_script(
     mode: RequestMode,
     credentials: Credentials,
     main: bool,
+    main_request: Option<&MainRequest>,
 ) -> Result<(Bytes, String), String> {
     let mut request = Request::get(url, destination);
     request.mode = mode;
     request.credentials = credentials;
+    if let Some((referrer, policy)) = main_request.and_then(|m| m.referrer.clone()) {
+        request.referrer = Some(referrer);
+        request.referrer_policy = policy;
+    }
     request.origin = origin.clone();
     request.frame_id = page.request_context().frame_id;
     request.max_body = Some(MAX_SCRIPT_BYTES);
@@ -1040,6 +1097,9 @@ fn fetch_script(
                 {
                     net.cancel(id);
                     return Err(format!("MIME type ('{}') is not executable", head.mime));
+                }
+                if let Some(main_request) = main_request {
+                    *main_request.response_url.borrow_mut() = Some(head.url.clone());
                 }
                 if main {
                     page.set_referrer_policy_header(pyro_net::ReferrerPolicy::from_header(
@@ -1081,6 +1141,10 @@ pub struct ScopeData {
     origin_wall_ms: f64,
     /// Identity of `performance` once made.
     performance: Cell<Option<IdentityKey>>,
+    /// The main script response's URL, after redirects (none for a `data:`
+    /// or `blob:` script): the referrer source of the worker's nested
+    /// workers' script requests.
+    response_url: RefCell<Option<pyro_net::Url>>,
 }
 
 fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
@@ -1265,7 +1329,7 @@ impl JsClass for WorkerGlobalScope {
                 let bytes =
                     match page.blob_url(&name) {
                         Some((bytes, _)) => bytes,
-                        None => fetch_script(page, &net, &g.shared, &origin, url, Destination::Script, RequestMode::NoCors, Credentials::SameOrigin, false).map(|(b, _)| b).map_err(
+                        None => fetch_script(page, &net, &g.shared, &origin, url, Destination::Script, RequestMode::NoCors, Credentials::SameOrigin, false, None).map(|(b, _)| b).map_err(
                             |e| {
                                 JsError::dom(
                             "NetworkError",
@@ -1552,6 +1616,9 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     if shared_worker {
         return engine.register::<SharedWorkerGlobalScope>();
     }
+    // Nested dedicated workers (HTML: `Worker` is exposed in dedicated
+    // workers). Not yet in shared workers: see docs/webapi/WORKER.md.
+    crate::worker::register(engine);
     crate::audio_data::register(engine);
     crate::encoded_chunks::register(engine);
     engine.register::<DedicatedWorkerGlobalScope>()
@@ -1650,4 +1717,13 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         1,
     )?;
     Ok(())
+}
+
+/// The referrer source of a nested worker's script request when `s` is a
+/// worker's realm: its main script's response URL, else its URL (a `data:`
+/// or `blob:` one, which gives no referrer). None outside a worker.
+pub(crate) fn nested_referrer_source(s: &Scope<'_>) -> Option<pyro_net::Url> {
+    let g = s.global_data::<WorkerGlobalScope>()?;
+    let url = g.response_url.borrow().clone();
+    Some(url.unwrap_or_else(|| g.url.clone()))
 }

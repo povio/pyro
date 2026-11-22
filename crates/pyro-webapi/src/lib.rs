@@ -174,8 +174,8 @@ pub use structured_clone::{
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use worker::{
-    hold_for_fork, join_stopped, release_after_fork, take_worker_ended, worker_ended, InspectTask, WorkerEvent,
-    WorkerHandle, MAX_WORKERS_PER_DOCUMENT,
+    hold_for_fork, join_stopped, live_nested_workers, release_after_fork, take_worker_ended, worker_ended,
+    InspectTask, WorkerEvent, WorkerHandle, MAX_NESTED_WORKERS, MAX_WORKERS_PER_DOCUMENT,
 };
 pub use worker_scope::{BufferedEvent, WorkerContext, WorkerEvents};
 pub use xhr::XhrLimits;

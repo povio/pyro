@@ -143,7 +143,20 @@ connected to it goes away.
   cross-thread ports): see [Service workers](SERVICE_WORKER.md).
 - Host objects other than Blob, File, FileList, CryptoKey, ImageBitmap and
   OffscreenCanvas do not cross (DataCloneError), ImageData included.
-- Nested workers. `Worker` is undefined inside a worker.
+- Nested workers from shared workers: `Worker` is undefined inside a
+  `SharedWorkerGlobalScope`. Dedicated workers start nested workers (see
+  `crates/pyro-webapi/src/worker.rs`); they get no inspector target, and at most
+  64 live in the process (past that, a nested worker fails like one whose script
+  did not load). The place is held by the nested worker's thread until it exits,
+  however the worker ended (close, load failure, terminate, its creator's end),
+  even while script still holds its `Worker`. An ending worker waits at most 1 s
+  for its nested workers' threads (once per level of nesting); one still running
+  then, like any worker thread a `join_stopped` call outlasts, stays tracked and is
+  joined by a later `join_stopped`. A nested worker's script request is sent with
+  its creator's script response URL (after redirects) as the referrer, under the
+  creator's policy. The creator's own `location` and base URL are still its
+  request URL. An uncanceled error on the nested `Worker` does not propagate
+  to its creator's global scope.
 - `importScripts` of a page-created `blob:` URL (the store is the owner document's).
 - A worker whose wrapper became unreachable runs until its document goes.
 - Virtual time (`Emulation.setVirtualTimePolicy`) and the page clock do not reach a

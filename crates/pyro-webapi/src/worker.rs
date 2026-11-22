@@ -26,10 +26,26 @@
 //! reply during template boot waits until then.
 //!
 //! Gaps (explicit): `{type: 'module'}` throws NotSupportedError on the system
-//! JavaScriptCore framework (module workers need the patched build);
-//! workers cannot start workers. `SharedWorker` is `shared_worker`, on this
-//! machinery. ArrayBuffers and MessagePorts transfer. See
-//! docs/webapi/WORKER.md.
+//! JavaScriptCore framework (module workers need the patched build).
+//! Shared workers cannot start workers. `SharedWorker` is `shared_worker`, on
+//! this machinery. ArrayBuffers and MessagePorts transfer.
+//!
+//! Nested workers: a dedicated worker's realm has `Worker` too. The worker it
+//! starts is this same machinery one thread down: its `PageDom` is the
+//! creator's (the worker thread's empty document), so its messages, errors
+//! and close are tasks of the creator's loop (`deliver_up` finds it in that
+//! thread's `LIVE`), and the creator's end (`PageDom::dispose`) ends it.
+//! Its script request's referrer is the creator's main script response URL
+//! (after redirects) under the creator's policy.
+//!
+//! `MAX_NESTED_WORKERS` bounds how many nested worker threads exist in the
+//! process: the place is taken at construction and held by the worker's
+//! thread until that thread exits (`worker_scope::run`), whatever ends it
+//! (close, load failure, terminate, its creator's end), whether or not its
+//! wrapper is still reachable. A worker whose thread never starts gives it
+//! back with its `WorkerStart`. An ending creator waits a bounded time for
+//! its nested workers' threads (`join_nested`); one still running then is
+//! kept in `ORPHANS`, which [`join_stopped`] joins. See docs/webapi/WORKER.md.
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -53,12 +69,49 @@ pub const MAX_WORKERS_PER_DOCUMENT: usize = 16;
 /// Live workers of one browser thread, that is one CDP connection (iframes
 /// have their own documents).
 pub const MAX_WORKERS_PER_THREAD: usize = 64;
+/// Live workers started by workers, in the whole process: the per-document
+/// and per-thread limits alone would let each level start 16 more.
+pub const MAX_NESTED_WORKERS: usize = 64;
 /// Message bytes that may wait for their receiver, per direction and worker.
 pub(crate) const MAX_QUEUED_BYTES: usize = 64 * 1024 * 1024;
 
 /// A template process: workers wait for the fork (see the module docs).
 static HOLD: AtomicBool = AtomicBool::new(false);
 pub(crate) static NEXT_WORKER: AtomicU64 = AtomicU64::new(1);
+/// Live nested workers (`NestedSlot`).
+static NESTED: AtomicUsize = AtomicUsize::new(0);
+/// Worker threads told to stop that had not finished when their joiner gave
+/// up: a nested worker's whose creator ended first (`join_nested`), or one
+/// that outlasted a [`join_stopped`]. Joined by a later [`join_stopped`].
+/// Process-wide: the thread that started one may be gone by then.
+static ORPHANS: Mutex<Vec<std::thread::JoinHandle<()>>> = Mutex::new(Vec::new());
+
+/// How many nested workers (started by a worker) hold a place under
+/// `MAX_NESTED_WORKERS`: constructed, and their thread (if it started) has
+/// not exited.
+pub fn live_nested_workers() -> usize {
+    NESTED.load(Ordering::Acquire)
+}
+
+/// One of the `MAX_NESTED_WORKERS`, held by a nested worker's thread (via
+/// its `WorkerStart`) and given back when that thread exits, or when the
+/// `WorkerStart` of a thread that never started is dropped.
+pub(crate) struct NestedSlot;
+
+impl NestedSlot {
+    fn take() -> Option<NestedSlot> {
+        NESTED
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < MAX_NESTED_WORKERS).then_some(n + 1))
+            .ok()
+            .map(|_| NestedSlot)
+    }
+}
+
+impl Drop for NestedSlot {
+    fn drop(&mut self) {
+        NESTED.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 thread_local! {
     /// This browser thread's live workers, for tasks posted back to it.
@@ -132,14 +185,55 @@ pub fn release_after_fork() {
     }
 }
 
-/// After the thread's pages were closed: waits for their worker threads to
-/// finish (they were told to stop), so a process exit does not race a VM
-/// teardown. Script that outlasts `timeout` is left to the exit. Whether every
-/// thread finished.
+/// After the thread's pages were closed: waits, `timeout` in all, for their
+/// worker threads to finish (they were told to stop), so a process exit does
+/// not race a VM teardown, then for the threads in `ORPHANS` (nested
+/// workers' that ending workers handed over, and ones earlier calls gave up
+/// on, of any browser thread: all were told to stop). Every thread that
+/// outlasts `timeout`, this thread's own included, stays in `ORPHANS` for a
+/// later call. Whether every thread finished.
 pub fn join_stopped(timeout: Duration) -> bool {
-    let threads = THREADS.with(|t| std::mem::take(&mut *t.borrow_mut()));
     let deadline = Instant::now() + timeout;
-    let mut all = true;
+    let threads = THREADS.with(|t| std::mem::take(&mut *t.borrow_mut()));
+    let own = join_until(threads, deadline);
+    let mut all = own.is_empty();
+    if !all {
+        ORPHANS.lock().unwrap_or_else(|e| e.into_inner()).extend(own);
+    }
+    // Joining an orphan can hand over more: its own nested workers'.
+    loop {
+        let orphans = std::mem::take(&mut *ORPHANS.lock().unwrap_or_else(|e| e.into_inner()));
+        if orphans.is_empty() {
+            break;
+        }
+        let left = join_until(orphans, deadline);
+        if !left.is_empty() {
+            ORPHANS.lock().unwrap_or_else(|e| e.into_inner()).extend(left);
+            all = false;
+            break;
+        }
+    }
+    all
+}
+
+/// On a worker's thread as it ends, after its `PageDom::dispose` told its
+/// nested workers to stop: waits at most `timeout` for their threads. Those
+/// still running are moved to `ORPHANS`, so [`join_stopped`] still joins
+/// them before the process exits.
+pub(crate) fn join_nested(timeout: Duration) {
+    let threads = THREADS.with(|t| std::mem::take(&mut *t.borrow_mut()));
+    if threads.is_empty() {
+        return;
+    }
+    let left = join_until(threads, Instant::now() + timeout);
+    if !left.is_empty() {
+        ORPHANS.lock().unwrap_or_else(|e| e.into_inner()).extend(left);
+    }
+}
+
+/// Joins each of `threads` that finishes by `deadline`; returns the others.
+fn join_until(threads: Vec<std::thread::JoinHandle<()>>, deadline: Instant) -> Vec<std::thread::JoinHandle<()>> {
+    let mut left = Vec::new();
     for thread in threads {
         while !thread.is_finished() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(1));
@@ -147,10 +241,10 @@ pub fn join_stopped(timeout: Duration) -> bool {
         if thread.is_finished() {
             let _ = thread.join();
         } else {
-            all = false;
+            left.push(thread);
         }
     }
-    all
+    left
 }
 
 /// What both sides of a worker read and write.
@@ -506,12 +600,28 @@ impl JsClass for Worker {
                 down_bytes: AtomicUsize::new(0),
                 up_bytes: AtomicUsize::new(0),
             });
+            // The script request's referrer source: this document's URL, or
+            // the creating worker's main script response URL; under the
+            // creator's policy (a worker's: its script's `Referrer-Policy`).
+            let source = match worker_scope::nested_referrer_source(s) {
+                Some(url) => Some(url),
+                None => page.client_referrer(),
+            };
+            let referrer = source.map(|r| (r, page.referrer_policy()));
+            // A nested worker's place: the `WorkerStart` carries it to the
+            // thread, which holds it until it exits.
+            let nested = worker_scope::is_worker(s);
+            let slot = if nested { NestedSlot::take() } else { None };
+            let refused = nested && slot.is_none();
             let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
                 start.module = module;
+                start.referrer = referrer;
+                start.nested = slot;
                 start
             });
             let full = page.workers.borrow().len() >= MAX_WORKERS_PER_DOCUMENT
-                || LIVE.with(|live| live.borrow().len()) >= MAX_WORKERS_PER_THREAD;
+                || LIVE.with(|live| live.borrow().len()) >= MAX_WORKERS_PER_THREAD
+                || refused;
             let inner = Rc::new(WorkerInner {
                 id,
                 url: resolved,
@@ -611,4 +721,29 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
         return Some("worker::HELD");
     }
     THREADS.with(|t| !t.borrow().is_empty()).then_some("worker::THREADS")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The cap admits `MAX_NESTED_WORKERS` live nested workers, refuses the
+    /// next, and admits one again as soon as a place is given back. (No other
+    /// unit test of this crate starts nested workers: the count is the
+    /// process's.)
+    #[test]
+    fn nested_slots_cap_and_come_back() {
+        let before = live_nested_workers();
+        let mut slots: Vec<NestedSlot> = std::iter::from_fn(NestedSlot::take).take(MAX_NESTED_WORKERS + 1).collect();
+        assert_eq!(slots.len(), MAX_NESTED_WORKERS - before, "only free places are taken");
+        assert!(NestedSlot::take().is_none(), "past the cap");
+        assert_eq!(live_nested_workers(), MAX_NESTED_WORKERS);
+        drop(slots.pop());
+        assert_eq!(live_nested_workers(), MAX_NESTED_WORKERS - 1);
+        let again = NestedSlot::take();
+        assert!(again.is_some(), "a returned place is reused");
+        drop(again);
+        drop(slots);
+        assert_eq!(live_nested_workers(), before);
+    }
 }
