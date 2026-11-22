@@ -188,7 +188,7 @@ fn fetch_later<'s>(s: &Scope<'s>, input: Value<'s>, init: Value<'s>) -> JsResult
     };
     // The request as `new Request(input, init)` makes it; a ReadableStream body (its bytes are
     // not known now) is a TypeError there.
-    let (request, signal, _extras) = crate::fetch::parse_request(s, &page, input, init, true)?;
+    let (mut request, signal, _extras) = crate::fetch::parse_request(s, &page, input, init, true)?;
     if let Some(signal) = &signal {
         let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
         if signal.aborted() {
@@ -201,6 +201,14 @@ fn fetch_later<'s>(s: &Scope<'s>, input: Value<'s>, init: Value<'s>) -> JsResult
     if activate_after.is_some_and(|ms| ms < 0.0) {
         return Err(JsError::Range("fetchLater: activateAfter must not be negative.".into()));
     }
+    // CSP `connect-src`, checked as the request is queued (its violation reported now); a
+    // blocked one stays queued, as Chromium's does, and the client fails it unsent when it is
+    // processed. The guard checks its redirects too.
+    request.csp = crate::csp::guard_request(
+        &page,
+        pyro_net::csp::CspRequest::new(request.url.clone(), pyro_net::csp::RequestDest::Empty),
+        None,
+    );
     // Fetch "queue a deferred fetch": a keepalive request. pyro-net's Request has no keepalive
     // flag; what it means is how `process` sends it: outside the document's fetch group, so it
     // outlives the document, and without the document's keepalive quota.
