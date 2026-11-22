@@ -9,10 +9,10 @@
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1222,
+   "distinct_census_pages": 1221,
    "owner_reported_unlisted": 5,
    "selector_union": 1457,
-   "owner_estimate_reduction": 240,
+   "owner_estimate_reduction": 241,
    "of_which_tentative": 195,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 40,
@@ -33,19 +33,19 @@
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
-    "html/infrastructure": 7,
     "encoding": 7,
+    "html/infrastructure": 7,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
-    "svg/styling": 1,
     "quirks": 1,
-    "html/rendering": 1,
-    "IndexedDB": 1
+    "svg/styling": 1,
+    "IndexedDB": 1,
+    "html/rendering": 1
    }
   },
   "in_progress": {
@@ -71,16 +71,16 @@
     "fetch/fetch-later": 10,
     "fetch/api": 9,
     "IndexedDB": 6,
+    "html/webappapis": 5,
     "html/dom": 5,
     "fetch/security": 5,
-    "html/webappapis": 5,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/images": 1,
-    "fetch/http-cache": 1,
     "fetch/content-type": 1,
+    "fetch/redirects": 1,
+    "fetch/images": 1,
     "fetch/redirect-navigate": 1,
     "fetch/range": 1,
-    "fetch/redirects": 1
+    "fetch/http-cache": 1
    }
   },
   "queued": {
@@ -105,12 +105,12 @@
     "html/infrastructure": 13,
     "fetch/compression-dictionary": 8,
     "fetch/corb": 6,
-    "html/interaction": 5,
     "html/semantics": 5,
+    "html/interaction": 5,
     "svg/path": 4,
     "workers": 3,
-    "html/rendering": 2,
     "fetch/orb": 2,
+    "html/rendering": 2,
     "dom/nodes": 1
    }
   }
@@ -2119,7 +2119,7 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1262,
+ "implemented_total_estimate": 1261,
  "milestones_reached": [
   250,
   500,
