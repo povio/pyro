@@ -70,6 +70,10 @@ pub(crate) static VIDEO_FRAMES: LazyModule = LazyModule {
         let limits = s.object();
         limits.set_atom("maxSide", s.number(f64::from(pyro_canvas::MAX_SIDE)))?;
         limits.set_atom("maxArea", s.number(pyro_canvas::MAX_AREA as f64))?;
+        limits.set_atom("isCanvasSource", s.function("isCanvasSource", |s, _, a| {
+            Ok(s.boolean(is_frame_canvas_source(s, a.get(0))?))
+        })?.value())?;
+        limits.set_atom("canvasSnapshot", s.function("canvasSnapshot", |s, _, a| frame_canvas_snapshot(s, a.get(0)))?.value())?;
         Ok(limits)
     }),
 };
@@ -182,7 +186,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         {
             let mut commits = page.canvas_commits.borrow_mut();
             commits.retain(|c| c.surface.strong_count() > 0);
-            commits.push(FrameCommit { surface: Rc::downgrade(&c.surface), placeholder, committed: Cell::new(None) });
+            commits.push(FrameCommit { surface: Rc::downgrade(&c.surface), clean: c.clean.clone(), placeholder, committed: Cell::new(None) });
         }
         Ok(context.value())
     })?;
@@ -416,7 +420,7 @@ pub struct ContextData {
     path: RefCell<Path>,
     surface: Rc<RefCell<Surface>>,
     /// HTML "origin-clean": nothing cross-origin was drawn.
-    clean: Cell<bool>,
+    clean: Rc<Cell<bool>>,
 }
 
 impl ContextData {
@@ -493,7 +497,7 @@ fn new_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Target, w: u32, h:
         stack: RefCell::new(Vec::new()),
         path: RefCell::new(Path::default()),
         surface: Rc::new(RefCell::new(Surface::new(w, h))),
-        clean: Cell::new(true),
+        clean: Rc::new(Cell::new(true)),
     };
     match target {
         Target::Element(canvas) => {
@@ -668,6 +672,67 @@ fn bitmap_triple<'s>(s: &Scope<'s>, handle: ImageHandle) -> JsResult<Value<'s>> 
     Ok(s.array(&[object.value(), s.number(f64::from(w)), s.number(f64::from(h))])?.value())
 }
 
+fn is_frame_canvas_source(s: &Scope<'_>, value: Value<'_>) -> JsResult<bool> {
+    if let Some(node) = s.unwrap::<crate::node::Node>(value) {
+        let dom = node.page().dom.borrow();
+        return Ok(dom.element(node.id).is_ok_and(|e| e.is_html() && &*e.name.local == "canvas"));
+    }
+    let Some(realm) = value.as_object().and_then(|o| s.object_realm(o)) else { return Ok(false) };
+    let home = realm.scope()?;
+    let page = crate::target::page_of(&home)?;
+    let Some(module) = MODULE.existing(&home, &page)? else { return Ok(false) };
+    let brand = module.get_atom("frameCanvasSource")?.as_object().ok_or(JsError::ContextDestroyed)?;
+    Ok(brand.call(None, &[home.rehome(value)])?.to_bool())
+}
+
+fn frame_canvas_snapshot<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<'s>> {
+    let invalid = || JsError::dom("InvalidStateError", "The canvas image source has no usable bitmap.");
+    let exhausted = || JsError::dom("QuotaExceededError", "The VideoFrame exceeds the raster budget.");
+    if !is_frame_canvas_source(s, value)? {
+        return Err(JsError::Type("Expected a canvas image source.".into()));
+    }
+    let realm = value.as_object().and_then(|o| s.object_realm(o)).ok_or_else(invalid)?;
+    let home = realm.scope()?;
+    let source_page = crate::target::page_of(&home)?;
+    let source = image_source(&home, &source_page, home.rehome(value), "VideoFrame", false, None)?.ok_or_else(invalid)?;
+    if !source.clean {
+        return Err(JsError::dom("SecurityError", "The canvas image source is not origin-clean."));
+    }
+    if !pyro_canvas::valid_size(source.width, source.height) {
+        return Err(invalid());
+    }
+    let len = source.width as usize * source.height as usize * 4;
+    let budget = crate::target::page_of(s)?.raster_budget().ok_or_else(invalid)?;
+    let held = budget.reserve(len).map_err(|_| exhausted())?;
+    let scratch = budget.reserve(len).map_err(|_| exhausted())?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(len).map_err(|_| exhausted())?;
+    if let Some(bitmap) = source.pixmap {
+        if u32::from(bitmap.width()) != source.width || u32::from(bitmap.height()) != source.height {
+            return Err(invalid());
+        }
+        bytes.extend_from_slice(bitmap.data_as_u8_slice());
+        pyro_canvas::unpremultiply(&mut bytes);
+    } else {
+        bytes.resize(len, 0);
+    }
+    let result = s.object();
+    result.set_prototype(s.null());
+    result.set_atom("data", crate::encoding::uint8_array(s, &bytes)?)?;
+    drop(bytes);
+    drop(scratch);
+    result.set_atom("width", s.number(f64::from(source.width)))?;
+    result.set_atom("height", s.number(f64::from(source.height)))?;
+    result.set_atom("opaque", s.boolean(false))?;
+    result.set_atom("colorSpace", s.string("srgb"))?;
+    let lease = crate::image_decoder::image_lease(s, Rc::new(held))?;
+    if let Err(error) = result.set_atom("lease", lease.value()) {
+        lease.call(None, &[s.boolean(false)])?;
+        return Err(error);
+    }
+    Ok(result.value())
+}
+
 /// An image argument's pixels: `Ok(None)` when it has none to give yet
 /// (an image still loading, a video), errors as HTML specifies.
 fn image_source(
@@ -747,7 +812,7 @@ fn image_source(
                     // A placeholder shows its OffscreenCanvas's last frame.
                     None => match placeholder_frame(&source_page, n.id) {
                         Some(frame) => {
-                            ImageHandle { pixmap: frame.bitmap, width: frame.width, height: frame.height, clean: true }
+                            ImageHandle { pixmap: frame.bitmap, width: frame.width, height: frame.height, clean: frame.clean }
                         }
                         None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
                     },
@@ -2030,6 +2095,7 @@ pub(crate) struct PlaceholderFrame {
     bitmap: Option<Bitmap>,
     width: u32,
     height: u32,
+    clean: bool,
     straight: Option<Arc<Vec<u8>>>,
 }
 
@@ -2050,8 +2116,8 @@ impl Placeholder {
         self.frame.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn commit(&self, bitmap: Option<Bitmap>, width: u32, height: u32) {
-        *self.frame() = PlaceholderFrame { bitmap, width, height, straight: None };
+    fn commit(&self, bitmap: Option<Bitmap>, width: u32, height: u32, clean: bool) {
+        *self.frame() = PlaceholderFrame { bitmap, width, height, clean, straight: None };
     }
 
     /// The frame's straight RGBA rows, `None` while it has no pixels.
@@ -2070,9 +2136,10 @@ impl Placeholder {
 /// An offscreen context of this thread whose frames go to a placeholder.
 pub(crate) struct FrameCommit {
     surface: Weak<RefCell<Surface>>,
+    clean: Rc<Cell<bool>>,
     placeholder: Arc<Placeholder>,
     /// The surface's generation and size last committed.
-    committed: Cell<Option<(u64, u32, u32)>>,
+    committed: Cell<Option<(u64, u32, u32, bool)>>,
 }
 
 /// After a task: each offscreen context drawing for a placeholder whose
@@ -2091,10 +2158,10 @@ pub(crate) fn commit_frames(page: &PageDom) {
         };
         let Ok(mut surface) = surface.try_borrow_mut() else { continue };
         surface.flush();
-        let now = (surface.generation(), surface.width(), surface.height());
+        let now = (surface.generation(), surface.width(), surface.height(), commit.clean.get());
         if commit.committed.get() != Some(now) {
             commit.committed.set(Some(now));
-            commit.placeholder.commit(surface.snapshot(), now.1, now.2);
+            commit.placeholder.commit(surface.snapshot(), now.1, now.2, now.3);
         }
     }
     drop(commits);
@@ -2152,10 +2219,10 @@ pub(crate) fn transfer_control_to_offscreen<'s>(
             "Failed to execute 'transferControlToOffscreen' on 'HTMLCanvasElement': Cannot transfer control from a canvas for more than one time.",
         ));
     }
-    let placeholder = Arc::new(Placeholder::default());
+    let (w, h) = canvas_size(page, canvas);
+    let placeholder = Arc::new(Placeholder { frame: Mutex::new(PlaceholderFrame { width: w, height: h, clean: true, ..Default::default() }) });
     page.canvas_placeholders.borrow_mut().push((canvas, placeholder.clone()));
     page.canvas_used.set(true);
-    let (w, h) = canvas_size(page, canvas);
     let handle = placeholder_object(s, placeholder)?;
     MODULE.helper(s, page, "offscreenOf", &[s.number(f64::from(w)), s.number(f64::from(h)), handle])
 }

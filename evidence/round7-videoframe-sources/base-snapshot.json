@@ -1,0 +1,22 @@
+{
+  "dom-surface": {
+    "error": "TypeError"
+  },
+  "dom-bitmap": {
+    "error": "TypeError"
+  },
+  "offscreen-surface": {
+    "error": "TypeError"
+  },
+  "offscreen-bitmap": {
+    "error": "TypeError"
+  },
+  "raw": [
+    -7,
+    "RGBA",
+    5,
+    6,
+    7,
+    255
+  ]
+}

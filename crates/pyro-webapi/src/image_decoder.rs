@@ -187,7 +187,7 @@ fn create_source<'s>(s: &Scope<'s>, page: PageRasters) -> JsResult<Value<'s>> {
 // Each wrapper has its own native lease owner. Cloning shares the charge;
 // closing or collecting the last wrapper releases it even if another wrapper
 // disappeared without an explicit close.
-fn image_lease<'s>(s: &Scope<'s>, reservation: Rc<Reservation>) -> JsResult<Object<'s>> {
+pub(crate) fn image_lease<'s>(s: &Scope<'s>, reservation: Rc<Reservation>) -> JsResult<Object<'s>> {
     let owned = RefCell::new(Some(reservation));
     s.function("imageLease", move |s, _, args| {
         if args.get(0).to_bool() {

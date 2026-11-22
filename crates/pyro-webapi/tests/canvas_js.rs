@@ -611,6 +611,26 @@ fn video_frame_draw_orientation_follows_destination_canvas_style() {
 }
 
 #[test]
+fn canvas_video_frame_snapshot_is_independent_and_charged_until_last_close() {
+    let env = crate::support::network::Env::new("http://localhost:5173/");
+    let page = &env.page;
+    let budget = page.dom.borrow().document_data(page.document()).unwrap().raster_budget.clone();
+    env.eval("var c = document.createElement('canvas'); c.width = 2; c.height = 3;
+              var ctx = c.getContext('2d'); ctx.fillStyle = 'red'; ctx.fillRect(0,0,2,3);
+              ctx.getImageData(0,0,1,1)");
+    let before = budget.used();
+    env.eval("var frame = new VideoFrame(c, {timestamp: 42}); var twin = frame.clone(); frame.close();
+              ctx.fillStyle = 'blue'; ctx.fillRect(0,0,2,3);
+              var data = new Uint8Array(twin.allocationSize()); var done = false;
+              twin.copyTo(data).then(() => { done = true })");
+    env.until("done");
+    assert_eq!(env.eval("Array.from(data.slice(0,4)).join(',')"), "255,0,0,255");
+    assert_eq!(budget.used() - before, 24);
+    env.eval("twin.close()");
+    assert_eq!(budget.used(), before);
+}
+
+#[test]
 fn image_decoder_frame_charge_lasts_until_last_clone_closes() {
     let env = crate::support::network::Env::new("http://localhost:5173/");
     let page = &env.page;

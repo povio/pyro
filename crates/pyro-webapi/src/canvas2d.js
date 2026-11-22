@@ -958,6 +958,7 @@
     imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data, s.colorSpace] : null; },
     // The gradient or pattern record of a fill/stroke style.
     paintRecord(value) { return gradients.get(value) || patterns.get(value) || null; },
+    frameCanvasSource(image) { return bitmaps.has(image) || offscreens.has(image); },
     sourceOf,
     // [a, b, c, d, e, f] of a DOMMatrix2DInit (validated), for setTransform.
     matrix2D(init) {
