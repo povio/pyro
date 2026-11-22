@@ -1976,6 +1976,7 @@ impl<'doc> DocumentMutator<'doc> {
                 // attribute page content cannot write).
                 policy: self.doc.engine_attr(target_id, crate::document::SHEET_POLICY_ATTRIBUTE).map(str::to_owned),
                 policies: self.doc.sheet_policies.clone(),
+                quirks_mode: self.doc.sheet_quirks_mode(),
             },
         );
 

@@ -292,6 +292,8 @@ pub struct StylesheetHandler {
     pub policy: Option<String>,
     /// pyro: the document's sheet policies, which this sheet's goes into.
     pub policies: SheetPolicies,
+    /// pyro: the document's quirks mode for its sheets (`BaseDocument::sheet_quirks_mode`).
+    pub quirks_mode: QuirksMode,
 }
 
 impl NetHandler for ResourceHandler<StylesheetHandler> {
@@ -341,9 +343,10 @@ impl ResourceHandler<StylesheetHandler> {
                 client: self.data.client.clone(),
                 inline: None,
                 policies: self.data.policies.clone(),
+                quirks_mode: self.data.quirks_mode,
             }),
             None, // error_reporter
-            QuirksMode::NoQuirks,
+            self.data.quirks_mode,
         );
 
         self.respond(
@@ -388,6 +391,9 @@ pub(crate) struct StylesheetLoader {
     pub(crate) inline: Option<InlineUrls>,
     /// pyro: the document's sheet policies (`SheetPolicies`).
     pub(crate) policies: SheetPolicies,
+    /// pyro: the document's quirks mode for its sheets, imported ones too
+    /// (`BaseDocument::sheet_quirks_mode`).
+    pub(crate) quirks_mode: QuirksMode,
 }
 impl ServoStylesheetLoader for StylesheetLoader {
     fn request_stylesheet(
@@ -502,7 +508,7 @@ impl ResourceHandler<NestedStylesheetHandler> {
             self.data.lock.clone(),
             Some(&self.data.loader),
             None, // error_reporter
-            QuirksMode::NoQuirks,
+            self.data.loader.quirks_mode,
         ));
 
         // Fetch @font-face fonts
