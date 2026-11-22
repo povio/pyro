@@ -10,7 +10,7 @@ SEL={
  'Q06':[r'^html/semantics/forms/the-input-element/type-change-state\.html$'],
  'Q07':[r'^html/semantics/embedded-content/image-maps/image-map-processing-model/hash-name-reference\.html$',r'^html/semantics/embedded-content/the-area-element/area-coords\.html$'],
  'Q08':[r'^custom-elements/form-associated/ElementInternals-setFormValue\.html$'],
- 'Q09':['__COUNT2__'],  # Studio: frozen mspace fix covers 2 pages (IDs not reported)
+ 'Q09':[],  # Studio: frozen mspace fix covers 2 pages (IDs not reported)
  'Q02':[r'^quirks/unitless-length/quirks\.html$'],
  'Q10':[],
  'Q11':[r'^svg/path/property/'],
@@ -63,7 +63,7 @@ def main(ledger,out):
   strict=load()
   q01=[u for _,u,_ in json.load(open('/Users/xban1x/Library/Caches/lightningpanda/round7-queue/q01-named-access-pages.json')) if 'command-and-commandfor' not in u]
   L=[json.loads(l) for l in open(ledger)]
-  per={};
+  per={}; CSS={}
   for r in L:
     if r['kind']!='brief' and r['id'] not in SEL and not isinstance(r.get('page_list'),list): continue
     i=r['id']
@@ -72,13 +72,18 @@ def main(ledger,out):
     elif SEL.get(i)==['__COUNT2__']: pages={'mathml/relations/css-styling/<page-1 of Q09 mspace>','mathml/relations/css-styling/<page-2 of Q09 mspace>'}
     elif i in SEL: pages={u for u in strict if any(re.search(p,u) for p in SEL[i])}
     else: pages=None  # SC/S rows: CSS corpus, not in this census
+    cssp={u.lstrip('/') for u in (r.get('page_list') or []) if u.lstrip('/').startswith('css/')}
+    if isinstance(r.get('page_list'),list) and pages is not None and not pages and cssp: pages=set()
+    CSS[i]=cssp
     per[i]=(r['state'],pages,r)
   tiers={'implemented':('frozen','implemented-unbuilt','landed'),'in_progress':('claimed','active','reserved'),'queued':('validated','proposed')}
   res={'basis':'census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured','tiers':{}}
   for t,states in tiers.items():
-    u=set(); css=0; byd=collections.Counter()
+    u=set(); css=0; cssu=set(); byd=collections.Counter()
     for i,(st,pg,r) in per.items():
       if st not in states: continue
+      cssu|=CSS.get(i,set())
+      if CSS.get(i): continue
       if pg is None:
         sp=r.get('receipts',{}).get('strict_page_gains_potential') or r.get('receipts',{}).get('pages') or 0
         try: css+=int(str(sp).split()[0])
@@ -90,9 +95,9 @@ def main(ledger,out):
     for i,(st,pg,r) in per.items():
       if st in states and pg is not None and isinstance(r.get('est_pages_owner'),int) and r['est_pages_owner']<len(pg): adj+=len(pg)-r['est_pages_owner']
     for p in u: byd['/'.join(p.split('/')[:2]) if p.split('/')[0] in('html','fetch','svg','dom') else p.split('/')[0]]+=1
-    res['tiers'][t]={'distinct_census_pages':len(u)-adj+unl,'owner_reported_unlisted':unl,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'by_dir':dict(byd.most_common())}
+    res['tiers'][t]={'distinct_census_pages':len(u)-adj+unl,'owner_reported_unlisted':unl,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'studio_css_listed_distinct':len(cssu),'by_dir':dict(byd.most_common())}
   res['per_brief']={i:{'state':st,'pages':(len(pg) if pg is not None else None),'tentative':(sum(1 for x in pg if 'tentative' in x) if pg is not None else None)} for i,(st,pg,r) in per.items()}
-  cum=res['tiers']['implemented']['distinct_census_pages']+res['tiers']['implemented']['studio_css_reported_pages_not_deduped']
+  cum=res['tiers']['implemented']['distinct_census_pages']+res['tiers']['implemented']['studio_css_reported_pages_not_deduped']+res['tiers']['implemented']['studio_css_listed_distinct']
   res['implemented_total_estimate']=cum
   res['milestones_reached']=[m for m in (250,500,750,1000) if cum>=m]
   json.dump(res,open(out,'w'),indent=1)
