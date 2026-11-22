@@ -2957,6 +2957,35 @@ fn listify_placeholder(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, p
     Some((item, 0))
 }
 
+/// Toggle out a single empty item without converting its siblings.
+fn unlist_placeholder(dom: &mut Dom, host: NodeId, tag: &str, point: Point) -> Option<Point> {
+    let (item, offset) = point;
+    let list = dom.parent_element(item).ok()??;
+    if offset != 0 || !local_html(dom, item, "li") || !local_html(dom, list, tag)
+        || editing::editing_host(dom, item) != Some(host) || dom.child_count(item).ok()? != 1 { return None; }
+    let br = dom.first_child(item).ok()??;
+    if !local_html(dom, br, "br") || editing::editing_host(dom, br) != Some(host) { return None; }
+    let parent = dom.parent_element(list).ok()??;
+    let prev = dom.prev_sibling(item).ok()?;
+    let next = dom.next_sibling(item).ok()?;
+    let before = if prev.is_none() { Some(list) } else if let Some(next) = next {
+        let tail = dom.clone_node(list, false, None).ok()?;
+        dom.remove_attribute(tail, "id").ok()?;
+        let after = dom.next_sibling(list).ok()?;
+        dom.insert_before(parent, tail, after).ok()?;
+        let mut child = Some(next);
+        while let Some(n) = child {
+            child = dom.next_sibling(n).ok()?;
+            dom.append_child(tail, n).ok()?;
+        }
+        Some(tail)
+    } else { dom.next_sibling(list).ok()? };
+    dom.insert_before(parent, br, before).ok()?;
+    dom.remove_child(list, item).ok()?;
+    if dom.child_count(list).ok()? == 0 { dom.remove_child(parent, list).ok()?; }
+    Some((parent, dom.index_in_parent(br).ok()?))
+}
+
 fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
     let (start, end) = editing::host_range(page, host);
     editing::apply_edit(page, host, input_type, None, None, |page| {
@@ -2979,7 +3008,8 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
                 return;
             }
             if start == end {
-                if let Some(caret) = listify_placeholder(page, &mut dom, host, tag, start) {
+                if let Some(caret) = unlist_placeholder(&mut dom, host, tag, start)
+                    .or_else(|| listify_placeholder(page, &mut dom, host, tag, start)) {
                     drop(dom);
                     editing::set_selection(page, caret, caret);
                     return;
@@ -3320,20 +3350,24 @@ impl TableSelection {
 }
 
 /// The HTML parser closes a P before a list. Retain the location and
-/// actual markup of quoted paragraphs that contain a list in the live DOM.
-struct QuotedListParagraph {
+/// actual markup of quoted list paragraphs and the paragraph owning a saved placeholder item.
+struct ListParagraph {
     path: Vec<u32>,
     html: String,
+    children: u32,
 }
 
-impl QuotedListParagraph {
-    fn capture(dom: &Dom, host: NodeId, html: &str) -> Vec<Self> {
-        if !html.contains("<blockquote") || !html.contains("<p") || !(html.contains("<ol") || html.contains("<ul")) {
+impl ListParagraph {
+    fn capture(dom: &Dom, host: NodeId, html: &str, caret_paragraph: Option<NodeId>) -> Vec<Self> {
+        if (caret_paragraph.is_none() && !html.contains("<blockquote")) || !html.contains("<p") || !(html.contains("<ol") || html.contains("<ul")) {
             return Vec::new();
         }
         dom.descendants(host).into_iter().flatten().filter_map(|node| {
-            if !local_html(dom, node, "p") || dom.child_count(node).ok()? != 1
-                || !local_html(dom, dom.parent_element(node).ok()??, "blockquote") { return None; }
+            if !local_html(dom, node, "p") { return None; }
+            let children = dom.child_count(node).ok()?;
+            if Some(node) != caret_paragraph && !(children == 1 && local_html(dom, dom.parent_element(node).ok()??, "blockquote")) {
+                return None;
+            }
             let list = dom.first_child(node).ok()??;
             if !local_html(dom, list, "ol") && !local_html(dom, list, "ul") { return None; }
             let mut path = Vec::new();
@@ -3343,33 +3377,72 @@ impl QuotedListParagraph {
                 current = dom.parent(current).ok()??;
             }
             path.reverse();
-            Some(Self { path, html: dom.outer_html(node).ok()? })
+            Some(Self { path, html: dom.outer_html(node).ok()?, children })
         }).collect()
     }
 
     fn restore(self, dom: &mut Dom, host: NodeId) -> Option<()> {
         let mut p = host;
         for index in self.path { p = dom.child_at(p, index).ok()??; }
-        if !local_html(dom, p, "p") || !local_html(dom, dom.parent_element(p).ok()??, "blockquote")
+        if !local_html(dom, p, "p")
             || dom.child_count(p).ok()? != 0 { return None; }
         let list = dom.next_sibling(p).ok()??;
-        let tail = dom.next_sibling(list).ok()??;
+        let mut children = Vec::new();
+        let mut next = Some(list);
+        let mut serialized = String::new();
+        for _ in 0..self.children {
+            let child = next?;
+            next = dom.next_sibling(child).ok()?;
+            serialized.push_str(&dom.outer_html(child).ok()?);
+            children.push(child);
+        }
+        let tail = next?;
         if !(local_html(dom, list, "ol") || local_html(dom, list, "ul")) || !local_html(dom, tail, "p")
             || dom.child_count(tail).ok()? != 0 || !dom.attributes(tail).ok()?.is_empty() { return None; }
         // Repair only the precise empty-P/list/empty-P sequence corresponding
         // to the saved element. Leave other parser normalizations untouched.
         let empty = dom.outer_html(p).ok()?;
         let contents = self.html.strip_prefix(empty.strip_suffix("</p>")?)?.strip_suffix("</p>")?;
-        if contents != dom.outer_html(list).ok()? { return None; }
-        dom.append_child(p, list).ok()?;
+        if contents != serialized { return None; }
+        for child in children { dom.append_child(p, child).ok()?; }
         dom.remove_node(tail).ok()
+    }
+}
+
+/// Flat offsets are ambiguous at the leading edge of an empty list item.
+struct PlaceholderCaret {
+    path: Vec<u32>,
+    list_tag: &'static str,
+}
+
+impl PlaceholderCaret {
+    fn capture(dom: &Dom, host: NodeId, point: Point) -> Option<Self> {
+        let (mut node, offset) = point;
+        if offset != 0 || !local_html(dom, node, "li") || dom.child_count(node).ok()? != 1
+            || !local_html(dom, dom.first_child(node).ok()??, "br") { return None; }
+        let list = dom.parent_element(node).ok()??;
+        let list_tag = if local_html(dom, list, "ol") { "ol" } else if local_html(dom, list, "ul") { "ul" } else { return None };
+        let mut path = Vec::new();
+        while node != host { path.push(dom.index_in_parent(node).ok()?); node = dom.parent(node).ok()??; }
+        path.reverse();
+        Some(Self { path, list_tag })
+    }
+
+    fn resolve(self, dom: &Dom, host: NodeId) -> Option<Point> {
+        let mut item = host;
+        for index in self.path { item = dom.child_at(item, index).ok()??; }
+        let parent = dom.parent_element(item).ok()??;
+        let br = dom.first_child(item).ok()??;
+        (local_html(dom, parent, self.list_tag) && local_html(dom, item, "li")
+            && dom.child_count(item).ok()? == 1 && local_html(dom, br, "br")
+            && editing::editing_host(dom, br) == Some(host)).then_some((item, 0))
     }
 }
 
 enum Saved {
     Control { value: String, selection: ControlSelection, opposite: Option<ControlSelection> },
     /// Saved anchor and focus offsets, in selection direction.
-    Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection>, quoted_lists: Vec<QuotedListParagraph> },
+    Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection>, list_paragraphs: Vec<ListParagraph>, placeholder: Option<PlaceholderCaret> },
 }
 
 struct Step {
@@ -3386,9 +3459,10 @@ impl Saved {
     fn bytes(&self) -> usize {
         match self {
             Saved::Control { value, .. } => value.len(),
-            Saved::Host { html, table_selection, quoted_lists, .. } => html.len()
+            Saved::Host { html, table_selection, list_paragraphs, placeholder, .. } => html.len()
                 + table_selection.as_ref().map_or(0, |s| s.path.len() * size_of::<u32>())
-                + quoted_lists.iter().map(|q| q.html.len() + q.path.len() * size_of::<u32>()).sum::<usize>(),
+                + placeholder.as_ref().map_or(0, |p| p.path.len() * size_of::<u32>())
+                + list_paragraphs.iter().map(|q| q.html.len() + q.path.len() * size_of::<u32>()).sum::<usize>(),
         }
     }
 }
@@ -3423,7 +3497,15 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
         });
     }
     let html = dom.inner_html(target).ok()?;
-    let quoted_lists = QuotedListParagraph::capture(&dom, target, &html);
+    let collapsed = editing::selection(page).and_then(|(a, f)| (a == f).then_some(a));
+    let placeholder = collapsed.and_then(|p| PlaceholderCaret::capture(&dom, target, p));
+    let caret_paragraph = collapsed.and_then(|p| {
+        let item = if local_html(&dom, p.0, "li") { p.0 } else { dom.parent_element(p.0).ok()?? };
+        if !local_html(&dom, item, "li") { return None; }
+        let list = dom.parent_element(item).ok()??;
+        dom.parent_element(list).ok()?
+    });
+    let list_paragraphs = ListParagraph::capture(&dom, target, &html, caret_paragraph);
     drop(dom);
     let mut table_selection = None;
     let selection = editing::selection(page).and_then(|(anchor, focus)| {
@@ -3438,7 +3520,7 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
             (flat.pos_of(&dom, anchor), flat.pos_of(&dom, focus))
         })
     });
-    Some(Saved::Host { html, selection, table_selection, quoted_lists })
+    Some(Saved::Host { html, selection, table_selection, list_paragraphs, placeholder })
 }
 
 fn caret(page: &PageDom, target: NodeId, control: bool) -> Option<Caret> {
@@ -3519,12 +3601,16 @@ fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
             }
             editing::queue_control_selectionchange(page, target);
         }
-        Saved::Host { html, selection, table_selection, quoted_lists } => {
+        Saved::Host { html, selection, table_selection, list_paragraphs, placeholder } => {
             let ok = pyro_dom::parse::set_inner_html(&mut page.dom.borrow_mut(), target, &html).is_ok();
             if !ok {
                 return;
             }
-            for paragraph in quoted_lists { paragraph.restore(&mut page.dom.borrow_mut(), target); }
+            for paragraph in list_paragraphs { paragraph.restore(&mut page.dom.borrow_mut(), target); }
+            if let Some(caret) = placeholder.and_then(|p| p.resolve(&page.dom.borrow(), target)) {
+                editing::set_selection(page, caret, caret);
+                return;
+            }
             if let Some((anchor, focus)) = table_selection.and_then(|s| s.resolve(&page.dom.borrow(), target)) {
                 editing::set_selection(page, anchor, focus);
                 return;
