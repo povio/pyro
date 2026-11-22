@@ -425,7 +425,8 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
     if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
         layout.snap_initial_positions(&dom);
     }
-    if !page.layout.borrow().has_scroll_offsets() {
+    // (A document with snap containers re-snaps unsnapped ones though nothing is scrolled.)
+    if !page.layout.borrow().has_scroll_offsets() && !page.layout.borrow().snap_owed() {
         return;
     }
     let moved = {
@@ -458,7 +459,15 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
 /// rendering update would lay out without any script read.
 pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
     let (checked, queued) = page.scroll_clamp.get();
-    if queued || page.is_disposed() || !page.layout.borrow().has_scroll_offsets() {
+    if queued || page.is_disposed() {
+        return;
+    }
+    // (A document with snap containers re-snaps unsnapped ones though nothing is scrolled.)
+    let owed = {
+        let layout = page.layout.borrow();
+        layout.has_scroll_offsets() || layout.snap_owed()
+    };
+    if !owed {
         return;
     }
     if checked == Some(page.dom.borrow().version()) {
