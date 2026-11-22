@@ -137,7 +137,7 @@
   attribute(base, cues, 'endTime', endTime);
   attribute(base, cues, 'pauseOnExit', Boolean);
   for (const type of ['enter', 'exit']) {
-    const name = 'on' + type, listener = Symbol();
+    const name = 'on' + type, listener = name + 'Listener';
     define(base, name, {
       enumerable: true, configurable: true, get() { return state(cues, this)[name]; },
       set(value) {
