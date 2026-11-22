@@ -2346,7 +2346,7 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
 
 /// The parent element in the flat tree: a slottable's slot, a shadow
 /// root's host, else the parent element.
-fn flat_parent_element(dom: &Dom, el: NodeId) -> Option<NodeId> {
+pub(crate) fn flat_parent_element(dom: &Dom, el: NodeId) -> Option<NodeId> {
     if let Some(slot) = dom.assigned_slot_any(el) {
         return Some(slot);
     }

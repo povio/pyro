@@ -1031,6 +1031,7 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
         return;
     }
     queue_dialog_toggle(page, el, true, false, source);
+    let was_modal = page.dom.borrow().is_modal(el);
     let keep = overlay_style_flush(page, el);
     {
         let mut dom = page.dom.borrow_mut();
@@ -1046,7 +1047,21 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
     remove_watcher(page, el);
     let previous = page.popover.previously_focused.borrow_mut().remove(&el);
     if let Some(prev) = previous {
-        let inside = focused(page).is_none_or(|f| page.dom.borrow().contains(el, f).unwrap_or(false));
+        // HTML "close the dialog": focus goes back when the focused area is in the dialog in the
+        // flat tree (a shadow tree inside it, an element slotted into it), or always for a
+        // dialog that was modal.
+        let inside = was_modal
+            || focused(page).is_none_or(|f| {
+                let dom = page.dom.borrow();
+                let mut node = Some(f);
+                while let Some(n) = node {
+                    if n == el {
+                        return true;
+                    }
+                    node = crate::input::flat_parent_element(&dom, n);
+                }
+                false
+            });
         if inside {
             crate::input::focus_element_with_options(page, prev, true);
         }
