@@ -2925,14 +2925,21 @@ fn convert_text_and_list(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str,
 
 /// Extract selected levels of a nested list as lines. A nested list of
 /// another type remains an intact block between the surrounding text.
-fn unlist_nested_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
+fn unlist_selected_lines(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
     use std::collections::HashSet;
     let first = ancestor_item(dom, start.0, host)?;
     let list = dom.parent_element(first).ok()??;
     if start == end || !local_html(dom, list, tag) || dom.parent(list).ok()? != Some(host)
-        || !dom.contains(list, end.0).ok()? || !dom.descendants(list).ok()?.skip(1).any(|n| local_html(dom,n,"ol") || local_html(dom,n,"ul"))
+        || !dom.contains(list, end.0).ok()?
         || dom.descendants(list).ok()?.any(|n| editing::editing_host(dom,n) != Some(host))
     { return None; }
+    let has_sublist = dom.descendants(list).ok()?.skip(1).any(|n| local_html(dom,n,"ol") || local_html(dom,n,"ul"));
+    if !has_sublist {
+        // Structural ranges around a table or other block keep their own
+        // conversion path. The flat case here spans multiple text items.
+        if !editing::is_text(dom,start.0) || !editing::is_text(dom,end.0)
+            || ancestor_item(dom,end.0,host)? == first { return None; }
+    }
     let selected: HashSet<_> = texts_in(dom, list, start, end).into_iter().filter_map(|t| ancestor_item(dom,t,host)).collect();
     fn lines(dom: &Dom, list: NodeId, tag: &str, selected: &HashSet<NodeId>, output: &mut Vec<(bool, Vec<NodeId>)>) -> Option<()> {
         let items: Vec<_> = dom.children(list).ok()?.collect();
@@ -3407,7 +3414,7 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
         {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
-            if unlist_nested_run(page, &mut dom, host, tag, start, end).is_some() {
+            if unlist_selected_lines(page, &mut dom, host, tag, start, end).is_some() {
                 drop(dom);
                 editing::set_selection(page, start, end);
                 return;
