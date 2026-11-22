@@ -220,6 +220,7 @@ pub fn register(engine: &pyro_js::Engine) {
     form_data::register(engine);
     dom_parser::register(engine);
     resize_observer::register(engine);
+    html_in_canvas::register(engine);
     xpath::register(engine);
     engine.register::<storage::Storage>();
     storage_buckets::register(engine);

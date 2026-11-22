@@ -3439,6 +3439,32 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
         crate::html_in_canvas::request_paint(n.page(), n.id);
         Ok(s.undefined())
     });
+    def.method("captureElementImage", 1, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.captureElementImage")?;
+        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        crate::html_in_canvas::capture(s, n.page(), n.id, element)
+    });
+    def.method("getElementImageDefaultSize", 1, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.getElementImageDefaultSize")?;
+        crate::html_in_canvas::default_size(s, n.page(), n.id, a.get(0))
+    });
+    def.method("getElementTransform", 1, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.getElementTransform")?;
+        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        crate::html_in_canvas::get_transform(s, n.page(), n.id, element)
+    });
+    def.method("updateElementGeometry", 2, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.updateElementGeometry")?;
+        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        crate::html_in_canvas::update_geometry(s, n.page(), n.id, element, a.get(1))?;
+        Ok(s.undefined())
+    });
+    def.method("clearElementGeometry", 1, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.clearElementGeometry")?;
+        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        crate::html_in_canvas::clear_geometry(n.page(), n.id, element)?;
+        Ok(s.undefined())
+    });
     reflect_enum!(def, "content", "content", CANVAS_CONTENT);
     def.accessor(
         "onpaint",

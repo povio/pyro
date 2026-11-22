@@ -24,6 +24,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pyro_dom::html_in_canvas::Touch;
+use pyro_js::{JsError, Scope, Value};
 use pyro_dom::{Dom, NodeId};
 
 use crate::page::PageDom;
@@ -40,6 +41,12 @@ pub(crate) struct State {
     /// Canvases a `paint` event was fired at since they became drawable:
     /// `drawElementImage` draws only into those.
     ready: Vec<NodeId>,
+    /// The border box size (CSS px) of each drawable element of a canvas as of
+    /// the canvas's last `paint` event: (canvas, element, width, height).
+    painted_sizes: Vec<(NodeId, NodeId, f64, f64)>,
+    /// `updateElementGeometry` transforms: (canvas, element, the matrix's 6
+    /// (2D) or 16 values).
+    transforms: Vec<(NodeId, NodeId, Vec<f64>)>,
 }
 
 pub(crate) type Shared = RefCell<State>;
@@ -62,6 +69,18 @@ fn parent(dom: &Dom, n: NodeId) -> Option<NodeId> {
         return dom.fragment_host(p).ok().flatten();
     }
     Some(p)
+}
+
+/// The nearest drawable canvas above `el`.
+fn owner_canvas(dom: &Dom, el: NodeId) -> Option<NodeId> {
+    let mut cur = parent(dom, el);
+    while let Some(a) = cur {
+        if is_drawable_canvas(dom, a) {
+            return Some(a);
+        }
+        cur = parent(dom, a);
+    }
+    None
 }
 
 impl State {
@@ -218,6 +237,22 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
                 }
             });
         }
+        // The sizes `captureElementImage` and `getElementImageDefaultSize`
+        // report until the next paint: each drawable element's, now.
+        for (canvas, _) in &events {
+            let canvas = *canvas;
+            state.painted_sizes.retain(|(c, _, _, _)| *c != canvas);
+            let elements: Vec<NodeId> = dom
+                .descendants(canvas)
+                .into_iter()
+                .flatten()
+                .filter(|&el| el != canvas && is_drawable(&dom, el) && owner_canvas(&dom, el) == Some(canvas))
+                .collect();
+            for el in elements {
+                let rect = layout.bounding_client_rect(&dom, el);
+                state.painted_sizes.push((canvas, el, rect.width, rect.height));
+            }
+        }
         events
     };
     for (canvas, changed) in events {
@@ -259,36 +294,7 @@ fn invalid_state(message: &str) -> pyro_js::JsError {
 pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<ElementImage> {
     let layout = page.layout();
     let dom = page.dom.borrow();
-    if !is_drawable_canvas(&dom, canvas) || !page.html_in_canvas.borrow().ready.contains(&canvas) {
-        return Err(invalid_state("The canvas has no drawable content painted yet."));
-    }
-    if !is_drawable(&dom, element) {
-        return Err(invalid_state("The element is not drawable."));
-    }
-    // `element`'s nearest drawable canvas above it must be `canvas`, with no
-    // top-layer element (a modal dialog, an open popover) in between.
-    let mut cur = parent(&dom, element);
-    loop {
-        let Some(a) = cur else { return Err(invalid_state("The element is not a child of the canvas.")) };
-        if a == canvas {
-            break;
-        }
-        if is_drawable_canvas(&dom, a) {
-            return Err(invalid_state("The element is not a child of the canvas."));
-        }
-        if dom.is_modal(a) || dom.is_popover_showing(a) {
-            return Err(invalid_state("The element is in the top layer."));
-        }
-        cur = parent(&dom, a);
-    }
-    // Rendered: neither it nor an ancestor (the canvas included) is `display: none`.
-    let mut cur = Some(element);
-    while let Some(a) = cur {
-        if dom.element(a).is_ok() && layout.style().computed_value(&dom, a, "display").as_deref() == Some("none") {
-            return Err(invalid_state("The element is not rendered."));
-        }
-        cur = parent(&dom, a);
-    }
+    check_painted(page, &layout, &dom, canvas, element)?;
     // (The rect query syncs the renderer's document, which the painting below reads.)
     let rect = layout.bounding_client_rect(&dom, element);
     let key = pyro_dom::snapshot::render_key(element);
@@ -304,4 +310,208 @@ pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId)
         },
         None => ElementImage { width: rect.width, height: rect.height, pixels: None, taints: false },
     })
+}
+
+/// `element` is a drawable element of the drawable `canvas` (its nearest
+/// drawable canvas), connected, with no top-layer element in between.
+fn check_owned(dom: &Dom, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<()> {
+    if !is_drawable_canvas(dom, canvas) {
+        return Err(invalid_state("The canvas's content is not drawable."));
+    }
+    if !dom.is_connected(element).unwrap_or(false) || !is_drawable(dom, element) {
+        return Err(invalid_state("The element is not drawable."));
+    }
+    let mut cur = parent(dom, element);
+    loop {
+        let Some(a) = cur else { return Err(invalid_state("The element is not a child of the canvas.")) };
+        if a == canvas {
+            return Ok(());
+        }
+        if is_drawable_canvas(dom, a) {
+            return Err(invalid_state("The element is not a child of the canvas."));
+        }
+        if dom.is_modal(a) || dom.is_popover_showing(a) {
+            return Err(invalid_state("The element is in the top layer."));
+        }
+        cur = parent(dom, a);
+    }
+}
+
+/// [`check_owned`], and the canvas had its `paint` event and the element is
+/// rendered (neither it nor an ancestor is `display: none`).
+fn check_painted(
+    page: &Rc<PageDom>, layout: &pyro_dom::layout::Layout, dom: &Dom, canvas: NodeId, element: NodeId,
+) -> pyro_js::JsResult<()> {
+    if !is_drawable_canvas(dom, canvas) || !page.html_in_canvas.borrow().ready.contains(&canvas) {
+        return Err(invalid_state("The canvas has no drawable content painted yet."));
+    }
+    check_owned(dom, canvas, element)?;
+    let mut cur = Some(element);
+    while let Some(a) = cur {
+        if dom.element(a).is_ok() && layout.style().computed_value(dom, a, "display").as_deref() == Some("none") {
+            return Err(invalid_state("The element is not rendered."));
+        }
+        cur = parent(dom, a);
+    }
+    Ok(())
+}
+
+/// HTML-in-Canvas `ElementImage`: what `captureElementImage` returns, the
+/// element's paint and size as captured, which `drawElementImage` and
+/// `getElementImageDefaultSize` accept in place of the element.
+pub struct ElementImageClass;
+impl pyro_js::JsClass for ElementImageClass {
+    const NAME: &'static str = "ElementImage";
+    type Data = ElementSnapshot;
+    type Parent = pyro_js::NoParent;
+    fn define(_def: &mut pyro_js::ClassDef<Self>) {}
+}
+
+/// The data of an [`ElementImageClass`].
+pub struct ElementSnapshot {
+    /// The element's size in CSS px as of the canvas's last paint.
+    pub width: f64,
+    pub height: f64,
+    pub pixels: Option<(u32, u32, Rc<Vec<u8>>)>,
+    pub taints: bool,
+}
+
+pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<ElementImageClass>();
+}
+
+/// The element's size as of its canvas's last paint (its size now when none was recorded).
+fn painted_size(page: &PageDom, layout: &pyro_dom::layout::Layout, dom: &Dom, canvas: NodeId, element: NodeId) -> (f64, f64) {
+    let recorded = page
+        .html_in_canvas
+        .borrow()
+        .painted_sizes
+        .iter()
+        .find(|(c, e, _, _)| *c == canvas && *e == element)
+        .map(|&(_, _, w, h)| (w, h));
+    recorded.unwrap_or_else(|| {
+        let rect = layout.bounding_client_rect(dom, element);
+        (rect.width, rect.height)
+    })
+}
+
+/// The canvas grid's units per CSS px: its bitmap size over its box's size.
+fn grid_scale(layout: &pyro_dom::layout::Layout, dom: &Dom, canvas: NodeId) -> (f64, f64) {
+    let bitmap = |name: &str, default: f64| {
+        dom.get_attribute(canvas, name)
+            .ok()
+            .flatten()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .map_or(default, f64::from)
+    };
+    let rect = layout.bounding_client_rect(dom, canvas);
+    let scale = |bitmap: f64, css: f64| if css > 0.0 { bitmap / css } else { 1.0 };
+    (scale(bitmap("width", 300.0), rect.width), scale(bitmap("height", 150.0), rect.height))
+}
+
+/// `canvas.captureElementImage(element)`.
+pub(crate) fn capture<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<Value<'s>> {
+    let image = element_image(page, canvas, element)?;
+    let (width, height) = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        painted_size(page, &layout, &dom, canvas, element)
+    };
+    let snapshot = ElementSnapshot {
+        width,
+        height,
+        pixels: image.pixels.map(|(w, h, data)| (w, h, Rc::new(data))),
+        taints: image.taints,
+    };
+    Ok(s.wrap::<ElementImageClass>(snapshot, None)?.value())
+}
+
+/// `canvas.getElementImageDefaultSize(element or elementImage)`: its size as
+/// of the canvas's last paint in the canvas grid's units.
+pub(crate) fn default_size<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, target: Value<'s>) -> pyro_js::JsResult<Value<'s>> {
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    let (width, height) = match s.unwrap::<ElementImageClass>(target) {
+        Some(image) => {
+            if !is_drawable_canvas(&dom, canvas) {
+                return Err(invalid_state("The canvas's content is not drawable."));
+            }
+            (image.width, image.height)
+        }
+        None => {
+            let element = element_of(s, page, target)?;
+            check_painted(page, &layout, &dom, canvas, element)?;
+            painted_size(page, &layout, &dom, canvas, element)
+        }
+    };
+    let (sx, sy) = grid_scale(&layout, &dom, canvas);
+    let out = s.object();
+    out.set_atom("width", s.number(width * sx))?;
+    out.set_atom("height", s.number(height * sy))?;
+    Ok(out.value())
+}
+
+/// The element `value` is, of this page.
+pub(crate) fn element_of(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> pyro_js::JsResult<NodeId> {
+    s.unwrap::<crate::node::Node>(value)
+        .filter(|node| Rc::ptr_eq(&node.page().dom, &page.dom) && node.page().dom.borrow().element(node.id).is_ok())
+        .map(|node| node.id)
+        .ok_or_else(|| JsError::Type("The provided value is not of type 'Element'.".into()))
+}
+
+fn dom_matrix<'s>(s: &Scope<'s>) -> pyro_js::JsResult<pyro_js::Object<'s>> {
+    s.global().get_atom("DOMMatrix")?.as_object().ok_or_else(|| JsError::Type("DOMMatrix is not available.".into()))
+}
+
+/// `canvas.getElementTransform(element)`: a new DOMMatrix of the transform
+/// `updateElementGeometry` set (identity without one).
+pub(crate) fn get_transform<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<Value<'s>> {
+    check_owned(&page.dom.borrow(), canvas, element)?;
+    let values = page
+        .html_in_canvas
+        .borrow()
+        .transforms
+        .iter()
+        .find(|(c, e, _)| *c == canvas && *e == element)
+        .map(|(_, _, m)| m.clone());
+    let ctor = dom_matrix(s)?;
+    let matrix = match values {
+        Some(values) => {
+            let items: Vec<Value<'_>> = values.iter().map(|&v| s.number(v)).collect();
+            ctor.construct(&[s.array(&items)?.value()])?
+        }
+        None => ctor.construct(&[])?,
+    };
+    Ok(matrix.value())
+}
+
+/// `canvas.updateElementGeometry(element, {canvasTransform})`: keeps the
+/// transform (a DOMMatrixInit, validated as `DOMMatrix.fromMatrix` does).
+pub(crate) fn update_geometry(s: &Scope<'_>, page: &Rc<PageDom>, canvas: NodeId, element: NodeId, options: Value<'_>) -> pyro_js::JsResult<()> {
+    let init = match options.as_object() {
+        Some(o) => o.get_atom("canvasTransform")?,
+        None => s.undefined(),
+    };
+    let ctor = dom_matrix(s)?;
+    let from = ctor.get_atom("fromMatrix")?.as_object().ok_or_else(|| JsError::Type("DOMMatrix.fromMatrix is not available.".into()))?;
+    let matrix = from.call(Some(ctor), &[init])?;
+    check_owned(&page.dom.borrow(), canvas, element)?;
+    let matrix = matrix.as_object().ok_or_else(|| JsError::Type("DOMMatrix.fromMatrix returned no matrix.".into()))?;
+    let is_2d = matrix.get_atom("is2D")?.to_bool();
+    let array = matrix.get_atom("toFloat64Array")?.as_object().ok_or_else(|| JsError::Type("toFloat64Array is not available.".into()))?.call(Some(matrix), &[])?;
+    let array = array.as_object().ok_or_else(|| JsError::Type("toFloat64Array returned no array.".into()))?;
+    let all: Vec<f64> = (0..16).map(|i| array.get_index(i).and_then(|v| v.to_number())).collect::<pyro_js::JsResult<_>>()?;
+    // A 2D matrix as its six values (a, b, c, d, e, f): read back as 2D.
+    let values = if is_2d { vec![all[0], all[1], all[4], all[5], all[12], all[13]] } else { all };
+    let mut state = page.html_in_canvas.borrow_mut();
+    state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
+    state.transforms.push((canvas, element, values));
+    Ok(())
+}
+
+/// `canvas.clearElementGeometry(element)`.
+pub(crate) fn clear_geometry(page: &Rc<PageDom>, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<()> {
+    check_owned(&page.dom.borrow(), canvas, element)?;
+    page.html_in_canvas.borrow_mut().transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
+    Ok(())
 }

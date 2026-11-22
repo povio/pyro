@@ -1634,17 +1634,34 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     if !matches!(n, 3 | 5) && n < 9 {
         return Err(JsError::Type(format!("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.").into()));
     }
-    let element = s
-        .unwrap::<crate::node::Node>(a.get(0))
-        .filter(|node| Rc::ptr_eq(&node.page().dom, &c.page.dom) && node.page().dom.borrow().element(node.id).is_ok())
-        .map(|node| node.id)
-        .ok_or_else(|| JsError::Type("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': parameter 1 is not of type 'Element'.".into()))?;
+    // An ElementImage (`captureElementImage`) draws what it captured.
+    let snapshot = s.unwrap::<crate::html_in_canvas::ElementImageClass>(a.get(0)).map(|image| {
+        crate::html_in_canvas::ElementImage {
+            width: image.width,
+            height: image.height,
+            pixels: image.pixels.as_ref().map(|(w, h, data)| (*w, *h, (**data).clone())),
+            taints: image.taints,
+        }
+    });
+    let element = match snapshot {
+        Some(_) => None,
+        None => Some(
+            s.unwrap::<crate::node::Node>(a.get(0))
+                .filter(|node| Rc::ptr_eq(&node.page().dom, &c.page.dom) && node.page().dom.borrow().element(node.id).is_ok())
+                .map(|node| node.id)
+                .ok_or_else(|| JsError::Type("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': parameter 1 is not of type '(Element or ElementImage)'.".into()))?,
+        ),
+    };
     let Target::Element(canvas) = c.target else {
         return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The canvas has no drawable content."));
     };
     // WebIDL: the numbers are converted (their valueOf run) before the method's steps can throw.
     let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
-    let image = crate::html_in_canvas::element_image(&c.page, canvas, element)?;
+    let image = match (snapshot, element) {
+        (Some(image), _) => image,
+        (None, Some(element)) => crate::html_in_canvas::element_image(&c.page, canvas, element)?,
+        (None, None) => return Ok(s.undefined()),
+    };
     let Some(v) = v else { return Ok(s.undefined()) };
     let (w, h) = (image.width, image.height);
     let (src, dst) = match v.len() {
