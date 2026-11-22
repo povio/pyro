@@ -1426,7 +1426,7 @@ fn formatted_split_edge(dom: &Dom, block: NodeId, point: Point) -> Option<bool> 
 }
 
 /// Enter on the placeholder of an empty list item exits one list level.
-fn exit_empty_list_item(dom: &mut Dom, host: NodeId, item: NodeId) -> Option<Point> {
+fn exit_empty_list_item(page: &PageDom, dom: &mut Dom, host: NodeId, item: NodeId) -> Option<Point> {
     if !dom.element(item).is_ok_and(|el| el.is_html() && el.local_name() == &markup5ever::local_name!("li"))
         || item == host || editing_host(dom, item) != Some(host)
     {
@@ -1460,8 +1460,25 @@ fn exit_empty_list_item(dom: &mut Dom, host: NodeId, item: NodeId) -> Option<Poi
         let next = dom.next_sibling(parent).ok()?;
         dom.insert_before(destination, list, next).ok()?;
     }
-    let preceding = dom.prev_sibling(item).ok()?.is_some();
-    let following = dom.next_sibling(item).ok()?.is_some();
+    // Source indentation between list items is not a separate list run.
+    // Keep that text in the original list when a run survives.
+    let has_content = |forward| -> Option<bool> {
+        let mut node = item;
+        loop {
+            let sibling = if forward { dom.next_sibling(node) } else { dom.prev_sibling(node) }.ok()?;
+            let Some(next) = sibling else { return Some(false) };
+            if !dom.char_data(next).is_ok_and(|s| is_text(dom, next)
+                && s.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n' | '\x0c'))) {
+                return Some(true);
+            }
+            if !matches!(page.layout().computed_style_value(dom, list, "white-space-collapse").as_str(), "collapse") {
+                return Some(true);
+            }
+            node = next;
+        }
+    };
+    let preceding = has_content(false)?;
+    let following = has_content(true)?;
     if preceding && following {
         crate::edit_commands::alignment::split_edge(dom, destination, item, true, &mut [])?;
     }
@@ -1475,7 +1492,7 @@ fn exit_empty_list_item(dom: &mut Dom, host: NodeId, item: NodeId) -> Option<Poi
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     // A DOM caret inside an inline void has no child insertion position.
     // Split at the rendered object's edge so it travels with the right line.
-    if let Some(point) = exit_empty_list_item(dom, host, caret.0) { return point; }
+    if let Some(point) = exit_empty_list_item(page, dom, host, caret.0) { return point; }
     let void = caret.0;
     let kind = dom.element(void).ok().filter(|el| el.is_html() && pyro_dom::serialize::is_void(el.local_name()))
         .map(|el| el.local_name().to_string());
