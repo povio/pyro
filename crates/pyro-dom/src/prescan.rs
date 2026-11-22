@@ -34,7 +34,7 @@ pub enum Prescanned {
     Stylesheet { href: String, crossorigin: Option<String> },
     /// `<link rel=preload href as>` (not a modulepreload).
     Preload { href: String, as_: Option<String>, crossorigin: Option<String> },
-    /// `<img src>` without `srcset` and outside `<picture>`.
+    /// An eager `<img src>` without `srcset` and outside `<picture>`.
     Image { src: String },
     /// The first `<base href>`: later URLs resolve against it.
     Base { href: String },
@@ -351,7 +351,8 @@ impl Prescan {
             // The element's request carries its own referrer policy, which a
             // speculative request (the document's) would not: left to the element.
         } else if is("img") {
-            if self.picture_depth == 0 && attr(attrs, "srcset").is_none() {
+            let lazy = attr(attrs, "loading").is_some_and(|value| value.eq_ignore_ascii_case("lazy"));
+            if !lazy && self.picture_depth == 0 && attr(attrs, "srcset").is_none() {
                 if let Some(src) = attr(attrs, "src").filter(|v| !v.trim().is_empty()) {
                     emit(Prescanned::Image { src: src.to_owned() });
                 }
@@ -718,6 +719,7 @@ mod tests {
             <script src="/s1.js"></script><script type="module" src="/mod.js" crossorigin="anonymous"></script>
             <script type="text/template" src="/no.js"></script><script nomodule src="/nm.js"></script>
             <script language="vbscript" src="/vb.js"></script><script language="JavaScript" src="/lang.js"></script>
+            <img src="/lazy.png" loading="LaZy"><img loading="eager" src="/eager.png">
             <img src="/i.png"><img src="/set.png" srcset="/set2x.png 2x"><img src=" ">"#,
         );
         assert_eq!(
@@ -729,6 +731,7 @@ mod tests {
                 script("/s1.js"),
                 Prescanned::Script { src: "/mod.js".into(), module: true, crossorigin: Some("anonymous".into()) },
                 script("/lang.js"),
+                Prescanned::Image { src: "/eager.png".into() },
                 Prescanned::Image { src: "/i.png".into() },
             ]
         );
