@@ -1,0 +1,16 @@
+[
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.html?av1",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.html?h264_annexb",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.html?h264_avc",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.html?h265_annexb",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.html?h265_hevc",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.html?vp8",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.html?vp9",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.worker.html?av1",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.worker.html?h264_annexb",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.worker.html?h264_avc",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.worker.html?h265_annexb",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.worker.html?h265_hevc",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.worker.html?vp8",
+  "webcodecs/videoDecoder-codec-specific-orientation.https.any.worker.html?vp9"
+]

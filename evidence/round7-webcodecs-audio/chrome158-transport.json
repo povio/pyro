@@ -1,0 +1,33 @@
+{
+  "surface": [
+    "function",
+    "function"
+  ],
+  "worker": [
+    "function",
+    "function"
+  ],
+  "cloned": [
+    3,
+    [
+      "u8",
+      750,
+      0,
+      128,
+      255
+    ]
+  ],
+  "transferred": [
+    0,
+    [
+      "u8",
+      750,
+      0,
+      128,
+      255
+    ],
+    0,
+    128,
+    255
+  ]
+}

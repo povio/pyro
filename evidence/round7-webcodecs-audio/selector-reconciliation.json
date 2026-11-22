@@ -1,0 +1,13 @@
+{
+  "originalMembershipSelectorSHA256": "2639c19275b2a09162ec60c0b76110d5dd3755dde941c7799fe0ce27c6fc793b",
+  "uniqueSelectorSHA256": "024e08a519de1016070bd3b6ff2dd3751005d8b1997a673a69687f6e51454cf3",
+  "groupsSHA256": "6703b2908282958ba41bfd9fad28ded025063246889a67b8215e26bf59f543de",
+  "targets": 53,
+  "guards": 9,
+  "sharedURLs": [
+    "webcodecs/encodedVideoChunk-serialization.crossAgentCluster.https.html"
+  ],
+  "uniqueURLs": 61,
+  "signedMapSHA256": "3ecce823ad3cff79ce75935d884f130c0d2e7590e1d7c81d3ec31f20f331d1b8",
+  "signedResultsSHA256": "0e2f106355f37f9e11b5789792040aa87c0a16b595e69671ad8f4f901a08bf0d"
+}
