@@ -39,13 +39,13 @@
     "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
     "FileAPI": 4,
-    "html/rendering": 3,
     "fetch/nosniff": 3,
+    "html/rendering": 3,
     "fetch/http-cache": 3,
     "xhr": 2,
     "svg/styling": 1,
-    "IndexedDB": 1,
-    "quirks": 1
+    "quirks": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
@@ -92,11 +92,11 @@
     "html/semantics": 34,
     "content-security-policy": 20,
     "webidl": 19,
-    "html/browsers": 5,
     "html/interaction": 5,
+    "html/browsers": 5,
     "svg/path": 4,
-    "html/webappapis": 3,
     "workers": 3,
+    "html/webappapis": 3,
     "dom/nodes": 1
    }
   }
@@ -1574,10 +1574,17 @@
   },
   "R-HTML-10": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 59,
+   "in_scope_pages": 37,
    "out_of_scope_pages": 0,
-   "pages": 59,
+   "pages": 37,
    "tentative": 2
+  },
+  "R-HTML-10a": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 22,
+   "out_of_scope_pages": 0,
+   "pages": 22,
+   "tentative": 0
   },
   "R-HTML-11": {
    "state": "claimed",
