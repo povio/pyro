@@ -654,6 +654,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         origin: worker_origin,
         url: start.url.to_string(),
         sched: event_loop.scheduler(),
+        in_flight: Rc::default(),
     })));
     {
         let s = realm.scope()?;
@@ -772,6 +773,12 @@ struct WorkerModuleFetcher {
     origin: Option<String>,
     url: String,
     sched: Scheduler<WorkerLoop>,
+    /// The fetches in flight by URL and module type, with the requests that
+    /// joined each (HTML module map: an entry being fetched collects
+    /// callbacks). The engine asks for a module once per load until one
+    /// settles, so concurrent loads would each fetch it. Nothing stays once a
+    /// fetch settles: a failed one is fetched again by the next request.
+    in_flight: Rc<RefCell<HashMap<(String, pyro_js::ModuleType), Vec<pyro_js::ModuleRequest>>>>,
 }
 
 impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
@@ -780,46 +787,72 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
     }
 
     fn fetch(&self, realm: &Realm, url: String, request: pyro_js::ModuleRequest) {
-        let realm = realm.downgrade();
-        let (page, net, shared, origin) =
-            (self.page.clone(), self.net.clone(), self.shared.clone(), self.origin.clone());
-        let request = RefCell::new(Some(request));
-        self.sched.post(TaskSource::Networking, move |_| {
-            let Some(request) = request.borrow_mut().take() else { return };
-            let Some(realm) = realm.upgrade().filter(|r| !r.is_disposed()) else { return };
-            let Ok(s) = realm.scope() else { return };
-            // A worker has no CSSStyleSheet: a CSS module fails unfetched.
-            if let Some(e) = crate::module_script::disallowed(request.module_type(), false) {
-                if let Err(e) = request.reject(&s, &e) {
-                    s.report_exception(&e);
-                }
+        let key = (url.clone(), request.module_type());
+        {
+            let mut in_flight = self.in_flight.borrow_mut();
+            if let Some(joined) = in_flight.get_mut(&key) {
+                joined.push(request);
                 return;
             }
-            let source = match (page.upgrade(), pyro_net::Url::parse(&url)) {
-                (Some(page), Ok(parsed)) => match page.blob_url(&url) {
-                    Some((bytes, mime)) => Ok((bytes, pyro_net::parse_content_type(&mime).0)),
-                    None => {
-                        // A JSON module is fetched with destination "json"
-                        // (CSS modules were rejected above).
-                        let destination = match request.module_type() {
-                            pyro_js::ModuleType::Json => Destination::Json,
-                            pyro_js::ModuleType::Text => Destination::Text,
-                            _ => Destination::Script,
-                        };
-                        fetch_script(&page, &net, &shared, &origin, parsed, destination, RequestMode::Cors, false)
+            in_flight.insert(key.clone(), Vec::new());
+        }
+        let realm = realm.downgrade();
+        let (page, net, shared, origin, in_flight) =
+            (self.page.clone(), self.net.clone(), self.shared.clone(), self.origin.clone(), self.in_flight.clone());
+        let request = RefCell::new(Some(request));
+        self.sched.post(TaskSource::Networking, move |_| {
+            // Every request of the fetch, taken out before any completes: one
+            // the engine makes while they complete starts a fetch of its own.
+            let take = || {
+                let joined = in_flight.borrow_mut().remove(&key).unwrap_or_default();
+                request.borrow_mut().take().into_iter().chain(joined).collect::<Vec<_>>()
+            };
+            let Some(realm) = realm.upgrade().filter(|r| !r.is_disposed()) else {
+                drop(take());
+                return;
+            };
+            let Ok(s) = realm.scope() else {
+                drop(take());
+                return;
+            };
+            let ty = key.1;
+            // A worker has no CSSStyleSheet: a CSS module fails unfetched.
+            let outcome = match crate::module_script::disallowed(ty, false) {
+                Some(e) => Err(e),
+                None => {
+                    let source = match (page.upgrade(), pyro_net::Url::parse(&url)) {
+                        (Some(page), Ok(parsed)) => match page.blob_url(&url) {
+                            Some((bytes, mime)) => Ok((bytes, pyro_net::parse_content_type(&mime).0)),
+                            None => {
+                                // A JSON module is fetched with destination "json"
+                                // (CSS modules were rejected above).
+                                let destination = match ty {
+                                    pyro_js::ModuleType::Json => Destination::Json,
+                                    pyro_js::ModuleType::Text => Destination::Text,
+                                    _ => Destination::Script,
+                                };
+                                fetch_script(&page, &net, &shared, &origin, parsed, destination, RequestMode::Cors, false)
+                            }
+                        },
+                        _ => Err("invalid URL".to_owned()),
+                    };
+                    match source {
+                        Ok((bytes, mime)) => match crate::module_script::mime_error(ty, &mime, &url) {
+                            None => Ok(script_text(&bytes)),
+                            Some(e) => Err(JsError::Type(e.into())),
+                        },
+                        Err(_) => Err(JsError::Type(format!("Failed to fetch module: {url}").into())),
                     }
-                },
-                _ => Err("invalid URL".to_owned()),
+                }
             };
-            let done = match source {
-                Ok((bytes, mime)) => match crate::module_script::mime_error(request.module_type(), &mime, &url) {
-                    None => crate::module_script::complete(&s, request, &script_text(&bytes)),
-                    Some(e) => request.reject(&s, &JsError::Type(e.into())),
-                },
-                Err(_) => request.reject(&s, &JsError::Type(format!("Failed to fetch module: {url}").into())),
-            };
-            if let Err(e) = done {
-                s.report_exception(&e);
+            for request in take() {
+                let done = match &outcome {
+                    Ok(text) => crate::module_script::complete(&s, request, text),
+                    Err(e) => request.reject(&s, e),
+                };
+                if let Err(e) = done {
+                    s.report_exception(&e);
+                }
             }
         });
     }

@@ -45,8 +45,6 @@ enum ModuleEntry {
     /// loads at once, as one answered from the module map; an import (the
     /// engine asks only for a module it does not have) requests it.
     Imported,
-    /// A failed fetch stays in the document module map until navigation.
-    Failed(String),
 }
 
 /// Preloads started per document, at most (a page's own chunks number far fewer).
@@ -103,12 +101,6 @@ impl Browser {
                 waiters.push((waiter, import));
                 return None;
             }
-            Some(ModuleEntry::Failed(error)) => {
-                let error = error.clone();
-                drop(doc);
-                waiter(self, Err(error));
-                return None;
-            }
             // A link: the module was fetched (and is kept, or imported).
             Some(ModuleEntry::Done(_) | ModuleEntry::Imported) if !import => String::new(),
             // The import takes the source and leaves the marker.
@@ -131,7 +123,7 @@ impl Browser {
         let Some(mut doc) = self.doc_mut(page) else { return };
         let (key, waiters) = match doc.preloads.modules.remove_entry(url) {
             Some((key, ModuleEntry::Pending(waiters))) => (key, waiters),
-            Some((key, ModuleEntry::Done(_) | ModuleEntry::Imported | ModuleEntry::Failed(_))) => (key, Vec::new()),
+            Some((key, ModuleEntry::Done(_) | ModuleEntry::Imported)) => (key, Vec::new()),
             None => (url.to_owned(), Vec::new()),
         };
         let last_import = waiters.iter().rposition(|(_, import)| *import);
@@ -146,10 +138,9 @@ impl Browser {
                 doc.preloads.modules.insert(key, ModuleEntry::Imported);
                 Ok(Some(source))
             }
-            Err(e) => {
-                doc.preloads.modules.insert(key, ModuleEntry::Failed(e.clone()));
-                Err(e)
-            }
+            // HTML does not keep a failed fetch in the module map: what
+            // waited for this one fails, the next request fetches again.
+            Err(e) => Err(e),
         };
         drop(doc);
         for (i, (waiter, import)) in waiters.into_iter().enumerate() {
