@@ -3,28 +3,28 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 1042,
+    "macbook_in_scope": 1046,
     "studio_in_scope": 408,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1404,
+   "distinct_census_pages": 1408,
    "owner_reported_unlisted": 14,
-   "selector_union": 1621,
-   "owner_estimate_reduction": 231,
+   "selector_union": 1626,
+   "owner_estimate_reduction": 232,
    "of_which_tentative": 208,
    "studio_css_reported_pages_not_deduped": 259,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 460,
-    "html/semantics": 420,
+    "html/semantics": 425,
     "html/interaction": 115,
     "referrer-policy": 114,
     "html/browsers": 103,
     "fetch/api": 74,
-    "content-security-policy": 52,
     "html/editing": 52,
+    "content-security-policy": 52,
     "fetch/fetch-later": 29,
     "html/webappapis": 26,
     "html/dom": 24,
@@ -42,36 +42,36 @@
     "html/rendering": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/http-cache": 3,
     "fetch/nosniff": 3,
+    "fetch/http-cache": 3,
     "xhr": 2,
     "fetch/orb": 2,
-    "svg/styling": 1,
-    "fetch/security": 1,
     "fetch/redirects": 1,
+    "fetch/images": 1,
+    "svg/styling": 1,
     "IndexedDB": 1,
-    "fetch/redirect-navigate": 1,
     "quirks": 1,
-    "fetch/images": 1
+    "fetch/security": 1,
+    "fetch/redirect-navigate": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 110,
+    "macbook_in_scope": 112,
     "studio_in_scope": 22,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 10,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 108,
+   "distinct_census_pages": 110,
    "owner_reported_unlisted": 0,
-   "selector_union": 600,
-   "owner_estimate_reduction": 492,
-   "of_which_tentative": 186,
+   "selector_union": 587,
+   "owner_estimate_reduction": 477,
+   "of_which_tentative": 178,
    "studio_css_reported_pages_not_deduped": 22,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 174,
+    "html/semantics": 169,
     "html/canvas": 116,
     "html/browsers": 97,
     "html/webappapis": 51,
@@ -79,19 +79,18 @@
     "html/rendering": 33,
     "html/infrastructure": 25,
     "html/dom": 16,
-    "fetch/compression-dictionary": 8,
     "html/editing": 7,
-    "html/obsolete": 5,
-    "fetch/api": 5,
     "html/interaction": 5,
+    "fetch/api": 5,
+    "html/obsolete": 5,
     "fetch/security": 4,
-    "fetch/fetch-later": 3,
     "html/user-activation": 3,
-    "html/scripting": 1,
+    "fetch/fetch-later": 3,
     "html/the-xhtml-syntax": 1,
-    "fetch/content-type": 1,
+    "fetch/http-cache": 1,
     "html/select": 1,
-    "fetch/http-cache": 1
+    "html/scripting": 1,
+    "fetch/content-type": 1
    }
   },
   "queued": {
@@ -104,13 +103,14 @@
    },
    "distinct_census_pages": 32,
    "owner_reported_unlisted": 0,
-   "selector_union": 32,
-   "owner_estimate_reduction": 0,
-   "of_which_tentative": 5,
+   "selector_union": 40,
+   "owner_estimate_reduction": 8,
+   "of_which_tentative": 13,
    "studio_css_reported_pages_not_deduped": 126,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "webidl": 19,
+    "fetch/compression-dictionary": 8,
     "html/interaction": 5,
     "svg/path": 4,
     "workers": 3,
@@ -2332,7 +2332,7 @@
    "tentative": 6
   },
   "R-FETCH-DICT": {
-   "state": "reserved",
+   "state": "proposed",
    "in_scope_pages": 8,
    "out_of_scope_pages": 0,
    "pages": 8,
@@ -2662,10 +2662,24 @@
   },
   "BUCKET-interactive-focus": {
    "state": "reserved",
-   "in_scope_pages": 43,
+   "in_scope_pages": 27,
    "out_of_scope_pages": 0,
-   "pages": 43,
-   "tentative": 5
+   "pages": 27,
+   "tentative": 4
+  },
+  "BUCKET-interactive-focus-sel-landed": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
+   "pages": 5,
+   "tentative": 0
+  },
+  "BUCKET-interactive-focus-sel": {
+   "state": "active",
+   "in_scope_pages": 11,
+   "out_of_scope_pages": 0,
+   "pages": 11,
+   "tentative": 1
   },
   "BUCKET-popovers": {
    "state": "split",
@@ -2766,14 +2780,14 @@
    "tentative": null
   }
  },
- "implemented_total_estimate": 1703,
+ "implemented_total_estimate": 1707,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 1042,
+ "macbook_in_scope_implemented": 1046,
  "macbook_in_scope_milestones": [
   100,
   200,
