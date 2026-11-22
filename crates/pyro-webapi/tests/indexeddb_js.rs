@@ -814,6 +814,33 @@ fn interfaces_are_lazy_globals_and_opaque_origins_reject() {
 }
 
 #[test]
+fn worker_idb_interfaces_start_as_own_data_properties() {
+    let env = crate::support::network::Env::new("http://idb.test/page");
+    env.eval(
+        r#"
+        const source = `
+          const failures = [];
+          for (const name of ['IDBCursor', 'IDBCursorWithValue', 'IDBDatabase', 'IDBIndex',
+            'IDBKeyRange', 'IDBObjectStore', 'IDBOpenDBRequest', 'IDBRecord', 'IDBRequest',
+            'IDBTransaction', 'IDBVersionChangeEvent']) {
+            const desc = Object.getOwnPropertyDescriptor(self, name);
+            if (!desc || typeof desc.value !== 'function' || desc.value !== self[name] ||
+                !desc.writable || desc.enumerable || !desc.configurable || 'get' in desc ||
+                Object.hasOwn(WorkerGlobalScope.prototype, name)) failures.push(name);
+          }
+          postMessage(failures.join(',') || 'ok');`;
+        globalThis.reply = null;
+        globalThis.worker = new Worker(URL.createObjectURL(new Blob([source])));
+        worker.onmessage = event => { reply = event.data; };
+        worker.onerror = event => { reply = 'error: ' + event.message; };
+    "#,
+    );
+    env.until("reply !== null");
+    assert_eq!(env.eval("reply"), "ok");
+    env.eval("worker.terminate()");
+}
+
+#[test]
 fn dedicated_workers_share_the_owner_partition() {
     let env = crate::support::network::Env::new("http://idb.test/page");
     env.eval(

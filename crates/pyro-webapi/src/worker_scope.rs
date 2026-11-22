@@ -1004,7 +1004,6 @@ impl JsClass for WorkerGlobalScope {
         crate::storage_manager::define_globals(def);
         crate::websocket::define_worker_globals(def);
         def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
-        crate::indexeddb::define_globals(def);
         def.getter("caches", |s, g| crate::cache_storage::caches(s, &g.target.page));
         crate::cache_storage::define_globals(def);
         def.method("setTimeout", 1, |s, g, a| set_timer(s, g, a, false));
@@ -1104,6 +1103,7 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
         crate::canvas::define_video_globals(def);
+        crate::indexeddb::define_globals(def);
         def.getter("name", |s, g| Ok(s.string(&g.name)));
         def.method("postMessage", 1, |s, g, a| {
             a.require(1, "DedicatedWorkerGlobalScope.postMessage")?;
@@ -1152,6 +1152,7 @@ impl JsClass for SharedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
+        crate::indexeddb::define_globals(def);
         def.getter("name", |s, g| Ok(s.string(&g.name)));
         def.method("close", 0, |s, g, _a| {
             g.shared.closing.store(true, Ordering::Release);
@@ -1174,6 +1175,7 @@ impl JsClass for ServiceWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
+        crate::indexeddb::define_globals(def);
         def.getter("clients", |s, _g| crate::service_worker_scope::member(s, "clients"));
         def.getter("registration", |s, _g| crate::service_worker_scope::member(s, "registration"));
         def.getter("serviceWorker", |s, _g| crate::service_worker_scope::member(s, "serviceWorker"));
