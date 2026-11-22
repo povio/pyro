@@ -194,6 +194,8 @@ impl NestedJoin {
                 (text, 0)
             };
             dom.remove_node(if self.inner_first { self.right } else { self.inner }).ok()?;
+            // Resolve the seam while its paragraph still has its computed style.
+            whitespace::after_join(page, dom, host, destination);
             // At the host's sole anonymous paragraph the outer DIV no longer
             // separates any lines. Keep attributed or neighboring blocks.
             if local(dom, self.outer) == "div" && dom.attributes(self.outer).ok()?.is_empty()
@@ -204,7 +206,7 @@ impl NestedJoin {
                 }
                 dom.remove_node(self.outer).ok()?;
             }
-            destination
+            return Some(destination);
         };
         whitespace::after_join(page, dom, host, caret);
         Some(caret)
