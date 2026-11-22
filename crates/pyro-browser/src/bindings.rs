@@ -1187,7 +1187,24 @@ pub(crate) fn create(
         let same_origin = host
             .frame(parent_key)
             .is_some_and(|parent| crate::frames::frame_origin_key(&parent) == crate::frames::frame_origin_key(&frame));
-        pyro_webapi::fetch_later::join_quota(&bindings, parent.as_deref(), same_origin);
+        // The container's `allow` on "deferred-fetch" for this document's origin: delegated to it
+        // (the normal quota), or declared for another origin (its `src`'s, before a redirect),
+        // which reserved the normal quota for a document that may not use it and no minimal one.
+        let delegated = parent.as_ref().and_then(|pd| {
+            let parent_url =
+                pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
+            let parent_origin = frame_origin(host, parent_key, &parent_url, pd.has_opaque_origin());
+            let child_origin = frame_origin(host, page, url, frame.sandbox.opaque);
+            let container = frame.fullscreen_container.clone();
+            pyro_webapi::fullscreen::container_allows(
+                "deferred-fetch",
+                container.allow.as_deref(),
+                parent_origin.as_deref(),
+                container.declared_origin.as_deref(),
+                child_origin.as_deref(),
+            )
+        });
+        pyro_webapi::fetch_later::join_quota(&bindings, parent.as_deref(), same_origin, delegated);
     }
     // Permissions Policy for `fullscreen`, inherited through the container when the document is made.
     if page.child.is_some() {
