@@ -1027,6 +1027,11 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
     apply_edit(page, host, input_type, None, None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
+            if let Some(caret) = whitespace::delete_after_spaces(page, &mut dom, host, from, to) {
+                drop(dom);
+                set_selection(page, caret, caret);
+                return;
+            }
             let adjacent_text = start == end && from.0 == to.0 && is_text(&dom, from.0)
                 && [dom.prev_sibling(from.0), dom.next_sibling(from.0)].into_iter()
                     .any(|s| s.ok().flatten().is_some_and(|n| is_text(&dom, n)));
@@ -1696,7 +1701,10 @@ pub(crate) fn step(dom: &Dom, host: NodeId, p: Point, forward: bool) -> Point {
 /// line deletion, cut).
 pub(crate) fn delete_span(page: &Rc<PageDom>, host: NodeId, input_type: &str, start: Point, end: Point) {
     edit(page, host, input_type, None, |page| {
-        let caret = delete_range(&mut page.dom.borrow_mut(), host, start, end, true);
+        let mut dom = page.dom.borrow_mut();
+        let caret = whitespace::delete_after_spaces(page, &mut dom, host, start, end)
+            .unwrap_or_else(|| delete_range(&mut dom, host, start, end, true));
+        drop(dom);
         set_selection(page, caret, caret);
     });
 }
