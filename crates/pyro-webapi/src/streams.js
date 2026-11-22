@@ -15,7 +15,7 @@
 // Byte streams follow the spec's pull-into descriptors: enqueue() and BYOB
 // reads transfer buffers, `byobRequest` views the pending read's own buffer,
 // and a released reader's partly filled read carries over to the next reader.
-// Byte tee is still built on a default reader (chunks cloned for branch 2).
+// Byte tee follows ReadableByteStreamTee (default and BYOB source readers).
 (function (natives) {
   'use strict';
   const token = Symbol('pyro');
@@ -576,6 +576,14 @@
     first.buffer = transfer(first.buffer);
     bcRespondInternal(c, 0);
   }
+  // ReadableByteStreamControllerRespondWithNewView, for byte tee (the public
+  // respondWithNewView() checks the same and throws).
+  function bcRespondWithNewView(c, view) {
+    const { buffer, length } = viewParts(view);
+    bcInvalidate(c);
+    c.pending[0].buffer = transfer(buffer);
+    bcRespondInternal(c, length);
+  }
   // ReadableByteStreamControllerGetBYOBRequest.
   function bcRequest(c) {
     if (c.byobRequest === null && c.pending.length > 0) {
@@ -640,8 +648,173 @@
     return st;
   };
 
+  // CloneAsUint8Array.
+  const cloneBytes = (view) => {
+    const { buffer, offset, length } = viewParts(view);
+    const copy = new Uint8ArrayC(length);
+    copy.set(new Uint8ArrayC(buffer, offset, length));
+    return copy;
+  };
+  // ReadableByteStreamTee: each pull reads with a default reader, or with a
+  // BYOB reader into the branch's own byobRequest view, switching the
+  // source's reader as needed.
+  function rsByteTee(st) {
+    let rd = newReader(st);
+    let reading = false;
+    let readAgain1 = false;
+    let readAgain2 = false;
+    let canceled1 = false;
+    let canceled2 = false;
+    let reason1;
+    let reason2;
+    let c1;
+    let c2;
+    const cancelP = defer();
+    const fail = (error) => {
+      rcError(c1, error);
+      rcError(c2, error);
+      cancelP.resolve(rsCancel(st, error));
+    };
+    const forwardError = (thisReader) => {
+      then(thisReader.closed.promise, undefined, (e) => {
+        if (thisReader !== rd) return;
+        rcError(c1, e);
+        rcError(c2, e);
+        if (!canceled1 || !canceled2) cancelP.resolve();
+      });
+    };
+    const switchReader = (byob) => {
+      readerRelease(rd);
+      rd = newReader(st);
+      rd.byob = byob;
+      forwardError(rd);
+    };
+    const readAgain = () => {
+      if (readAgain1) pull1();
+      else if (readAgain2) pull2();
+    };
+    const pullWithDefault = () => {
+      if (rd.byob) switchReader(false);
+      readerRead(rd, {
+        chunk(chunk) {
+          microtask(() => {
+            readAgain1 = false;
+            readAgain2 = false;
+            let chunk2 = chunk;
+            if (!canceled1 && !canceled2) {
+              try {
+                chunk2 = cloneBytes(chunk);
+              } catch (error) {
+                fail(error);
+                return;
+              }
+            }
+            if (!canceled1) bcEnqueue(c1, chunk);
+            if (!canceled2) bcEnqueue(c2, chunk2);
+            reading = false;
+            readAgain();
+          });
+        },
+        close() {
+          reading = false;
+          if (!canceled1) bcClose(c1);
+          if (!canceled2) bcClose(c2);
+          if (!canceled1 && c1.pending.length > 0) bcRespondClosed(c1);
+          if (!canceled2 && c2.pending.length > 0) bcRespondClosed(c2);
+          if (!canceled1 || !canceled2) cancelP.resolve();
+        },
+        error() {
+          reading = false;
+        },
+      });
+    };
+    const pullWithBYOB = (view, forBranch2) => {
+      if (!rd.byob) switchReader(true);
+      const byobC = forBranch2 ? c2 : c1;
+      const otherC = forBranch2 ? c1 : c2;
+      const byobCanceled = () => (forBranch2 ? canceled2 : canceled1);
+      const otherCanceled = () => (forBranch2 ? canceled1 : canceled2);
+      const req = {
+        chunk(chunk) {
+          microtask(() => {
+            readAgain1 = false;
+            readAgain2 = false;
+            if (!otherCanceled()) {
+              let cloned;
+              try {
+                cloned = cloneBytes(chunk);
+              } catch (error) {
+                fail(error);
+                return;
+              }
+              if (!byobCanceled()) bcRespondWithNewView(byobC, chunk);
+              bcEnqueue(otherC, cloned);
+            } else if (!byobCanceled()) {
+              bcRespondWithNewView(byobC, chunk);
+            }
+            reading = false;
+            readAgain();
+          });
+        },
+        close(chunk) {
+          reading = false;
+          if (!byobCanceled()) bcClose(byobC);
+          if (!otherCanceled()) bcClose(otherC);
+          if (chunk !== undefined) {
+            if (!byobCanceled()) bcRespondWithNewView(byobC, chunk);
+            if (!otherCanceled() && otherC.pending.length > 0) bcRespondClosed(otherC);
+          }
+          if (!byobCanceled() || !otherCanceled()) cancelP.resolve();
+        },
+        error() {
+          reading = false;
+        },
+      };
+      // ReadableStreamBYOBReaderRead(reader, view, 1, req); the view is the
+      // branch's byobRequest view, a Uint8Array.
+      st.disturbed = true;
+      if (st.state === 'errored') {
+        req.error(st.storedError);
+        return;
+      }
+      const { buffer, offset, length } = viewParts(view);
+      bcPullInto(st.controller, buffer, offset, length, Uint8ArrayC, 1, 1, req);
+    };
+    const pullFor = (forBranch2) => () => {
+      if (reading) {
+        if (forBranch2) readAgain2 = true;
+        else readAgain1 = true;
+        return resolved();
+      }
+      reading = true;
+      const request = bcRequest(forBranch2 ? c2 : c1);
+      if (request === null) pullWithDefault();
+      else pullWithBYOB(ReadableStreamBYOBRequest$view.get(request), forBranch2);
+      return resolved();
+    };
+    const pull1 = pullFor(false);
+    const pull2 = pullFor(true);
+    const cancel = (first) => (reason) => {
+      if (first) {
+        canceled1 = true;
+        reason1 = reason;
+      } else {
+        canceled2 = true;
+        reason2 = reason;
+      }
+      if (canceled1 && canceled2) cancelP.resolve(rsCancel(st, [reason1, reason2]));
+      return cancelP.promise;
+    };
+    const b1 = makeStream(true, noop, pull1, cancel(true), 0, () => 1);
+    const b2 = makeStream(true, noop, pull2, cancel(false), 0, () => 1);
+    c1 = b1.controller;
+    c2 = b2.controller;
+    forwardError(rd);
+    return [b1.wrapper, b2.wrapper];
+  }
+
   function rsTee(st, cloneForBranch2) {
-    const byte = st.controller.byte;
+    if (st.controller.byte) return rsByteTee(st);
     const rd = newReader(st);
     let reading = false;
     let readAgain = false;
@@ -667,8 +840,7 @@
               try {
                 // Fetch clones default-stream chunks for branch 2, even if
                 // branch 1 canceled. Public tee() shares default chunks.
-                if (!byte && cloneForBranch2) value2 = cloneForBranch2(value);
-                else if (byte && !canceled1) value2 = new Uint8ArrayC(value);
+                if (cloneForBranch2) value2 = cloneForBranch2(value);
               } catch (error) {
                 rcError(c1, error);
                 rcError(c2, error);
@@ -676,22 +848,16 @@
                 return;
               }
             }
-            if (!canceled1) (byte ? bcEnqueue(c1, value) : rcEnqueue(c1, value));
-            if (!canceled2) (byte ? bcEnqueue(c2, value2) : rcEnqueue(c2, value2));
+            if (!canceled1) rcEnqueue(c1, value);
+            if (!canceled2) rcEnqueue(c2, value2);
             reading = false;
             if (readAgain) pull();
           });
         },
         close() {
           reading = false;
-          if (!canceled1) (byte ? bcClose(c1) : rcClose(c1));
-          if (!canceled2) (byte ? bcClose(c2) : rcClose(c2));
-          // ReadableByteStreamTee: a branch's pending BYOB read completes
-          // with what it has, as respond(0) on the closed branch.
-          if (byte) {
-            if (!canceled1 && c1.pending.length > 0) bcRespondClosed(c1);
-            if (!canceled2 && c2.pending.length > 0) bcRespondClosed(c2);
-          }
+          if (!canceled1) rcClose(c1);
+          if (!canceled2) rcClose(c2);
           if (!canceled1 || !canceled2) cancelP.resolve();
         },
         error() {
@@ -711,9 +877,8 @@
       if (canceled1 && canceled2) cancelP.resolve(rsCancel(st, [reason1, reason2]));
       return cancelP.promise;
     };
-    const hwm = byte ? 0 : 1;
-    const b1 = makeStream(byte, noop, pull, cancel(true), hwm, () => 1);
-    const b2 = makeStream(byte, noop, pull, cancel(false), hwm, () => 1);
+    const b1 = makeStream(false, noop, pull, cancel(true), 1, () => 1);
+    const b2 = makeStream(false, noop, pull, cancel(false), 1, () => 1);
     c1 = b1.controller;
     c2 = b2.controller;
     then(rd.closed.promise, undefined, (e) => {

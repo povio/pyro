@@ -1,0 +1,17 @@
+{
+ "streams/readable-byte-streams/read-min.any.js": [
+  "ReadableStream with byte source: tee() with read({ min }) from branch1 and read() from branch2"
+ ],
+ "streams/readable-byte-streams/tee.any.js": [
+  "ReadableStream teeing with byte source: chunks for BYOB requests from branch 1 should be cloned to branch 2",
+  "ReadableStream teeing with byte source: read from branch1 and branch2, cancel branch1, cancel branch2",
+  "ReadableStream teeing with byte source: read from branch1 and branch2, cancel branch2, cancel branch1",
+  "ReadableStream teeing with byte source: read from branch1 and branch2, cancel branch2, enqueue to branch1",
+  "ReadableStream teeing with byte source: read from branch1 and branch2, cancel branch1, respond to branch2",
+  "ReadableStream teeing with byte source: pull with BYOB reader, then pull with default reader",
+  "ReadableStream teeing with byte source: pull with default reader, then pull with BYOB reader",
+  "ReadableStream teeing with byte source: read from branch2, then read from branch1",
+  "ReadableStream teeing with byte source: close when both branches have pending BYOB reads",
+  "ReadableStream teeing with byte source: respond() and close() while both branches are pulling"
+ ]
+}
