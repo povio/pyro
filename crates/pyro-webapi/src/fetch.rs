@@ -839,7 +839,9 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
             }
-            let (request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1))?;
+            let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1))?;
+            // streams.js `fetchBuffered` passes `true` third: the body is a stream's bytes.
+            request.body_from_stream = request.body.is_some() && args.get(2).to_bool();
             // Init conversion can execute script, including embedder teardown.
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);

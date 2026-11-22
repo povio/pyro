@@ -2473,7 +2473,8 @@
         const copy = {};
         for (const key of Reflect.ownKeys(init)) copy[key] = init[key];
         copy.body = bytes;
-        return fetchFn(input, copy);
+        // The third argument marks the body as a stream's (Fetch: its source is null).
+        return fetchFn(input, copy, true);
       });
     },
   };

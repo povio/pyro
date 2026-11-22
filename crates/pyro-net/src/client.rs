@@ -2437,6 +2437,10 @@ impl Io {
                     {
                         return Err(NetError::Cors("Redirect to a URL with credentials".into()));
                     }
+                    // A streamed body cannot be sent again; only a 303 drops it.
+                    if req.body_from_stream && req.body.is_some() && status != StatusCode::SEE_OTHER {
+                        return Err(NetError::Other("A request with a streamed body cannot be redirected".into()));
+                    }
                     crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                     drop(resp.into_body().collect().await);
                     drop(permit);

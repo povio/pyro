@@ -152,6 +152,9 @@ pub struct Request {
     /// document's blob URL store (the client has no access to it). A `blob:`
     /// request without one fails as for a revoked URL.
     pub blob: Option<BlobBody>,
+    /// The body came from a `ReadableStream` (Fetch: its body's source is null), so it cannot
+    /// be sent again: a redirect other than 303 and a credentialed 401 are network errors.
+    pub body_from_stream: bool,
 }
 
 /// A `Blob` served for a `blob:` URL: its bytes and its `type`.
@@ -210,6 +213,7 @@ impl Request {
             cache: CacheMode::Default,
             skip_interception: false,
             blob: None,
+            body_from_stream: false,
         }
     }
 }
