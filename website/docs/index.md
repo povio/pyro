@@ -55,7 +55,7 @@ features:
     linkText: Install
 ---
 
-[Round seven compatibility progress and editing results →](/reference/round-seven)
+[Pyro 0.0.50-rc.5 compatibility progress and editing results →](/reference/round-seven)
 
 [Round six compatibility progress: 749 more CSS test pages pass in full →](/reference/round-six)
 
