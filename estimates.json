@@ -23,11 +23,11 @@
     "FileAPI": 4,
     "fetch/api": 4,
     "fetch/data-urls": 3,
-    "xhr": 2,
     "encoding": 2,
-    "quirks": 1,
+    "xhr": 2,
+    "svg/styling": 1,
     "html/rendering": 1,
-    "svg/styling": 1
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -56,13 +56,13 @@
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 53,
+    "macbook_in_scope": 76,
     "studio_in_scope": 308,
     "other_dirs_out_of_scope": 301
    },
-   "distinct_census_pages": 540,
+   "distinct_census_pages": 563,
    "owner_reported_unlisted": 0,
-   "selector_union": 541,
+   "selector_union": 564,
    "owner_estimate_reduction": 1,
    "of_which_tentative": 24,
    "studio_css_reported_pages_not_deduped": 122,
@@ -71,15 +71,21 @@
     "svg/animations": 229,
     "referrer-policy": 114,
     "content-security-policy": 72,
+    "fetch/api": 40,
     "intersection-observer": 36,
-    "fetch/api": 36,
     "webidl": 19,
     "workers": 12,
     "encoding": 7,
     "fetch/content-encoding": 6,
+    "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "html/browsers": 5,
     "svg/path": 4,
-    "dom/nodes": 1
+    "fetch/data-urls": 3,
+    "fetch/http-cache": 3,
+    "fetch/nosniff": 2,
+    "dom/nodes": 1,
+    "fetch/corb": 1
    }
   }
  },
@@ -1048,6 +1054,48 @@
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
+   "tentative": 0
+  },
+  "R-FETCH-9a": {
+   "state": "proposed",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
+   "tentative": 0
+  },
+  "R-FETCH-9b": {
+   "state": "proposed",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
+   "pages": 5,
+   "tentative": 0
+  },
+  "R-FETCH-9c": {
+   "state": "proposed",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
+   "tentative": 0
+  },
+  "R-FETCH-10": {
+   "state": "proposed",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
+   "pages": 5,
+   "tentative": 0
+  },
+  "R-FETCH-11": {
+   "state": "proposed",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
+   "tentative": 0
+  },
+  "R-FETCH-12": {
+   "state": "proposed",
+   "in_scope_pages": 4,
+   "out_of_scope_pages": 0,
+   "pages": 4,
    "tentative": 0
   }
  },
