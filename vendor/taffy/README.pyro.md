@@ -702,3 +702,11 @@ dimensions, but its height is definite (`LayoutInput::known_dimensions_are_defin
 its content was measured (its `height`, both insets, a ratio); one its content gives leaves its children's percentage
 heights `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`). Covered by
 `crates/pyro-render/tests/abspos_percentage_heights.rs`.
+
+## The default overflow limit of a position-area box is its original containing block (WPT round 7)
+
+`src/compute/oof.rs` (`OofAxis::overflow_limit`, `solve_oof_box`): when a `position-area` cell replaces the
+containing block, an overflowing box with default overflow alignment is still kept inside the union of its IMCB and
+the original containing block (css-align-3 § auto-safety-position; Chrome), not the cell alone. Fallback fit tests
+still use the cell. WPT css-anchor-position `last-successful-{basic,animation,change-fallbacks,change-try-rule,
+intermediate-ignored}` ("No successful position, keep flip-block").

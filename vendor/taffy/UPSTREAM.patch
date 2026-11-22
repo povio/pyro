@@ -9431,7 +9431,7 @@ index bb954acf..a07ad780 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..f60e54ea 100644
+index 2c6179a4..7b7c2945 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -9458,7 +9458,34 @@ index 2c6179a4..f60e54ea 100644
              // The fallback alignment of `baseline` is `start`
              AlignItemsKeyword::Start
              | AlignItemsKeyword::FlexStart
-@@ -349,6 +355,7 @@ impl OofAxis {
+@@ -129,6 +135,11 @@ impl OofAlignment {
+ struct OofAxis {
+     /// The size of the containing block in this axis
+     cb_size: f32,
++    /// The original containing block in this axis (before a `position-area` cell replaced it),
++    /// relative to the start of `cb_size`'s area. The default overflow limit of an overflowing box
++    /// is the union of its IMCB and this line (<https://www.w3.org/TR/css-align-3/#auto-safety-position>).
++    /// Without `position-area` it is `0..cb_size`.
++    overflow_limit: Line<f32>,
+     /// The box's resolved inset properties (`None` = `auto`)
+     inset: Line<Option<f32>>,
+     /// The box's resolved margins (`None` = `auto`)
+@@ -304,9 +315,12 @@ impl OofAxis {
+                             align_in_line(imcb, margin_box_size, edge)
+                         } else {
+                             // The overflow limit rect is the bounding rect of the IMCB and the
+-                            // containing block, extended to infinity in the scrollable direction
++                            // original containing block (not a `position-area` cell), extended to infinity in the scrollable direction
+                             // of a scroll container
+-                            let mut limit = Line { start: imcb.start.min(0.0), end: f32_max(imcb.end, self.cb_size) };
++                            let mut limit = Line {
++                                start: imcb.start.min(self.overflow_limit.start),
++                                end: f32_max(imcb.end, self.overflow_limit.end),
++                            };
+                             if self.is_scroll_axis {
+                                 if self.reversed {
+                                     limit.start = f32::NEG_INFINITY;
+@@ -349,6 +363,7 @@ impl OofAxis {
  /// claimed by the final root positioning pass in [`compute_root_layout`](crate::compute_root_layout).
  pub fn compute_oof_layout(tree: &mut impl LayoutContainingBlock, node_id: NodeId, output: &mut LayoutOutput) {
      let Some(area) = output.oof_positioning_area else { return };
@@ -9466,7 +9493,7 @@ index 2c6179a4..f60e54ea 100644
      if output.oof_candidates.is_empty() {
          tree.clear_hoisted_children(node_id);
          return;
-@@ -457,6 +464,7 @@ fn compute_oof_layout_for_area_with_origin(
+@@ -457,6 +472,7 @@ fn compute_oof_layout_for_area_with_origin(
          reversed,
          &mut hoisted,
          &mut unclaimed,
@@ -9474,7 +9501,7 @@ index 2c6179a4..f60e54ea 100644
      );
  
      #[cfg(feature = "content_size")]
-@@ -501,6 +509,7 @@ pub(crate) struct OofBoxLayout {
+@@ -501,6 +517,7 @@ pub(crate) struct OofBoxLayout {
  pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      tree: &mut Tree,
      candidate: OofCandidate,
@@ -9482,7 +9509,7 @@ index 2c6179a4..f60e54ea 100644
      area_size: Size<f32>,
      area_offset: Point<f32>,
      direction: Direction,
-@@ -508,6 +517,45 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -508,6 +525,45 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      #[cfg(feature = "grid")] grid_owner: Option<NodeId>,
      before_layout: impl FnOnce(&mut Tree, &LayoutInput),
  ) -> OofBoxLayout {
@@ -9528,13 +9555,20 @@ index 2c6179a4..f60e54ea 100644
      let child_style = tree.get_oof_item_style(candidate.node);
  
      // If the current node is a grid container then the box is positioned relative to the
-@@ -535,12 +583,22 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -535,12 +591,29 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
          _ => (area_size, area_offset),
      };
 +    let anchor_area = anchor_container.and_then(|container| tree.oof_anchor_area(candidate.node, container, area_size, area_offset, trial));
 +    let anchor_center = anchor_container.map(|container| tree.oof_anchor_center(candidate.node, container));
++    // The containing block before a `position-area` cell replaces it bounds the default overflow
++    // limit (css-align-3 § auto-safety-position; Chrome)
++    let (original_size, original_offset) = (area_size, area_offset);
 +    let (area_size, area_offset) = anchor_area.map_or((area_size, area_offset), |(size, offset, _)| (size, offset));
++    let overflow_limit = |original_offset: f32, original_size: f32, cell_offset: f32| {
++        let start = original_offset - cell_offset;
++        Line { start, end: start + original_size }
++    };
      let area_width = area_size.width;
      let area_height = area_size.height;
  
@@ -9552,7 +9586,7 @@ index 2c6179a4..f60e54ea 100644
      let padding = child_style.padding().resolve_or_zero(Some(area_width), |val, basis| tree.calc(val, basis));
      let border = child_style.border().resolve_or_zero(Some(area_width), |val, basis| tree.calc(val, basis));
      let padding_border_sum = (padding + border).sum_axes();
-@@ -552,26 +610,43 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -552,26 +625,43 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      let right = child_style.inset().right.maybe_resolve(area_width, |val, basis| tree.calc(val, basis));
      let top = child_style.inset().top.maybe_resolve(area_height, |val, basis| tree.calc(val, basis));
      let bottom = child_style.inset().bottom.maybe_resolve(area_height, |val, basis| tree.calc(val, basis));
@@ -9601,7 +9635,7 @@ index 2c6179a4..f60e54ea 100644
  
      let is_replaced = child_style.is_replaced();
      let is_table = child_style.is_table();
-@@ -583,8 +658,20 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -583,8 +673,20 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          child_style.justify_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, true);
      let align_self =
          child_style.align_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, false);
@@ -9623,7 +9657,7 @@ index 2c6179a4..f60e54ea 100644
      #[cfg(feature = "content_size")]
      let contain = child_style.contain();
  
-@@ -592,15 +679,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -592,19 +694,28 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
  
      // Static positions are relative to the containing block's border box: make them relative to
      // the inset-resolution area
@@ -9656,7 +9690,20 @@ index 2c6179a4..f60e54ea 100644
      };
  
      let horizontal = OofAxis {
-@@ -649,8 +744,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+         cb_size: area_width,
++        overflow_limit: overflow_limit(original_offset.x, original_size.width, area_offset.x),
+         inset: Line { start: left, end: right },
+         margin: Line { start: margin.left, end: margin.right },
+         static_position: static_position.x,
+@@ -616,6 +727,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+     };
+     let vertical = OofAxis {
+         cb_size: area_height,
++        overflow_limit: overflow_limit(original_offset.y, original_size.height, area_offset.y),
+         inset: Line { start: top, end: bottom },
+         margin: Line { start: margin.top, end: margin.bottom },
+         static_position: static_position.y,
+@@ -649,8 +761,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
              &mut known_dimensions,
              size_style,
              area_size,
@@ -9666,7 +9713,7 @@ index 2c6179a4..f60e54ea 100644
              SizingMode::ContentSize,
          );
          known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
-@@ -691,8 +785,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -691,8 +802,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
      }
  
@@ -9815,7 +9862,7 @@ index 2c6179a4..f60e54ea 100644
          _ => {
              let measured_size = tree.measure_child_size_both(
                  candidate.node,
-@@ -707,9 +941,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -707,9 +958,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      }
      .maybe_clamp(min_size, max_size);
  
@@ -9844,7 +9891,7 @@ index 2c6179a4..f60e54ea 100644
          parent_size: area_size.map(Some),
          available_space,
          sizing_mode: SizingMode::ContentSize,
-@@ -719,6 +971,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -719,6 +988,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
      before_layout(tree, &layout_input);
      let mut layout_output = tree.compute_child_layout(candidate.node, layout_input);
@@ -9855,7 +9902,7 @@ index 2c6179a4..f60e54ea 100644
  
      // Resolve auto margins <https://www.w3.org/TR/css-position-3/#abspos-margins>
      let horizontal_margin = horizontal.resolve_margins(final_size.width);
-@@ -731,17 +987,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -731,17 +1004,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
  
      // Align the margin box within the IMCB <https://www.w3.org/TR/css-position-3/#abspos-alignment>
@@ -9888,7 +9935,7 @@ index 2c6179a4..f60e54ea 100644
  
      let layout = Layout {
          order: candidate.order,
-@@ -756,14 +1022,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -756,14 +1039,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
      tree.set_unrounded_layout(candidate.node, &layout);
  
@@ -9905,7 +9952,7 @@ index 2c6179a4..f60e54ea 100644
  }
  
  /// Perform final layout on the out-of-flow candidates for which the current node is the
-@@ -801,7 +1067,24 @@ pub(crate) fn perform_oof_layout(
+@@ -801,7 +1084,24 @@ pub(crate) fn perform_oof_layout(
      #[cfg_attr(not(feature = "content_size"), allow(unused_variables))] reversed: Point<bool>,
      hoisted: &mut Vec<NodeId>,
      unclaimed: &mut OofCandidates,
@@ -9930,7 +9977,7 @@ index 2c6179a4..f60e54ea 100644
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
      let mut absolute_overflow_rect = Rect::ZERO;
      #[cfg(feature = "content_size")]
-@@ -828,7 +1111,8 @@ pub(crate) fn perform_oof_layout(
+@@ -828,7 +1128,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
@@ -9940,7 +9987,7 @@ index 2c6179a4..f60e54ea 100644
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +1135,22 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1152,22 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -9974,7 +10021,7 @@ index 2c6179a4..f60e54ea 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +1160,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1177,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {
@@ -9983,6 +10030,54 @@ index 2c6179a4..f60e54ea 100644
                      worklist.push(*surfaced_candidate);
                  } else {
                      unclaimed.push(*surfaced_candidate);
+@@ -900,7 +1206,7 @@ pub(crate) fn perform_oof_layout(
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::resolve_static_offset;
++    use super::{resolve_static_offset, OofAlignment, OofAxis};
+     use crate::geometry::{Line, Point, Rect, Size};
+     use crate::style::AlignmentSafety;
+     use crate::tree::{AxisStaticAlign, AxisStaticEdge, AxisStaticPosition};
+@@ -963,6 +1269,38 @@ mod tests {
+         assert_eq!(resolve_x(sp_x, 120.0, NO_MARGIN), -10.0);
+     }
+ 
++    /// A 200-tall box with zero insets in a 150-tall `position-area` cell
++    fn cell_axis(alignment: OofAlignment, overflow_limit: Line<f32>) -> OofAxis {
++        OofAxis {
++            cb_size: 150.0,
++            overflow_limit,
++            inset: Line { start: Some(0.0), end: Some(0.0) },
++            margin: Line { start: Some(0.0), end: Some(0.0) },
++            static_position: AxisStaticPosition::from_edge(0.0, AxisStaticEdge::Start),
++            alignment,
++            safety: AlignmentSafety::Default,
++            is_inline: false,
++            reversed: false,
++            is_scroll_axis: false,
++        }
++    }
++
++    #[test]
++    fn default_overflow_limit_includes_original_containing_block() {
++        const ZERO: Line<f32> = Line { start: 0.0, end: 0.0 };
++        // Cell 250..400 of a 0..400 containing block (WPT css-anchor-position
++        // `last-successful-basic`, flip-block): start alignment shifts up to stay inside the
++        // containing block, not the cell
++        let bottom_cell = cell_axis(OofAlignment::Start, Line { start: -250.0, end: 150.0 });
++        assert_eq!(bottom_cell.position(200.0, ZERO), -50.0);
++        // Cell 0..150 of the same containing block, end-aligned: clamped at its start
++        let top_cell = cell_axis(OofAlignment::End, Line { start: 0.0, end: 400.0 });
++        assert_eq!(top_cell.position(200.0, ZERO), 0.0);
++        // Without position-area the limit is the containing block itself: start-aligned
++        let no_area = cell_axis(OofAlignment::Start, Line { start: 0.0, end: 150.0 });
++        assert_eq!(no_area.position(200.0, ZERO), 0.0);
++    }
++
+     #[test]
+     fn degenerate_area() {
+         // A zero-extent area (static positions emitted by block layout) behaves as an anchor point
 diff --git a/src/lib.rs b/src/lib.rs
 index c18fa644..50154417 100644
 --- a/src/lib.rs
