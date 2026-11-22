@@ -400,7 +400,7 @@ impl State {
         }
     }
 
-    fn stroke(&self) -> kurbo::Stroke {
+    pub(crate) fn stroke(&self) -> kurbo::Stroke {
         let cap = match self.line_cap {
             "round" => kurbo::Cap::Round,
             "square" => kurbo::Cap::Square,
@@ -1813,9 +1813,19 @@ fn is_point_in<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>, stroke: bool) ->
     let state = c.state.borrow().clone();
     let inside = |path: &BezPath| {
         if stroke {
-            let (outline, k) = stroke_outline(path, &state);
-            let p = Point::new(p.x * k, p.y * k);
-            outline.winding(p) != 0 || on_outline(&outline, p)
+            // The path and the point in the current user space, where the
+            // line width and dashes apply (as drawing strokes); nothing is
+            // inside under a transform that cannot be inverted.
+            let t = state.transform;
+            let det = t.determinant();
+            if det == 0.0 || !det.is_finite() || !t.as_coeffs().iter().all(|v| v.is_finite()) {
+                return false;
+            }
+            let user = t.inverse() * path.clone();
+            let (outline, k) = stroke_outline(&user, &state);
+            let q = t.inverse() * p;
+            let q = Point::new(q.x * k, q.y * k);
+            outline.winding(q) != 0 || on_outline(&outline, q)
         } else {
             point_in_fill(path, p, evenodd)
         }
