@@ -1204,7 +1204,7 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         };
     }
     let Some(Target::Host(host)) = target else { return false };
-    if requires_rich_selection(&cmd) && !rich_selection(page, host) {
+    if requires_rich_selection(&cmd) && !rich_selection(page, host, &cmd) {
         return false;
     }
     if inline_value::format_spaced_run(page, host, &cmd, value) { return true; }
@@ -3417,8 +3417,11 @@ pub(crate) fn query_value(page: &PageDom, doc: NodeId, command: &str) -> String 
 
 /// Rich editing commands require a range in this host. Plaintext-only can
 /// be inherited or overridden within the same editable tree.
-fn rich_selection(page: &PageDom, host: NodeId) -> bool {
+fn rich_selection(page: &PageDom, host: NodeId, command: &str) -> bool {
     let Some((start, end)) = editing::selection_range(page) else { return false };
+    // Unlink acts on selected content. A caret inside an anchor does not
+    // select that anchor, even when it is the only content in the host.
+    if command == "unlink" && start == end { return false; }
     let dom = page.dom.borrow();
     [start.0, end.0].into_iter().all(|node| {
         editing::editing_host(&dom, node) == Some(host) && !editing::plaintext_at(&dom, node)
@@ -3432,7 +3435,7 @@ pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool 
         return false;
     }
     if requires_rich_selection(&cmd) {
-        return matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h));
+        return matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h, &cmd));
     }
     let has_range = || match command_target(page) {
         Some(Target::Control(c)) => page.dom.borrow().selection(c).is_ok_and(|(s, e)| s != e),

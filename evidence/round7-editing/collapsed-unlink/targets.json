@@ -1,0 +1,10 @@
+[
+  [
+    "editing/run/unlink.html",
+    "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]

@@ -1,0 +1,155 @@
+{
+  "[[\"unlink\",\"\"]] \"foo[]bar\": execCommand(\"unlink\", false, \"\") return value": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"foo[]bar\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"foo[]bar\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"foo[]bar\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    }
+  },
+  "[[\"unlink\",\"\"]] \"<b>foo[]bar</b>\": execCommand(\"unlink\", false, \"\") return value": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"<b>foo[]bar</b>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"<b>foo[]bar</b>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"<b>foo[]bar</b>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    }
+  },
+  "[[\"unlink\",\"\"]] \"<i>foo[]bar</i>\": execCommand(\"unlink\", false, \"\") return value": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"<i>foo[]bar</i>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"<i>foo[]bar</i>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"<i>foo[]bar</i>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    }
+  },
+  "[[\"unlink\",\"\"]] \"<span>foo</span>{}<span>bar</span>\": execCommand(\"unlink\", false, \"\") return value": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"<span>foo</span>{}<span>bar</span>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"<span>foo</span>{}<span>bar</span>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"<span>foo</span>{}<span>bar</span>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    }
+  },
+  "[[\"unlink\",\"\"]] \"foo<a href=http://www.google.com/>b[]ar</a>baz\": execCommand(\"unlink\", false, \"\") return value": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"foo<a href=http://www.google.com/>b[]ar</a>baz\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"foo<a href=http://www.google.com/>b[]ar</a>baz\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"foo<a href=http://www.google.com/>b[]ar</a>baz\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    }
+  },
+  "[[\"unlink\",\"\"]] \"foo<a href=http://www.google.com/>b[]ar</a>baz\" compare innerHTML": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"foo<a href=http://www.google.com/>b[]ar</a>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"foo<a href=http://www.google.com/>b[]ar</a>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foobarbaz\" but got \"foo<a href=\\\"http://www.google.com/\\\">bar</a>baz\""
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"foo<a href=http://www.google.com/>b[]ar</a>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foobarbaz\" but got \"foo<a href=\\\"http://www.google.com/\\\">bar</a>baz\""
+    }
+  },
+  "[[\"unlink\",\"\"]] \"<a id=foo href=http://www.google.com/>foobar[]baz</a>\": execCommand(\"unlink\", false, \"\") return value": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"<a id=foo href=http://www.google.com/>foobar[]baz</a>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"<a id=foo href=http://www.google.com/>foobar[]baz</a>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"<a id=foo href=http://www.google.com/>foobar[]baz</a>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    }
+  },
+  "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\": execCommand(\"unlink\", false, \"\") return value": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\": execCommand(\"unlink\", false, \"\") return value",
+      "status": "Fail",
+      "msg": "assert_equals: expected true but got false"
+    }
+  },
+  "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\" compare innerHTML": {
+    "parent": {
+      "name": "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a name=\\\"foo\\\">foobarbaz</a>\" but got \"foobarbaz\""
+    },
+    "candidate": {
+      "name": "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "signed": {
+      "name": "[[\"unlink\",\"\"]] \"<a name=foo>foobar[]baz</a>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  }
+}
