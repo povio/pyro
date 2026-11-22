@@ -1401,7 +1401,9 @@ impl BaseDocument {
     }
 
     pub fn update_scroll_marker_states(&mut self) {
-        if !self.scroll_pseudo_owners.is_empty() {
+        // pyro: and `scroll-state(scrollable)` queries (`resolve::refresh_scroll_state_queries`).
+        let scroll_state_queries = !self.nodes.scroll_state_queries.lock().unwrap().is_empty();
+        if !self.scroll_pseudo_owners.is_empty() || scroll_state_queries {
             if let Some(root) = self.try_root_element().map(|root| root.id) {
                 self.nodes[root].mark_damaged();
             }
@@ -1613,7 +1615,9 @@ impl BaseDocument {
     /// buttons' `:disabled`): an embedder that sets a scroll position after a resolve resolves
     /// again.
     pub fn tracks_scroll_states(&self) -> bool {
-        !self.scroll_pseudo_owners.is_empty() || !self.scroll_target_groups.is_empty()
+        !self.scroll_pseudo_owners.is_empty()
+            || !self.scroll_target_groups.is_empty()
+            || !self.nodes.scroll_state_queries.lock().unwrap().is_empty()
     }
 
     /// pyro: the current scroll target of each scroll container (CSS Overflow 5 § 2.1: the

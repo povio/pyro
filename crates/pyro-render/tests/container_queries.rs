@@ -373,3 +373,32 @@ i {display:block;width:1px;height:1px}
     doc.resolve(0.0);
     assert_eq!(size(&doc, "#a"), (1.0, 20.0));
 }
+
+/// pyro: `@container scroll-state(scrollable: ...)` matches the edges a `container-type:
+/// scroll-state` scroll container can scroll towards at the last layout: an `overflow: auto` box
+/// with taller content scrolls towards its bottom only, an `overflow: visible` box towards none,
+/// and a horizontally overflowing RTL box towards its left (its inline end). The first style pass
+/// sees no edges; the pass after layout styles the subtrees again (WPT css-conditional
+/// container-queries/scroll-state `scroll-state-initially-scrollable`, `-scrollable-wm`).
+#[test]
+fn scroll_state_scrollable_queries_follow_the_layout_scroll_range() {
+    const SCROLLABLE: &str = r#"<!doctype html><style>
+body {margin:0}
+.s {container-type:scroll-state;width:100px;height:100px}
+.auto {overflow:auto}
+.tall {width:10px;height:300px}
+.wide {width:300px;height:1px}
+i {display:block;width:1px;height:1px}
+@container scroll-state(scrollable: bottom) {i {width:20px}}
+@container scroll-state(scrollable: top) {i {height:20px}}
+@container scroll-state(scrollable: none) {i {width:5px}}
+@container scroll-state(scrollable: inline-end) {i {height:7px}}
+@container scroll-state((scrollable: left) and (not (scrollable: right))) {i {width:9px}}
+</style><div class="s auto"><i id=a></i><div class=tall></div></div><div class=s><i id=b></i><div class=tall></div></div><div class="s auto" style="direction:rtl"><i id=c></i><div class=wide></div></div>"#;
+    let mut doc = HtmlDocument::from_html(SCROLLABLE, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (20.0, 1.0));
+    assert_eq!(size(&doc, "#b"), (5.0, 1.0));
+    assert_eq!(size(&doc, "#c"), (9.0, 7.0));
+}

@@ -87,6 +87,8 @@ pub(crate) fn init_stylo_prefs() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.anchor-positioning.enabled", true);
+        // pyro: `container-type: scroll-state` and `@container scroll-state(scrollable)`.
+        style_config::set_pref!("layout.css.scroll-state.enabled", true);
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         // pyro: `offset-path: url()` to an SVG shape element (resolve.rs `motion_url_path`).
         style_config::set_pref!("layout.css.motion-path-url.enabled", true);
