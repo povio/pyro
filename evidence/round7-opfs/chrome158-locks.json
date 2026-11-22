@@ -1,0 +1,59 @@
+{
+  "exposed": [
+    [
+      "FileSystemHandle",
+      [
+        true,
+        false,
+        true,
+        false,
+        true
+      ],
+      false,
+      false
+    ],
+    [
+      "FileSystemSyncAccessHandle",
+      [
+        true,
+        false,
+        true,
+        false,
+        true
+      ],
+      false,
+      false
+    ],
+    [
+      "StorageManager",
+      [
+        true,
+        false,
+        true,
+        false,
+        true
+      ],
+      false,
+      false
+    ],
+    [
+      "VideoDecoder",
+      [
+        true,
+        false,
+        true,
+        false,
+        true
+      ],
+      false,
+      false
+    ]
+  ],
+  "moveConflict": "NoModificationAllowedError",
+  "moveAfter": "ok",
+  "heldCannotMove": "NoModificationAllowedError",
+  "afterCloseCanMove": "ok",
+  "removeConflict": "NoModificationAllowedError",
+  "removeAfter": "ok",
+  "unrelated": "ok"
+}

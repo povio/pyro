@@ -2355,6 +2355,27 @@ impl<'s> Scope<'s> {
         self.realm.global_payload.get()
     }
 
+    /// Installs an interface on this global as a writable, configurable,
+    /// non-enumerable own data property. On the fork, a custom value defers
+    /// creation until the first access (including descriptor inspection).
+    /// Other JSC builds materialize the same property immediately.
+    pub fn define_lazy_global_interface<I: LazyGlobalInterface>(&self) -> JsResult<()> {
+        let spi = sys::spi::get();
+        let target = self.realm.global_target.get();
+        if let (Some(install), Some(_)) = (spi.set_custom_value, spi.throw_exception) {
+            if !target.is_null() {
+                // SAFETY: a live global target and its interned property name.
+                // The monomorphized callback needs no borrowed Rust state.
+                let ok = unsafe {
+                    install(self.ctx, target, crate::string::atom_raw(I::NAME), Some(read_global_interface::<I>),
+                        None, sys::kJSPropertyAttributeDontEnum)
+                };
+                if ok { return Ok(()) }
+            }
+        }
+        self.global().set_atom_with(I::NAME, I::value(self)?, sys::kJSPropertyAttributeDontEnum)
+    }
+
     /// Makes `name` a constant attribute of the realm's global: a
     /// non-configurable, read-only accessor that yields `value` (a WebIDL
     /// `[LegacyUnforgeable] readonly attribute` whose value never changes for
@@ -2680,6 +2701,29 @@ impl Deferred {
     }
     pub fn reject(&self, scope: &Scope<'_>, value: Value<'_>) -> JsResult<()> {
         self.reject.get(scope).as_object().expect("reject").call(None, &[value]).map(|_| ())
+    }
+}
+
+/// An interface constructor cached by its realm's bindings, for
+/// [`Scope::define_lazy_global_interface`].
+pub trait LazyGlobalInterface {
+    const NAME: &'static str;
+    fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>>;
+}
+
+unsafe extern "C" fn read_global_interface<I: LazyGlobalInterface>(
+    ctx: sys::JSContextRef, _holder: sys::JSValueRef, _uid: *const c_void,
+) -> sys::JSValueRef {
+    let mut exc = ptr::null();
+    // SAFETY: JSC calls a CustomValue with its slot base's realm as ctx,
+    // including when another realm reads the descriptor.
+    unsafe {
+        let spi = sys::spi::get();
+        let value = class::guard(ctx, &mut exc, ptr::null(), |s| I::value(s).map(|v| v.raw));
+        if !exc.is_null() {
+            spi.throw_exception.expect("checked at installation")(ctx, exc);
+        }
+        if value.is_null() { sys::JSValueMakeUndefined(ctx) } else { value }
     }
 }
 

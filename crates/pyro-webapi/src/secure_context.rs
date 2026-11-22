@@ -29,6 +29,7 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
     if secure(s, page) {
         return Ok(());
     }
+    crate::storage_manager::hide_file_system_globals(s)?;
     let global = s.global();
     for name in GLOBALS {
         global.delete(name)?;

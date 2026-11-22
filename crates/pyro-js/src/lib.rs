@@ -34,7 +34,7 @@ pub use error::{DomError, JsError, JsException, JsResult, Message};
 pub use interned::InternedId;
 pub use persistent::{HeldValue, Persistent, RootedVec};
 pub use realm::{
-    Deferred, DeferredSetup, IdentityKey, LazyGlobalConstant, ModuleFetcher, ModuleRequest, ModuleType, WorkletModule, WorkletModuleMap, NameUnits, NamedProperties,
+    Deferred, DeferredSetup, IdentityKey, LazyGlobalConstant, LazyGlobalInterface, ModuleFetcher, ModuleRequest, ModuleType, WorkletModule, WorkletModuleMap, NameUnits, NamedProperties,
     NativeCallbackHook, Realm, RealmId, RealmOptions, Scope, UnhandledRejectionHandler, ValueDescription, WeakRealm,
     WrapperRef,
 };

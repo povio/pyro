@@ -1,0 +1,31 @@
+const fs = require('node:fs'), http = require('node:http'), path = require('node:path'), net = require('node:net'), os = require('node:os'), cp = require('node:child_process');
+const w=__dirname,ref=path.join(path.dirname(w),'round6-reference-158/census'),pw=require(path.join(ref,'runner/node_modules/playwright-core'));
+const [label,explicit]=process.argv.slice(2);
+const worker=`onmessage=async()=>{try{
+ const desc=n=>{const d=Object.getOwnPropertyDescriptor(self,n);return !d?null:[Object.hasOwn(d,'value'),!!d.get,d.writable??null,d.enumerable,d.configurable]};
+ const exposed=['FileSystemHandle','FileSystemSyncAccessHandle','StorageManager','VideoDecoder'].map(n=>[n,desc(n),Object.hasOwn(DedicatedWorkerGlobalScope.prototype,n),Object.hasOwn(WorkerGlobalScope.prototype,n)]);
+ const root=await navigator.storage.getDirectory(),d=await root.getDirectoryHandle('locking',{create:true});
+ const attempt=async(action)=>{try{const result=await action();if(result?.close)await result.close();return 'ok'}catch(e){return e.name}};
+ const rows={exposed};
+ const m=await d.getFileHandle('move-source',{create:true}),alias=await d.getFileHandle('move-source'),dest=await d.getFileHandle('move-dest',{create:true});
+ const moving=m.move('move-dest');rows.moveConflict=await attempt(()=>alias.createSyncAccessHandle());await moving;
+ rows.moveAfter=await attempt(()=>m.createSyncAccessHandle());
+ const writer=await dest.createWritable();
+ rows.heldCannotMove=await attempt(()=>m.move('moved-again'));await writer.close();
+ rows.afterCloseCanMove=await attempt(()=>m.move('moved-again'));
+ const f=await d.getFileHandle('remove-source',{create:true}),r=f.remove();rows.removeConflict=await attempt(()=>f.createSyncAccessHandle());await r;
+ const replacement=await d.getFileHandle('remove-source',{create:true});rows.removeAfter=await attempt(()=>replacement.createSyncAccessHandle());
+ const a=await d.getFileHandle('independent-one',{create:true}),b=await d.getFileHandle('independent-two',{create:true});
+ const p=a.move('independent-new');rows.unrelated=await attempt(()=>b.createSyncAccessHandle());await p;
+ postMessage(rows);
+ }catch(e){postMessage({error:e.name,message:e.message})}}`;
+const server=http.createServer((req,res)=>{res.setHeader('Content-Type',req.url==='/worker.js'?'text/javascript':'text/html');res.end(req.url==='/worker.js'?worker:'<!doctype html><body>normal file locks')});
+const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',()=>r(s.address().port)));
+(async()=>{const port=await listen(server),sock=net.createServer(),cdp=await listen(sock);await new Promise(r=>sock.close(r));let proc,b;
+ try{const bin=explicit||path.join(ref,'launch-158'),tmp=fs.mkdtempSync(path.join(os.tmpdir(),'r7-locks-'));
+ proc=cp.spawn(bin,['serve','--host','127.0.0.1','--port',String(cdp),'--log-level','error'],{stdio:'ignore',env:{...process.env,WPT_CHROME_STATE_DIR:tmp,WPT_CHROME_REFERENCE_MODE:'wpt-stable'}});
+ for(let i=0;i<120;i++){try{if((await fetch('http://127.0.0.1:'+cdp+'/json/version')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
+ b=await pw.chromium.connectOverCDP('http://127.0.0.1:'+cdp);const page=await b.newPage();await page.goto('http://127.0.0.1:'+port+'/');
+ const rows=await page.evaluate(()=>new Promise((resolve,reject)=>{const worker=new Worker('/worker.js');const timer=setTimeout(()=>{worker.terminate();reject(Error('worker timed out'))},8000);worker.onmessage=e=>{clearTimeout(timer);worker.terminate();resolve(e.data)};worker.onerror=e=>{clearTimeout(timer);worker.terminate();reject(Error(e.message))};worker.postMessage(1)}));
+ fs.writeFileSync(path.join(w,label+'-locks.json'),JSON.stringify(rows,null,2));
+ }finally{if(b)await b.close();if(proc)proc.kill();server.close()}})().catch(e=>{console.error(e);process.exitCode=1});
