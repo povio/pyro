@@ -3,15 +3,15 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 1196,
+    "macbook_in_scope": 1199,
     "studio_in_scope": 504,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 220,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1561,
+   "distinct_census_pages": 1564,
    "owner_reported_unlisted": 14,
-   "selector_union": 1793,
+   "selector_union": 1796,
    "owner_estimate_reduction": 246,
    "of_which_tentative": 215,
    "studio_css_reported_pages_not_deduped": 355,
@@ -19,7 +19,7 @@
    "by_dir": {
     "html/semantics": 483,
     "html/canvas": 477,
-    "html/browsers": 125,
+    "html/browsers": 128,
     "html/interaction": 117,
     "referrer-policy": 114,
     "fetch/api": 76,
@@ -45,16 +45,16 @@
     "html/obsolete": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "fetch/orb": 2,
-    "html/user-activation": 2,
     "xhr": 2,
-    "svg/styling": 1,
-    "fetch/redirects": 1,
-    "quirks": 1,
-    "fetch/redirect-navigate": 1,
-    "IndexedDB": 1,
+    "html/user-activation": 2,
+    "fetch/orb": 2,
     "fetch/security": 1,
-    "fetch/content-type": 1
+    "svg/styling": 1,
+    "fetch/redirect-navigate": 1,
+    "fetch/redirects": 1,
+    "IndexedDB": 1,
+    "fetch/content-type": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -79,11 +79,11 @@
     "html/syntax": 33,
     "html/webappapis": 32,
     "fetch/compression-dictionary": 8,
-    "html/interaction": 5,
     "fetch/api": 5,
     "html/dom": 5,
-    "html/user-activation": 1,
-    "html/scripting": 1
+    "html/interaction": 5,
+    "html/scripting": 1,
+    "html/user-activation": 1
    }
   },
   "queued": {
@@ -2807,9 +2807,9 @@
   },
   "BUCKET-history-bfcache": {
    "state": "deferred",
-   "in_scope_pages": 37,
+   "in_scope_pages": 34,
    "out_of_scope_pages": 0,
-   "pages": 37,
+   "pages": 34,
    "tentative": 3
   },
   "BUCKET-history-bfcache-landed": {
@@ -2817,6 +2817,13 @@
    "in_scope_pages": 9,
    "out_of_scope_pages": 0,
    "pages": 9,
+   "tentative": 0
+  },
+  "BUCKET-history-bfcache-landed-b": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
    "tentative": 0
   },
   "BUCKET-interactive-focus": {
@@ -3121,14 +3128,14 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1956,
+ "implemented_total_estimate": 1959,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 1196,
+ "macbook_in_scope_implemented": 1199,
  "macbook_in_scope_milestones": [
   100,
   200,
