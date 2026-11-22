@@ -185,7 +185,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         let mut runs = Vec::new();
         for (index,pseudo, style) in styles {
             for run in pyro_dom::timing::AnimationTiming::from_transition_box(&style) {
-                runs.push(s.array(&[s.number(index as f64),s.number(run.index as f64),s.string(&pseudo), s.string(&run.name), s.number(run.delay_ms), s.number(run.duration_ms), s.number(run.iterations), s.string(&run.style.direction), s.string(&run.style.fill), s.string(run.style.easing.as_deref().unwrap_or("ease")), s.boolean(run.style.paused)])?.value());
+                runs.push(s.array(&[s.number(index as f64),s.number(run.index as f64),s.string(&pseudo), s.string(&run.name), s.number(run.delay_ms), s.number(run.duration_ms), s.number(run.iterations), s.string(&run.style.direction), s.string(&run.style.fill), s.string(&run.style.easing.as_deref().map_or_else(|| "ease".to_owned(), pyro_dom::timing::shown_easing)), s.boolean(run.style.paused)])?.value());
             }
         }
         let entries = s.array(&runs)?.value();

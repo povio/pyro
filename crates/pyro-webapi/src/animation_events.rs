@@ -898,10 +898,11 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
                     None => "backwards".to_owned(),
                 },
                 easing: match transition {
-                    true => t.easing.clone().unwrap_or_else(|| "ease".to_owned()),
+                    // (Sampled at full precision; shown as it serializes.)
+                    true => t.easing.as_deref().map_or_else(|| "ease".to_owned(), pyro_dom::timing::shown_easing),
                     false => "linear".to_owned(),
                 },
-                keyframe_easing: style.and_then(|s| s.easing.clone()).unwrap_or_else(|| "ease".into()),
+                keyframe_easing: style.and_then(|s| s.easing.as_deref()).map_or_else(|| "ease".into(), pyro_dom::timing::shown_easing),
                 paused_at: t.paused_at,
                 trigger: t.timing.as_ref().and_then(|timing| timing.trigger.clone()).and_then(|item| {
                     let name = item.split_whitespace().next()?.to_owned();

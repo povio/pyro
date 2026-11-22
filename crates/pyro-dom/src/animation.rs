@@ -367,7 +367,7 @@ pub fn transition_value(
 }
 
 /// A computed easing from CSS text; `None`: not one.
-fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction> {
+pub(crate) fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction> {
     use style::properties::PropertyDeclaration;
     use style::values::computed::ToComputedValue as _;
     let url = crate::stylo::url_data();

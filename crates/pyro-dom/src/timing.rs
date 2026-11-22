@@ -258,7 +258,7 @@ impl AnimationTiming {
             let name = name.as_atom()?.to_string();
             let duration = ui.animation_duration_mod(index);
             Some(Self { name, index, duration_auto: duration.is_auto(), duration_ms: match duration { AnimationDuration::Time(t) => t.seconds() as f64 * 1000.0, _ => 0.0 }, delay_ms: ui.animation_delay_mod(index).seconds() as f64 * 1000.0, iterations: ui.animation_iteration_count_mod(index).0 as f64, style: AnimationStyle {
-                direction: ui.animation_direction_mod(index).to_css_string(), fill: ui.animation_fill_mode_mod(index).to_css_string(), paused: ui.animation_play_state_mod(index).to_css_string() == "paused", composition: ui.animation_composition_mod(index).to_css_string(), easing: Some(ui.animation_timing_function_mod(index).to_css_string()),
+                direction: ui.animation_direction_mod(index).to_css_string(), fill: ui.animation_fill_mode_mod(index).to_css_string(), paused: ui.animation_play_state_mod(index).to_css_string() == "paused", composition: ui.animation_composition_mod(index).to_css_string(), easing: Some(easing_sample_text(&ui.animation_timing_function_mod(index))),
             }, trigger: None })
         })
     }
@@ -681,6 +681,13 @@ impl TimingRules {
                     AnimationDuration::Auto => "auto".to_owned(),
                 }).collect());
             }
+            // Easings at full precision, as the samplers parse them (`easing_sample_text`).
+            if longhand == Longhand::AnimationTimingFunction {
+                return Some(authored.get_ui().animation_timing_function_iter().map(|f| easing_sample_text(&f)).collect());
+            }
+            if longhand == Longhand::TransitionTimingFunction {
+                return Some(authored.get_ui().transition_timing_function_iter().map(|f| easing_sample_text(&f)).collect());
+            }
             let css = crate::stylo::serialize(authored, longhand.name())?;
             Some(split_commas(&css).into_iter().map(|s| s.trim().to_owned()).collect())
         };
@@ -872,6 +879,7 @@ impl TimingRules {
 fn shown(longhand: Longhand, item: &str) -> String {
     match longhand {
         Longhand::AnimationDuration if item == "auto" => "0s".to_owned(),
+        Longhand::AnimationTimingFunction | Longhand::TransitionTimingFunction => shown_easing(item),
         Longhand::AnimationDuration
         | Longhand::AnimationDelay
         | Longhand::TransitionDuration
@@ -907,7 +915,7 @@ fn transition_shorthand(lists: &TimingLists) -> String {
             }
             let easing = lists.item(TransitionTimingFunction, i);
             if easing != "ease" {
-                parts.push(easing.to_owned());
+                parts.push(shown_easing(easing));
             }
             if delay != "0s" {
                 parts.push(delay);
@@ -943,7 +951,7 @@ fn animation_shorthand(lists: &TimingLists) -> String {
             for (longhand, value) in [(AnimationTimingFunction, "ease")] {
                 let v = lists.item(longhand, i);
                 if v != value {
-                    parts.push(v.to_owned());
+                    parts.push(shown_easing(v));
                 }
             }
             if delay != "0s" {
@@ -1435,10 +1443,36 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
 }
 
 /// A specified easing as its computed value serializes (`step-start` is
-/// `steps(1, start)`, `steps(4, end)` is `steps(4)`).
+/// `steps(1, start)`, `steps(4, end)` is `steps(4)`), at full precision
+/// ([`easing_sample_text`]).
 fn easing_text(easing: &style::values::specified::TimingFunction) -> String {
+    easing_sample_text(&easing.to_computed_value_without_context())
+}
+
+/// pyro: a computed easing as the text the timing lists carry and the samplers parse back: a
+/// `cubic-bezier()`'s numbers at full `f32` precision. Its CSS serialization keeps six significant
+/// digits, and the curve read back from that text misses its point: the interpolation tests' easing
+/// for 0.3 (`cubic-bezier(0, 0.23333333333333334, 1, 0.23333333333333334)` at the halfway time) gave
+/// 0.29999975 through `0.233333`, so `black` to `orange` sampled `rgb(76.49994, 49.49996, 0)` and its
+/// legacy channels rounded down to `rgb(76, 49, 0)`; Chromium samples the curve it parsed (0.3:
+/// `rgb(77, 50, 0)`). [`shown_easing`] gives the serialized text back for `getComputedStyle` and script.
+pub fn easing_sample_text(easing: &style::values::computed::TimingFunction) -> String {
+    use style::values::generics::easing::TimingFunction as F;
     use style_traits::ToCss;
-    easing.to_computed_value_without_context().to_css_string()
+    match easing {
+        F::CubicBezier { x1, y1, x2, y2 } => format!("cubic-bezier({x1}, {y1}, {x2}, {y2})"),
+        other => other.to_css_string(),
+    }
+}
+
+/// An easing of the timing lists ([`easing_sample_text`]) as it serializes (`getComputedStyle`,
+/// `getTiming().easing`): a `cubic-bezier()`'s numbers to six significant digits.
+pub fn shown_easing(easing: &str) -> String {
+    use style_traits::ToCss;
+    if !easing.starts_with("cubic-bezier(") {
+        return easing.to_owned();
+    }
+    crate::animation::easing_function(easing).map_or_else(|| easing.to_owned(), |f| f.to_css_string())
 }
 
 fn time_list(items: impl Iterator<Item = Option<String>>) -> Value {
@@ -1601,6 +1635,11 @@ mod tests {
         // Computed easings and times; names keep their case.
         let e = declared("transition-timing-function", "step-start, step-end, cubic-bezier(.4,0,.2,1), EASE-IN");
         assert_eq!(e[0].1, ["steps(1, start)", "steps(1)", "cubic-bezier(0.4, 0, 0.2, 1)", "ease-in"]);
+        // A bezier's numbers at full precision for the samplers, six digits where shown.
+        let b = declared("animation-timing-function", "cubic-bezier(0, 0.23333333333333334, 1, 0.23333333333333334)");
+        assert_eq!(b[0].1, ["cubic-bezier(0, 0.23333333, 1, 0.23333333)"]);
+        assert_eq!(shown(Longhand::AnimationTimingFunction, &b[0].1[0]), "cubic-bezier(0, 0.233333, 1, 0.233333)");
+        assert_eq!(shown_easing("steps(1, start)"), "steps(1, start)");
         assert_eq!(declared("transition-duration", "calc(1s + 100ms), 150ms")[0].1, ["1.1s", "0.15s"]);
         assert_eq!(declared("animation-name", "Spin, \"a b\", none")[0].1, ["Spin", r"a\ b", "none"]);
         assert_eq!(declared("transition-property", "OPACITY, --Foo")[0].1, ["opacity", "--Foo"]);
