@@ -1004,7 +1004,6 @@ impl JsClass for WorkerGlobalScope {
         crate::storage_manager::define_globals(def);
         crate::websocket::define_worker_globals(def);
         def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
-        crate::indexeddb::define_globals(def);
         def.getter("caches", |s, g| crate::cache_storage::caches(s, &g.target.page));
         crate::cache_storage::define_globals(def);
         def.method("setTimeout", 1, |s, g, a| set_timer(s, g, a, false));
@@ -1341,6 +1340,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     }
     // Before the worker's script can change the intrinsics they capture.
     crate::structured_clone::prepare_wire(s)?;
+    crate::indexeddb::install_worker_globals(s, page)?;
     // The global is JSC's default one, whose prototype cannot be replaced
     // (docs/ARCHITECTURE.md), and libraries read `self.constructor.name`.
     s.eval(

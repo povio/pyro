@@ -748,7 +748,7 @@ where
     );
 }
 
-fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'s>> {
+fn interface_objects<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     let factory = window_factory(s, page)?.as_object().ok_or_else(unavailable)?;
     let data = s.unwrap::<IdbFactory>(factory.value()).ok_or_else(unavailable)?;
     // Opaque origins still get the interfaces (feature detection), through a
@@ -758,7 +758,19 @@ fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'
         Err(JsError::ContextDestroyed) => return Err(JsError::ContextDestroyed),
         Err(_) => opaque_module(s, factory)?,
     };
-    let value = module.get_atom("globals")?.as_object().ok_or_else(unavailable)?.get(name)?;
+    module.get_atom("globals")?.as_object().ok_or_else(unavailable)
+}
+
+pub(crate) fn install_worker_globals(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+    let interfaces = interface_objects(s, page)?;
+    for name in interfaces.keys() {
+        replace(s, page, &name, interfaces.get(&name)?)?;
+    }
+    Ok(())
+}
+
+fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'s>> {
+    let value = interface_objects(s, page)?.get(name)?;
     replace(s, page, name, value)?;
     Ok(value)
 }
