@@ -36,6 +36,7 @@ use crate::request::*;
 use crate::subscription::{
     flush_deferred_wakes, DeferredWakes, NetSubscription, NetWake, SubscriptionLimits, Subscriptions,
 };
+use crate::zstd::Zstd;
 
 #[path = "websocket.rs"]
 pub mod websocket;
@@ -516,7 +517,7 @@ impl Shared {
                 }
             }
         }
-        h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, br"));
+        h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, br, zstd"));
         if let Some(origin) = &req.origin {
             if cors_cross || !matches!(req.method, Method::GET | Method::HEAD) {
                 if let Ok(v) = HeaderValue::from_str(origin) {
@@ -1646,6 +1647,7 @@ enum Stage {
     /// bytes so far, and an output that stays empty.
     Sniff(Vec<u8>, Vec<u8>),
     Brotli(Box<brotli_decompressor::DecompressorWriter<Vec<u8>>>),
+    Zstd(Box<Zstd>),
 }
 
 /// A zlib stream header (RFC 1950): method 8 with a window of at most
@@ -1659,6 +1661,7 @@ impl Stage {
         match self {
             Stage::Inflate(d) => d.write_all(chunk),
             Stage::Brotli(d) => d.write_all(chunk),
+            Stage::Zstd(d) => d.write_all(chunk),
             Stage::Sniff(head, _) => {
                 head.extend_from_slice(chunk);
                 if head.len() < 2 {
@@ -1680,6 +1683,7 @@ impl Stage {
         match self {
             Stage::Inflate(d) => d.out(),
             Stage::Brotli(d) => d.get_mut(),
+            Stage::Zstd(d) => d.out(),
             Stage::Sniff(_, out) => out,
         }
     }
@@ -1689,6 +1693,7 @@ impl Stage {
         match self {
             Stage::Inflate(d) => d.finish().map_err(err),
             Stage::Brotli(d) => d.into_inner().map_err(|_| NetError::Decode("truncated brotli stream".into())),
+            Stage::Zstd(d) => d.finish().map_err(err),
             Stage::Sniff(head, _) if head.is_empty() => Ok(Vec::new()),
             // A one-byte body: no zlib stream, so raw deflate decides.
             Stage::Sniff(head, _) => {
@@ -1723,6 +1728,8 @@ impl Decoder {
                 Stage::Sniff(Vec::new(), Vec::new())
             } else if token.eq_ignore_ascii_case("br") {
                 Stage::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new(Vec::new(), 4096)))
+            } else if token.eq_ignore_ascii_case("zstd") {
+                Stage::Zstd(Box::new(Zstd::new()))
             } else {
                 return Decoder::IDENTITY;
             };
@@ -3186,11 +3193,28 @@ mod decoder_tests {
     #[test]
     fn unknown_codings_pass_through() {
         let gz = gzip(b"abc");
-        for enc in ["UTF-8", "none", "text", "zstd", "gzip, bogus", "identity", "identity, gzip", "", " , "] {
+        for enc in ["UTF-8", "none", "text", "zstd2", "gzip, bogus", "identity", "identity, gzip", "", " , "] {
             assert_eq!(decode(enc, &gz, 5).unwrap(), gz, "{enc}");
         }
         assert_eq!(decode(" GZIP ", &gz, 5).unwrap(), b"abc");
         assert_eq!(decode("x-gzip", &gz, 5).unwrap(), b"abc");
+    }
+
+    /// `zstd` decodes (WPT's `foo.text.zst`, also under gzip), and a body
+    /// that is not zstd fails as Chromium's does (a network error on read).
+    #[test]
+    fn zstd_decodes_and_bad_zstd_fails() {
+        let foo: &[u8] = &[
+            0x28, 0xb5, 0x2f, 0xfd, 0x64, 0x04, 0x28, 0x5d, 0x00, 0x00, 0x18, 0x66, 0x6f, 0x6f, 0x01, 0x00, 0xfe, 0x48,
+            0xde, 0x0d, 0x01, 0xc3, 0xbe, 0x9f, 0x9f,
+        ];
+        for chunk in [1, 4, 100] {
+            assert_eq!(decode("zstd", foo, chunk).unwrap(), b"foo".repeat(3500));
+            assert_eq!(decode("ZSTD", foo, chunk).unwrap(), b"foo".repeat(3500));
+            assert_eq!(decode("zstd, gzip", &gzip(foo), chunk).unwrap(), b"foo".repeat(3500));
+        }
+        assert!(matches!(decode("zstd", b"not actually zstd", 5), Err(NetError::Decode(_))));
+        assert!(matches!(decode("zstd", &foo[..20], 5), Err(NetError::Decode(_))));
     }
 }
 

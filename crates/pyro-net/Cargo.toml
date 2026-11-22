@@ -31,6 +31,8 @@ webpki-roots = "1"
 pyro-psl.workspace = true
 percent-encoding = "2.3.2"
 rustc-hash = "2.1.3"
+# `Content-Encoding: zstd` (src/zstd.rs): a pure-Rust decoder, no C build.
+ruzstd = "0.9.1"
 # Sec-WebSocket-Accept.
 sha1 = "0.10"
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "io-util", "fs", "macros"] }
@@ -43,6 +45,8 @@ zlib-rs = { version = "0.6.8", default-features = false, features = ["std"] }
 [dev-dependencies]
 h2 = "0.4"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+# zstd frame checksums in the src/zstd.rs tests (ruzstd's own hasher).
+twox-hash = { version = "2", default-features = false, features = ["xxhash64"] }
 
 [[test]]
 name = "integration"

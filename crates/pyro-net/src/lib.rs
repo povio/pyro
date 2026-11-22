@@ -18,6 +18,7 @@ pub mod static_files;
 mod subscription;
 pub mod timing;
 mod ws_deflate;
+mod zstd;
 pub use subscription::{NetSubscription, NetWake, SubscriptionError, SubscriptionLimits};
 pub use timing::{timing_allowed, ConnectionTiming, NetTiming};
 
