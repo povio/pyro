@@ -2440,6 +2440,18 @@ impl Renderer {
             .collect()
     }
 
+    /// pyro: the `content-visibility: auto` elements of `page`'s persistent document whose
+    /// relevance was determined, by key, and whether they skip their contents
+    /// (`BaseDocument::content_visibility_auto_states`).
+    pub fn content_visibility_auto_states(&self, page: u64) -> Vec<(u64, bool)> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        m.doc
+            .content_visibility_auto_states()
+            .into_iter()
+            .filter_map(|(id, skipped)| Some((m.key_of(id)?, skipped)))
+            .collect()
+    }
+
     /// pyro: renders the contents `content-visibility: auto` skips around the element keyed `key`
     /// in `page`'s persistent document, laying it out again (`BaseDocument::force_content_visibility`).
     /// pyro: a rendering frame of `page` starts: what queries forced to render since the last one
@@ -2449,9 +2461,12 @@ impl Renderer {
     pub fn content_visibility_frame(&mut self, page: u64) -> bool {
         let Some(m) = self.mirrors.get_mut(&page) else { return false };
         m.doc.commit_anchor_frame();
+        // (The anchors positioned boxes use hold their ancestors relevant from this frame on: a
+        // change determines relevance again, `BaseDocument::commit_cv_anchor_frame`.)
+        let anchors_changed = m.doc.commit_cv_anchor_frame();
         // (Also when the page scrolled since relevance was last determined: nothing else lays the
         // document out for a scroll alone. The time is the mirror's, 0: animations are sampled in.)
-        if !m.doc.has_content_visibility_forcing() && !m.doc.content_visibility_stale() {
+        if !anchors_changed && !m.doc.has_content_visibility_forcing() && !m.doc.content_visibility_stale() {
             return false;
         }
         m.doc.clear_content_visibility_forcing();

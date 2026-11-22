@@ -552,6 +552,15 @@ pub struct BaseDocument {
     /// (`NodeFlags::CV_DETERMINED`), those a query forced to render (`CV_FORCED`), and the scroll
     /// position relevance was last determined at (`update_content_visibility`).
     pub(crate) cv_auto: HashSet<NodeId>,
+    /// pyro: the anchors each absolutely positioned box resolved at its last layout, with the
+    /// layout pass (`cv_layout_pass`) that laid it out (`BaseDocument::record_cv_anchor_use`).
+    pub(crate) cv_anchor_uses: RefCell<HashMap<NodeId, (u64, Vec<NodeId>)>>,
+    /// pyro: the layout passes run so far (`resolve_layout_in_flush`).
+    pub(crate) cv_layout_pass: std::cell::Cell<u64>,
+    /// pyro: the (anchor, positioned box) pairs of the last rendering frame
+    /// (`commit_cv_anchor_frame`): each anchor's ancestors below the positioned box's are relevant
+    /// to the user (`update_content_visibility`).
+    pub(crate) cv_anchor_frame: HashSet<(NodeId, NodeId)>,
     /// pyro: the elements that may remember a size (CSS Sizing 4 § 5.1): styled with
     /// `contain-intrinsic-size: auto` in an axis (or `content-visibility: auto`), or holding a
     /// remembered size (`BaseDocument::record_remembered_sizes`).
@@ -985,6 +994,9 @@ impl BaseDocument {
             has_canvas: false,
             sub_document_nodes: HashSet::new(),
             cv_auto: HashSet::new(),
+            cv_anchor_uses: RefCell::new(HashMap::new()),
+            cv_layout_pass: std::cell::Cell::new(0),
+            cv_anchor_frame: HashSet::new(),
             cis_auto: HashSet::new(),
             remembered_size_work: std::cell::Cell::new(0),
             remembered_pending: false,

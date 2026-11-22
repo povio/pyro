@@ -88,6 +88,95 @@ impl Node {
 }
 
 impl BaseDocument {
+    /// pyro: the nearest ancestor of `id` that skips its contents (`content-visibility: hidden`,
+    /// or `auto` while not relevant to the user): `id` is in its skipped contents.
+    pub(crate) fn skipping_ancestor(&self, id: crate::NodeId) -> Option<crate::NodeId> {
+        let mut at = self.nodes.get(id)?.parent;
+        while let Some(n) = at {
+            let node = &self.nodes[n];
+            if node.primary_styles().is_some_and(|s| crate::resolve::skips_contents(node, &s)) {
+                return Some(n);
+            }
+            at = node.parent;
+        }
+        None
+    }
+
+    /// pyro: whether `ancestor` is `id` or one of its ancestors.
+    fn is_inclusive_ancestor(&self, ancestor: crate::NodeId, id: crate::NodeId) -> bool {
+        let mut at = Some(id);
+        while let Some(n) = at {
+            if n == ancestor {
+                return true;
+            }
+            at = self.nodes.get(n).and_then(|node| node.parent);
+        }
+        false
+    }
+
+    /// pyro: `node`, an absolutely positioned box with anchor queries, is laid out by this layout
+    /// pass: the anchors an earlier pass resolved for it are forgotten (it records the ones it
+    /// resolves now, `record_cv_anchor_use`).
+    pub(crate) fn touch_cv_anchor_uses(&self, node: crate::NodeId) {
+        let pass = self.cv_layout_pass.get();
+        let mut uses = self.cv_anchor_uses.borrow_mut();
+        if let Some(entry) = uses.get_mut(&node).filter(|entry| entry.0 != pass) {
+            *entry = (pass, Vec::new());
+        }
+    }
+
+    /// pyro: `node`, outside skipped contents, resolved `anchor`: the anchor keeps its
+    /// `content-visibility: auto` ancestors relevant to the user (CSS Contain 2 § 4.1, as Chrome),
+    /// from the next rendering frame (`commit_cv_anchor_frame`).
+    fn record_cv_anchor_use(&self, node: crate::NodeId, anchor: crate::NodeId) {
+        if self.skipping_ancestor(node).is_some() {
+            return;
+        }
+        let pass = self.cv_layout_pass.get();
+        let mut uses = self.cv_anchor_uses.borrow_mut();
+        let entry = uses.entry(node).or_insert_with(|| (pass, Vec::new()));
+        if entry.0 != pass {
+            *entry = (pass, Vec::new());
+        }
+        if !entry.1.contains(&anchor) {
+            entry.1.push(anchor);
+        }
+    }
+
+    /// pyro: a rendering frame starts: the anchors positioned boxes (in the document, with anchor
+    /// queries, outside skipped contents) resolved at their last layouts hold their ancestors
+    /// relevant to the user until the next frame (`update_content_visibility`). Whether that
+    /// changed what is held while some `content-visibility: auto` element is tracked (relevance
+    /// is then determined again).
+    pub fn commit_cv_anchor_frame(&mut self) -> bool {
+        use crate::node::NodeFlags;
+        use std::collections::HashSet;
+        if self.cv_anchor_uses.get_mut().is_empty() && self.cv_anchor_frame.is_empty() {
+            return false;
+        }
+        let nodes = &self.nodes;
+        self.cv_anchor_uses.get_mut().retain(|&id, _| {
+            nodes.get(id).is_some_and(|n| n.flags.is_in_document() && n.flags.contains(NodeFlags::ANCHOR_QUERIES))
+        });
+        let mut frame: HashSet<(crate::NodeId, crate::NodeId)> = HashSet::new();
+        {
+            let uses = self.cv_anchor_uses.borrow();
+            for (&positioned, (_, anchors)) in uses.iter() {
+                if self.skipping_ancestor(positioned).is_some() {
+                    continue;
+                }
+                for &anchor in anchors {
+                    if self.nodes.get(anchor).is_some_and(|n| n.flags.is_in_document()) {
+                        frame.insert((anchor, positioned));
+                    }
+                }
+            }
+        }
+        let changed = frame != self.cv_anchor_frame;
+        self.cv_anchor_frame = frame;
+        changed && !self.cv_auto.is_empty()
+    }
+
     pub(super) fn anchor_placer_mode(&self, node: &Node) -> stylo_taffy::WritingMode {
         node.containing_block().and_then(|id| self.nodes[id].primary_styles()).map_or(stylo_taffy::WritingMode::empty(), |style| style.writing_mode)
     }
@@ -231,6 +320,12 @@ impl BaseDocument {
         if anchor_style.get_box().display.is_none() {
             return None;
         }
+        // pyro: an anchor in skipped contents is not acceptable (CSS Anchor Positioning 1 § 2.2,
+        // as Chrome), unless the positioned box is in the same skipped subtree (WPT css-contain
+        // `content-visibility-anchor-positioning-001` to `-003`).
+        if let Some(skipper) = self.skipping_ancestor(id) && !self.is_inclusive_ancestor(skipper, node.id) {
+            return None;
+        }
         let mut cursor = id;
         let mut point = taffy::Point::ZERO;
         let mut extent = self.anchor_physical_size(anchor);
@@ -314,6 +409,7 @@ impl BaseDocument {
             return None;
         }
         let rect = projected_bounds(&matrix, point, extent)?;
+        self.record_cv_anchor_use(node.id, id);
         Some((id, taffy::Point { x: rect.left, y: rect.top }, taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top }))
     }
 }

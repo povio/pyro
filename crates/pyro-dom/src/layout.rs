@@ -2894,6 +2894,22 @@ impl Layout {
         self.synced_geometry_source(dom).map(|s| s.content_visibility_state()).unwrap_or_default()
     }
 
+    /// pyro: the `content-visibility: auto` elements of `dom` whose relevance the layout engine
+    /// determined, on the current layout (synced first), and whether they skip their contents
+    /// (CSS Contain 2 § 4.1, `contentvisibilityautostatechange`). Connected elements only.
+    pub fn content_visibility_auto_states(&self, dom: &Dom) -> Vec<(NodeId, bool)> {
+        let Some(source) = self.synced_geometry_source(dom) else { return Vec::new() };
+        source
+            .content_visibility_auto_states()
+            .into_iter()
+            .filter_map(|(key, skipped)| {
+                // (A render key: generation in the high half, slot index in the low one.)
+                let id = NodeId { idx: key as u32, gen: (key >> 32) as u32 };
+                (crate::snapshot::render_key(id) == key && dom.is_connected(id).unwrap_or(false)).then_some((id, skipped))
+            })
+            .collect()
+    }
+
     /// pyro: the rendering update's ResizeObserver step (CSS Sizing 4 § 5.1): when the layout
     /// engine has elements that may remember a size, they remember it on its layout if that is
     /// the page's now, else at the end of its next one (`GeometrySource::record_remembered_sizes`).
