@@ -15,6 +15,7 @@ mod paragraph_join;
 mod target_range;
 pub(crate) use target_range::rendered;
 mod whitespace;
+pub(crate) use whitespace::invisible_formatting_space;
 
 use std::rc::Rc;
 

@@ -98,6 +98,27 @@ fn adjacent(page: &PageDom, dom: &Dom, host: NodeId, mut n: NodeId, forward: boo
     }
 }
 
+/// A whitespace-only text node can carry inline formatting when it
+/// separates visible inline content. At either line edge the same run
+/// collapses away. Preserve whitespace in modes that keep segment breaks.
+pub(crate) fn invisible_formatting_space(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId) -> bool {
+    let ordinary = |n| dom.char_data(n).is_ok_and(|s| s.bytes().all(|c| matches!(c, b' ' | b'\t' | b'\n' | b'\r')));
+    let collapsible = |n| dom.parent_element(n).ok().flatten().is_some_and(|el|
+        page.layout().computed_style_value(dom, el, "white-space-collapse") == "collapse");
+    if !ordinary(node) || !collapsible(node) { return false; }
+    let line_edge = |forward| {
+        let mut current = node;
+        loop {
+            match adjacent(page, dom, host, current, forward) {
+                Next::Boundary | Next::Break => return true,
+                Next::Text(next) if ordinary(next) && collapsible(next) => current = next,
+                _ => return false,
+            }
+        }
+    };
+    line_edge(false) || line_edge(true)
+}
+
 /// Whether an extra preserved newline is needed to display the last empty
 /// line. Text after an inline ancestor and an existing BR both supply it.
 pub(super) fn at_line_end(page: &PageDom, dom: &Dom, host: NodeId, (node, offset): Point) -> bool {
