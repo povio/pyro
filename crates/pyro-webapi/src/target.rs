@@ -816,7 +816,15 @@ fn dispatch_at(
         // Dispatch retargets the relatedTarget for each invocation target.
         let mut state = event.state.borrow_mut();
         state.target = Some(target);
-        state.related_target = event.fields.borrow().related_target;
+        let fields = event.fields.borrow();
+        // Use the source visible to the initial target when trimming an
+        // interest event's path. A host can itself receive interest from its
+        // shadow tree. The IDL getter retains the original source.
+        state.related_target = if event.iface == crate::event::EventInterface::InterestEvent {
+            fields.submitter.map(|key| page.dom.borrow().retarget_live(key, target))
+        } else {
+            fields.related_target
+        };
     }
     event.refresh_wrappers();
     // A callback can detach ancestors and run GC during dispatch. The path

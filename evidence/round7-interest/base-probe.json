@@ -1,0 +1,55 @@
+{
+  "HTMLButtonElement": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "HTMLAnchorElement": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "HTMLAreaElement": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "SVGAElement": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "ancestor": true,
+  "detached": [
+    true,
+    false
+  ],
+  "scope": [
+    false,
+    false
+  ]
+}
