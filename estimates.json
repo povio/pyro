@@ -23,8 +23,8 @@
     "referrer-policy": 114,
     "html/browsers": 103,
     "fetch/api": 74,
-    "content-security-policy": 52,
     "html/editing": 52,
+    "content-security-policy": 52,
     "fetch/fetch-later": 29,
     "html/webappapis": 26,
     "html/dom": 24,
@@ -37,22 +37,22 @@
     "html/infrastructure": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/corb": 6,
     "fetch/range": 6,
+    "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/http-cache": 3,
     "html/rendering": 3,
+    "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "fetch/orb": 2,
     "xhr": 2,
-    "fetch/images": 1,
-    "fetch/redirect-navigate": 1,
-    "IndexedDB": 1,
-    "fetch/redirects": 1,
+    "fetch/orb": 2,
     "quirks": 1,
+    "svg/styling": 1,
+    "IndexedDB": 1,
+    "fetch/images": 1,
+    "fetch/redirects": 1,
     "fetch/security": 1,
-    "svg/styling": 1
+    "fetch/redirect-navigate": 1
    }
   },
   "in_progress": {
@@ -85,13 +85,13 @@
     "fetch/api": 5,
     "html/interaction": 5,
     "fetch/security": 4,
-    "html/user-activation": 3,
     "fetch/fetch-later": 3,
+    "html/user-activation": 3,
     "fetch/http-cache": 1,
     "html/select": 1,
+    "html/the-xhtml-syntax": 1,
     "fetch/content-type": 1,
-    "html/scripting": 1,
-    "html/the-xhtml-syntax": 1
+    "html/scripting": 1
    }
   },
   "queued": {
@@ -2416,7 +2416,7 @@
    "tentative": 1
   },
   "R-HTML-RENDER-a": {
-   "state": "reserved",
+   "state": "active",
    "in_scope_pages": 8,
    "out_of_scope_pages": 0,
    "pages": 8,
