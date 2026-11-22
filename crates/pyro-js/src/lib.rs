@@ -29,7 +29,7 @@ pub use engine::{
     BytecodeCacheStats, ConsoleLevel, Engine, EngineHooks, FunctionCoverage, HeapCounts, ImpureNames, ModulePrecompileStats,
     ScriptCoverage, TerminateHandle, WrapperPropertyHook, RECYCLE_HEAP_SLACK,
 };
-pub use engine::{process_footprint, release_thread_memory, set_allocator_release, set_allocator_trim};
+pub use engine::{process_footprint, release_thread_memory, script_entry_turn, set_allocator_release, set_allocator_trim};
 pub use error::{DomError, JsError, JsException, JsResult, Message};
 pub use interned::InternedId;
 pub use persistent::{HeldValue, Persistent, RootedVec};

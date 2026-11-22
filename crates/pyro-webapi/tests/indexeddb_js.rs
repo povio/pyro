@@ -128,6 +128,38 @@ const HELPERS: &str = r#"
 "#;
 
 #[test]
+fn ordinary_transaction_creation_ends_between_listener_invocations() {
+    let env = Env::new();
+    let owner = env.doc("http://idb.test/creation-turn");
+    owner.eval(HELPERS);
+    let got = env.run(
+        &owner,
+        r#"
+        const db = await openDb('activity', 1, db => db.createObjectStore('s'));
+        const outer = db.transaction('s', 'readwrite'), finished = done(outer);
+        const store = outer.objectStore('s'), request = store.put('first', 1), log = [];
+        let inner, innerDone;
+        request.addEventListener('success', () => {
+          Promise.resolve().then(() => {
+            inner = db.transaction('s'); innerDone = done(inner);
+            Promise.resolve().then(() => { inner.objectStore('s').get(1); log.push('microtask'); });
+          });
+        });
+        request.addEventListener('success', () => {
+          try { inner.objectStore('s').get(1); log.push('still active'); } catch (e) { log.push(e.name); }
+          try { inner.commit(); log.push('committed'); } catch (e) { log.push(e.name); }
+          store.put('second', 2);
+        });
+        log.push(await finished, await innerDone); db.close();
+        const reopened = await openDb('activity', 1);
+        log.push(await req(reopened.transaction('s').objectStore('s').get(2)));
+        reopened.close(); out = log.join('|');
+        "#,
+    );
+    assert_eq!(got, "microtask|TransactionInactiveError|InvalidStateError|complete|complete|second");
+}
+
+#[test]
 fn borrowed_request_methods_use_receiver_realm_after_detach() {
     let env = Env::new();
     let owner = env.doc("http://idb.test/owner");

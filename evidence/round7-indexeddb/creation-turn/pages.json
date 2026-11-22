@@ -1,0 +1,106 @@
+{
+  "parent": {
+    "IndexedDB/transaction-deactivation-timing.any.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 3,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.serviceworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 3,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.sharedworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 3,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.worker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 3,
+      "n": 5
+    }
+  },
+  "candidate": {
+    "IndexedDB/transaction-deactivation-timing.any.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.serviceworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.sharedworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.worker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    }
+  },
+  "repeat": {
+    "IndexedDB/transaction-deactivation-timing.any.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.serviceworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.sharedworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.worker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    }
+  },
+  "chrome158": {
+    "IndexedDB/transaction-deactivation-timing.any.serviceworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.sharedworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.worker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    },
+    "IndexedDB/transaction-deactivation-timing.any.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 5,
+      "n": 5
+    }
+  }
+}

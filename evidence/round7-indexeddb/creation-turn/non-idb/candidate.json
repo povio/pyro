@@ -1,0 +1,40 @@
+{
+  "arm": "candidate",
+  "start": "2026-11-22T03:27:08.455Z",
+  "end": "2026-11-22T03:27:08.688Z",
+  "trace": [
+    [
+      "outer start",
+      true
+    ],
+    [
+      "child callback",
+      true,
+      true,
+      true
+    ],
+    [
+      "outer nested listener",
+      true
+    ],
+    [
+      "child resumes",
+      true
+    ],
+    [
+      "outer resumes",
+      true
+    ],
+    [
+      "next listener",
+      true
+    ],
+    [
+      "dispatch returned"
+    ],
+    [
+      "microtask",
+      true
+    ]
+  ]
+}

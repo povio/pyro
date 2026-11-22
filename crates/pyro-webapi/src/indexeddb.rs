@@ -16,8 +16,7 @@
 //! are dispatched natively, so microtasks run after every listener while the
 //! transaction is still active, as in browsers.
 //!
-//! Transactions are deactivated in the task after the one that created them,
-//! not after that task's microtask checkpoint.
+//! New ordinary transactions remain active through the creating script's microtask checkpoint.
 use crate::page::{PageDom, RemotePoster};
 use crate::structured_clone::{decode_message, encode_message, WireMessage};
 use crate::util::arg_string;
@@ -914,6 +913,9 @@ fn natives<'s>(
 ) -> JsResult<Object<'s>> {
     let ctx = Rc::new(Ctx { namespace, origin, handle, page: Rc::downgrade(page) });
     let natives = binding_natives(s)?;
+    add(s, &natives, &ctx, "scriptTurn", |s, _, _| {
+        Ok(pyro_js::script_entry_turn().map_or(s.undefined(), |turn| s.number(turn as f64)))
+    })?;
     // One task of idb.js's queue.
     add(s, &natives, &ctx, "post", |s, ctx, _a| {
         if let Some(page) = ctx.page.upgrade() {
