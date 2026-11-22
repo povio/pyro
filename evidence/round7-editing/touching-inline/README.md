@@ -1,0 +1,13 @@
+# Pending formatting at touching inline text boundaries
+
+Frozen source `4da39b0951e3705d77d25892d502107e85597b44`, tree `8b01d7ea83bac9ea19ec22b821602c15fcd09802`, executable SHA-256 `bac4c69ea9582c817a3808be9b0091b1d68a117ee9ac4cddc80df16531e94741`. The integration parent `430cb3b77` differs from tested `36b22e81f` only in evidence. The archived parent executable rehashed to `e295741785be49d37d490f52a87a199dbe26aa2dc349ea8b5af5bd6561fa30fe`. Named and neighboring WPT baselines retain their original adjacent-bold provenance. Direct controls were measured on this binary and signed Chrome 158.0.8127.37.
+
+A text range extending from the end of one inline run to the start of the next can have two distinct DOM endpoints but one visible insertion position. Bold, italic, strike-through, subscript, superscript and underline retain pending formatting at that position. Typing uses the upstream text endpoint. The eligibility walk checks adjacent inline ancestry and stops at an intervening sibling, block or editing-host boundary.
+
+Independent QA matched 33,326 named assertions across 44 pages. All six frozen post-command state assertions recovered, with zero losses or changes in test membership. [Changed assertions](changed-names.json)
+
+All 48 exact-fixture variations (six commands × two modes × two selection directions × one/two toggles) match signed state, original DOM range, direction and events before typing. After typing, all 48 match signed markup, insertion side, glyph styling and command state. Exact caret paths/offsets match in 36. The 12 remaining cases are double toggles of bold, subscript or superscript. Chrome puts Q in a separate text node at offset one while the candidate appends it to the upstream text node at offset four. Undo restores matching markup and selection in all 48; tracked original nodes are disconnected by snapshot restoration.
+
+Across all 336 core controls, first-toggle state and typed glyph vectors match in 336; typed markup matches in 292 and endpoints in 290. The 384 neighboring controls cover nested wrappers, block and atomic boundaries, images, NBSP, locked endpoints and intervening empty/hidden elements. Typed vectors match in 240/384, including preexisting differences outside the touching-inline case. The separate 96 fresh history controls match signed on typed and restored glyphs and restored endpoints in 96/96. No measured field lost a prior signed match across these suites.
+
+Both native collapsed typing tests passed. Final candidate runs retained the parent status of 10,092 command multitest and 13,060 static neighboring WPT rows.

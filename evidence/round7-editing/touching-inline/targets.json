@@ -1,0 +1,50 @@
+[
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"<span>foo[</span><span>]bar</span>\" queryCommandState(\"bold\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1-1000",
+    "[[\"italic\",\"\"]] \"<span>foo[</span><span>]bar</span>\" queryCommandState(\"italic\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1-1000",
+    "[[\"strikethrough\",\"\"]] \"<span>foo[</span><span>]bar</span>\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"subscript\",\"\"]] \"<span>foo[</span><span>]bar</span>\" queryCommandState(\"subscript\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"superscript\",\"\"]] \"<span>foo[</span><span>]bar</span>\" queryCommandState(\"superscript\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1-1000",
+    "[[\"underline\",\"\"]] \"<span>foo[</span><span>]bar</span>\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]
