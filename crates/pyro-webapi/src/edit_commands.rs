@@ -1220,7 +1220,15 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         return true;
     }
     match cmd.as_str() {
-        "inserttext" => editing::insert_text(page, host, value),
+        "inserttext" => {
+            // A visible caret can be positioned in a locked descendant.
+            // Falling back to the focused host would type at a different point.
+            if editing::selection_range(page).is_some_and(|(a, b)| a == b && {
+                let dom = page.dom.borrow();
+                dom.contains(host, a.0).unwrap_or(false) && !editing::is_editable(&dom, a.0)
+            }) { return false; }
+            editing::insert_text(page, host, value);
+        }
         "delete" => editing::delete(page, host, true),
         "forwarddelete" => editing::delete(page, host, false),
         "insertparagraph" => editing::insert_paragraph(page, host),
@@ -2433,6 +2441,28 @@ fn format_block_endpoint(dom: &Dom, point: Point, host: NodeId) -> NodeId {
     if usable(previous.0) { previous.0 } else { point.0 }
 }
 
+/// Normalize a structural query boundary past leaves with no visible caret
+/// position. Keep the formatting operation's line selection independent.
+fn format_query_endpoint(page: &PageDom, dom: &Dom, point: Point, host: NodeId) -> NodeId {
+    let original = format_block_endpoint(dom, point, host);
+    if editing::is_text(dom, point.0) { return original; }
+    let rendered = |n| {
+        editing::editing_host(dom, n) == Some(host) && alignment::visible(page, dom, n)
+            && if editing::is_text(dom, n) {
+                editing::len(dom, n) != 0 && !editing::invisible_formatting_space(page, dom, host, n)
+            } else {
+                local_html(dom, n, "br") || local_html(dom, n, "img") || local_html(dom, n, "hr")
+            }
+    };
+    if rendered(original) { return original; }
+    let mut previous = None;
+    for leaf in dom.descendants(point.0).into_iter().flatten().filter(|&n| rendered(n)) {
+        if crate::range::compare_boundary_points_dom(dom, point, (leaf, 0)) <= 0 { return leaf; }
+        previous = Some(leaf);
+    }
+    previous.unwrap_or(point.0)
+}
+
 fn format_block_value(page: &PageDom) -> Option<String> {
     let (start, end) = editing::selection_range(page)?;
     let dom = page.dom.borrow();
@@ -2440,8 +2470,12 @@ fn format_block_value(page: &PageDom) -> Option<String> {
     if editing::editing_host(&dom, end.0) != Some(host) {
         return None;
     }
-    let a = format_block_endpoint(&dom, start, host);
-    let b = if start == end { a } else { format_block_endpoint(&dom, end, host) };
+    let (a, b) = if start == end {
+        let node = format_block_endpoint(&dom, start, host);
+        (node, node)
+    } else {
+        (format_query_endpoint(page, &dom, start, host), format_query_endpoint(page, &dom, end, host))
+    };
     let mut node = crate::range::common_ancestor(&dom, a, b).ok()?;
     while node != host {
         let tag = editing::local(&dom, node);
@@ -2508,6 +2542,26 @@ fn format_lines(page: &PageDom, dom: &Dom, host: NodeId, start: Point, end: Poin
 
 /// formatBlock: the selected blocks become `tag` elements (content of a
 /// host without blocks is wrapped in one).
+/// The start of a whole-table selection can share a visible caret position
+/// with the inline sibling immediately before the newly formatted block.
+fn before_formatted_table(page: &PageDom, dom: &Dom, wrapper: NodeId, host: NodeId) -> Option<Point> {
+    let mut previous = dom.prev_sibling(wrapper).ok()?;
+    while let Some(node) = previous {
+        previous = dom.prev_sibling(node).ok()?;
+        if !alignment::visible(page, dom, node) { continue; }
+        if editing::is_text(dom, node) {
+            if editing::len(dom, node) == 0 { continue; }
+            if editing::invisible_formatting_space(page, dom, host, node) { return None; }
+            return Some((node, editing::len(dom, node)));
+        }
+        if page.layout().computed_style_value(dom, node, "display") != "inline"
+            || local_html(dom, node, "br") || !editing::is_container(dom, node) { return None; }
+        previous = dom.last_child(node).ok()?;
+        if previous.is_none() { return Some((node, 0)); }
+    }
+    None
+}
+
 fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
     let (start, end) = editing::host_range(page, host);
     editing::apply_edit(page, host, "formatBlock", None, None, |page| {
@@ -2522,10 +2576,19 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
             }
             let whole_child = (start.0 == end.0 && end.1.checked_sub(start.1) == Some(1))
                 .then(|| dom.child_at(start.0, start.1).ok().flatten()).flatten();
-            if let Some(table) = whole_child.filter(|&n| editing::local(&dom, n) == "table") {
+            let table_contents = start.0 == end.0 && start.1 == 0 && end.1 > 0
+                && local_html(&dom, start.0, "table") && dom.child_count(start.0).ok() == Some(end.1);
+            let table = if table_contents && start.0 != host { Some(start.0) } else {
+                whole_child.filter(|&n| local_html(&dom, n, "table"))
+            };
+            if let Some(table) = table {
+                let Ok(Some(parent)) = dom.parent(table) else { return };
                 let Ok(wrapper) = dom.create_element(doc, tag) else { return };
-                if dom.insert_before(start.0, wrapper, Some(table)).is_err() || dom.append_child(wrapper, table).is_err() { return; }
-                Some(((wrapper, 0), (wrapper, 1)))
+                if dom.insert_before(parent, wrapper, Some(table)).is_err() || dom.append_child(wrapper, table).is_err() { return; }
+                let first = if table_contents { before_formatted_table(page, &dom, wrapper, host) } else { None }
+                    .unwrap_or((wrapper, 0));
+                let last = if editing::is_editable(&dom, first.0) { (wrapper, 1) } else { first };
+                Some((first, last))
             } else {
                 let lines = format_lines(page, &dom, host, start, end);
                 let mut group = None;
@@ -2590,7 +2653,13 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
             let p = editing::host_start(&page.dom.borrow(), host);
             (p, p)
         });
-        editing::set_selection(page, s, e);
+        if start != end && s == e && !editing::is_editable(&page.dom.borrow(), s.0) {
+            // Formatting normalizes a structural table range to forward,
+            // even when its visible endpoints coincide on the locked edge.
+            editing::set_adjusted_caret(page, s, false);
+        } else {
+            editing::set_selection(page, s, e);
+        }
     });
 }
 

@@ -1,0 +1,206 @@
+{
+  "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected \"p\" but got \"\""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected \"p\" but got \"\""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<table><tbody><tr><td><div>foo</div></td><td><div>bar</div></td><td><div>baz</div></td></tr></tbody></table>\" but got \"<d"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<table><tbody><tr><td><div>foo</div></td><td><div>bar</div></td><td><div>baz</div></td></tr></tbody></table>\" but got \"<d"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<table><tbody><tr><td><div>foo</div></td><td><div>bar</div></td><td><div>baz</div></td></tr></tbody></table>\" but got \"<d"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<table><tbody><tr><td><div>foo</div></td><td><div>bar</div></td><td><div>baz</div></td></tr></tbody></table>\" but got \"<d"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected \"p\" but got \"\""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected \"p\" but got \"\""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<table><tbody><tr><td><p>foo</p></td><td><p>bar</p></td><td><p>baz</p></td></tr></tbody></table>\" but got \"<p><table><tbo"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<table><tbody><tr><td><p>foo</p></td><td><p>bar</p></td><td><p>baz</p></td></tr></tbody></table>\" but got \"<p><table><tbo"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected \"p\" but got \"\""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<table><tbody><tr><td><p>foo</p></td><td><p>bar</p></td><td><p>baz</p></td></tr></tbody></table>\" but got \"<p><table><tbo"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<table><tbody><tr><td><p>foo</p></td><td><p>bar</p></td><td><p>baz</p></td></tr></tbody></table>\" but got \"<p><table><tbo"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected \"p\" but got \"\""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandValue(\"formatblock\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  }
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "suite": "probe",
+    "count": 90,
+    "changed": 1,
+    "lost": []
+  },
+  {
+    "suite": "edit",
+    "count": 28,
+    "changed": 4,
+    "lost": []
+  },
+  {
+    "suite": "extended",
+    "count": 48,
+    "changed": 4,
+    "lost": []
+  },
+  {
+    "suite": "backward",
+    "count": 48,
+    "changed": 4,
+    "lost": []
+  },
+  {
+    "suite": "wrapper",
+    "count": 24,
+    "changed": 0,
+    "lost": []
+  }
+]
