@@ -2014,6 +2014,7 @@ impl Browser {
                 header_csp: None,
                 refresh: None,
                 content_language: None,
+                reporting_endpoints: None,
                 referrer_policy: crate::loader::parent_referrer_policy(self, key),
                 origin_agent_cluster: false,
                 sent_referrer: None,

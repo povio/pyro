@@ -236,6 +236,9 @@ pub struct PageDom {
     pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
     pub(crate) mutations: crate::mutation_observer::BindingState,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
+    /// CSP violation reports of the document shown: its `Reporting-Endpoints` and the reports
+    /// it sent (`csp_report`).
+    pub(crate) csp_reports: RefCell<crate::csp_report::ReportState>,
     /// The browser context's permissions and clipboard.
     context_services: RefCell<Rc<crate::navigator_extras::ContextServices>>,
     /// `navigator.maxTouchPoints` (Emulation.setTouchEmulationEnabled).
@@ -965,6 +968,7 @@ impl PageDom {
             net: RefCell::new(None),
             cookie_observers: Default::default(),
             identity: RefCell::new(Default::default()),
+            csp_reports: Default::default(),
             context_services: Default::default(),
             max_touch_points: Cell::new(0),
             permission_watchers: RefCell::new(Vec::new()),

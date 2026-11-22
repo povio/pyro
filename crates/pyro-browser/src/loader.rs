@@ -172,6 +172,9 @@ pub struct Resource {
     /// A document's `Content-Language` response header, if any (its
     /// language when no element or pragma gives one).
     pub content_language: Option<String>,
+    /// A document's `Reporting-Endpoints` response header, if any (the
+    /// endpoints its CSP `report-to` names; `PageDom::set_reporting_endpoints`).
+    pub reporting_endpoints: Option<String>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// A document's response asked for an origin-keyed agent cluster
@@ -505,6 +508,7 @@ impl ResourceLoader for NetLoader {
                 header_csp: None,
                 refresh: None,
                 content_language: None,
+                reporting_endpoints: None,
                 referrer_policy: None,
                 origin_agent_cluster: false,
                 sent_referrer: document.then(|| {
@@ -587,6 +591,7 @@ impl ResourceLoader for NetLoader {
                     header_csp: None,
                     refresh: None,
                     content_language: None,
+                    reporting_endpoints: None,
                     referrer_policy: None,
                     origin_agent_cluster: false,
                     sent_referrer: None,
@@ -649,6 +654,13 @@ impl ResourceLoader for NetLoader {
                             .flatten(),
                         content_language: document
                             .then(|| h.headers.get(http::header::CONTENT_LANGUAGE)?.to_str().ok().map(str::to_owned))
+                            .flatten(),
+                        reporting_endpoints: document
+                            .then(|| {
+                                let values = h.headers.get_all("reporting-endpoints");
+                                let values: Vec<&str> = values.iter().filter_map(|v| v.to_str().ok()).collect();
+                                (!values.is_empty()).then(|| values.join(","))
+                            })
                             .flatten(),
                         referrer_policy: pyro_net::ReferrerPolicy::from_header(
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
@@ -949,6 +961,7 @@ impl ResourceLoader for StaticLoader {
                         header_csp: csp.clone(),
                         refresh: None,
                         content_language: None,
+                        reporting_endpoints: None,
                         referrer_policy,
                         origin_agent_cluster: false,
                         sent_referrer: sent_referrer.clone(),
@@ -1633,6 +1646,7 @@ impl Browser {
             header_csp: None,
             refresh: None,
             content_language: None,
+            reporting_endpoints: None,
             referrer_policy: None,
             origin_agent_cluster: false,
             sent_referrer: None,
@@ -1768,6 +1782,9 @@ impl Browser {
         if resource.content_language.is_some() {
             let _ = dom.borrow_mut().set_content_language(doc, resource.content_language.as_deref());
         }
+        // The document's Reporting API endpoints (CSP `report-to`); a document without the header
+        // has none, and the previous document's report state goes.
+        page_dom.set_reporting_endpoints(resource.reporting_endpoints.as_deref());
         let json_document = pyro_net::is_json_mime(&resource.mime);
         let mut parser = if json_document {
             DocumentParser::new_json(dom.clone(), doc, &resource.mime)
@@ -3646,6 +3663,7 @@ mod disposition_tests {
             header_csp: None,
             refresh: None,
             content_language: None,
+            reporting_endpoints: None,
             referrer_policy: None,
             origin_agent_cluster: false,
             sent_referrer: None,
