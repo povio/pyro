@@ -198,6 +198,10 @@ bitflags! {
         const POSITION_TRY_OPTIONS = 1 << 38;
         const POSITION_VISIBILITY_CHECK = 1 << 39;
         const ANCHOR_QUERIES = 1 << 40;
+        /// pyro: a `content-visibility: hidden` element whose contents a geometry query needs laid
+        /// out (`BaseDocument::force_hidden_contents`): they get boxes until the next frame, still
+        /// unpainted, unhit and not sizing it (its size containment stays).
+        const CV_HIDDEN_FORCED = 1 << 41;
     }
 }
 

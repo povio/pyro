@@ -807,11 +807,15 @@ impl Layout {
         let key = crate::snapshot::render_key(el);
         let b = source.element_box(key);
         // pyro: no box, or an empty one: perhaps in contents `content-visibility: auto` skips, which
-        // a query renders (CSS Contain 2 § 4.1, as Chromium): read again once rendered.
+        // a query renders (CSS Contain 2 § 4.1, as Chromium): read again once rendered. Then
+        // perhaps in contents `hidden` skips, which a query lays out (still unpainted).
+        let nonempty = |b: &Option<crate::geometry::ExternalBox>| b.as_ref().is_some_and(|b| b.width > 0.0 || b.height > 0.0);
         let b = match b {
-            Some(b) if b.width > 0.0 || b.height > 0.0 => Some(b),
-            b if source.force_content_visibility(key) => source.element_box(key).or(b),
-            b => b,
+            b if nonempty(&b) => b,
+            b => {
+                let b = if source.force_content_visibility(key) { source.element_box(key).or(b) } else { b };
+                if !nonempty(&b) && source.force_hidden_contents(key) { source.element_box(key).or(b) } else { b }
+            }
         };
         b.map(|b| LayoutBox::from_external(&b, 0))
     }

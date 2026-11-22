@@ -2808,6 +2808,15 @@ Covered by `an_rtl_span_in_an_ltr_line_contains_by_the_lines_direction` in
   size, layout, style and paint containment). Not for form controls (their contents are their own), non-atomic inline
   boxes or `display: contents` (containment does not apply). Top-layer descendants of a skipped subtree are not shown.
   WPT css-contain `content-visibility/*` (+38). `pyro-render/tests/content_visibility_hidden.rs`.
+- Round 7, `node/node.rs` (`NodeFlags::CV_HIDDEN_FORCED`), `resolve.rs` (`force_hidden_contents`,
+  `clear_hidden_forcing`, `clear_content_visibility_forcing`), `layout/construct.rs`: a geometry query on an element
+  in skipped `content-visibility: hidden` contents lays out the contents of every `hidden` ancestor (Chromium's
+  forced layout of a locked subtree; CSS Contain 2 § 4.1). Disjoint from `auto` forcing (`CV_FORCED`): the element
+  keeps its size containment (and remembered size), so nothing outside it moves; its contents are built until the
+  next frame or page state (`clear_content_visibility_forcing`, which a capture runs before its layout, so they are
+  never painted) or a hit test (`clear_hidden_forcing`). WPT css-contain `content-visibility-038`, `-088`, `-089`,
+  `-091`..`-093`, `-hidden-*`, `-img`, `-input-image`, `-forced-layout-client-rects`.
+  `pyro-render/tests/content_visibility_hidden.rs`.
 
 ## Selections over transformed text (WPT round 4, lane S1)
 

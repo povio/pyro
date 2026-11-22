@@ -2191,6 +2191,7 @@ impl Renderer {
     /// Identify an existing generated hit, only within the nominated DOM owner.
     pub fn generated_hit(&mut self, page: u64, owner: u64, x: f64, y: f64) -> Option<pyro_dom::geometry::GeneratedHit> {
         use pyro_dom::geometry::GeneratedHit::*;
+        self.unforce_hidden_contents(page);
         let mirror = self.mirrors.get_mut(&page)?;
         let owner = mirror.node(owner)?;
         let origin = mirror.doc.get_node(owner)?;
@@ -2487,6 +2488,37 @@ impl Renderer {
         true
     }
 
+    /// pyro: lays out the contents the `content-visibility: hidden` ancestors of the element keyed
+    /// `key` skip, in `page`'s persistent document, for a geometry query that needs its box
+    /// (`BaseDocument::force_hidden_contents`), with any `auto` ancestor inside them that skips
+    /// its own: one layout for both. Still not painted (a capture clears the forcing before it
+    /// lays out) nor hit (`Self::unforce_hidden_contents`). Whether any were skipped.
+    pub fn force_hidden_contents(&mut self, page: u64, key: u64) -> bool {
+        let Some(m) = self.mirrors.get_mut(&page) else { return false };
+        let Some(node) = m.node(key) else { return false };
+        if !m.doc.force_hidden_contents(node) {
+            return false;
+        }
+        m.doc.force_content_visibility(node);
+        m.doc.resolve(0.0);
+        self.geometry.remove(&page);
+        self.geometry.entry(page).or_default();
+        true
+    }
+
+    /// pyro: before a hit test of `page`: the `content-visibility: hidden` contents a geometry
+    /// query laid out are skipped again (`BaseDocument::clear_hidden_forcing`), so no hit finds
+    /// them. Nothing to do (no layout) when none were forced.
+    fn unforce_hidden_contents(&mut self, page: u64) {
+        let Some(m) = self.mirrors.get_mut(&page) else { return };
+        if !m.doc.clear_hidden_forcing() {
+            return;
+        }
+        m.doc.resolve(0.0);
+        self.geometry.remove(&page);
+        self.geometry.entry(page).or_default();
+    }
+
     pub fn element_pseudo_style(
         &self,
         page: u64,
@@ -2696,6 +2728,7 @@ impl Renderer {
     /// its last sync (`BaseDocument::ensure_hit_overflow`: a sync only marks
     /// them stale), for [`Self::hit_candidates`].
     pub fn ensure_hit_bounds(&mut self, page: u64) {
+        self.unforce_hidden_contents(page);
         if let Some(m) = self.mirrors.get_mut(&page) {
             m.doc.ensure_hit_overflow();
         }
@@ -2748,6 +2781,7 @@ impl Renderer {
     /// persistent document, topmost first (`document.elementsFromPoint`;
     /// the first is `elementFromPoint`'s).
     pub fn elements_from_point(&mut self, page: u64, x: f64, y: f64) -> Vec<u64> {
+        self.unforce_hidden_contents(page);
         let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
         let mut out = Vec::new();
         let mut cur = m.doc.element_from_point(x as f32, y as f32);

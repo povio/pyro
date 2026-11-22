@@ -818,7 +818,8 @@ fn collect_layout_children_with_wrap(
     // pyro: `content-visibility: hidden` skips the element's contents: no boxes are built for them,
     // so they are neither laid out nor painted (CSS Contain 2 § 4.1; Stylo adds the size
     // containment). Form controls build their own contents and keep them; an element containment
-    // does not apply to (an inline box, `display: contents`) is not affected.
+    // does not apply to (an inline box, `display: contents`) is not affected. A geometry query
+    // forces them to be built until the next frame (`NodeFlags::CV_HIDDEN_FORCED`).
     let skips_contents = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
         !matches!(el.name.local.as_ref(), "input" | "textarea" | "select")
     }) && doc.nodes[container_node_id].display_style().is_some_and(|display| {
@@ -831,9 +832,10 @@ fn collect_layout_children_with_wrap(
             && display.inside() != DisplayInside::Table
             && display.outside() != style::values::specified::box_::DisplayOutside::InternalTable
     }) && (doc.nodes[container_node_id].flags.contains(crate::node::NodeFlags::CV_SKIPPED)
-        || doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
-            style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
-        }));
+        || (!doc.nodes[container_node_id].flags.contains(crate::node::NodeFlags::CV_HIDDEN_FORCED)
+            && doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
+                style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
+            })));
     if skips_contents {
         return;
     }

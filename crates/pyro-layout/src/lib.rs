@@ -1031,6 +1031,12 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn force_hidden_contents(&self, key: u64) -> bool {
+        RENDERER.with(|r| {
+            r.try_borrow_mut().ok().and_then(|mut r| Some(r.as_mut()?.force_hidden_contents(self.page, key))).unwrap_or(false)
+        })
+    }
+
     fn element_box(&self, key: u64) -> Option<ExternalBox> {
         let t = profile::on().then(Instant::now);
         let b = self.element_box_inner(key);

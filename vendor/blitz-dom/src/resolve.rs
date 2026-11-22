@@ -928,20 +928,91 @@ impl BaseDocument {
     }
 
     /// pyro: whether a query forced some `content-visibility: auto` element to render
-    /// (`force_content_visibility`) since the last frame.
+    /// (`force_content_visibility`), or the contents of a `hidden` one to be laid out
+    /// (`force_hidden_contents`), since the last frame.
     pub fn has_content_visibility_forcing(&self) -> bool {
         !self.cv_forced.is_empty()
     }
 
     /// pyro: the elements queries forced to render are rendered only as relevance gives them now:
-    /// called at each frame (`update_content_visibility` determines them at its next layout).
+    /// called at each frame (`update_content_visibility` determines them at its next layout). The
+    /// contents of `hidden` elements forced for a query are skipped again.
     pub fn clear_content_visibility_forcing(&mut self) {
         use crate::node::NodeFlags;
         for id in std::mem::take(&mut self.cv_forced) {
             let Some(node) = self.nodes.get_mut(id) else { continue };
-            node.flags.remove(NodeFlags::CV_FORCED);
+            node.flags.remove(NodeFlags::CV_FORCED | NodeFlags::CV_HIDDEN_FORCED);
             node.insert_damage(ALL_DAMAGE);
         }
+    }
+
+    /// pyro: lays out the contents of the `content-visibility: hidden` ancestors of `node` (all of
+    /// them, nested ones too) for a geometry query that needs its box (`offsetTop`,
+    /// `getBoundingClientRect`, `getClientRects`, a resolved `getComputedStyle` width...): as
+    /// Chromium's forced layout of a locked subtree (CSS Contain 2 § 4.1: skipped contents are
+    /// laid out for an API that needs their layout). They are built until the next frame
+    /// (`clear_content_visibility_forcing`), or a hit test (`clear_hidden_forcing`); the element
+    /// keeps its size containment (its size, and what follows it, do not change), and its
+    /// contents are still neither painted nor hit (a paint clears the forcing before its layout).
+    /// Disjoint from `content-visibility: auto` forcing (`force_content_visibility`, which makes
+    /// an element relevant): only `CV_HIDDEN_FORCED`. Returns whether one was skipping them (the
+    /// caller resolves again).
+    pub fn force_hidden_contents(&mut self, node: NodeId) -> bool {
+        use crate::node::NodeFlags;
+        use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
+        let mut forced = false;
+        let mut at = self.nodes.get(node).and_then(|n| n.parent);
+        while let Some(id) = at {
+            let n = &self.nodes[id];
+            let parent = n.parent;
+            // (Only one whose contents construction skips: containment applies to it, as
+            // `layout::construct` tells; forcing another would lay out again for nothing.)
+            let hidden = n.is_element()
+                && !n.flags.contains(NodeFlags::CV_HIDDEN_FORCED)
+                && n.primary_styles().is_some_and(|s| {
+                    let display = s.get_box().display;
+                    s.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden
+                        && !display.is_contents()
+                        && !display.is_none()
+                        && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+                        && display.inside() != DisplayInside::Table
+                        && display.outside() != DisplayOutside::InternalTable
+                });
+            if hidden {
+                let n = &mut self.nodes[id];
+                n.flags.insert(NodeFlags::CV_HIDDEN_FORCED);
+                n.insert_damage(ALL_DAMAGE);
+                self.cv_forced.insert(id);
+                self.unskip_contents(id);
+                forced = true;
+            }
+            at = parent;
+        }
+        forced
+    }
+
+    /// pyro: the contents of `hidden` elements a geometry query forced (`force_hidden_contents`)
+    /// are skipped again before a hit test, which must not find them. Returns whether any were
+    /// (the caller resolves again). `content-visibility: auto` forcing is kept.
+    pub fn clear_hidden_forcing(&mut self) -> bool {
+        use crate::node::NodeFlags;
+        if self.cv_forced.is_empty() {
+            return false;
+        }
+        let mut cleared = false;
+        let nodes = &mut self.nodes;
+        self.cv_forced.retain(|&id| {
+            let Some(node) = nodes.get_mut(id) else { return false };
+            if !node.flags.contains(NodeFlags::CV_HIDDEN_FORCED) {
+                return true;
+            }
+            node.flags.remove(NodeFlags::CV_HIDDEN_FORCED);
+            node.insert_damage(ALL_DAMAGE);
+            cleared = true;
+            // (Kept while a query also forced it as a `content-visibility: auto` element.)
+            node.flags.contains(NodeFlags::CV_FORCED)
+        });
+        cleared
     }
 
     /// pyro: renders the contents of the `content-visibility: auto` ancestors of `node` that skip
