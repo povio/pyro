@@ -2317,6 +2317,9 @@ impl Browser {
             p.nav.set_page_dom(&page_dom);
             (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced), initial_same_origin)
         };
+        if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
+            host.store_ancestor_origins(page);
+        }
         let (old_dom, replaced) = old_dom;
         // A child frame's initial about:blank Window made reusable
         // (`FrameHost::reuse_realm`) becomes the new document's: it keeps its

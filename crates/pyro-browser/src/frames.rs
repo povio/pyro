@@ -868,6 +868,7 @@ impl FrameHost {
             dom.set_ready_state(dom.document(), "complete");
             nav.commit_document("about:blank", HistoryHandling::Replace, Some((self.dom.clone(), dom.document())));
             nav.set_page_dom(&dom);
+            self.store_ancestor_origins(key);
             {
                 let mut children = self.children.borrow_mut();
                 let child = children.get_mut(&id).ok_or(JsError::ContextDestroyed)?;
@@ -1270,6 +1271,38 @@ impl FrameHost {
             .find(|&&key| in_subtree(key))
             .or_else(|| named.iter().find(|&&key| self.same_origin(source, key)))
             .copied()
+    }
+    /// HTML "ancestor origins list" of the document frame `key` just committed, kept for its
+    /// `location.ancestorOrigins`: its parent document's origin, then the parent document's own
+    /// list. A container `referrerpolicy` that hides the parent ([`crate::nav::masks_ancestor_origin`],
+    /// as snapshotted when the navigation began, else the attribute now) makes it "null", and the
+    /// entries of the parent's list right after it that have its origin too. A top-level document's
+    /// list is empty.
+    pub(crate) fn store_ancestor_origins(&self, key: FrameKey) {
+        let Some(nav) = self.nav(key) else { return };
+        let Some(frame) = self.frame(key) else { return };
+        let Some(parent) = frame.parent.as_ref().and_then(|id| self.key(id)) else {
+            nav.set_ancestor_origins(Vec::new());
+            return;
+        };
+        let Some(embedder) = self.frame(parent).map(|f| f.origin) else { return };
+        let parent_list = self.nav(parent).map(|n| n.ancestor_origins()).unwrap_or_default();
+        let policy = match nav.committed_container_policy() {
+            Some(snapshot) => snapshot,
+            None => frame.owner.and_then(|owner| crate::loader::element_referrer_policy(&self.dom.borrow(), owner)),
+        };
+        let masked = policy.is_some_and(|p| crate::nav::masks_ancestor_origin(p, &embedder, &frame.origin));
+        let mut list = Vec::with_capacity(parent_list.len() + 1);
+        if masked {
+            list.push("null".to_owned());
+            let run = parent_list.iter().take_while(|o| **o == embedder).count();
+            list.extend(std::iter::repeat("null".to_owned()).take(run));
+            list.extend(parent_list.into_iter().skip(run));
+        } else {
+            list.push(embedder);
+            list.extend(parent_list);
+        }
+        nav.set_ancestor_origins(list);
     }
     pub(crate) fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)

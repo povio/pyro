@@ -230,6 +230,9 @@ pub struct PageNav {
     /// the container did not start), the attribute as it is now is used.
     container_policy_pending: Cell<Option<Option<pyro_net::ReferrerPolicy>>>,
     container_policy: Cell<Option<Option<pyro_net::ReferrerPolicy>>>,
+    /// The current document's ancestor origins list, made when it committed
+    /// (`FrameHost::store_ancestor_origins`): `location.ancestorOrigins`.
+    ancestor_origins: RefCell<Vec<String>>,
 }
 
 /// What the listeners of a Navigation API `navigate` event decided.
@@ -323,6 +326,7 @@ impl PageNav {
             traversal_from: Cell::new(None),
             container_policy_pending: Cell::new(None),
             container_policy: Cell::new(None),
+            ancestor_origins: RefCell::new(Vec::new()),
         });
         nav.joint.members.borrow_mut().push(Rc::downgrade(&nav));
         nav
@@ -432,6 +436,7 @@ impl PageNav {
         self.pending_frame_url.borrow_mut().take();
         self.traversal_from.set(None);
         self.container_policy.set(self.container_policy_pending.take());
+        self.ancestor_origins.borrow_mut().clear();
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let id = st.next_entry_id();
@@ -728,6 +733,21 @@ impl PageNav {
     /// pending loader). Not for the frame's initial about:blank document.
     pub(crate) fn leaving_document(&self) -> bool {
         self.queued_navigations.get() > 0 && !self.is_first_blank()
+    }
+
+    /// The container's referrer policy snapshotted for the current document
+    /// (`None`: its navigation was not one the container started).
+    pub(crate) fn committed_container_policy(&self) -> Option<Option<pyro_net::ReferrerPolicy>> {
+        self.container_policy.get()
+    }
+
+    /// The current document's ancestor origins list.
+    pub(crate) fn ancestor_origins(&self) -> Vec<String> {
+        self.ancestor_origins.borrow().clone()
+    }
+
+    pub(crate) fn set_ancestor_origins(&self, list: Vec<String>) {
+        *self.ancestor_origins.borrow_mut() = list;
     }
 
     /// Records the container's referrer policy as the frame's navigation
@@ -1558,41 +1578,25 @@ fn ancestor_origins<'s>(s: &Scope<'s>, nav: &Rc<PageNav>, this: pyro_js::Object<
     if let Some(list) = s.get_hidden(this, key)? {
         return Ok(list);
     }
-    let mut origins = Vec::new();
-    if active {
-        if let Some((host, mut frame)) = window.and_then(|w| Some((w.frame_host()?, w.frame_key()?))) {
-            while let Some(f) = host.frame(frame) {
-                let Some(parent) = f.parent.and_then(|id| host.key(&id)) else { break };
-                let Some(origin) = host.frame(parent).map(|f| f.origin) else { break };
-                // HTML "ancestor origins list": the container's referrer policy as the navigation
-                // of the level's document began masks its embedder's origin as "null" when it
-                // would send that document no referrer (the levels above keep their own masks).
-                let policy = match host.nav(frame).and_then(|n| n.container_policy.get()) {
-                    Some(snapshot) => snapshot,
-                    None => f.owner.and_then(|owner| crate::loader::element_referrer_policy(&host.dom.borrow(), owner)),
-                };
-                let masked = policy.is_some_and(|policy| masks_ancestor_origin(policy, &origin, &f.origin));
-                origins.push(s.string(if masked { "null" } else { &origin }));
-                frame = parent;
-            }
-        }
-    }
+    // The list the document got when it committed (`FrameHost::store_ancestor_origins`).
+    let stored = if active { nav.ancestor_origins.borrow().clone() } else { Vec::new() };
+    let origins: Vec<Value<'s>> = stored.iter().map(|o| s.string(o)).collect();
     let list = s.array(&origins)?.value();
     s.set_hidden(this, key, list)?;
     Ok(list)
 }
 
-/// Whether referrer policy `policy` of a frame's container sends the frame's
-/// document (of origin `origin`) no referrer from its embedder (of origin
-/// `embedder`): `location.ancestorOrigins` then lists the embedder as "null".
-fn masks_ancestor_origin(policy: pyro_net::ReferrerPolicy, embedder: &str, origin: &str) -> bool {
+/// Whether the `referrerpolicy` of a frame's container (as snapshotted when
+/// the navigation began) hides its embedder (of origin `embedder`) from the
+/// frame's document (of origin `origin`) in `location.ancestorOrigins`:
+/// `no-referrer` always, `same-origin` across origins (WPT
+/// location-ancestor-origins*). Other policies hide nothing.
+pub(crate) fn masks_ancestor_origin(policy: pyro_net::ReferrerPolicy, embedder: &str, origin: &str) -> bool {
     use pyro_net::ReferrerPolicy as P;
-    let downgrade = embedder.starts_with("https:") && !origin.starts_with("https:");
     match policy {
         P::NoReferrer => true,
         P::SameOrigin => origin == "null" || embedder != origin,
-        P::StrictOrigin | P::StrictOriginWhenCrossOrigin | P::NoReferrerWhenDowngrade => downgrade,
-        P::Origin | P::OriginWhenCrossOrigin | P::UnsafeUrl => false,
+        _ => false,
     }
 }
 
