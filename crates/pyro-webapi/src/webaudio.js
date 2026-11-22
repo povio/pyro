@@ -142,28 +142,43 @@
     }
     copyFromChannel(destination, channelNumber, bufferOffset = 0) {
       const b = bufOf(this);
-      if (!(destination instanceof F32)) throw new TypeErrorC("Failed to execute 'copyFromChannel' on 'AudioBuffer': parameter 1 is not of type 'Float32Array'.");
+      if (arguments.length < 2) throw new TypeErrorC(`Failed to execute 'copyFromChannel' on 'AudioBuffer': 2 arguments required, but only ${arguments.length} present.`);
+      checkCopyArray(destination, 'copyFromChannel');
       const c = ulong(channelNumber);
+      const offset = ulong(bufferOffset);
       if (c >= b.data.length) {
         throw new DE(`Failed to execute 'copyFromChannel' on 'AudioBuffer': The channelNumber provided (${c}) is outside the range [0, ${b.data.length - 1}].`, 'IndexSizeError');
       }
-      const offset = ulong(bufferOffset);
       const src = b.data[c];
-      if (offset < src.length) destination.set(src.subarray(offset, offset + min(destination.length, src.length - offset)));
+      copySamples(destination, 0, src, offset);
     }
     copyToChannel(source, channelNumber, bufferOffset = 0) {
       const b = bufOf(this);
-      if (!(source instanceof F32)) throw new TypeErrorC("Failed to execute 'copyToChannel' on 'AudioBuffer': parameter 1 is not of type 'Float32Array'.");
+      if (arguments.length < 2) throw new TypeErrorC(`Failed to execute 'copyToChannel' on 'AudioBuffer': 2 arguments required, but only ${arguments.length} present.`);
+      checkCopyArray(source, 'copyToChannel');
       const c = ulong(channelNumber);
+      const offset = ulong(bufferOffset);
       if (c >= b.data.length) {
         throw new DE(`Failed to execute 'copyToChannel' on 'AudioBuffer': The channelNumber provided (${c}) is outside the range [0, ${b.data.length - 1}].`, 'IndexSizeError');
       }
-      const offset = ulong(bufferOffset);
       const dst = b.data[c];
-      if (offset < dst.length) dst.set(source.subarray(0, min(source.length, dst.length - offset)), offset);
+      copySamples(dst, offset, source, 0);
     }
   }
   webidl(AudioBuffer, 'AudioBuffer');
+  function checkCopyArray(view, method) {
+    const prefix = `Failed to execute '${method}' on 'AudioBuffer': `;
+    if (apply(arrayKind, view, []) !== 'Float32Array') throw new TypeErrorC(prefix + "parameter 1 is not of type 'Float32Array'.");
+    const buffer = apply(arrayBufferOf, view, []);
+    try { apply(bufferLength, buffer, []); } catch { throw new TypeErrorC(prefix + 'The provided Float32Array value must not be shared.'); }
+    if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC(prefix + 'Expected a fixed-length ArrayBuffer.');
+  }
+  function copySamples(destination, destinationOffset, source, sourceOffset) {
+    const length = min(apply(arrayLength, source, []) - sourceOffset, apply(arrayLength, destination, []) - destinationOffset);
+    if (length <= 0) return;
+    const byteOffset = apply(arrayByteOffset, source, []) + sourceOffset * F32.BYTES_PER_ELEMENT;
+    apply(arraySet, destination, [new F32(apply(arrayBufferOf, source, []), byteOffset, length), destinationOffset]);
+  }
   function makeBuffer(rate, data) {
     made = { rate, length: data[0].length, data };
     return new AudioBuffer(secret);
@@ -1340,6 +1355,8 @@
   const arrayKind = getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag).get;
   const arrayBufferOf = getOwnPropertyDescriptor(typedArrayPrototype, 'buffer').get;
   const arrayLength = getOwnPropertyDescriptor(typedArrayPrototype, 'length').get;
+  const arrayByteOffset = getOwnPropertyDescriptor(typedArrayPrototype, 'byteOffset').get;
+  const arraySet = typedArrayPrototype.set;
   const bufferLength = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'byteLength').get;
   const resizable = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'resizable')?.get;
   const { sqrt, hypot, atan2 } = Math;
