@@ -1462,6 +1462,129 @@ fn restored_format_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) 
         .unwrap_or(point)
 }
 
+/// Drop the semantic weight while retaining attributes, including the ID
+/// and unrelated presentation, on a neutral replacement.
+fn neutralize_bold(dom: &mut Dom, element: NodeId, points: &mut [Point; 2]) -> Option<()> {
+    if dom.attributes(element).ok()?.is_empty() {
+        indentation::unwrap(dom, element, points)
+    } else {
+        indentation::rename(dom, element, "span", points).map(|_| ())
+    }
+}
+
+/// A stylesheet reset can contain a selected bold run between ordinary text
+/// siblings. When removing the enclosing semantic weight, apply it directly
+/// to the unselected runs and keep the selected text in its reset span.
+fn remove_reset_child_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let inner = dom.parent_element(text).ok()??;
+    let inner_style = DeclarationBlock::parse(dom.get_attribute(inner, "style").ok()?.unwrap_or(""));
+    let direct = editing::local(dom, inner) == "span" && dom.has_attribute(inner, "class").ok()?
+        && inner_style.value("font-weight") == "bold";
+    let reset = if direct { inner } else { dom.parent_element(inner).ok()?? };
+    let outer = dom.parent_element(reset).ok()??;
+    if outer == host || !matches!(editing::local(dom, outer).as_str(), "b" | "strong")
+        || editing::local(dom, reset) != "span" || !dom.has_attribute(reset, "class").ok()?
+        || dom.child_count(inner).ok()? != 1 { return None; }
+    if !direct {
+        let inner_tag = editing::local(dom, inner);
+        let simple = inner_tag == "b" && dom.attributes(inner).ok()?.is_empty()
+            || inner_tag == "span" && dom.attributes(inner).ok()?.len() == 1
+                && inner_style.names().len() == 1 && inner_style.value("font-weight") == "bold";
+        if !simple || FontToggle::Bold.active(&page.layout().computed_style_value(dom, reset, "font-weight")) { return None; }
+    }
+    let selected = if direct { text } else { inner };
+    let siblings: Vec<_> = dom.children(reset).ok()?.filter(|&n| n != selected).collect();
+    if !siblings.iter().all(|&n| editing::is_text(dom, n)) { return None; }
+    let outside: Vec<_> = dom.children(outer).ok()?.filter(|&n| n != reset).collect();
+    if !outside.iter().all(|&n| editing::is_text(dom, n) || !editing::is_editable(dom, n)) { return None; }
+    // Only the affected outer siblings lose inherited weight when B is
+    // neutralized. Preserve a locked element and its children in place.
+    let layout = page.layout();
+    let affected: Vec<_> = outside.into_iter().filter(|&n| {
+        let element = if editing::is_text(dom, n) { outer } else { n };
+        FontToggle::Bold.active(&layout.computed_style_value(dom, element, "font-weight"))
+    }).collect();
+    let doc = dom.node_document(text).ok()?;
+    let css = dom.document_data(doc).ok()?.style_with_css;
+    let mut points = [(text, 0), (text, editing::len(dom, text))];
+    neutralize_bold(dom, outer, &mut points)?;
+    if !direct { indentation::unwrap(dom, inner, &mut points)?; }
+    let mut retained = DeclarationBlock::parse(dom.get_attribute(reset, "style").ok()?.unwrap_or(""));
+    retained.remove("font-weight");
+    dom.set_attribute(reset, "style", &retained.css_text()).ok()?;
+    for sibling in siblings.into_iter().chain(affected) {
+        let parent = dom.parent_element(sibling).ok()??;
+        if editing::is_text(dom, sibling) {
+            let wrapper = dom.create_element(doc, if css { "span" } else { "b" }).ok()?;
+            if css { dom.set_attribute(wrapper, "style", "font-weight: bold;").ok()?; }
+            dom.insert_before(parent, wrapper, Some(sibling)).ok()?;
+            dom.append_child(wrapper, sibling).ok()?;
+        } else if !FontToggle::Bold.active(&layout.computed_style_value(dom, sibling, "font-weight")) {
+            let mut style = DeclarationBlock::parse(dom.get_attribute(sibling, "style").ok()?.unwrap_or(""));
+            style.set("font-weight", "bold", false)?;
+            dom.set_attribute(sibling, "style", &style.css_text()).ok()?;
+        }
+    }
+    Some(())
+}
+
+/// A semantic bold ancestor may be overridden closer to the selected text.
+/// Remove the selected inline reset, or apply bold below a stylesheet reset.
+fn prepare_overridden_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, css: bool) -> Option<bool> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let span = dom.parent_element(text).ok()??;
+    if span == host || !dom.element(span).is_ok_and(|e| e.is_html() && &**e.local_name() == "span") {
+        return None;
+    }
+    let layout = page.layout();
+    if FontToggle::Bold.active(&layout.computed_style_value(dom, span, "font-weight")) { return None; }
+    let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()?.unwrap_or(""));
+    // A class rule with higher priority can defeat a normal inline bold
+    // declaration. Reapplying the same declaration leaves that cascade intact.
+    if css && dom.child_count(span).ok()? == 1 && dom.has_attribute(span, "class").ok()?
+        && style.value("font-weight") == "bold" { return Some(true); }
+    ancestor_named(dom, span, host, &["b", "strong"])?;
+    match style.value("font-weight").as_str() {
+        "normal" => {
+            let parent = dom.parent_element(span).ok()??;
+            let middle = alignment::split_edge(dom, parent, text, false, &mut [])?;
+            alignment::split_edge(dom, parent, text, true, &mut [])?;
+            style.remove("font-weight");
+            if style.is_empty() {
+                dom.remove_attribute(middle, "style").ok()?;
+                if dom.attributes(middle).ok()?.is_empty() {
+                    indentation::unwrap(dom, middle, &mut [(text, 0), (text, editing::len(dom, text))])?;
+                }
+            } else {
+                dom.set_attribute(middle, "style", &style.css_text()).ok()?;
+            }
+            let current = dom.parent_element(text).ok()??;
+            Some(FontToggle::Bold.active(&layout.computed_style_value(dom, current, "font-weight")))
+        }
+        "" => {
+            // A reset from a rule still applies after removing the outer B.
+            // If the selected text fills both elements, keep the reset span
+            // and reapply bold inside it without retaining a redundant B.
+            if let Some(outer) = dom.parent_element(span).ok().flatten().filter(|&outer|
+                outer != host && matches!(editing::local(dom, outer).as_str(), "b" | "strong")
+                && dom.element(outer).is_ok_and(|el| el.is_html())
+                && dom.child_count(outer).ok() == Some(1) && dom.child_count(span).ok() == Some(1))
+            {
+                let mut points = [(text, 0), (text, editing::len(dom, text))];
+                neutralize_bold(dom, outer, &mut points)?;
+            }
+            if css && dom.child_count(span).ok()? == 1 {
+                style.set("font-weight", "bold", false)?;
+                dom.set_attribute(span, "style", &style.css_text()).ok()?;
+                return Some(true);
+            }
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
 /// Remove a conflicting numeric weight from the selected portion before
 /// applying bold. Other attributes and declarations stay on their span.
 fn prepare_numeric_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, use_css: bool) -> Option<bool> {
@@ -1708,7 +1831,10 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                     let Some(unit) = mixed_italic_unit(page, &mut dom, host, t, last_wrapper, texts.get(index + 1).copied()) else { continue };
                     unit
                 } else { t };
-                let prepared = if tag == "b" { prepare_numeric_bold(page, &mut dom, host, t, use_css) } else { None };
+                let prepared = if tag == "b" {
+                    prepare_overridden_bold(page, &mut dom, host, t, use_css)
+                        .or_else(|| prepare_numeric_bold(page, &mut dom, host, t, use_css))
+                } else { None };
                 let carried = prepared.unwrap_or_else(|| carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some()));
                 if carried && (!mixed_italic || dom.parent_element(t).ok().flatten().is_some_and(|el|
                     FontToggle::Italic.active(&page.layout().computed_style_value(&dom, el, "font-style")))) {
@@ -2099,6 +2225,11 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
             }
             for &t in &texts {
                 let Some(owner) = editing::plaintext_root(&dom, t).or_else(|| editing::editing_host(&dom, t)) else { continue };
+                if input_type == "formatBold" && texts.len() == 1
+                    && remove_reset_child_bold(page, &mut dom, owner, t).is_some()
+                { continue; }
+                let inner_bold = input_type == "formatBold" && dom.parent_element(t).ok().flatten()
+                    .is_some_and(|el| matches!(editing::local(&dom, el).as_str(), "b" | "strong"));
                 while let Some(mut a) = ancestor_format(&dom, t, owner, names, true) {
                     // Remove a completely selected carrier as a unit. Hoisting
                     // only its editable text would leave a formatting wrapper
@@ -2158,6 +2289,22 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                     }
                     if ancestor_format(&dom, t, owner, names, true) == Some(a) {
                         break;
+                    }
+                }
+                if inner_bold {
+                    // With the bold child gone, a fully selected normal-weight
+                    // wrapper is redundant when its parent already supplies 400.
+                    if let Some(span) = dom.parent_element(t).ok().flatten().filter(|&span| span != owner
+                        && editing::local(&dom, span) == "span" && dom.child_count(span).ok() == Some(1)
+                        && dom.attributes(span).is_ok_and(|attrs| attrs.len() == 1)
+                        && dom.get_attribute(span, "style").ok().flatten().is_some_and(|style| {
+                            let declarations = crate::css::parse_declarations(style);
+                            matches!(declarations.as_slice(), [d] if d.name == "font-weight" && d.value == "normal")
+                        })
+                        && dom.parent_element(span).ok().flatten().is_some_and(|outer|
+                            page.layout().computed_style_value(&dom, outer, "font-weight") == "400"))
+                    {
+                        indentation::unwrap(&mut dom, span, &mut [first, last]);
                     }
                 }
                 let font = match input_type {

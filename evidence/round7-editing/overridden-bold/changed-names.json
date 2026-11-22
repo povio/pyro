@@ -1,0 +1,119 @@
+[
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<b><span class=notbold>[foo]</span></b>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<b><span class=notbold>[foo]</span></b>\" queryCommandState(\"bold\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<b><span class=notbold>foo[bar]baz</span></b>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<b><span class=notbold>foo[bar]baz</span></b>\" queryCommandState(\"bold\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<b>foo<span style=\\\"font-weight: normal\\\">[bar]</span>baz</b>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<b>foo<span style=\\\"font-weight: normal\\\">[bar]</span>baz</b>\" queryCommandState(\"bold\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"foo<span style=\\\"font-weight: normal\\\"><b>{bar}</b></span>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<b><span class=notbold>[foo]</span></b>\" queryCommandState(\"bold\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<b><span class=notbold>foo[bar]baz</span></b>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<b><span class=notbold>foo[bar]baz</span></b>\" queryCommandState(\"bold\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<b>foo<span style=\\\"font-weight: normal\\\">[bar]</span>baz</b>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<b>foo<span style=\\\"font-weight: normal\\\">[bar]</span>baz</b>\" queryCommandState(\"bold\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"foo<span style=\\\"font-weight: normal\\\"><b>{bar}</b></span>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]
