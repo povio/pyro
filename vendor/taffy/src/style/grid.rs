@@ -1126,7 +1126,7 @@ impl MaxTrackSizingFunction {
     ) -> Option<f32> {
         match self.0.tag() {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
-            CompactLength::PERCENT_TAG => parent_size.map(|size| self.0.value() * size),
+            CompactLength::PERCENT_TAG => parent_size.map(|size| percentage_track_size(self.0.value(), size)),
             #[cfg(feature = "calc")]
             _ if self.0.is_plain_calc() => parent_size.map(|size| calc_resolver(self.0.calc_value(), size)),
             _ => None,
@@ -1496,7 +1496,7 @@ impl MinTrackSizingFunction {
     ) -> Option<f32> {
         match self.0.tag() {
             CompactLength::LENGTH_TAG => Some(self.0.value()),
-            CompactLength::PERCENT_TAG => parent_size.map(|size| self.0.value() * size),
+            CompactLength::PERCENT_TAG => parent_size.map(|size| percentage_track_size(self.0.value(), size)),
             #[cfg(feature = "calc")]
             _ if self.0.is_plain_calc() => parent_size.map(|size| calc_resolver(self.0.calc_value(), size)),
             _ => None,
@@ -2009,6 +2009,18 @@ mod expand_tests {
     use super::*;
 
     #[test]
+    fn percentage_tracks_resolve_to_whole_layout_units() {
+        // 0.3 * 800.0 in f32 is 240.00002; Chromium floors it to a layout unit, 240px
+        let max = MaxTrackSizingFunction::percent(0.3);
+        assert_eq!(max.definite_value(Some(800.0), |_, _| 0.0), Some(240.0));
+        let min = MinTrackSizingFunction::percent(0.3);
+        assert_eq!(min.definite_value(Some(800.0), |_, _| 0.0), Some(240.0));
+        // A third of 800px floors to 1/64 px: 266.65625
+        assert_eq!(max.definite_value(None, |_, _| 0.0), None);
+        assert_eq!(MaxTrackSizingFunction::percent(1.0 / 3.0).definite_value(Some(800.0), |_, _| 0.0), Some(266.65625));
+    }
+
+    #[test]
     fn max_track_sizing_function_round_trips() {
         let cases = [
             MaxTrackSizingFunction::length(12.0),
@@ -2079,5 +2091,20 @@ mod expand_tests {
             MaxTrackSizingFunction::calc(handle)
         );
         assert_eq!(MinTrackSizingFunction::calc(handle).expand(), ExpandedMinTrackSizingFunction::Calc(handle));
+    }
+}
+
+/// pyro: a percentage track size resolved against a definite size, floored to a Blink layout unit
+/// (1/64 px) as Chromium's `MinimumValueForLength` does (`LayoutUnit::FromFloatFloor`). The f32 product
+/// alone carries rounding noise: 30% of 800px is 240.00002px, which `getComputedStyle` would report
+/// (WPT css-grid parsing/grid-columns-rows-get-set-multiple).
+#[inline(always)]
+fn percentage_track_size(fraction: f32, size: f32) -> f32 {
+    let product = fraction * size;
+    let floored = (product * 64.0).floor() / 64.0;
+    if floored.is_finite() {
+        floored
+    } else {
+        product
     }
 }
