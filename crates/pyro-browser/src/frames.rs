@@ -2226,6 +2226,18 @@ impl Browser {
                 // The container's `referrerpolicy`, else its document's policy (the request's client).
                 let referrer_policy =
                     crate::loader::container_referrer_policy(&host.dom.borrow(), owner, parent.page_dom.as_deref());
+                // HTML "navigate an iframe or frame": "replace" while the frame's document is
+                // not completely loaded (its `load` and `pageshow` handlers still run, after
+                // the frame counts as loaded), else "auto", a push (which leaving the initial
+                // about:blank document still makes a replace). An `<object>` or `<embed>`
+                // always replaces.
+                let completely_loaded =
+                    frame.loaded && frame.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded());
+                let handling = if completely_loaded && !host.dom.borrow().is_document_object(owner) {
+                    HistoryHandling::Push
+                } else {
+                    HistoryHandling::Replace
+                };
                 self.navigate_frame_with_handling(
                     key,
                     NavigateOpts {
@@ -2236,18 +2248,7 @@ impl Browser {
                         referrer: parent.navigation_referrer(),
                         referrer_policy,
                     },
-                    // HTML "navigate an iframe or frame": "replace" while the frame's document is
-                    // not completely loaded (its `load` and `pageshow` handlers still run, after
-                    // the frame counts as loaded), else "auto", a push (which leaving the initial
-                    // about:blank document still makes a replace). An `<object>` or `<embed>`
-                    // always replaces.
-                    let completely_loaded =
-                        frame.loaded && frame.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded());
-                    if completely_loaded && !host.dom.borrow().is_document_object(owner) {
-                        HistoryHandling::Push
-                    } else {
-                        HistoryHandling::Replace
-                    },
+                    handling,
                 )
                 .map(|_| ())
             }
