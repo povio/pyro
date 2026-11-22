@@ -2957,3 +2957,11 @@ Chrome (and pyro-dom's `lang_range_matches`). WPT css/selectors/selectors-4 `lan
 `src/node/element.rs` (`ElementData::new`), `src/mutator.rs` (`set_attribute`, `clear_attribute`): only a
 `class` attribute in no namespace gives the element's classes, as `id` already did; an XHTML-namespaced
 `xhtml:class` in an XML document does not. WPT css/selectors/old-tests `css3-modsel-171`.
+
+## Quirks-mode selector matching
+
+`src/document.rs` (`BaseDocument::new`), `src/stylo.rs` (`TDocument::quirks_mode`, the `:has()` invalidators): a
+document made with `DocumentConfig::quirks_mode` gives its `Stylist` `QuirksMode::Quirks`, so ID and class
+selectors match ASCII case-insensitively there, as in every browser (HTML "case-sensitivity of selectors"). Its
+author sheets already parsed in quirks mode (`BaseDocument::sheet_quirks_mode`); style attributes and CSSOM edits
+still parse in no-quirks mode. WPT css/selectors/invalidation `quirks-mode-stylesheet-dynamic-add-001`.

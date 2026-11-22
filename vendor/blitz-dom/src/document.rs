@@ -895,7 +895,10 @@ impl BaseDocument {
             .unwrap_or_default();
         let fragment_document = config.document_url.and_then(|text| DocumentUrl::from_str(&text).ok());
         device.set_document_url(fragment_document.as_ref().unwrap_or(&base_url).inline_url_data().clone());
-        let stylist = Stylist::new(device, QuirksMode::NoQuirks);
+        // pyro: a quirks-mode document matches ID and class selectors ASCII case-insensitively
+        // (HTML "case-sensitivity of selectors"; WPT css/selectors/invalidation
+        // `quirks-mode-stylesheet-dynamic-add-001`).
+        let stylist = Stylist::new(device, if nodes.quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks });
         nodes.base_url = without_fragment(base_url.as_str()).to_owned();
 
         let net_provider = config
