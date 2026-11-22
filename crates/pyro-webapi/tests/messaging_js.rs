@@ -321,9 +321,18 @@ fn audio_data_wire_message_preserves_pcm_identity_and_checks_recipient_and_stora
     let options = s.eval("({transfer:[sample]})", None, 1).unwrap();
     let wire = pyro_webapi::serialize_message(&s, value, options).unwrap();
     assert_eq!(sender.eval("sample.numberOfFrames"), "0");
+    // A resource can appear only in the transfer list. The destination still
+    // deserializes its transfer record and the queue must count its PCM bytes.
+    let list = s.eval(r#"globalThis.extra = new AudioData({format:'u8', sampleRate:8000,
+        numberOfFrames:1024, numberOfChannels:1, timestamp:0, data:new Uint8Array(1024)}); [extra]"#, None, 1).unwrap();
+    let unused = pyro_webapi::serialize_message(&s, s.number(1.), list).unwrap();
+    assert!(unused.size() >= 1024);
+    assert_eq!(sender.eval("extra.numberOfFrames"), "0");
     let rs = other.realm.scope().unwrap();
-    let rejected = pyro_webapi::deserialize_message(&rs, &wire).err().expect("different agent cluster");
-    assert_eq!(rejected.to_value(&rs).as_object().unwrap().get_atom("name").unwrap().to_string().unwrap(), "DataCloneError");
+    for message in [&wire, &unused] {
+        let rejected = pyro_webapi::deserialize_message(&rs, message).err().expect("different agent cluster");
+        assert_eq!(rejected.to_value(&rs).as_object().unwrap().get_atom("name").unwrap().to_string().unwrap(), "DataCloneError");
+    }
     let rs = same.realm.scope().unwrap();
     let received = pyro_webapi::deserialize_message(&rs, &wire).unwrap();
     rs.global().set_atom("receivedSample", received).unwrap();
