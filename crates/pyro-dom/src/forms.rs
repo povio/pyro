@@ -340,7 +340,8 @@ fn sanitize(ty: InputType, v: &str) -> String {
     let keep_if = |ok: bool| if ok { v.to_owned() } else { String::new() };
     match ty {
         Text | Search | Tel | Password => strip_newlines(v).into_owned(),
-        Url | Email => strip_newlines(v).trim_matches(|c: char| c.is_ascii_whitespace()).to_owned(),
+        Url => strip_newlines(v).trim_matches(|c: char| c.is_ascii_whitespace()).to_owned(),
+        Email => sanitize_email(v, false),
         Number => keep_if(parse_float(v).is_some()),
         Date => keep_if(datetime::parse_date(v).is_some()),
         Month => keep_if(datetime::parse_month(v).is_some()),
@@ -352,6 +353,29 @@ fn sanitize(ty: InputType, v: &str) -> String {
         }
         Color => crate::color_well::sanitize(v, false, false),
         _ => v.to_owned(),
+    }
+}
+
+/// The email state's value sanitization, as Chrome's: one address has its
+/// newlines removed and its ASCII whitespace trimmed; with `multiple` each
+/// comma-separated address is trimmed. A non-ASCII domain is converted to
+/// ASCII (IDNA), kept as it is when that fails.
+fn sanitize_email(v: &str, multiple: bool) -> String {
+    let one = |a: &str| email_to_ascii(a.trim_matches(|c: char| c.is_ascii_whitespace()));
+    if multiple {
+        v.split(',').map(one).collect::<Vec<_>>().join(",")
+    } else {
+        one(&*strip_newlines(v))
+    }
+}
+
+fn email_to_ascii(a: &str) -> String {
+    match a.split_once('@') {
+        Some((local, domain)) if !domain.is_ascii() => match url::Host::parse(domain) {
+            Ok(url::Host::Domain(d)) => format!("{local}@{d}"),
+            _ => a.to_owned(),
+        },
+        _ => a.to_owned(),
     }
 }
 
@@ -636,7 +660,7 @@ impl Dom {
         let Some(stored) = self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.value.clone()) else {
             return;
         };
-        let sanitized = sanitize(new, &stored);
+        let sanitized = self.sanitize_for(i, new, &stored);
         if sanitized != stored {
             // A changed value moves the cursor to the end, direction "none".
             let end = utf16_len(&sanitized);
@@ -878,25 +902,56 @@ impl Dom {
         }
     }
 
-    /// After attribute `local` of `i` changed from `old`: a radio joins a
-    /// group when its type becomes radio or its name or form owner changes,
-    /// and a `checked` attribute added while the checkedness is not dirty
-    /// checks it.
-    pub(crate) fn radio_after_attr(&mut self, i: u32, local: &str, old: Option<&str>) {
+    /// The value sanitization of `i`'s state `ty` (email depends on
+    /// `multiple`).
+    fn sanitize_for(&self, i: u32, ty: InputType, v: &str) -> String {
+        if ty == InputType::Email {
+            let multiple = self.n(i).element().is_some_and(|e| e.attr_local(&local_name!("multiple")).is_some());
+            return sanitize_email(v, multiple);
+        }
+        sanitize(ty, v)
+    }
+
+    /// After attribute `local` of input `i` changed from `old`: a radio
+    /// joins a group when its type becomes radio or its name or form owner
+    /// changes, and a `checked` attribute added while the checkedness is not
+    /// dirty checks it; an email input's `multiple` sanitizes its value again.
+    pub(crate) fn input_after_attr(&mut self, i: u32, local: &str, old: Option<&str>) {
         if !self.is_input(i) {
+            return;
+        }
+        if local == "multiple" {
+            self.email_multiple_changed(i);
             return;
         }
         let join = match local {
             "type" => InputType::parse(old) != InputType::Radio,
             "name" | "form" => true,
             "checked" => {
-                old.is_none()
-                    && !self.n(i).element().and_then(|e| e.control.as_ref()).is_some_and(|c| c.dirty_checked)
+                old.is_none() && !self.n(i).element().and_then(|e| e.control.as_ref()).is_some_and(|c| c.dirty_checked)
             }
             _ => false,
         };
         if join {
             self.radio_joined_group(i);
+        }
+    }
+
+    fn email_multiple_changed(&mut self, i: u32) {
+        if self.input_type_idx(i) != InputType::Email {
+            return;
+        }
+        let Some(stored) = self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.value.clone()) else {
+            return;
+        };
+        let sanitized = self.sanitize_for(i, InputType::Email, &stored);
+        if sanitized != stored {
+            let end = utf16_len(&sanitized);
+            let id = self.id_of(i);
+            let Ok(c) = self.control_state_mut(id) else { return };
+            c.value = Some(sanitized);
+            c.selection = (end, end);
+            c.selection_set = true;
         }
     }
 
@@ -1452,6 +1507,9 @@ impl Dom {
                         // what the user typed (a number input's bad input)
                         // or what an earlier type allowed, and range
                         // depends on min/max/step: sanitized on read.
+                        // What the user typed into an email or URL field
+                        // keeps its spaces: sanitized on read.
+                        Some(v) if matches!(ty, InputType::Email | InputType::Url) => self.sanitize_for(i, ty, v),
                         Some(v) if ty.has_length_limits() => v.clone(),
                         Some(v) if ty == InputType::Range => self.range_value(i, v),
                         Some(v) if ty == InputType::Color => self.color_value(i, v),
@@ -1462,7 +1520,7 @@ impl Dom {
                         None if ty == InputType::Color => {
                             self.color_value(i, e.attr_local(&local_name!("value")).unwrap_or(""))
                         }
-                        None => sanitize(ty, e.attr_local(&local_name!("value")).unwrap_or("")),
+                        None => self.sanitize_for(i, ty, e.attr_local(&local_name!("value")).unwrap_or("")),
                     },
                     ValueMode::Default => e.attr_local(&local_name!("value")).unwrap_or("").to_owned(),
                     ValueMode::DefaultOn => e.attr_local(&local_name!("value")).unwrap_or("on").to_owned(),
@@ -1498,9 +1556,13 @@ impl Dom {
                         let v = match ty {
                             InputType::Range => self.range_value(i, v),
                             InputType::Color => self.color_value(i, v),
-                            _ => sanitize(ty, v),
+                            _ => self.sanitize_for(i, ty, v),
                         };
-                        let changed = self.value(id)? != v;
+                        // An email or URL field can show unsanitized text
+                        // whose value equals `v`: that text changes too.
+                        let shown =
+                            self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.value.as_deref());
+                        let changed = shown.is_some_and(|s| s != v) || self.value(id)? != v;
                         if changed { self.replace_all_value_ranges(i); }
                         let end = utf16_len(&v);
                         let c = self.control_state_mut(id)?;

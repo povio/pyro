@@ -204,7 +204,7 @@ impl Dom {
             self.selectedcontent_after_attr(i, &name.local);
         }
         if self.input_seen && name.ns == markup5ever::ns!() {
-            self.radio_after_attr(i, &name.local, old);
+            self.input_after_attr(i, &name.local, old);
         }
     }
 
