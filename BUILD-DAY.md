@@ -156,6 +156,7 @@ Build the JSC archive through patch **0041**:
 - c0d4f513b: a popup's window.opener is now the window of the frame that opened it (not the top window) — check Playwright popup/opener flows opened from iframes.
 - 1dce34479: <link rel=compression-dictionary> now fetches; image preloads use imagesrcset and the preload scanner skips such links — check preload behaviour on real sites.
 - 83e7fe8fe: noscript/template now appear in the render tree (display:none) — structural selectors (:nth-child, +, ~) count them in rendering (spec/Chrome); check reftests that relied on the old omission; render_html.rs expectations updated.
+- 8901cc5b4 regression guards (Studio 2026-11-23: none expected to flip, do not credit): html/semantics/embedded-content/the-iframe-element/sandbox-inherit-to-blank-document-unsandboxed.html (keep its 1 passing subtest; still needs MacBook CSP-sandbox-opaque-at-commit), html/browsers/origin/inheritance/about-blank-iframe.html and about-srcdoc.html (must stay unchanged; commit touches the initial about:blank/srcdoc commit path).
 
 Additional watchlist notes:
 - 2026-11-22 coordinator: history navigation rate limit risk removed (cc806a11f adds an off switch used by the Playwright drop-in); R-HTML-25 now 7 (recorded on the row).
