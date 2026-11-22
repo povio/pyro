@@ -25,6 +25,8 @@ pub struct ScriptInfo {
     pub src: Option<String>,
     pub async_: bool,
     pub defer: bool,
+    /// A classic script that is never run once prepared ("already started", no events): it
+    /// has `nomodule`, or `event` and `for` attributes other than window's `onload`.
     pub nomodule: bool,
     pub parser_inserted: bool,
     pub already_started: bool,
@@ -557,7 +559,7 @@ impl Dom {
             src: src.map(str::to_owned),
             async_: !svg && e.attr_local(&local_name!("async")).is_some(),
             defer: !svg && e.attr_local(&local_name!("defer")).is_some(),
-            nomodule: !svg && e.attr_local(&local_name!("nomodule")).is_some(),
+            nomodule: !svg && (e.attr_local(&local_name!("nomodule")).is_some() || !for_window_onload(e)),
             parser_inserted: e.flags & element_flags::PARSER_INSERTED != 0,
             already_started: e.flags & element_flags::SCRIPT_ALREADY_STARTED != 0,
             inline_text,
@@ -597,6 +599,19 @@ impl Dom {
     }
 }
 
+/// HTML "prepare the script element": a classic script with both `event` and `for`
+/// attributes runs only for `for` "window" and `event` "onload" or "onload()" (ASCII
+/// whitespace stripped, ASCII case-insensitive).
+fn for_window_onload(e: &crate::node::ElementData) -> bool {
+    let (Some(event), Some(for_)) = (e.attr("event"), e.attr("for")) else {
+        return true;
+    };
+    let trim = |v: &str| v.trim_matches(|c: char| c.is_ascii_whitespace()).to_owned();
+    let (event, for_) = (trim(event), trim(for_));
+    for_.eq_ignore_ascii_case("window")
+        && (event.eq_ignore_ascii_case("onload") || event.eq_ignore_ascii_case("onload()"))
+}
+
 #[cfg(test)]
 mod language_attribute_tests {
     use std::cell::RefCell;
@@ -620,5 +635,28 @@ mod language_attribute_tests {
         let kind = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().kind;
         assert_eq!(kind("h"), ScriptKind::Data);
         assert_eq!(kind("s"), ScriptKind::Classic);
+    }
+
+    /// `event` + `for` other than window's onload: never run, like `nomodule`
+    /// (html/semantics/scripting-1/the-script-element/execution-timing/149.html).
+    #[test]
+    fn event_and_for_other_than_window_onload_never_run() {
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(
+            &dom_ref,
+            "http://test/",
+            "<!doctype html><script id=a for=window event='onload()'></script>\
+             <script id=b for=' WINdow\t' event='ONload\n'></script>\
+             <script id=c for=window event=load></script>\
+             <script id=d for=window event=onpageshow></script>\
+             <script id=e for=document event=onload></script>\
+             <script id=f event=load></script><script id=g for=document></script>",
+        );
+        let dom = dom_ref.borrow();
+        let skipped = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().nomodule;
+        assert!(!skipped("a") && !skipped("b"));
+        assert!(skipped("c") && skipped("d") && skipped("e"));
+        // Only both attributes together are checked.
+        assert!(!skipped("f") && !skipped("g"));
     }
 }
