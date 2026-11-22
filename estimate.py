@@ -67,7 +67,8 @@ def main(ledger,out):
   for r in L:
     if r['kind']!='brief' and r['id'] not in SEL: continue
     i=r['id']
-    if i=='Q01': pages=set(q01)&strict
+    if isinstance(r.get('page_list'),list): pages=set(r['page_list'])&strict
+    elif i=='Q01': pages=set(q01)&strict
     elif SEL.get(i)==['__COUNT2__']: pages={'mathml/relations/css-styling/<page-1 of Q09 mspace>','mathml/relations/css-styling/<page-2 of Q09 mspace>'}
     elif i in SEL: pages={u for u in strict if any(re.search(p,u) for p in SEL[i])}
     else: pages=None  # SC/S rows: CSS corpus, not in this census
@@ -83,11 +84,13 @@ def main(ledger,out):
         try: css+=int(str(sp).split()[0])
         except: pass
       else: u|=pg
-    adj=0
+    adj=0; unl=0
+    for i,(st,pg,r) in per.items():
+      if st in states and pg is None and isinstance(r.get('est_pages_owner'),int) and not i.startswith(('SC-','S0')): unl+=r['est_pages_owner']
     for i,(st,pg,r) in per.items():
       if st in states and pg is not None and isinstance(r.get('est_pages_owner'),int) and r['est_pages_owner']<len(pg): adj+=len(pg)-r['est_pages_owner']
     for p in u: byd['/'.join(p.split('/')[:2]) if p.split('/')[0] in('html','fetch','svg','dom') else p.split('/')[0]]+=1
-    res['tiers'][t]={'distinct_census_pages':len(u)-adj,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'by_dir':dict(byd.most_common())}
+    res['tiers'][t]={'distinct_census_pages':len(u)-adj+unl,'owner_reported_unlisted':unl,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'by_dir':dict(byd.most_common())}
   res['per_brief']={i:{'state':st,'pages':(len(pg) if pg is not None else None),'tentative':(sum(1 for x in pg if 'tentative' in x) if pg is not None else None)} for i,(st,pg,r) in per.items()}
   cum=res['tiers']['implemented']['distinct_census_pages']+res['tiers']['implemented']['studio_css_reported_pages_not_deduped']
   res['implemented_total_estimate']=cum
