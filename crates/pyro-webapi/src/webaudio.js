@@ -1956,12 +1956,12 @@
     return c;
   }
   class BaseAudioContext extends ET {
-    constructor(token, rate, channels, offline) {
+    constructor(token, rate, channels, offline, quantum = QUANTUM) {
       if (token !== secret) throw illegal();
       super();
       const self = this;
       const c = {
-        self, rate, offline, state: 'suspended', frames: 0, sources: new Set(), endedQueue: [],
+        self, rate, offline, quantum, state: 'suspended', frames: 0, sources: new Set(), endedQueue: [],
         time() { return c.currentFrames() / c.rate; },
         currentFrames() { return c.frames; },
         scheduleEnds() {},
@@ -1970,6 +1970,7 @@
       c.destination = new AudioDestinationNode(secret, this, channels, offline);
     }
     get sampleRate() { return ctxOf(this).rate; }
+    get renderQuantumSize() { return ctxOf(this).quantum; }
     get currentTime() { return ctxOf(this).time(); }
     get destination() { return ctxOf(this).destination; }
     get listener() { return contextListener(this); }
@@ -2074,18 +2075,21 @@
   class AudioContext extends BaseAudioContext {
     constructor(options) {
       const o = contextOptions(options, 'AudioContext');
-      let rate = 48000;
-      if (o.sampleRate !== undefined) {
-        rate = finite(o.sampleRate, 'construct', 'AudioContext');
-        if (!(rate >= MIN_RATE && rate <= MAX_RATE)) {
-          throw new DE(`Failed to construct 'AudioContext': The hardware sample rate provided (${rate}) is outside the range [${MIN_RATE}, ${MAX_RATE}].`, 'NotSupportedError');
-        }
+      const latency = o.latencyHint;
+      if (typeof latency === 'string' && !['interactive', 'balanced', 'playback'].includes(latency)) {
+        throw new TypeErrorC(`Failed to construct 'AudioContext': Failed to read the 'latencyHint' property from 'AudioContextOptions': The provided value '${latency}' is not a valid enum value of type AudioContextLatencyCategory.`);
       }
-      if (o.latencyHint !== undefined && typeof o.latencyHint === 'string'
-        && !['interactive', 'balanced', 'playback'].includes(o.latencyHint)) {
-        throw new TypeErrorC(`Failed to construct 'AudioContext': Failed to read the 'latencyHint' property from 'AudioContextOptions': The provided value '${o.latencyHint}' is not a valid enum value of type AudioContextLatencyCategory.`);
+      const hint = o.renderSizeHint;
+      let quantum = QUANTUM;
+      if (typeof hint === 'number') quantum = ulong(hint);
+      else if (hint !== undefined && !['default', 'hardware'].includes(`${hint}`)) throw new TypeErrorC('Invalid AudioContextRenderSizeCategory.');
+      const sampleRate = o.sampleRate;
+      const rate = sampleRate === undefined ? 48000 : fround(finite(sampleRate, 'construct', 'AudioContext'));
+      if (!(rate >= MIN_RATE && rate <= MAX_RATE)) {
+        throw new DE(`Failed to construct 'AudioContext': The hardware sample rate provided (${rate}) is outside the range [${MIN_RATE}, ${MAX_RATE}].`, 'NotSupportedError');
       }
-      super(secret, rate, 2, false);
+      if (!quantum || quantum > 6 * rate) throw new DE('Render quantum size outside supported range.', 'NotSupportedError');
+      super(secret, rate, 2, false, quantum);
       const c = ctxOf(this);
       c.started = 0; // document time the clock (re)started at
       c.timer = undefined;
@@ -2093,7 +2097,7 @@
       c.currentFrames = () => {
         if (c.state !== 'running') return c.frames;
         const elapsed = (now() - c.started) / 1000 * c.rate;
-        return c.frames + floor(elapsed / QUANTUM) * QUANTUM;
+        return c.frames + floor(elapsed / quantum) * quantum;
       };
       c.run = () => {
         if (c.state === 'running' || c.state === 'closed') return;
@@ -2119,12 +2123,19 @@
         }
         if (c.endedQueue.length) flushEnded(c);
         // Not a page timer: a playing source does not keep the page busy.
-        if (next !== Infinity) c.timer = timer(max(0, (next - c.time()) * 1000) + 1, () => { c.timer = undefined; c.scheduleEnds(); });
+        if (next !== Infinity) {
+          const endFrame = ceil(next * rate / quantum) * quantum;
+          const delay = (endFrame - c.frames) * 1000 / rate - (now() - c.started);
+          c.timer = timer(max(0, delay) + 1, () => { c.timer = undefined; c.scheduleEnds(); });
+        }
       };
       // Chrome's autoplay policy: a context made after a user gesture runs.
       if (activated()) setTimer(() => c.run(), 0);
     }
-    get baseLatency() { ctxOf(this); return 0.01; }
+    get baseLatency() {
+      const c = ctxOf(this);
+      return max(QUANTUM, ceil(256 * c.rate / 48000), c.quantum) / c.rate;
+    }
     get outputLatency() { ctxOf(this); return 0; }
     getOutputTimestamp() {
       const c = ctxOf(this);
