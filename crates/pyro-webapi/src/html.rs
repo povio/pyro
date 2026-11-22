@@ -1754,8 +1754,10 @@ impl JsClass for HtmlElement {
                             value = "false";
                             break;
                         }
-                        Some(v) if v.is_empty() || v.eq_ignore_ascii_case("true") => break,
-                        _ => el = dom.parent_element(e).js()?,
+                        // "true", "" and an invalid value are the true state (Chromium); only a
+                        // missing attribute inherits (WPT writingsuggestions "... to an invalid value").
+                        Some(_) => break,
+                        None => el = dom.parent_element(e).js()?,
                     }
                 }
                 Ok(s.string(value))
