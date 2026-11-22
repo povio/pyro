@@ -25,9 +25,13 @@
 //!   size. SVG takes its size from numeric `width`/`height` on the root.
 //! - An empty `src` fires `error`; removing `src` clears the image. The
 //!   `<img>`'s own `srcset` (with `sizes`) selects the candidate for the
-//!   device pixel ratio (`pyro_dom::picture`). Not modelled:
-//!   `loading="lazy"` deferral (lazy images load eagerly), re-resolving a
+//!   device pixel ratio (`pyro_dom::picture`). Not modelled: re-resolving a
 //!   loaded `src` when a `<base>` is inserted later.
+//! - `loading="lazy"` (scripting enabled): the source is selected, the fetch
+//!   deferred until the window `load` event has fired and the image
+//!   intersects the viewport (or a scroll container) expanded by the lazy
+//!   load margin (`pyro_webapi::intersection_observer::lazy_load_intersects`),
+//!   so a lazy image never delays `load`. Switching to eager fetches at once.
 //! - An `<img>` child of a `<picture>` loads the first preceding `<source>`
 //!   whose `media` matches and whose `type` is an image type
 //!   (`pyro_dom::picture`). Moving, inserting or removing a `<source>` or the
@@ -110,8 +114,11 @@ pub(crate) struct Images {
     /// Each lazy image's last `sizes="auto"` width while it was rendered: what `auto` stays when
     /// it stops being rendered.
     auto_widths: HashMap<NodeId, f64>,
-    /// The layout engine's sync stamp when the deferred images were last checked.
-    checked_at: Option<(u64, u64, u32, u32)>,
+    /// Deferred lazy images the lazy load check found intersecting: their next steps fetch.
+    approved: HashSet<NodeId>,
+    /// The observation stamp (DOM, style, viewport, scroll) and the window `load` state at
+    /// the last lazy load check.
+    lazy_checked: Option<(((u64, u64, u32, u32), u64), bool)>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -291,7 +298,9 @@ impl Browser {
         drop(state);
         let (lazy, hidden, rendered_width, attr_width, auto_css_width) = {
             let dom = bindings.dom.borrow();
-            let lazy = dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+            // HTML "will lazy load element steps": only with scripting enabled.
+            let lazy = !bindings.scripting_disabled()
+                && dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
             let connected = dom.is_connected(node).unwrap_or(false);
             // "Being rendered" from the last completed layout, never running layout here (this
             // runs per inserted image); its size only when that layout is current (free then).
@@ -353,9 +362,10 @@ impl Browser {
         } else {
             None
         };
-        // Not rendered as of the last layout (or detached): select now, fetch once rendered. Not
-        // in that layout yet (inserted since): fetched now, as an eager image.
-        let deferred_now = hidden;
+        // A lazy image waits for the lazy load check (`fetch_rendered_images`), which lets its
+        // next steps fetch once it intersects.
+        let approved = self.doc_mut(page).is_some_and(|mut p| p.images.approved.remove(&node));
+        let deferred_now = lazy && (hidden || !approved);
         let stored = self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });
         let candidate = match stored {
             // `loading` stopped being lazy: the source selected while deferred is fetched.
@@ -798,18 +808,21 @@ impl Browser {
         }
         let nodes: Vec<NodeId> = state.images.deferred.keys().copied().collect();
         let Some(bindings) = state.main_frame.page_dom.clone() else { return };
-        let checked = state.images.checked_at;
+        let loaded = state.main_frame.loaded;
+        let checked = state.images.lazy_checked;
         drop(state);
-        // Decided once per completed layout (this runs at every microtask checkpoint): the
-        // engine's answers change only when it syncs, and nothing here makes it sync. An image
-        // connected since that layout is not in it: it is fetched as an eager image.
-        let synced = bindings.layout().style().engine_sync_stamp();
-        let stamp_moved = synced != checked;
-        if let Some(mut p) = self.doc_mut(page) {
-            p.images.checked_at = synced;
+        // Lazy images start no earlier than the window `load` event, so none delays it.
+        if !loaded {
+            return;
+        }
+        // Checked again only when the DOM, style, viewport or a scroll offset changed (this
+        // runs at every microtask checkpoint).
+        let stamp = || (bindings.layout().observation_stamp(&bindings.dom.borrow()), loaded);
+        if checked == Some(stamp()) {
+            return;
         }
         for node in nodes {
-            let rendered = {
+            let connected = {
                 let dom = bindings.dom.borrow();
                 if !dom.is_alive(node) {
                     drop(dom);
@@ -819,14 +832,18 @@ impl Browser {
                     continue;
                 }
                 dom.is_connected(node).unwrap_or(false)
-                    && match rendered_as_laid_out(&bindings.layout(), &dom, node) {
-                        Some(rendered) => stamp_moved && rendered,
-                        None => true,
-                    }
             };
-            if rendered {
+            if connected && pyro_webapi::intersection_observer::lazy_load_intersects(&bindings, node) {
+                if let Some(mut p) = self.doc_mut(page) {
+                    p.images.approved.insert(node);
+                }
                 self.image_event_with(page, node, false);
             }
+        }
+        // After the checks, which may have synced layout.
+        let stamp = stamp();
+        if let Some(mut p) = self.doc_mut(page) {
+            p.images.lazy_checked = Some(stamp);
         }
     }
 

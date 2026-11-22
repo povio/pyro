@@ -243,6 +243,14 @@ fn entries<'s>(s: &Scope<'s>, records: Vec<PendingEntry>) -> JsResult<Value<'s>>
     }
     Ok(s.array(&values.iter(s).collect::<Vec<_>>())?.value())
 }
+/// HTML's lazy loading intersection: whether `target` of `page`'s document intersects the
+/// top-level viewport expanded by the lazy load root margin, through each clipping
+/// ancestor and frame (scroll containers expanded by the same margin). Not being rendered
+/// or not being in a shown document intersects nothing. Syncs layout.
+pub fn lazy_load_intersects(page: &PageDom, target: NodeId) -> bool {
+    geometry::measure(page, &options::lazy_load(), page, target).intersecting
+}
+
 pub(crate) fn after_task(page: &PageDom) {
     if page.is_disposed() {
         return;
