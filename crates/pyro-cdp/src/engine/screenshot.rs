@@ -715,13 +715,14 @@ impl EngineHost {
             path => path.map(std::path::PathBuf::from),
         };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
-        // Lazy images and iframes near the viewport that the lazy load check has not let go yet.
-        self.thread.browser.approve_lazy_content(pid, false);
         let area = match (p.clip, p.capture_beyond_viewport) {
             (Some(clip), beyond_viewport) => clip.area(beyond_viewport)?,
             (None, true) => Area::FullPage,
             (None, false) => self.viewport_area(pid),
         };
+        // Lazy images and iframes the lazy load check has not let go yet: all of them for a
+        // full-page capture, those near the viewport otherwise.
+        self.thread.browser.approve_lazy_content(pid, matches!(area, Area::FullPage));
         let started = Instant::now();
         let snapshot = self.snapshot(pid, None)?;
         let snapshot_ms = ms(started.elapsed());

@@ -28,10 +28,11 @@
 //!   device pixel ratio (`pyro_dom::picture`). Not modelled: re-resolving a
 //!   loaded `src` when a `<base>` is inserted later.
 //! - `loading="lazy"` (scripting enabled): the source is selected, the fetch
-//!   deferred until the window `load` event has fired and the image
-//!   intersects the viewport (or a scroll container) expanded by the lazy
-//!   load margin (`pyro_webapi::intersection_observer::lazy_load_intersects`),
-//!   so a lazy image never delays `load`. Switching to eager fetches at once.
+//!   deferred until the image intersects the viewport (or a scroll
+//!   container) expanded by the lazy load margin
+//!   (`pyro_webapi::intersection_observer::lazy_load_intersects`), checked
+//!   from the first layout. A lazy image never delays `load`; switching to
+//!   eager fetches at once, still without delaying it.
 //! - An `<img>` child of a `<picture>` loads the first preceding `<source>`
 //!   whose `media` matches and whose `type` is an image type
 //!   (`pyro_dom::picture`). Moving, inserting or removing a `<source>` or the
@@ -367,6 +368,8 @@ impl Browser {
         let approved = self.doc_mut(page).is_some_and(|mut p| p.images.approved.remove(&node));
         let deferred_now = lazy && (hidden || !approved);
         let stored = self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });
+        // A lazy image, or one let go from deferral (`loading` became eager), never delays `load`.
+        let from_deferral = stored.is_some();
         let candidate = match stored {
             // `loading` stopped being lazy: the source selected while deferred is fetched.
             Some(selected) if !lazy && !restart => selected,
@@ -530,7 +533,7 @@ impl Browser {
                     density,
                     generation,
                     pending: true,
-                    blocks_load: !loaded,
+                    blocks_load: !loaded && !lazy && !from_deferral,
                     cancel: None,
                     request_state,
                     outcome: None,
@@ -812,9 +815,15 @@ impl Browser {
         let loaded = state.main_frame.loaded;
         let checked = state.images.lazy_checked;
         drop(state);
-        // Lazy images start no earlier than the window `load` event, so none delays it.
+        // As Chrome, from the first layout (a lazy image never delays `load`, see
+        // `blocks_load`). Before `load` only from a layout that is already current: the check
+        // must not run layout at each checkpoint of a parse.
         if !loaded {
-            return;
+            let layout = bindings.layout();
+            let current = bindings.dom.try_borrow().is_ok_and(|dom| layout.style().engine_current(&dom));
+            if !current {
+                return;
+            }
         }
         // Checked again only when the DOM, style, viewport or a scroll offset changed (this
         // runs at every microtask checkpoint).
