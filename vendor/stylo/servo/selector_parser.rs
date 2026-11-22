@@ -1097,17 +1097,19 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
         &self,
         name: &str,
         parser: &mut CssParser<'i>,
-        after_part: bool,
+        _after_part: bool,
     ) -> Result<NonTSPseudoClass, ParseError> {
         let pseudo_class = match_ignore_ascii_case! { &name,
-            "lang" if !after_part => {
+            // pyro: `:lang()` and `:dir()` are not tree-structural, so they may follow `::part()`
+            // as Chrome allows (WPT css/selectors/parsing `parse-part`, invalidation `part-lang`).
+            "lang" => {
                 NonTSPseudoClass::Lang(parser.expect_ident_or_string()?.as_ref().into())
             },
             "state" => {
                 let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                 NonTSPseudoClass::CustomState(CustomState(result))
             },
-            "dir" if !after_part => {
+            "dir" => {
                 NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
             },
             "has-slotted" => {

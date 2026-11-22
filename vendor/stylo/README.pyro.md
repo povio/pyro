@@ -324,6 +324,9 @@ slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its REA
   absolutely and fixed positioned descendants, as in Chromium (round 6 lane paint).
 - `servo/selector_parser.rs`: `:has-slotted` and `:has-slotted(<selector-list>)` (CSS Scoping 1 § 3.2.5),
   `NonTSPseudoClass::HasSlotted`, matched by blitz-dom on a slot's flattened slottables (round 6 lane paint).
+- `servo/selector_parser.rs`: `:lang()` and `:dir()` may follow `::part()` (upstream rejected them after a
+  part-like pseudo-element); they are not tree-structural, and Chrome accepts and matches them on the part
+  (WPT `css/selectors/invalidation/part-dir`, `part-lang`, `parsing/parse-part`).
 - `values/specified/align.rs` (`AlignFlags::FLOW_START`/`FLOW_END`): the `flow-start` and `flow-end` keywords
   (css-align-3) in `<content-position>` and `<self-position>`, serialized, flipped and listed like the others;
   stylo_taffy maps them to `flex-start`/`flex-end` (WPT `css/css-flexbox/alignment/flow-start-flow-end-*`).
