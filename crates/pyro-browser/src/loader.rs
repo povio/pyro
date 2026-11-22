@@ -1948,7 +1948,11 @@ impl Browser {
     ) {
         let new_window = page.child.is_none() && self.doc(page).is_some_and(|d| d.nav.is_first_blank());
         let blocked_frame = page.child.is_some() && error.starts_with(pyro_net::csp::BLOCKED_BY_CSP);
-        if (new_window && shows_error_document(&error)) || blocked_frame {
+        // A child frame shows Chrome's error document for a network error too (a redirect to an
+        // about: or other non-HTTP(S) URL is one): its document is then of an opaque origin, which
+        // its embedder cannot script (WPT navigating-across-documents/redirect-to-about).
+        let failed_frame = page.child.is_some() && shows_error_document(&error);
+        if ((new_window || failed_frame) && shows_error_document(&error)) || blocked_frame {
             self.commit_error_document(page, opts, loader_id, error, history);
         } else {
             self.navigation_failed(page, &opts, loader_id, error);
