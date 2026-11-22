@@ -8,8 +8,9 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 pub mod demux;
+pub mod encode;
 mod packet;
-pub use packet::{PacketConfig, PacketDecoder, PacketFrame};
+pub use packet::{PacketConfig, PacketDecoder, PacketFrame, PacketPixels};
 #[cfg(any(feature = "av1", feature = "h264"))]
 mod yuv;
 
@@ -35,7 +36,7 @@ pub fn decodes(codec: &Codec) -> bool {
 }
 
 /// A decoded picture coming out of a decoder: the tag of the sample it
-/// was sent with, and its RGBA if it was asked for.
+/// was sent with, and the requested output pixels (RGBA for media elements).
 pub(crate) struct Decoded {
     pub tag: u64,
     pub image: Option<(u32, u32, Vec<u8>)>,

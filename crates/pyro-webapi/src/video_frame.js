@@ -637,5 +637,43 @@
     frames.get(frame).imageLease = lease;
     return frame;
   }
-  return { VideoFrame, VideoColorSpace, canvasSource, decodedImage };
+  // VideoEncoder retains a separate wrapper while its control message is queued.
+  const closeFrame = Function.prototype.call.bind(VideoFrame.prototype.close);
+  function encoderFrame(op, o) {
+    const s = frames.get(o);
+    if (op === 'brand') return s !== undefined;
+    if (!s || !s.data) throw new TypeError('Expected a live VideoFrame.');
+    if (op === 'capture') return new VideoFrame(o, {__proto__: null});
+    if (op === 'release') return closeFrame(o);
+    if (op === 'orientation') return s.rotation / 90 + (s.flip ? 4 : 0);
+    const { rect, conversionColor: color } = s;
+    let data, kind, stride, offset;
+    // Preserve the actual limited-range samples when they already match
+    // the encoder's I420 matrix, transfer function and primaries.
+    if ((s.format === 'I420' || s.format === 'I420A') && color.matrix === 'bt709' &&
+        color.primaries === 'bt709' && color.transfer === 'bt709' && !color.fullRange) {
+      kind = 'I420';
+      const l = layoutOf(kind, rect.width, rect.height);
+      data = new U8(l.size);
+      copyPlanes({...s, format: kind}, rect, data, l.layout);
+      stride = rect.width;
+      offset = 0;
+    } else if (rgb.has(s.format) && color.primaries === 'bt709' && color.transfer === 'iec61966-2-1' &&
+               color.fullRange && color.matrix === 'rgb') {
+      kind = s.format.startsWith('BGR') ? 'BGRA' : 'RGBA';
+      data = s.data;
+      stride = s.layout[0].stride;
+      offset = s.layout[0].offset + rect.y * stride + rect.x * 4;
+    } else {
+      kind = 'RGBA';
+      const opt = optionsFor(s, {__proto__: null, format: kind});
+      data = new U8(opt.size);
+      copyPixels(s, opt, data);
+      stride = rect.width * 4;
+      offset = 0;
+    }
+    return {__proto__: null, data, kind, stride, offset, width: rect.width, height: rect.height,
+            rotation: s.rotation, flip: s.flip, timestamp: s.timestamp, duration: s.duration};
+  }
+  return { VideoFrame, VideoColorSpace, canvasSource, decodedImage, encoderFrame };
 });

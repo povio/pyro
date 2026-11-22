@@ -1,0 +1,5 @@
+[trace_headers @ 0x793a8040a0] 69          video_full_range_flag                                       0 = 0
+[trace_headers @ 0x793a8040a0] 70          colour_description_present_flag                             1 = 1
+[trace_headers @ 0x793a8040a0] 71          colour_primaries                                     00000110 = 6
+[trace_headers @ 0x793a8040a0] 79          transfer_characteristics                             00000110 = 6
+[trace_headers @ 0x793a8040a0] 87          matrix_coefficients                                  00000110 = 6

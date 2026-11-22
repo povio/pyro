@@ -44,6 +44,7 @@ mod audio_decoder;
 mod audio_encoder;
 mod image_decoder;
 mod video_decoder;
+mod video_encoder;
 pub mod encoding;
 pub mod event;
 mod event_source;

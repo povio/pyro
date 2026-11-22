@@ -18,6 +18,7 @@ const GLOBALS: &[&str] = &[
     "AudioDecoder",
     "AudioEncoder",
     "VideoDecoder",
+    "VideoEncoder",
     "cookieStore",
     "StorageBucketManager",
     "StorageBucket",

@@ -196,13 +196,14 @@ fn check_packets(config: video::PacketConfig, samples: Vec<(Vec<u8>, usize)>, fi
             let origin = (24 * 64 + 32) * 4;
             let reference = player.frame_at(display_index as f64 / 10.).unwrap();
             assert_eq!(frame_of(&reference.rgba[origin..]), display_index);
+            let pyro_media::video::PacketPixels::Rgba(rgba) = &picture.pixels else { panic!("expected RGBA") };
             for channel in 0..3 {
                 let signal = f64::from(reference.rgba[origin + channel]) / 255.;
                 let linear = if signal < 0.081 { signal / 4.5 } else { ((signal + 0.099) / 1.099).powf(1. / 0.45) };
                 let srgb = if linear <= 0.0031308 { 12.92 * linear } else { 1.055 * linear.powf(1. / 2.4) - 0.055 };
                 // Player already rounded to 8-bit; the packet conversion
                 // applies the curve before that rounding.
-                assert!(picture.rgba[origin + channel].abs_diff((255. * srgb).round() as u8) <= 2);
+                assert!(rgba[origin + channel].abs_diff((255. * srgb).round() as u8) <= 2);
             }
         }
         assert!(decoder.flush().unwrap().is_empty());
