@@ -828,7 +828,17 @@ fn worker_idb_interfaces_start_as_own_data_properties() {
                 !desc.writable || desc.enumerable || !desc.configurable || 'get' in desc ||
                 Object.hasOwn(WorkerGlobalScope.prototype, name)) failures.push(name);
           }
-          postMessage(failures.join(',') || 'ok');`;
+          const open = indexedDB.open('worker-interface-identity', 1);
+          if (Object.getPrototypeOf(open) !== IDBOpenDBRequest.prototype) failures.push('request identity');
+          open.onupgradeneeded = () => {
+            if (Object.getPrototypeOf(open.transaction) !== IDBTransaction.prototype) failures.push('tx identity');
+          };
+          open.onerror = () => postMessage(open.error.name);
+          open.onsuccess = () => {
+            if (Object.getPrototypeOf(open.result) !== IDBDatabase.prototype) failures.push('db identity');
+            open.result.close();
+            postMessage(failures.join(',') || 'ok');
+          };`;
         globalThis.reply = null;
         globalThis.worker = new Worker(URL.createObjectURL(new Blob([source])));
         worker.onmessage = event => { reply = event.data; };
