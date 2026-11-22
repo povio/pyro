@@ -655,7 +655,8 @@ impl<'a> TDocument for BlitzNode<'a> {
     }
 
     fn quirks_mode(&self) -> QuirksMode {
-        QuirksMode::NoQuirks
+        // pyro: the document's mode, as its stylist matches with (`BaseDocument::new`).
+        if self.tree().quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks }
     }
 
     fn shared_lock(&self) -> &SharedRwLock {
@@ -2505,7 +2506,7 @@ impl crate::BaseDocument {
         ) -> RelativeSelectorInvalidator<'dom, 'dom, BlitzNode<'dom>> {
             RelativeSelectorInvalidator {
                 element,
-                quirks_mode: QuirksMode::NoQuirks,
+                quirks_mode: if element.tree().quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks },
                 snapshots: None,
                 invalidated: relative_selector_invalidated_at,
                 sibling_traversal_map,
@@ -2575,7 +2576,7 @@ impl crate::BaseDocument {
         let _layout_thread_scope = LayoutThreadScope::enter();
         let invalidator = RelativeSelectorInvalidator {
             element: node,
-            quirks_mode: QuirksMode::NoQuirks,
+            quirks_mode: self.stylist.quirks_mode(),
             snapshots: None,
             invalidated: relative_selector_invalidated_at,
             sibling_traversal_map: SiblingTraversalMap::default(),
