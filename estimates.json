@@ -29,32 +29,32 @@
     "fetch/fetch-later": 32,
     "html/dom": 28,
     "html/syntax": 22,
-    "fetch/content-encoding": 21,
     "html/infrastructure": 21,
+    "fetch/content-encoding": 21,
     "scheduler": 19,
     "html/rendering": 18,
     "imagebitmap-renderingcontext": 14,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
-    "fetch/corb": 6,
-    "fetch/data-urls": 6,
     "fetch/range": 6,
+    "fetch/data-urls": 6,
+    "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
-    "FileAPI": 4,
     "html/obsolete": 4,
+    "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "html/user-activation": 2,
     "fetch/orb": 2,
     "xhr": 2,
-    "quirks": 1,
-    "fetch/content-type": 1,
-    "fetch/redirects": 1,
-    "html/select": 1,
+    "html/user-activation": 2,
     "fetch/security": 1,
-    "fetch/redirect-navigate": 1,
+    "fetch/content-type": 1,
     "IndexedDB": 1,
+    "fetch/redirects": 1,
+    "quirks": 1,
+    "fetch/redirect-navigate": 1,
+    "html/select": 1,
     "svg/styling": 1
    }
   },
@@ -81,8 +81,8 @@
     "html/webappapis": 27,
     "fetch/compression-dictionary": 8,
     "fetch/api": 5,
-    "html/interaction": 5,
-    "html/dom": 5
+    "html/dom": 5,
+    "html/interaction": 5
    }
   },
   "queued": {
@@ -3145,6 +3145,13 @@
    "in_scope_pages": 2,
    "out_of_scope_pages": 0,
    "pages": 2,
+   "tentative": 0
+  },
+  "ORPHAN-subject-matched": {
+   "state": "held",
+   "in_scope_pages": 18,
+   "out_of_scope_pages": 0,
+   "pages": 18,
    "tentative": 0
   }
  },
