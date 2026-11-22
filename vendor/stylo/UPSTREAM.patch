@@ -7235,7 +7235,7 @@ diff -ruN a/sharing/checks.rs b/sharing/checks.rs
  }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-21 17:02:38
++++ b/style_adjuster.rs	2026-11-22 19:04:21
 @@ -186,6 +186,84 @@
              .set_adjusted_display(new_display, false);
      }
@@ -7321,13 +7321,20 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      /// CSS 2.1 section 9.7:
      ///
      ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
-@@ -403,7 +481,52 @@
-             } else {
-                 self.style.mutate_box().set_display(Display::InlineBlock);
-             }
-+        }
-+    }
-+
+@@ -392,7 +470,8 @@
+         let parent_writing_mode = *layout_parent_style.get_inherited_box().get_writing_mode();
+ 
+         if our_writing_mode != parent_writing_mode
+-            && *self.style.get_box().get_display() == Display::Inline
++            // pyro: `ruby` and `ruby-text` are inline boxes too (`Display::without_ruby`).
++            && self.style.get_box().get_display().without_ruby() == Display::Inline
+         {
+             // TODO(emilio): Figure out if we can just set the adjusted display
+             // on Gecko too and unify this code path.
+@@ -406,6 +485,51 @@
+         }
+     }
+ 
 +    /// pyro: `text-combine-upright: all` on an inline box in a vertical (not sideways) line: its
 +    /// text is combined into one upright 1em square (CSS Writing Modes 4 § 9.1.1). Laid out as an
 +    /// inline-block of `horizontal-tb` writing (`adjust_for_writing_mode` below makes it one), 1em
@@ -7343,9 +7350,9 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            return;
 +        }
 +        let parent = layout_parent_style.writing_mode;
-+        if !parent.is_vertical() || parent.is_sideways() || *self.style.get_box().get_display() != Display::Inline {
++        if !parent.is_vertical() || parent.is_sideways() || self.style.get_box().get_display().without_ruby() != Display::Inline {
 +            return;
-         }
++        }
 +        // Emphasis marks of combined text go beside the composition, as for one glyph of the
 +        // vertical line, which an inline-block's own text cannot draw: such text is left as it
 +        // was (upright glyphs), until the line marks combined boxes itself.
@@ -7371,10 +7378,12 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        self.style
 +            .mutate_font()
 +            .set_line_height(crate::values::computed::LineHeight::Length(NonNegative(Length::new(em.px()))));
-     }
- 
++    }
++
      /// CSS overflow-x and overflow-y require some fixup as well in some cases.
-@@ -419,9 +542,14 @@
+     /// https://drafts.csswg.org/css-overflow-3/#overflow-properties
+     /// "Computed value: as specified, except with `visible`/`clip` computing to
+@@ -419,9 +543,14 @@
          }
  
          if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
@@ -7391,7 +7400,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
      }
  
-@@ -793,7 +921,9 @@
+@@ -793,7 +922,9 @@
              a => a,
          };
  
@@ -7402,7 +7411,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
              if *self.style.get_font().get_line_height() == LineHeight::normal() {
                  return;
              }
-@@ -821,6 +951,75 @@
+@@ -821,6 +952,75 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -7478,7 +7487,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1029,7 +1228,32 @@
+@@ -1029,7 +1229,32 @@
              pos.set_align_self(flipped);
          } else {
              pos.set_justify_self(flipped);
@@ -7511,7 +7520,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      }
  
      /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
-@@ -1064,7 +1288,20 @@
+@@ -1064,7 +1289,20 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -7532,7 +7541,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
          {
-@@ -1084,12 +1321,20 @@
+@@ -1084,12 +1322,20 @@
          }
          self.adjust_for_justify_items();
          self.adjust_for_table_text_align();
@@ -13354,7 +13363,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-22 01:26:58
++++ b/values/specified/box.rs	2026-11-22 19:04:08
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -13417,12 +13426,22 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              DisplayInside::FlowRoot => true,
              _ => false,
          }
-@@ -222,9 +223,18 @@
+@@ -221,10 +222,40 @@
+ impl Display {
      // Our u16 bits are used as follows: LOOOOOOOIIIIIIII
      pub const LIST_ITEM_MASK: u16 = 0b1000000000000000;
-     pub const OUTSIDE_MASK: u16 = 0b0111111100000000;
+-    pub const OUTSIDE_MASK: u16 = 0b0111111100000000;
 -    pub const INSIDE_MASK: u16 = 0b0000000011111111;
++    pub const OUTSIDE_MASK: u16 = 0b0001111100000000;
 +    pub const INSIDE_MASK: u16 = 0b0000000001111111;
++    /// pyro: `display: ruby` / `block ruby` (CSS Ruby 1, as Blink parses them): `inline flow` or
++    /// `block flow` with this bit. It changes only how the value parses and serializes: layout
++    /// sees the inline or block box it says (blitz-dom finds `<ruby>` by tag name), and
++    /// [`Self::without_ruby`] strips it where a computed value is compared with a plain one.
++    pub const RUBY_MASK: u16 = 0b0100000000000000;
++    /// pyro: `display: ruby-text` (CSS Ruby 1, as Blink): `inline flow` with this bit, like
++    /// [`Self::RUBY_MASK`]. It blockifies to `block`, as in Blink.
++    pub const RUBY_TEXT_MASK: u16 = 0b0010000000000000;
 +    /// pyro: `display: run-in` (CSS 2.1 § 9.2.3), a block (`block flow`) with this bit: where it
 +    /// runs in, the next block box lays it out as its first inline box (blitz-dom
 +    /// `layout::construct`); everywhere else it is the block box it says.
@@ -13434,10 +13453,23 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUN_IN_MASK,
 +    );
 +
++    /// pyro: `display: ruby` (`inline ruby`; see [`Self::RUBY_MASK`]).
++    pub const PyroRuby: Self = Self(
++        ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_MASK,
++    );
++    /// pyro: `display: block ruby` (see [`Self::RUBY_MASK`]).
++    pub const PyroBlockRuby: Self = Self(
++        ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_MASK,
++    );
++    /// pyro: `display: ruby-text` (see [`Self::RUBY_TEXT_MASK`]).
++    pub const PyroRubyText: Self = Self(
++        ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_TEXT_MASK,
++    );
++
      /// https://drafts.csswg.org/css-display/#the-display-properties
      /// ::new() inlined so cbindgen can use it
      pub const None: Self =
-@@ -239,7 +249,6 @@
+@@ -239,7 +270,6 @@
      );
      pub const Block: Self =
          Self(((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16);
@@ -13445,7 +13477,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const FlowRoot: Self = Self(
          ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::FlowRoot as u16,
      );
-@@ -268,11 +277,9 @@
+@@ -268,11 +298,9 @@
      #[cfg(feature = "gecko")]
      pub const Ruby: Self =
          Self(((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Ruby as u16);
@@ -13457,7 +13489,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -370,6 +377,12 @@
+@@ -370,6 +398,31 @@
          self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
      }
  
@@ -13467,10 +13499,29 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        (self.0 & Self::RUN_IN_MASK) != 0
 +    }
 +
++    /// pyro: whether this is `display: ruby` or `block ruby` (see [`Self::RUBY_MASK`]).
++    #[inline]
++    pub const fn is_pyro_ruby(&self) -> bool {
++        (self.0 & Self::RUBY_MASK) != 0
++    }
++
++    /// pyro: whether this is `display: ruby-text` (see [`Self::RUBY_TEXT_MASK`]).
++    #[inline]
++    pub const fn is_pyro_ruby_text(&self) -> bool {
++        (self.0 & Self::RUBY_TEXT_MASK) != 0
++    }
++
++    /// pyro: this value without the ruby bits: the `inline` or `block` box layout sees for
++    /// `ruby`, `block ruby` and `ruby-text` (any other value is unchanged).
++    #[inline]
++    pub const fn without_ruby(&self) -> Self {
++        Self(self.0 & !(Self::RUBY_MASK | Self::RUBY_TEXT_MASK))
++    }
++
      /// Returns whether this `display` value is some kind of list-item.
      #[inline]
      pub const fn is_list_item(&self) -> bool {
-@@ -440,6 +453,10 @@
+@@ -440,6 +493,17 @@
          if is_root_element && (self.is_contents() || self.is_list_item()) {
              return Display::Block;
          }
@@ -13478,10 +13529,17 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        if self.is_run_in() {
 +            return Display::Block;
 +        }
++        // pyro: `ruby` blockifies to `block ruby`, `ruby-text` to `block` (as Blink).
++        if self.is_pyro_ruby() {
++            return Display::PyroBlockRuby;
++        }
++        if self.is_pyro_ruby_text() {
++            return Display::Block;
++        }
  
          match self.outside() {
              DisplayOutside::Inline => {
-@@ -495,6 +512,10 @@
+@@ -495,6 +559,14 @@
      Inside(DisplayInside),
      Outside(DisplayOutside),
      ListItem,
@@ -13489,11 +13547,20 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    /// MathML element; on any other element it computes to `flow`, as it is kept here (pyro lays
 +    /// no MathML out). Its default outside is `inline`.
 +    Math,
++    /// pyro: the `ruby` inside keyword (see [`Display::RUBY_MASK`]). Its default outside is
++    /// `inline`; it takes no `list-item` (as Blink).
++    #[cfg(feature = "servo")]
++    Ruby,
  }
  
  impl DisplayKeyword {
-@@ -525,21 +546,21 @@
+@@ -523,23 +595,26 @@
+             "ruby-base-container" => Full(Display::RubyBaseContainer),
+             #[cfg(feature = "gecko")]
              "ruby-text" => Full(Display::RubyText),
++            // pyro: `ruby-text` in servo too (Blink parses it; not `ruby-base` or the containers).
++            #[cfg(feature = "servo")]
++            "ruby-text" => Full(Display::PyroRubyText),
              #[cfg(feature = "gecko")]
              "ruby-text-container" => Full(Display::RubyTextContainer),
 -            #[cfg(feature = "gecko")]
@@ -13516,12 +13583,28 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              "flex" => Inside(DisplayInside::Flex),
              "flow-root" => Inside(DisplayInside::FlowRoot),
              "table" => Inside(DisplayInside::Table),
-@@ -558,10 +579,12 @@
+@@ -547,6 +622,8 @@
+             "grid-lanes" if is_display_grid_lanes_enabled() => Inside(DisplayInside::GridLanes),
+             #[cfg(feature = "gecko")]
+             "ruby" => Inside(DisplayInside::Ruby),
++            #[cfg(feature = "servo")]
++            "ruby" => Ruby,
+         })
+     }
+ }
+@@ -558,10 +635,19 @@
      {
          let outside = self.outside();
          let inside = self.inside();
 +        if self.is_run_in() {
 +            return dest.write_str("run-in");
++        }
++        // pyro: see `Display::RUBY_MASK`.
++        if self.is_pyro_ruby() {
++            return dest.write_str(if outside == DisplayOutside::Block { "block ruby" } else { "ruby" });
++        }
++        if self.is_pyro_ruby_text() {
++            return dest.write_str("ruby-text");
 +        }
          match *self {
              Display::Block | Display::Inline => outside.to_css(dest),
@@ -13530,11 +13613,24 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              Display::WebkitInlineBox => dest.write_str("-webkit-inline-box"),
              Display::TableCaption => dest.write_str("table-caption"),
              _ => match (outside, inside) {
-@@ -626,10 +649,15 @@
+@@ -608,6 +694,10 @@
+         if outside == DisplayOutside::Block && inside == DisplayInside::Ruby {
+             return Err(());
+         }
++        // pyro: `block ruby`, two keywords, as gecko's above.
++        if self.is_pyro_ruby() && outside == DisplayOutside::Block {
++            return Err(());
++        }
+ 
+         if self.is_list_item()
+             && (outside != DisplayOutside::Block || inside != DisplayInside::Flow)
+@@ -626,10 +716,22 @@
  impl Parse for Display {
      fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
          let mut got_list_item = false;
 +        let mut got_math = false;
++        // pyro: see `Display::RUBY_MASK`.
++        let mut got_ruby = false;
          let mut inside = None;
          let mut outside = None;
          match DisplayKeyword::parse(input)? {
@@ -13543,15 +13639,26 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +                got_math = true;
 +                inside = Some(DisplayInside::Flow);
 +            },
++            #[cfg(feature = "servo")]
++            DisplayKeyword::Ruby => {
++                got_ruby = true;
++                inside = Some(DisplayInside::Flow);
++            },
              DisplayKeyword::Outside(o) => {
                  outside = Some(o);
              },
-@@ -652,13 +680,19 @@
+@@ -651,16 +753,30 @@
+                 },
                  DisplayKeyword::Inside(i) if inside.is_none() => {
                      inside = Some(i);
-                 },
++                },
 +                DisplayKeyword::Math if inside.is_none() => {
 +                    got_math = true;
++                    inside = Some(DisplayInside::Flow);
+                 },
++                #[cfg(feature = "servo")]
++                DisplayKeyword::Ruby if inside.is_none() => {
++                    got_ruby = true;
 +                    inside = Some(DisplayInside::Flow);
 +                },
                  _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
@@ -13562,13 +13669,18 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 -        let outside = outside.unwrap_or_else(|| inside.default_display_outside());
 -        if got_list_item && !inside.is_valid_for_list_item() {
 +        let outside = outside.unwrap_or_else(|| {
-+            if got_math { DisplayOutside::Inline } else { inside.default_display_outside() }
++            if got_math || got_ruby { DisplayOutside::Inline } else { inside.default_display_outside() }
 +        });
-+        if got_list_item && (got_math || !inside.is_valid_for_list_item()) {
++        if got_list_item && (got_math || got_ruby || !inside.is_valid_for_list_item()) {
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
++        if got_ruby {
++            return Ok(Display(Display::new(outside, inside).0 | Display::RUBY_MASK));
++        }
  
-@@ -788,7 +822,6 @@
+         Ok(Display::from3(outside, inside, got_list_item))
+     }
+@@ -788,7 +904,6 @@
      Parse,
      PartialEq,
      SpecifiedValueInfo,
@@ -13576,7 +13688,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToShmem,
      ToComputedValue,
      ToResolvedValue,
-@@ -801,31 +834,98 @@
+@@ -801,31 +916,98 @@
      /// Use the text-under baseline.
      TextBottom,
      /// Use the alphabetic baseline.
@@ -13680,13 +13792,11 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// A specified value for the `baseline-source` property.
  /// https://drafts.csswg.org/css-inline-3/#baseline-source
  #[derive(
-@@ -1336,11 +1436,17 @@
+@@ -1336,11 +1518,17 @@
      ToShmem,
      ToTyped,
  )]
 -#[css(bitflags(single = "none,auto,manipulation", mixed = "pan-x,pan-y,pinch-zoom"))]
--#[repr(C)]
--pub struct TouchAction(u8);
 +// pyro: `pan-left`, `pan-right`, `pan-up` and `pan-down` too (Pointer Events 3, as Chromium):
 +// `[pan-x | pan-left | pan-right] || [pan-y | pan-up | pan-down] || pinch-zoom`.
 +#[css(bitflags(
@@ -13694,7 +13804,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    mixed = "pan-x,pan-left,pan-right,pan-y,pan-up,pan-down,pinch-zoom",
 +    validate_mixed = "Self::validate_mixed_flags",
 +))]
-+#[repr(C)]
+ #[repr(C)]
+-pub struct TouchAction(u8);
 +pub struct TouchAction(u16);
  bitflags! {
 -    impl TouchAction: u8 {
@@ -13702,7 +13813,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          /// `none` variant
          const NONE = 1 << 0;
          /// `auto` variant
-@@ -1353,10 +1459,25 @@
+@@ -1353,10 +1541,25 @@
          const MANIPULATION = 1 << 4;
          /// `pinch-zoom` variant
          const PINCH_ZOOM = 1 << 5;
@@ -13728,7 +13839,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      #[inline]
      /// Get default `touch-action` as `auto`
      pub fn auto() -> TouchAction {
-@@ -1373,7 +1494,6 @@
+@@ -1373,7 +1576,6 @@
      Parse,
      PartialEq,
      SpecifiedValueInfo,
@@ -13736,7 +13847,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToCss,
      ToResolvedValue,
      ToShmem,
-@@ -1381,7 +1501,7 @@
+@@ -1381,7 +1583,7 @@
  )]
  #[css(bitflags(
      single = "none,strict,content",
@@ -13745,7 +13856,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      overlapping_bits
  ))]
  #[repr(C)]
-@@ -1410,6 +1530,25 @@
+@@ -1410,6 +1612,25 @@
      }
  }
  
@@ -13771,7 +13882,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  impl Parse for ContainIntrinsicSize {
      /// none | <length> | auto <length>
      fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
-@@ -1593,7 +1732,7 @@
+@@ -1593,7 +1814,7 @@
  )]
  #[css(bitflags(
      single = "normal",
@@ -13780,7 +13891,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      validate_mixed = "Self::validate_mixed_flags",
  ))]
  #[repr(C)]
-@@ -1614,6 +1753,8 @@
+@@ -1614,6 +1835,8 @@
          const SIZE = 1 << 1;
          /// The `scroll-state` variant.
          const SCROLL_STATE = 1 << 2;
@@ -13789,7 +13900,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      }
  }
  
-@@ -2013,8 +2154,12 @@
+@@ -2013,8 +2236,12 @@
      Auto,
      Page,
      Avoid,
@@ -13802,7 +13913,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl BreakBetween {
-@@ -2030,7 +2175,9 @@
+@@ -2030,7 +2257,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -13813,7 +13924,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2194,7 @@
+@@ -2047,7 +2276,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
@@ -13822,7 +13933,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2293,6 +2440,15 @@
+@@ -2293,6 +2522,15 @@
      Smooth,
  }
  
@@ -13838,7 +13949,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// https://drafts.fxtf.org/compositing/#isolation
  #[allow(missing_docs)]
  #[derive(
-@@ -2320,6 +2476,15 @@
+@@ -2320,6 +2558,15 @@
      Isolate,
  }
  
@@ -13854,7 +13965,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
  #[allow(missing_docs)]
  #[derive(
-@@ -2486,6 +2651,39 @@
+@@ -2486,8 +2733,41 @@
  pub enum ImageOrientation {
      FromImage,
      None,
@@ -13872,8 +13983,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    GridRows,
 +    GridColumns,
 +    GridOrder,
-+}
-+
+ }
+ 
 +/// Whether the element's text is rendered aurally (CSS Speech Level 1).
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -13891,10 +14002,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum InterpolateSize {
 +    NumericOnly,
 +    AllowKeywords,
- }
- 
++}
++
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
-@@ -2629,3 +2827,90 @@
+ #[allow(missing_docs)]
+ #[derive(
+@@ -2629,3 +2909,90 @@
      Ltr,
      Rtl,
  }
