@@ -300,20 +300,29 @@ impl ContainerCondition {
 
         let size = potential_container.query_container_size(box_style.get_display());
         let style = style.to_arc();
+        let inherited_style = potential_container.traversal_parent().and_then(|parent| {
+            parent
+                .borrow_data()
+                .and_then(|data| data.styles.get_primary().cloned())
+        });
+        // pyro: `anchored()` resolves logical `<position-area>` keywords against the containing
+        // block's writing mode; the parent's stands in until a layout found the containing block.
+        let anchored_cb_wm = if anchored {
+            potential_container.query_anchored_containing_block_writing_mode().unwrap_or_else(|| {
+                inherited_style.as_ref().map_or(wm, |parent| parent.writing_mode)
+            })
+        } else {
+            wm
+        };
         TraversalResult::Done(ContainerLookupResult {
             element: potential_container,
             info: ContainerInfo {
                 fallback: if anchored { potential_container.query_anchored_fallback() } else { None },
+                anchored_cb_wm,
                 scrollable: if scroll_state { potential_container.query_scrollable_edges() } else { ScrollableEdges::empty() },
                 size,
                 wm,
-                inherited_style: {
-                    potential_container.traversal_parent().and_then(|parent| {
-                        parent
-                            .borrow_data()
-                            .and_then(|data| data.styles.get_primary().cloned())
-                    })
-                },
+                inherited_style,
             },
             style,
         })
@@ -463,10 +472,13 @@ impl ContainerCondition {
 #[derive(Clone)]
 pub struct ContainerInfo {
     pub(crate) fallback: Option<crate::values::specified::position::PositionTryFallbacksItem>,
+    /// pyro: the writing mode of an anchored query container's containing block, which logical
+    /// `<position-area>` keywords in `anchored(fallback: ...)` resolve against.
+    pub(crate) anchored_cb_wm: WritingMode,
     /// pyro: the edges a scroll-state container can be scrolled towards (`scrollable`).
     pub(crate) scrollable: ScrollableEdges,
     size: Size2D<Option<Au>>,
-    wm: WritingMode,
+    pub(crate) wm: WritingMode,
     inherited_style: Option<Arc<ComputedValues>>,
 }
 

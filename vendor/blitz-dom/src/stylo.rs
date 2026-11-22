@@ -1610,6 +1610,15 @@ impl<'a> TElement for BlitzNode<'a> {
         self.tree().anchor_query_choices.lock().unwrap().entry(self.id).or_default().clone()
     }
 
+    /// pyro: the containing block the last layout placed this out-of-flow box in. Queries are
+    /// answered after that layout (`resolve::refresh_anchored_query_choices`), and the
+    /// containing block is an ancestor, so its style is complete by now.
+    fn query_anchored_containing_block_writing_mode(&self) -> Option<style::logical_geometry::WritingMode> {
+        let id = self.oof_containing_block.get()?;
+        let node = self.tree().get(id)?;
+        node.primary_styles().map(|style| style.writing_mode)
+    }
+
     /// pyro: the edges recorded at the last layout (none until one ran): a change after a layout
     /// restyles the container's subtree (`resolve::refresh_scroll_state_queries`).
     fn query_scrollable_edges(&self) -> style::stylesheets::container_rule::ScrollableEdges {

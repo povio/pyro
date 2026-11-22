@@ -26,7 +26,7 @@ use crate::substitution;
 use crate::substitution::AttrTaint;
 use crate::values::{AtomString, DashedIdent, computed};
 use crate::values::computed::ToComputedValue;
-use crate::values::specified::position::PositionTryFallbacksItem;
+use super::anchored::AnchoredQuery;
 use crate::{error_reporting::ContextualParseError, parser::Parse, parser::ParserContext};
 use cssparser::{
     Parser, SourceLocation, SourcePosition, Token, match_ignore_ascii_case, parse_important,
@@ -715,8 +715,8 @@ pub enum QueryCondition {
     InParens(Box<QueryCondition>),
     /// A <style> query.
     Style(StyleQuery),
-    /// A fallback query, optionally comparing against none or a descriptor.
-    Anchored(Option<Option<PositionTryFallbacksItem>>),
+    /// pyro: an `anchored()` query on the applied fallback option (CSS Anchor Positioning 2).
+    Anchored(AnchoredQuery),
     /// pyro: a `scroll-state()` query: its condition, and whether that is a bare
     /// `<scroll-state-feature>` (`scroll-state(scrollable: top)`), which serializes without
     /// parentheses.
@@ -756,14 +756,8 @@ impl ToCss for QueryCondition {
                 dest.write_char(')')
             },
             Self::Anchored(ref query) => {
-                dest.write_str("anchored(fallback")?;
-                if let Some(value) = query {
-                    dest.write_str(": ")?;
-                    match value {
-                        Some(item) => item.to_css(dest)?,
-                        None => dest.write_str("none")?,
-                    }
-                }
+                dest.write_str("anchored(")?;
+                query.to_css(dest)?;
                 dest.write_char(')')
             },
             Self::ScrollState(ref c, bare) => {
@@ -922,7 +916,7 @@ impl QueryCondition {
             Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
             Self::Style(ref c) => c.matches(context, attribute_tracker),
             Self::Anchored(ref query) => context.container_info.as_ref().map_or(KleeneValue::Unknown, |info| {
-                query.as_ref().map_or_else(|| info.fallback.is_some(), |value| value == &info.fallback).into()
+                query.matches(info.fallback.as_ref(), info.wm, info.anchored_cb_wm).into()
             }),
             // pyro: its features read the container's scroll state (`ContainerInfo::scrollable`).
             Self::ScrollState(ref c, _) => c.matches(context, custom, attribute_tracker),
@@ -1056,11 +1050,7 @@ impl OperationParser for QueryCondition {
                 match_ignore_ascii_case! { name,
                     "anchored" if feature_type == FeatureType::Container => {
                         if let Some(query) = try_parse_block(context, input, start, start_location, |input| {
-                            input.expect_ident_matching("fallback")?;
-                            if input.is_exhausted() { return Ok(None); }
-                            input.expect_colon()?;
-                            if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() { return Ok(Some(None)); }
-                            PositionTryFallbacksItem::parse(context, input).map(|item| Some(Some(item)))
+                            AnchoredQuery::parse(context, input)
                         }) { return Ok(Self::Anchored(query)); }
                         flags.insert(FeatureFlags::ANCHORED);
                     },
