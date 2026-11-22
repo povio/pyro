@@ -35,7 +35,7 @@ impl AnchoredAreaSlot {
         }
         let keyword = PositionAreaKeyword::parse(input)?;
         if keyword.is_none() {
-            return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(Self::Keyword(keyword))
     }
@@ -80,7 +80,7 @@ impl AnchoredFallback {
         {
             // Two keywords pair up as in `position-area`.
             if (PositionArea { first, second }).get_type() == PositionAreaType::None {
-                return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+                return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
             }
         }
         Ok(Self::Area(first, second))
