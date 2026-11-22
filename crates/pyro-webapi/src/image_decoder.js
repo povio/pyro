@@ -4,6 +4,7 @@
   'use strict';
   const decoders = new WeakMap(), lists = new WeakMap(), tracks = new WeakMap();
   const token = Symbol('image track'), U8 = Uint8Array, P = Promise, DE = DOMException;
+  const reject = P.reject.bind(P), TypeErrorC = TypeError;
   const {defineProperty, getOwnPropertyDescriptor, getPrototypeOf} = Object;
   const apply = Reflect.apply;
   const typed = getPrototypeOf(U8.prototype);
@@ -47,8 +48,14 @@
   }
   function slot(map, object) {
     const state = map.get(object);
-    if (!state) throw new TypeError('Illegal invocation');
+    if (!state) throw new TypeErrorC('Illegal invocation');
     return state;
+  }
+  // Web IDL turns receiver errors into rejected promises on promise-valued
+  // getters. Valid reads return the original promise on every access.
+  function promiseSlot(map, object, key) {
+    const state = map.get(object);
+    return state ? state[key].promise : reject(new TypeErrorC('Illegal invocation'));
   }
   function deferred(handled = false) {
     let resolve, reject;
@@ -212,7 +219,7 @@
     get length() { return slot(lists, this).track ? 1 : 0; }
     get selectedIndex() { return slot(lists, this).selected ? 0 : -1; }
     get selectedTrack() { const s = slot(lists, this); return s.selected ? s.track : null; }
-    get ready() { return slot(lists, this).ready.promise; }
+    get ready() { return promiseSlot(lists, this, 'ready'); }
   }
 
   class ImageDecoder {
@@ -265,7 +272,7 @@
     get tracks() { return slot(decoders, this).list; }
     get type() { return slot(decoders, this).type; }
     get complete() { return slot(decoders, this).complete; }
-    get completed() { return slot(decoders, this).completed.promise; }
+    get completed() { return promiseSlot(decoders, this, 'completed'); }
     decode(options = undefined) {
       try {
         const state = slot(decoders, this), d = dictionary(options);
@@ -279,7 +286,7 @@
         state.pending.add(req);
         schedule(state);
         return req.promise;
-      } catch (error) { return P.reject(error); }
+      } catch (error) { return reject(error); }
     }
     reset() { abortRequests(slot(decoders, this), aborted()); }
     close() { close(slot(decoders, this), aborted()); }
@@ -293,7 +300,7 @@
           catch (error) { result.reject(error); }
         });
         return result.promise;
-      } catch (error) { return P.reject(error); }
+      } catch (error) { return reject(error); }
     }
   }
   for (const C of [ImageDecoder, ImageTrack, ImageTrackList]) {
