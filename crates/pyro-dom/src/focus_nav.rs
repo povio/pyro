@@ -124,8 +124,8 @@ impl<'a> FocusNavigation<'a> {
         if let Some(flow) = self.flows.borrow().get(&i) { return *flow; }
         let style = layout.style().stylo_style(self.dom, self.id_of(i));
         let flow = style.as_ref().map_or(ReadingFlow::Normal, |s| {
-            let display = s.clone_display();
-            match (s.clone_reading_flow(), display.inside()) {
+            let display = s.get_box().display;
+            match (s.get_position().reading_flow, display.inside()) {
                 (ReadingFlow::SourceOrder, DisplayInside::Flow) if display.outside() == DisplayOutside::Block => ReadingFlow::SourceOrder,
                 (ReadingFlow::SourceOrder, DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid) => ReadingFlow::SourceOrder,
                 (ReadingFlow::FlexFlow, DisplayInside::Flex) => ReadingFlow::FlexFlow,
@@ -150,8 +150,8 @@ impl<'a> FocusNavigation<'a> {
         roots.sort_by_cached_key(|&i| {
             let id = self.id_of(i);
             let style = layout.style().stylo_style(self.dom, id);
-            let reading = style.as_ref().map_or(0, |s| s.clone_reading_order());
-            let order = if flow == ReadingFlow::SourceOrder { 0 } else { style.as_ref().map_or(0, |s| s.clone_order()) };
+            let reading = style.as_ref().map_or(0, |s| s.get_position().reading_order);
+            let order = if flow == ReadingFlow::SourceOrder { 0 } else { style.as_ref().map_or(0, |s| s.get_position().order) };
             let position = placements.get(&crate::snapshot::render_key(id)).copied().unwrap_or_default();
             (reading, position, order)
         });
