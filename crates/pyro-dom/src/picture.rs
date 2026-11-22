@@ -113,7 +113,7 @@ pub fn parse_srcset(input: &str, source_width: f64) -> Vec<Candidate> {
         let density = match (density, width) {
             (Some(d), _) => d,
             // A zero source size makes the density infinite (natural size 0).
-            (None, Some(w)) if source_width >= 0.0 => f64::from(w) / source_width,
+            (None, Some(w)) if source_width >= 0.0 => w / source_width,
             _ => 1.0,
         };
         out.push(Candidate { url, density });
@@ -121,9 +121,9 @@ pub fn parse_srcset(input: &str, source_width: f64) -> Vec<Candidate> {
 }
 
 /// HTML's srcset descriptor parser: the `x` density and `w` width, or `None`
-/// on an error.
-fn parse_descriptors(descriptors: &[String]) -> Option<(Option<f64>, Option<u32>)> {
-    let (mut density, mut width, mut height) = (None, None::<u32>, None::<u32>);
+/// on an error. Integers of any size are valid (read as f64).
+fn parse_descriptors(descriptors: &[String]) -> Option<(Option<f64>, Option<f64>)> {
+    let (mut density, mut width, mut height) = (None, None::<f64>, None::<f64>);
     for descriptor in descriptors {
         let (number, unit) = descriptor.split_at(descriptor.len() - descriptor.chars().last()?.len_utf8());
         match unit {
@@ -131,7 +131,7 @@ fn parse_descriptors(descriptors: &[String]) -> Option<(Option<f64>, Option<u32>
                 if width.is_some() || density.is_some() {
                     return None;
                 }
-                width = Some(number.parse::<u32>().ok().filter(|w| *w > 0)?);
+                width = Some(number.parse::<f64>().ok().filter(|w| *w > 0.0)?);
             }
             "x" if valid_float(number) => {
                 if width.is_some() || density.is_some() || height.is_some() {
@@ -143,7 +143,7 @@ fn parse_descriptors(descriptors: &[String]) -> Option<(Option<f64>, Option<u32>
                 if height.is_some() || density.is_some() {
                     return None;
                 }
-                height = Some(number.parse::<u32>().ok().filter(|h| *h > 0)?);
+                height = Some(number.parse::<f64>().ok().filter(|h| *h > 0.0)?);
             }
             _ => return None,
         }

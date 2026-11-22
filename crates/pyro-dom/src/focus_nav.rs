@@ -136,6 +136,8 @@ struct FocusNavigation<'a> {
     layout: Option<&'a crate::layout::Layout>,
     flows: std::cell::RefCell<FxHashMap<u32, ReadingFlow>>,
     grid_contents: std::cell::RefCell<rustc_hash::FxHashSet<u32>>,
+    /// Each radio group's tab stop, by member (one group scan per group).
+    radio_targets: std::cell::RefCell<FxHashMap<u32, Option<u32>>>,
 }
 
 impl std::ops::Deref for FocusNavigation<'_> {
@@ -145,7 +147,13 @@ impl std::ops::Deref for FocusNavigation<'_> {
 
 impl<'a> FocusNavigation<'a> {
     fn new(dom: &'a Dom, layout: Option<&'a crate::layout::Layout>) -> Self {
-        Self { dom, layout, flows: Default::default(), grid_contents: Default::default() }
+        Self {
+            dom,
+            layout,
+            flows: Default::default(),
+            grid_contents: Default::default(),
+            radio_targets: Default::default(),
+        }
     }
 
     fn flow(&self, i: u32) -> ReadingFlow {
@@ -414,21 +422,30 @@ impl<'a> FocusNavigation<'a> {
 
     /// A radio button in a group is reached by sequential navigation only as
     /// its group's one stop (Chromium): the checked radio when it is a
-    /// focusable area, else the group's first radio that is, in tree order.
-    /// Other elements are not affected.
+    /// focusable area, else the group's first radio that is, in tree order,
+    /// in both directions (WPT radio-focus-navigation-group-first-focus:
+    /// Shift+Tab lands on the first radio too). Other elements are not
+    /// affected.
     fn radio_group_target(&self, i: u32, area: &dyn Fn(NodeId) -> bool) -> bool {
         let radio = self.html_local(i) == Some(&local_name!("input"))
             && self.input_type_idx(i) == crate::forms::InputType::Radio;
         if !radio {
             return true;
         }
+        if let Some(target) = self.radio_targets.borrow().get(&i) {
+            return *target == Some(i);
+        }
         let group = self.radio_group(i);
         if group.len() <= 1 {
             return true;
         }
-        let focusable = |r: u32| r == i || area(self.id_of(r));
+        let focusable = |r: u32| area(self.id_of(r));
         let checked = group.iter().copied().find(|&r| self.checkedness_idx(r)).filter(|&r| focusable(r));
         let target = checked.or_else(|| group.iter().copied().find(|&r| focusable(r)));
+        let mut targets = self.radio_targets.borrow_mut();
+        for &r in &group {
+            targets.insert(r, target);
+        }
         target == Some(i)
     }
 
