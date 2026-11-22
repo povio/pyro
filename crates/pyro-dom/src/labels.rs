@@ -85,7 +85,7 @@ impl Dom {
         Ok((c != NIL).then(|| self.id_of(c)))
     }
 
-    fn labeled_control_idx(&self, l: u32) -> u32 {
+    pub(crate) fn labeled_control_idx(&self, l: u32) -> u32 {
         let e = self.n(l).element().expect("label element");
         if let Some(f) = e.attr_local(&local_name!("for")) {
             let target = self.resolve_reference_target_idx(self.first_by_id(self.root_idx(l), f));

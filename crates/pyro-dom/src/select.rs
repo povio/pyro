@@ -854,7 +854,7 @@ impl Dom {
             Visited => false,
             Active => {
                 let a = self.activated_idx(self.n(idx).owner_doc);
-                a != NIL && self.user_action_chain_holds(idx, a)
+                a != NIL && (self.user_action_chain_holds(idx, a) || self.labeled_by_active_label(idx, a))
             }
             Target => self.is_url_target(idx),
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
@@ -972,6 +972,22 @@ impl Dom {
     /// transition) lies strictly between them. Chrome stops the chain at the innermost top-layer
     /// element, which matches but whose ancestors do not (WPT css/selectors `*-toplayer-001`,
     /// `toplayer-transition-001`, `user-action-pseudo-top-layer`).
+    /// HTML `:active`: the labeled control of a label that matches it (a
+    /// label around the activated element `a`) matches it too.
+    fn labeled_by_active_label(&self, idx: u32, a: u32) -> bool {
+        if !self.labelable_idx(idx) {
+            return false;
+        }
+        let mut cur = a;
+        while cur != NIL {
+            if self.html_local(cur) == Some(&local_name!("label")) && self.labeled_control_idx(cur) == idx {
+                return true;
+            }
+            cur = self.n(cur).parent;
+        }
+        false
+    }
+
     pub(crate) fn user_action_chain_holds(&self, anc: u32, node: u32) -> bool {
         if self.top_layer().is_empty() || anc == node {
             return self.shadow_including_inclusive_ancestor(anc, node);
