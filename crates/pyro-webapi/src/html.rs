@@ -3191,6 +3191,7 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
     reflect_bool!(def, "shadowRootDelegatesFocus", "shadowrootdelegatesfocus");
     reflect_bool!(def, "shadowRootClonable", "shadowrootclonable");
     reflect_bool!(def, "shadowRootSerializable", "shadowrootserializable");
+    reflect_str!(def, "shadowRootCustomElementRegistry", "shadowrootcustomelementregistry");
 });
 
 fn slot_assigned<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, elements_only: bool) -> JsResult<Value<'s>> {

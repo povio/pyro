@@ -267,7 +267,8 @@ pub struct Dom {
     /// never reads styles pays nothing.
     style_snapshots: std::cell::RefCell<Option<StyleSnapshots>>,
     /// Custom element names whose definitions disable shadow roots.
-    shadow_disabled: Vec<(RegistryAssociation, Box<str>)>,
+    shadow_disabled: Vec<(Option<NodeId>, RegistryAssociation, LocalName, LocalName)>,
+    scoped_registry_docs: rustc_hash::FxHashMap<u64, Vec<(u64, NodeId)>>,
     registry_associations: rustc_hash::FxHashMap<u32, RegistryAssociation>,
     custom_definition_owners: rustc_hash::FxHashMap<u32, CustomDefinitionOwner>,
     /// Shadow roots ever attached (selective style invalidation does not
@@ -364,6 +365,7 @@ impl Dom {
             journal_floor: 0,
             style_snapshots: Default::default(),
             shadow_disabled: Vec::new(),
+            scoped_registry_docs: Default::default(),
             registry_associations: Default::default(),
             custom_definition_owners: Default::default(),
             shadow_roots: 0,
@@ -1548,10 +1550,41 @@ impl Dom {
         Ok(())
     }
 
-    pub fn has_scoped_registry(&self, id: u64) -> bool {
-        let scoped = RegistryAssociation::Scoped(id);
-        self.registry_associations.values().any(|r| *r == scoped)
-            || self.custom_definition_owners.values().any(|d| d.registry == scoped)
+    pub fn live_scoped_registries(&self) -> FxHashSet<u64> {
+        self.registry_associations.values().copied()
+            .chain(self.custom_definition_owners.values().map(|d| d.registry))
+            .filter_map(|association| match association {
+                RegistryAssociation::Scoped(id) => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The order belongs to the registry across documents, even if an embedder
+    /// keeps those documents in different DOM arenas.
+    pub fn note_scoped_registry_document(&mut self, registry: u64, doc: NodeId) -> DomResult<()> {
+        self.check(doc)?;
+        self.note_registry_connection(registry, doc);
+        Ok(())
+    }
+
+    fn note_registry_connection(&mut self, registry: u64, doc: NodeId) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let documents = self.scoped_registry_docs.entry(registry).or_default();
+        if !documents.iter().any(|(_, known)| *known == doc) {
+            documents.push((NEXT.fetch_add(1, Ordering::Relaxed), doc));
+        }
+    }
+
+    /// Called once the registry has no live wrapper or DOM references.
+    pub fn forget_scoped_registry(&mut self, registry: u64) {
+        self.scoped_registry_docs.remove(&registry);
+        self.shadow_disabled.retain(|(_, association, _, _)| *association != RegistryAssociation::Scoped(registry));
+    }
+
+    pub fn scoped_registry_documents(&self, registry: u64) -> Vec<(u64, NodeId)> {
+        self.scoped_registry_docs.get(&registry).cloned().unwrap_or_default()
     }
 
     pub fn custom_definition_owner(&self, el: NodeId) -> DomResult<Option<CustomDefinitionOwner>> {
@@ -1745,7 +1778,10 @@ impl Dom {
         if !valid_host {
             return Err(DomError::new(DomErrorKind::NotSupported, "This element does not support attachShadow"));
         }
-        if self.shadow_disabled.iter().any(|(registry, name)| **name == *el.name.local && *registry == self.registry_idx(h)) {
+        if self.shadow_disabled.iter().any(|(doc, registry, name, local)| {
+            *local == el.name.local && (name == local || el.is_value.as_ref() == Some(name))
+                && *registry == self.registry_idx(h) && doc.is_none_or(|d| d == self.id_of(self.n(h).owner_doc))
+        }) {
             return Err(DomError::new(
                 DomErrorKind::NotSupported,
                 "attachShadow() is disabled by disabledFeatures static field",
@@ -1829,11 +1865,13 @@ impl Dom {
 
     /// A custom element name defined with `disabledFeatures: ["shadow"]`.
     pub fn disable_shadow_for(&mut self, name: &str) {
-        self.disable_shadow_for_registry(RegistryAssociation::Default, name);
+        self.shadow_disabled.push((None, RegistryAssociation::Default, name.into(), name.into()));
     }
 
-    pub fn disable_shadow_for_registry(&mut self, registry: RegistryAssociation, name: &str) {
-        self.shadow_disabled.push((registry, name.into()));
+    pub fn disable_shadow_for_registry(&mut self, doc: NodeId, registry: RegistryAssociation, name: &str, local: &LocalName) {
+        let doc = (registry == RegistryAssociation::Default).then_some(doc);
+        let key = (doc, registry, LocalName::from(name), local.clone());
+        if !self.shadow_disabled.contains(&key) { self.shadow_disabled.push(key); }
     }
 
     /// HTML "scripting is enabled" for the nodes of `doc`: set for a document
@@ -2920,6 +2958,15 @@ impl Dom {
         }
         self.n_mut(parent).add_child_count();
         self.tree_linked(node);
+        if !self.registry_associations.is_empty() && self.is_connected_idx(node) && !self.is_fragment_parse_host(self.n(node).owner_doc) {
+            let mut i = node;
+            while i != NIL {
+                if let Some(&RegistryAssociation::Scoped(registry)) = self.registry_associations.get(&i) {
+                    self.note_registry_connection(registry, self.id_of(self.n(i).owner_doc));
+                }
+                i = self.next_shadow_including(i, node);
+            }
+        }
     }
 
     /// Every unlink (DOM, parsers, moves) goes through here and every link
@@ -4509,6 +4556,12 @@ impl Dom {
             self.svg_strings.remove(&(i, StringListAttribute::SystemLanguage));
         }
         if owner == i {
+            let doc = self.id_of(i);
+            self.scoped_registry_docs.retain(|_, docs| {
+                docs.retain(|(_, known)| *known != doc);
+                !docs.is_empty()
+            });
+            self.shadow_disabled.retain(|(owner, _, _, _)| *owner != Some(doc));
             self.snapshot_nonces.get_mut().remove(&i);
         }
         let inert = match &self.n(i).kind {

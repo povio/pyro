@@ -420,6 +420,11 @@ impl Dom {
                     if f.flags & shadow_flags::CLONABLE != 0 {
                         out.push_str(" shadowrootclonable=\"\"");
                     }
+                    use crate::RegistryAssociation::{Default, Null};
+                    let document_registry = self.registry_idx(self.n(sr).owner_doc);
+                    if !matches!((document_registry, self.registry_idx(sr)), (Null, Null) | (Default, Default)) {
+                        out.push_str(" shadowrootcustomelementregistry=\"\"");
+                    }
                     out.push('>');
                     stack.push(Step::ShadowClose);
                     let kids: Vec<u32> = self.child_idx_iter(sr).collect();
