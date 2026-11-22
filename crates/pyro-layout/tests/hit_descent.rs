@@ -125,6 +125,18 @@ impl Page {
                     self.describe(asked)
                 ));
             }
+            // `elementsFromPoint`'s list hit test starts with the same hit by either path.
+            let descent_list = self.layout.elements_from_point_descent(&self.dom, x, y);
+            let indexed_list = self.layout.elements_from_point_indexed(&self.dom, x, y);
+            if descent_list.first().copied() != descent || indexed_list.first().copied() != indexed {
+                mismatches.push(format!(
+                    "{label} at ({x}, {y}): list descent {} index {}, single descent {} index {}",
+                    self.describe(descent_list.first().copied()),
+                    self.describe(indexed_list.first().copied()),
+                    self.describe(descent),
+                    self.describe(indexed)
+                ));
+            }
             distinct.insert(scan);
         }
         // The vertical hit test (WebDriver scroll actions) too.
@@ -423,4 +435,36 @@ fn a_positioned_sibling_over_an_overflowing_flex_item_is_hit() {
     assert_eq!(p.layout.element_from_point(&p.dom, 50.0, 90.0), Some(next), "the positioned sibling over the item");
     assert_eq!(p.layout.element_from_point(&p.dom, 50.0, 30.0), Some(item), "the item above the sibling");
     assert!(p.compare("positioned sibling over a flex item") > 1);
+}
+
+/// `elementsFromPoint` lists every hit-testable element whose box holds the point, topmost first
+/// (Chrome's list hit test): an overlapped sibling too, but not an ancestor whose box does not
+/// hold the point nor a table row (hit only through its cells), and it ends with the root even
+/// where nothing is hit; nothing outside the viewport. WPT css/cssom-view `elementsFromPoint*`.
+#[test]
+fn elements_from_point_lists_every_box_holding_the_point() {
+    let p = page(
+        "<!doctype html><html id=h><body id=b style='margin:0'>\
+         <div id=big style='width:200px;height:200px'></div>\
+         <div id=small style='position:absolute;left:10px;top:10px;width:50px;height:50px'></div>\
+         <table id=t style='position:absolute;left:0;top:300px;border-spacing:0'><tr id=tr><td id=td style='width:40px;height:40px;padding:0'></td></tr></table>",
+    );
+    let ids = |x: f64, y: f64| -> Vec<NodeId> { p.layout.elements_from_point(&p.dom, x, y) };
+    let [h, b, big, small, t, td] = ["h", "b", "big", "small", "t", "td"].map(|id| p.id(id));
+    assert_eq!(ids(20.0, 20.0), vec![small, big, b, h], "the overlapped sibling under the positioned one");
+    assert_eq!(ids(100.0, 100.0), vec![big, b, h]);
+    // The body is only as tall as its in-flow content (200px).
+    assert_eq!(ids(20.0, 320.0), vec![td, t, h], "no row, no body");
+    assert!(!ids(20.0, 320.0).contains(&p.id("tr")));
+    assert_eq!(ids(500.0, 500.0), vec![h], "the root ends an otherwise empty list");
+    assert_eq!(ids(-1.0, 5.0), Vec::<NodeId>::new(), "outside the viewport");
+    assert_eq!(ids(5.0, 600.0), Vec::<NodeId>::new(), "outside the viewport");
+    for (x, y) in [(20.0, 20.0), (100.0, 100.0), (20.0, 320.0)] {
+        assert_eq!(ids(x, y).first().copied(), p.layout.element_from_point(&p.dom, x, y), "({x},{y})");
+        assert_eq!(
+            p.layout.elements_from_point_descent(&p.dom, x, y),
+            p.layout.elements_from_point_indexed(&p.dom, x, y)
+        );
+    }
+    assert!(p.compare("elementsFromPoint list") > 3);
 }

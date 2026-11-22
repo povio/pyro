@@ -63,6 +63,23 @@ struct HitTestGeometry {
     fragments: FxHashMap<NodeId, Option<Rc<[Rect]>>>,
 }
 
+/// pyro: one box of a list hit test (`Layout::hits_from_point`): its paint order key, its
+/// element, and what it lists (the element; an SVG graphic hit in an `svg` viewport's box, its
+/// SVG ancestors, then the viewport).
+struct ListHit {
+    key: Rc<[PaintEntry]>,
+    el: NodeId,
+    chain: Vec<NodeId>,
+}
+
+/// Whether paint order keys `a` and `b` are in one layer (one stacking context and paint
+/// phase), where a box paints over its tree-order ancestors.
+fn same_paint_layer(a: &[PaintEntry], b: &[PaintEntry]) -> bool {
+    a.len() == b.len()
+        && a[..a.len() - 1] == b[..b.len() - 1]
+        && a.last().map(|value| (value.0, value.1)) == b.last().map(|value| (value.0, value.1))
+}
+
 use crate::media::Viewport;
 use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
 use crate::style::{CheckVisibilityOptions, ComputedStyle, Display, Position, ScrollAxes, StyleEngine, UserSelect};
@@ -2239,7 +2256,7 @@ impl Layout {
     fn element_from_point_impl(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
         if ignore_x {
             // A whole row of the page: nothing a point index narrows.
-            return self.hit_test_descent(dom, x, y, true);
+            return self.hit_test_descent(dom, x, y, true, None);
         }
         // pyro: classic scrollbars: a point in the viewport's scrollbar gutters (outside its
         // scrollport) hits the root element (Chrome).
@@ -2251,10 +2268,10 @@ impl Layout {
             }
         }
         if let Some(index) = self.hit_index_for(dom, false) {
-            return self.hit_test_indexed(dom, &index, x, y);
+            return self.hit_test_indexed(dom, &index, x, y, None);
         }
         let started = std::time::Instant::now();
-        let hit = self.hit_test_descent(dom, x, y, false);
+        let hit = self.hit_test_descent(dom, x, y, false, None);
         let took = started.elapsed();
         let mut state = self.hit_index.borrow_mut();
         state.rented += took;
@@ -2262,6 +2279,47 @@ impl Layout {
         state.descent_cost.record(took);
         state.bought_unseen = 0;
         hit
+    }
+
+    /// pyro: every hit-testable element whose box holds viewport point (`x`, `y`), topmost in
+    /// paint order first (Chrome's list-based hit test behind `elementsFromPoint`): the
+    /// candidates [`Layout::element_from_point_impl`] selects from, by the same path (the
+    /// viewport's scrollbar gutters hit the root; an index when there is one, else a descent).
+    /// An SVG graphic is listed with its SVG ancestors up to its outer `svg`. The first is
+    /// `element_from_point_impl`'s hit.
+    fn hits_from_point(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
+        if let Some([left, top, right, bottom]) = self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()) {
+            let (vw, vh) = (self.viewport().width as f64, self.viewport().height as f64);
+            let in_viewport = x >= 0.0 && y >= 0.0 && x < vw && y < vh;
+            if in_viewport && (x < left || y < top || x >= vw - right || y >= vh - bottom) {
+                return dom.document_element(self.document()).ok().flatten().into_iter().collect();
+            }
+        }
+        let mut hits = Vec::new();
+        // (The descent is not timed here: its price feeds the index's, for single hits.)
+        match self.hit_index_for(dom, false) {
+            Some(index) => self.hit_test_indexed(dom, &index, x, y, Some(&mut hits)),
+            None => self.hit_test_descent(dom, x, y, false, Some(&mut hits)),
+        };
+        hits.into_iter().flat_map(|hit| hit.chain).collect()
+    }
+
+    /// [`Layout::hits_from_point`] from the index, built now if this layout has none yet (tests).
+    #[doc(hidden)]
+    pub fn elements_from_point_indexed(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
+        let mut hits = Vec::new();
+        if let Some(index) = self.hit_index_for(dom, true) {
+            self.hit_test_indexed(dom, &index, x, y, Some(&mut hits));
+        }
+        hits.into_iter().flat_map(|hit| hit.chain).collect()
+    }
+
+    /// [`Layout::hits_from_point`] by a descent of the engine's tree (tests).
+    #[doc(hidden)]
+    pub fn elements_from_point_descent(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
+        let mut hits = Vec::new();
+        self.hit_test_descent(dom, x, y, false, Some(&mut hits));
+        hits.into_iter().flat_map(|hit| hit.chain).collect()
     }
 
     /// The index of the current layout and scroll position, when there is
@@ -2373,14 +2431,21 @@ impl Layout {
     /// [`Layout::element_from_point_impl`] from `index`: the boxes of the
     /// point's cell holding the point, in tree order, are the candidates
     /// of the same selection as the scan's and the descent's.
-    fn hit_test_indexed(&self, dom: &Dom, index: &HitIndex, x: f64, y: f64) -> Option<NodeId> {
+    fn hit_test_indexed(
+        &self,
+        dom: &Dom,
+        index: &HitIndex,
+        x: f64,
+        y: f64,
+        all: Option<&mut Vec<ListHit>>,
+    ) -> Option<NodeId> {
         let candidates = index
             .grid
             .cell(x, y)
             .iter()
             .filter(|&&i| HitIndex::holds(&index.rects[i as usize], x, y))
             .map(|&i| index.els[i as usize]);
-        self.hit_select(dom, &index.result, candidates, x, y, false, &mut index.geometry.borrow_mut())
+        self.hit_select(dom, &index.result, candidates, x, y, false, &mut index.geometry.borrow_mut(), all)
     }
 
     /// `document.elementFromPoint(x, y)` answered from the index, built
@@ -2388,14 +2453,14 @@ impl Layout {
     #[doc(hidden)]
     pub fn element_from_point_indexed(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
         let index = self.hit_index_for(dom, true)?;
-        self.hit_test_indexed(dom, &index, x, y)
+        self.hit_test_indexed(dom, &index, x, y, None)
     }
 
     /// `document.elementFromPoint(x, y)` answered by a descent of the
     /// engine's tree, whether or not there is an index (tests).
     #[doc(hidden)]
     pub fn element_from_point_descent(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
-        self.hit_test_descent(dom, x, y, false)
+        self.hit_test_descent(dom, x, y, false, None)
     }
 
     /// How many hit-test indexes were built so far, and whether the current
@@ -2410,7 +2475,14 @@ impl Layout {
 
     /// The hit test by the engine's candidates (see
     /// [`Layout::element_from_point_impl`]).
-    fn hit_test_descent(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
+    fn hit_test_descent(
+        &self,
+        dom: &Dom,
+        x: f64,
+        y: f64,
+        ignore_x: bool,
+        all: Option<&mut Vec<ListHit>>,
+    ) -> Option<NodeId> {
         let source = self.synced_geometry_source(dom)?.clone();
         let has_element_scroll = self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0);
         let sticky = self.sticky_map(dom);
@@ -2438,7 +2510,7 @@ impl Layout {
         }
         shifted.extend(sticky.keys().map(|&el| crate::snapshot::render_key(el)));
         let Some(visits) = source.hit_candidates(&probe, &offset, &shifted) else {
-            return self.hit_test_scan(dom, x, y, ignore_x);
+            return self.hit_test_scan(dom, x, y, ignore_x, all);
         };
         let (document_width, document_height) = source.document_size().unwrap_or((0.0, 0.0));
         let mut result =
@@ -2459,12 +2531,19 @@ impl Layout {
         }
         let candidates: Vec<NodeId> = visits.iter().filter(|v| v.hit).filter_map(|v| node_of(dom, v.key)).collect();
         let mut geometry = geometry.into_inner();
-        self.hit_select(dom, &result, candidates.into_iter(), x, y, ignore_x, &mut geometry)
+        self.hit_select(dom, &result, candidates.into_iter(), x, y, ignore_x, &mut geometry, all)
     }
 
     /// [`Layout::element_from_point_impl`] over every box of the document
     /// (the whole document's geometry is read).
-    fn hit_test_scan(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
+    fn hit_test_scan(
+        &self,
+        dom: &Dom,
+        x: f64,
+        y: f64,
+        ignore_x: bool,
+        all: Option<&mut Vec<ListHit>>,
+    ) -> Option<NodeId> {
         let result = self.layout_result(dom);
         let mut geometry = HitTestGeometry {
             has_element_scroll: self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0),
@@ -2472,9 +2551,9 @@ impl Layout {
             has_fragments: self.external.as_ref().is_some_and(|source| source.has_fragmented_boxes()),
             ..Default::default()
         };
-        let mut all: Vec<NodeId> = result.boxes.keys().copied().collect();
-        all.sort_by_key(|el| result.boxes[el].order);
-        self.hit_select(dom, &result, all.into_iter(), x, y, ignore_x, &mut geometry)
+        let mut boxes: Vec<NodeId> = result.boxes.keys().copied().collect();
+        boxes.sort_by_key(|el| result.boxes[el].order);
+        self.hit_select(dom, &result, boxes.into_iter(), x, y, ignore_x, &mut geometry, all)
     }
 
     /// `document.elementFromPoint(x, y)` answered from every box of the
@@ -2482,19 +2561,23 @@ impl Layout {
     /// descent is checked against (tests).
     #[doc(hidden)]
     pub fn element_from_point_scan(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
-        self.hit_test_scan(dom, x, y, false)
+        self.hit_test_scan(dom, x, y, false, None)
     }
 
     /// [`Layout::element_from_vertical_point`] answered from every box of
     /// the document (tests).
     #[doc(hidden)]
     pub fn element_from_vertical_point_scan(&self, dom: &Dom, y: f64) -> Option<NodeId> {
-        self.hit_test_scan(dom, 0.0, y, true)
+        self.hit_test_scan(dom, 0.0, y, true, None)
     }
 
     /// The topmost hit-testable box among `candidates` (in tree order)
     /// holding the point, in paint order; else the topmost modal dialog
     /// (everything outside it is inert: the point hits its `::backdrop`).
+    ///
+    /// pyro: with `all`, every hit-testable box holding the point is put there too, topmost
+    /// first by the same rule (`elementsFromPoint`); the single hit skips the candidates that
+    /// cannot beat its best so far, so does not.
     #[allow(clippy::too_many_arguments)]
     fn hit_select(
         &self,
@@ -2505,6 +2588,7 @@ impl Layout {
         y: f64,
         ignore_x: bool,
         geometry: &mut HitTestGeometry,
+        mut all: Option<&mut Vec<ListHit>>,
     ) -> Option<NodeId> {
         let inside = |r: &Rect| (ignore_x || (x >= r.x && x < r.x + r.width)) && y >= r.y && y < r.y + r.height;
         let mut best: Option<(Rc<[PaintEntry]>, NodeId)> = None;
@@ -2556,10 +2640,8 @@ impl Layout {
                 continue;
             }
             let key = self.paint_key(dom, result, el);
-            if let Some((top_key, top_node)) = &best {
-                let same_layer = key.len() == top_key.len()
-                    && key[..key.len() - 1] == top_key[..top_key.len() - 1]
-                    && key.last().map(|value| (value.0, value.1)) == top_key.last().map(|value| (value.0, value.1));
+            if let (None, Some((top_key, top_node))) = (&all, &best) {
+                let same_layer = same_paint_layer(&key, top_key);
                 // Shadow-including: a host's shadow content paints over it.
                 if same_layer && dom.shadow_including_contains(el, *top_node) {
                     continue;
@@ -2591,6 +2673,35 @@ impl Layout {
                 } else {
                     None
                 };
+                if let Some(list) = all.as_deref_mut() {
+                    // The graphic, its SVG ancestors inside the viewport, then the viewport.
+                    let mut chain = Vec::new();
+                    if let Some(graphic) = target {
+                        let mut cur = Some(graphic);
+                        while let Some(n) = cur.filter(|&n| n != el) {
+                            if n == graphic || self.style.is_hit_testable(dom, n) {
+                                chain.push(n);
+                            }
+                            cur = dom.parent_element(n).ok().flatten();
+                        }
+                    }
+                    if self_hit || target == Some(el) {
+                        chain.push(el);
+                    }
+                    if !chain.is_empty() {
+                        // Before the first entry it paints over (as the single hit's best is
+                        // replaced: a later candidate in tree order wins a tie).
+                        let at = list
+                            .iter()
+                            .position(|e| {
+                                let same_layer = same_paint_layer(&key, &e.key);
+                                !(same_layer && dom.shadow_including_contains(el, e.el))
+                                    && (key >= e.key || (same_layer && dom.shadow_including_contains(e.el, el)))
+                            })
+                            .unwrap_or(list.len());
+                        list.insert(at, ListHit { key: key.clone(), el, chain });
+                    }
+                }
                 if let Some(target) = target.or_else(|| self_hit.then_some(el)) {
                     best = Some((key, target));
                 }
@@ -2598,11 +2709,17 @@ impl Layout {
         }
         // Outside the topmost modal dialog everything is inert: the point
         // hits the dialog's ::backdrop, whose events go to the dialog.
-        best.map(|(_, node)| node).or_else(|| {
+        let hit = best.map(|(_, node)| node).or_else(|| {
             dom.topmost_modal().filter(|&m| {
                 dom.node_document(m).ok() == Some(self.document()) && result.get(m).is_some() && self.is_visible(dom, m)
             })
-        })
+        });
+        if let (Some(list), Some(modal)) = (all, hit) {
+            if list.is_empty() {
+                list.push(ListHit { key: Rc::from(Vec::<PaintEntry>::new()), el: modal, chain: vec![modal] });
+            }
+        }
+        hit
     }
 
     /// A table row or row group, which Chromium hits only through its
@@ -2672,30 +2789,29 @@ impl Layout {
         self.element_from_point_impl(dom, 0.0, y, true)
     }
 
-    /// `document.elementsFromPoint(x, y)` (Document.zig:1034-1047): the hit
-    /// and its hit-testable ancestors, always ending with the root.
+    /// `document.elementsFromPoint(x, y)`: as Chrome lists them, every hit-testable element whose
+    /// box holds the point, topmost first ([`Layout::hits_from_point`]; an image map's area
+    /// before its image), a repeat of the previous one dropped, ending with the root; nothing
+    /// for a point outside the viewport.
     pub fn elements_from_point(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
-        let mut out = Vec::new();
-        let mut cur = self.element_from_point_impl(dom, x, y, false);
-        // pyro: an image map's area comes first, then the image and its ancestors.
-        if let Some(area) = cur.and_then(|img| self.image_map_area(dom, img, x, y)) {
+        let (vw, vh) = (self.viewport().width as f64, self.viewport().height as f64);
+        if !(x >= 0.0 && y >= 0.0 && x < vw && y < vh) {
+            return Vec::new();
+        }
+        let hits = self.hits_from_point(dom, x, y);
+        let mut out = Vec::with_capacity(hits.len() + 2);
+        if let Some(area) = hits.first().and_then(|&img| self.image_map_area(dom, img, x, y)) {
             out.push(area);
         }
-        while let Some(el) = cur {
-            // Flat-tree ancestors: a slottable's slot (boxless, so not
-            // listed), a shadow root's host.
-            let parent = match dom.assigned_slot_any(el) {
-                Some(slot) => Some(slot),
-                None => match dom.parent(el).ok().flatten() {
-                    Some(p) if dom.is_shadow_root(p).unwrap_or(false) => dom.fragment_host(p).ok().flatten(),
-                    _ => dom.parent_element(el).ok().flatten(),
-                },
-            };
-            let slot = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "slot");
-            if parent.is_none() || (self.style.is_hit_testable(dom, el) && !slot) {
-                out.push(el);
+        for n in hits {
+            if out.last() != Some(&n) {
+                out.push(n);
             }
-            cur = parent;
+        }
+        if let Some(root) = dom.document_element(self.document()).ok().flatten() {
+            if out.last() != Some(&root) {
+                out.push(root);
+            }
         }
         out
     }
