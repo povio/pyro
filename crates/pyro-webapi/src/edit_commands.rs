@@ -2831,6 +2831,57 @@ fn distribute_nested_item_color(page: &PageDom, dom: &mut Dom, host: NodeId, ite
 
 /// Join a selected bare host paragraph with the immediately following
 /// selected list items, leaving the trailing host content outside the list.
+/// Turn consecutive host lines separated by BR into distinct items, keeping
+/// inline wrappers on their lines and both text selection endpoints alive.
+fn listify_break_lines(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
+    if !editing::is_text(dom,start.0) || !editing::is_text(dom,end.0) || start.0 == end.0 { return None; }
+    let unit = |node| {
+        let parent = dom.parent_element(node).ok()??;
+        if parent == host { Some(node) } else if dom.parent(parent).ok()? == Some(host) && local_html(dom,parent,"span") {
+            Some(parent)
+        } else { None }
+    };
+    let first = unit(start.0)?;
+    let last = unit(end.0)?;
+    if first == last { return None; }
+    let mut runs = vec![Vec::new()];
+    let mut breaks = Vec::new();
+    let mut cur = first;
+    loop {
+        if editing::editing_host(dom,cur) != Some(host) { return None; }
+        if local_html(dom,cur,"br") {
+            breaks.push(cur);
+            runs.push(Vec::new());
+        } else {
+            if !editing::is_text(dom,cur) && !(local_html(dom,cur,"span") && dom.children(cur).ok()?.all(|n|
+                editing::is_text(dom,n) || local_html(dom,n,"br") && dom.next_sibling(n).ok()==Some(None))) { return None; }
+            runs.last_mut()?.push(cur);
+            if cur != last && dom.last_child(cur).ok()?.is_some_and(|br| local_html(dom,br,"br")) {
+                breaks.push(dom.last_child(cur).ok()??);
+                runs.push(Vec::new());
+            }
+        }
+        if cur == last { break; }
+        cur = dom.next_sibling(cur).ok()??;
+    }
+    if runs.len() < 2 || runs.iter().any(Vec::is_empty) { return None; }
+    // Limit this path to complete lines; the normal list logic handles
+    // other unselected inline siblings sharing either boundary line.
+    let boundary = |n| local_html(dom,n,"br") || local_html(dom,n,"ol") || local_html(dom,n,"ul");
+    if dom.prev_sibling(first).ok()?.is_some_and(|n| !boundary(n)) || dom.next_sibling(last).ok()?.is_some_and(|n| !boundary(n)) { return None; }
+    if let Some(br) = dom.next_sibling(last).ok()?.filter(|&n| local_html(dom,n,"br")) { breaks.push(br); }
+    let doc = dom.node_document(host).ok()?;
+    let list = dom.create_element(doc,tag).ok()?;
+    dom.insert_before(host,list,Some(first)).ok()?;
+    for run in runs {
+        let item = dom.create_element(doc,"li").ok()?;
+        dom.append_child(list,item).ok()?;
+        for n in run { dom.append_child(item,n).ok()?; }
+    }
+    for br in breaks { dom.remove_node(br).ok()?; }
+    Some(())
+}
+
 fn convert_text_and_list(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
     if !editing::is_text(dom, start.0) || dom.parent(start.0).ok()? != Some(host) || start == end { return None; }
     let source = dom.next_sibling(start.0).ok()??;
@@ -2874,7 +2925,7 @@ fn convert_text_and_list(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str,
 
 /// Extract selected levels of a nested list as lines. A nested list of
 /// another type remains an intact block between the surrounding text.
-fn unlist_nested_run(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
+fn unlist_nested_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
     use std::collections::HashSet;
     let first = ancestor_item(dom, start.0, host)?;
     let list = dom.parent_element(first).ok()??;
@@ -2903,8 +2954,19 @@ fn unlist_nested_run(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: 
     let mut output = Vec::new();
     lines(dom,list,tag,&selected,&mut output)?;
     let doc = dom.node_document(host).ok()?;
+    let layout = page.layout();
     let mut previous = None;
-    for (block, children) in output {
+    for (block, mut children) in output {
+        if block && children.len() == 1 {
+            let inner = children[0];
+            if !local_html(dom, inner, tag) && dom.attributes(inner).ok()?.is_empty()
+                && dom.children(inner).ok()?.all(|item| selected.contains(&item))
+            {
+                let replacement = dom.create_element(doc,tag).ok()?;
+                while let Some(item) = dom.first_child(inner).ok()? { dom.append_child(replacement,item).ok()?; }
+                children[0] = replacement;
+            }
+        }
         if !block {
             if let Some(prev) = previous {
                 let br = dom.create_element(doc,"br").ok()?;
@@ -2912,8 +2974,40 @@ fn unlist_nested_run(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: 
                 else { dom.insert_before(host,br,Some(list)).ok()?; }
             }
         }
-        previous = if block { None } else { children.last().copied() };
-        for n in children { dom.insert_before(host,n,Some(list)).ok()?; }
+        previous = None;
+        for n in children {
+            // A text child inherits from the LI and its list until it is
+            // lifted. Keep that appearance on a span only when it changes.
+            let mut retained = pyro_dom::stylo::declarations::DeclarationBlock::parse("");
+            if editing::is_text(dom, n) {
+                let source = dom.parent_element(n).ok()??;
+                for prop in ["color", "font-family", "font-size", "font-weight", "font-style"] {
+                    let value = layout.computed_style_value(dom,source,prop);
+                    if value.is_empty() || value == layout.computed_style_value(dom,host,prop) { continue; }
+                    let mut el = Some(source);
+                    let mut literal = value.clone();
+                    while let Some(node) = el.filter(|&el| el != host) {
+                        let style = pyro_dom::stylo::declarations::DeclarationBlock::parse(dom.get_attribute(node,"style").ok()?.unwrap_or(""));
+                        let authored = style.value(prop);
+                        if !authored.is_empty() {
+                            if authored == value || prop == "color" && pyro_dom::color_well::editing_color(&authored).is_some_and(|(c,_)| c == value)
+                                || prop == "font-weight" && authored == "bold" && value == "700" { literal = authored; }
+                            break;
+                        }
+                        el = dom.parent_element(node).ok()?;
+                    }
+                    retained.set(prop, &literal, false)?;
+                }
+            }
+            let unit = if retained.is_empty() { n } else {
+                let span = dom.create_element(doc,"span").ok()?;
+                dom.set_attribute(span,"style",&retained.css_text()).ok()?;
+                dom.append_child(span,n).ok()?;
+                span
+            };
+            dom.insert_before(host,unit,Some(list)).ok()?;
+            if !block { previous = Some(unit); }
+        }
     }
     if previous.is_some() && dom.next_sibling(list).ok()?.is_some_and(|n| local_html(dom,n,"ul") || local_html(dom,n,"ol")) {
         let br = dom.create_element(doc,"br").ok()?;
@@ -3313,12 +3407,13 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
         {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
-            if unlist_nested_run(&mut dom, host, tag, start, end).is_some() {
+            if unlist_nested_run(page, &mut dom, host, tag, start, end).is_some() {
                 drop(dom);
                 editing::set_selection(page, start, end);
                 return;
             }
-            if convert_text_and_list(page, &mut dom, host, tag, start, end).is_some() {
+            if listify_break_lines(&mut dom, host, tag, start, end).is_some()
+                || convert_text_and_list(page, &mut dom, host, tag, start, end).is_some() {
                 drop(dom);
                 editing::set_selection(page, start, end);
                 return;
