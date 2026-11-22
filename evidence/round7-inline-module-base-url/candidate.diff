@@ -1,0 +1,583 @@
+diff --git a/crates/pyro-browser/src/loader.rs b/crates/pyro-browser/src/loader.rs
+index e64c529ba..1f88acadc 100644
+--- a/crates/pyro-browser/src/loader.rs
++++ b/crates/pyro-browser/src/loader.rs
+@@ -1904,12 +1904,15 @@ impl Browser {
+             }
+             (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url, element, ScriptFetch::of(&info)),
+             (ScriptType::Module, None) => {
+-                let url = {
++                // The script's base URL is the document base URL when it is
++                // prepared (a `<base>` before it counts).
++                let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
++                let seq = {
+                     let mut l = self.load_mut(page).expect("load");
+                     l.inline_module_seq += 1;
+-                    // Distinct registry key per inline module (see pyro_js::Scope::eval_module).
+-                    format!("{}#inline-module-{}", base.split('#').next().unwrap_or(&base), l.inline_module_seq)
++                    l.inline_module_seq
+                 };
++                let url = self.inline_module_identity(page, &script_base, &seq.to_string());
+                 if info.async_ {
+                     self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
+                 } else {
+@@ -2209,7 +2212,8 @@ impl Browser {
+                 self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
+             }
+             (ScriptType::Module, None) => {
+-                let url = dynamic_inline_module_url(&base);
++                let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or(base);
++                let url = self.dynamic_inline_module_identity(page, &script_base);
+                 self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
+                 self.drain_dom_resources(page);
+             }
+@@ -2602,7 +2606,10 @@ impl Browser {
+         let external = info.src.is_some();
+         let url = match info.src.as_deref() {
+             Some(src) => (!src.is_empty()).then(|| resolve_url(node_base_str(&element.dom.borrow(), node).unwrap_or(&base), src)).flatten(),
+-            None if module => Some(dynamic_inline_module_url(&base)),
++            None if module => {
++                let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
++                Some(self.dynamic_inline_module_identity(page, &script_base))
++            }
+             None => None,
+         };
+         let Some(url) = url else { self.script_loaded(page, &element, false); ready(empty()); return };
+@@ -2661,7 +2668,8 @@ impl Browser {
+             if blocking {
+                 pyro_webapi::lifecycle::written_script_fetched(bindings, node, "", Err("invalid URL".into()));
+             } else if info.src.is_none() && info.kind == ScriptKind::Module {
+-                let url = dynamic_inline_module_url(&base);
++                let script_base = node_base_url(&dom.borrow(), node).unwrap_or_else(|| base.clone());
++                let url = self.dynamic_inline_module_identity(page, &script_base);
+                 let element =
+                     dom.borrow_mut().add_ref(node).ok().map(|_| Rc::new(ResourceNode { dom: dom.clone(), node }));
+                 self.execute_module(page, &info.inline_text, &url, false, element, false);
+@@ -3019,15 +3027,29 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
+     bindings.set_current_script(outer);
+ }
+ 
+-/// Registry key of an inline module the parser did not reach (script-inserted
+-/// or written). JSC never evaluates a URL twice and node indices are reused
+-/// after DOM garbage collection, so the key is a process-wide sequence under a
+-/// prefix the parser's `#inline-module-N` keys never use.
+-fn dynamic_inline_module_url(base: &str) -> String {
+-    use std::sync::atomic::{AtomicU64, Ordering};
+-    static SEQ: AtomicU64 = AtomicU64::new(0);
+-    let n = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+-    format!("{}#inline-module-dyn-{n}", base.split('#').next().unwrap_or(base))
++impl Browser {
++    /// Registry identity of an inline module script whose base URL is `base`,
++    /// the document base URL when it was prepared (`pyro_js`
++    /// `Scope::inline_module_identity`): its `import.meta.url` and the
++    /// referrer of its imports are `base`, fragment and all.
++    fn inline_module_identity(&self, page: FrameKey, base: &str, tag: &str) -> String {
++        let realm = self.main_realm(page);
++        match realm.as_ref().and_then(|r| r.scope().ok()) {
++            Some(scope) => scope.inline_module_identity(base, tag),
++            None => format!("{}#inline-module-{tag}", base.split('#').next().unwrap_or(base)),
++        }
++    }
++
++    /// [`Browser::inline_module_identity`] for an inline module the parser
++    /// did not reach (script-inserted or written). Node indices are reused
++    /// after DOM garbage collection, so the tag is a process-wide sequence
++    /// under a prefix the parser's tags (`N`) never use.
++    fn dynamic_inline_module_identity(&self, page: FrameKey, base: &str) -> String {
++        use std::sync::atomic::{AtomicU64, Ordering};
++        static SEQ: AtomicU64 = AtomicU64::new(0);
++        let n = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
++        self.inline_module_identity(page, base, &format!("dyn-{n}"))
++    }
+ }
+ 
+ pub(crate) fn install_module_fetcher(sched: pyro_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
+diff --git a/crates/pyro-browser/tests/loading.rs b/crates/pyro-browser/tests/loading.rs
+index 8706bca8d..816c165a7 100644
+--- a/crates/pyro-browser/tests/loading.rs
++++ b/crates/pyro-browser/tests/loading.rs
+@@ -116,6 +116,69 @@ fn import_maps_map_bare_specifiers() {
+     assert!(errors[0].contains("Invalid import map"), "{log:?}");
+ }
+ 
++const INLINE_MODULE_BASE_PAGE: &str = r#"<!doctype html><html><head>
++<base href="/one/#auth">
++<script type="importmap">{"imports":{"x":"/x-top.js"},"scopes":{"/one/#auth":{"x":"/x-frag.js"},"/marked.js#inline-module-authored":{"x":"/x-ext.js"}}}</script>
++<script type="module">import { v } from 'x'; console.log('p1', import.meta.url, v)</script>
++<script type="module">
++console.log('p2', import.meta.url, import.meta.resolve('x'));
++document.querySelector('base').href = '/two/#kept';
++for (const id of ['d1', 'd2']) {
++  const s = document.createElement('script');
++  s.type = 'module';
++  s.textContent = `console.log('${id}', import.meta.url, import.meta.resolve('./r.js'), import.meta.resolve('x'))`;
++  document.head.append(s);
++}
++</script>
++<script type="module" src="/marked.js#inline-module-authored"></script>
++</head><body></body></html>"#;
++
++/// An inline module script's `import.meta.url` and the referrer its
++/// specifiers resolve against are the document base URL when it was
++/// prepared, authored fragment and all (an exact import map scope matches
++/// it); each inline script runs under its own identity; a fetched module
++/// whose URL merely looks like an inline identity keeps its URL.
++#[test]
++fn inline_module_scripts_resolve_against_their_base_url() {
++    if unsafe { pyro_js::sys::modules::pyro_jsc_import_maps_available() } != 1 {
++        eprintln!("import maps need the patched JavaScriptCore; skipping");
++        return;
++    }
++    let mut thread = crate::browser_thread().unwrap();
++    let rec = Rc::new(Recorder::default());
++    thread.browser.set_observer(Some(rec.clone()));
++    thread.browser.set_engine_hooks(Some(rec.clone()));
++    let loader = Rc::new(StaticLoader::default());
++    for (path, body) in [
++        ("/", INLINE_MODULE_BASE_PAGE),
++        ("/x-top.js", "export const v = 'top';"),
++        ("/x-frag.js", "export const v = 'frag';"),
++        ("/x-ext.js", "export const v = 'ext';"),
++        // StaticLoader matches the request URL as given, fragment included.
++        ("/marked.js#inline-module-authored", "import { v } from 'x'; console.log('ext', import.meta.url, v)"),
++    ] {
++        let mime = if path == "/" { "text/html" } else { "text/javascript" };
++        loader.insert(&format!("http://site.test{path}"), mime, body, Duration::ZERO);
++    }
++    thread.browser.set_loader(Some(loader.clone()));
++    let page = thread.browser.create_page().unwrap();
++    rec.log.borrow_mut().clear();
++    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
++    run(&mut thread, &rec);
++    let log = rec.log.borrow();
++    for line in [
++        "p1 http://site.test/one/#auth frag",
++        "p2 http://site.test/one/#auth http://site.test/x-frag.js",
++        "d1 http://site.test/two/#kept http://site.test/two/r.js http://site.test/x-top.js",
++        "d2 http://site.test/two/#kept http://site.test/two/r.js http://site.test/x-top.js",
++        "ext http://site.test/marked.js#inline-module-authored ext",
++    ] {
++        assert!(log.iter().any(|l| l == line), "missing {line:?} in {log:?}");
++    }
++    let errors: Vec<_> = log.iter().filter(|l| l.starts_with("exception")).collect();
++    assert!(errors.is_empty(), "{log:?}");
++}
++
+ const TYPED_MODULES_PAGE: &str = r#"<!doctype html><html><head>
+ <script type="module">
+ import data from './data.json' with { type: 'json' };
+diff --git a/crates/pyro-js/src/realm.rs b/crates/pyro-js/src/realm.rs
+index 30f4f0829..a915d4bde 100644
+--- a/crates/pyro-js/src/realm.rs
++++ b/crates/pyro-js/src/realm.rs
+@@ -179,6 +179,10 @@ pub struct ModuleRequest {
+     /// The identifier JSC requested (module registry key); differs from `url`
+     /// for root-relative specifiers remapped from `file://`.
+     key: String,
++    /// The URL of the module's source: its `import.meta.url`, stack frames
++    /// and dynamic `import()` referrer. `key`, except for an inline module
++    /// script, whose identity is no URL ([`Scope::inline_module_identity`]).
++    source_url: String,
+     realm: std::rc::Weak<RealmInner>,
+     resolve: Persistent,
+     reject: Persistent,
+@@ -215,7 +219,7 @@ impl ModuleRequest {
+     /// Provides module source text (a [`ModuleType::JavaScript`] request).
+     pub fn resolve(self, scope: &Scope<'_>, source: &str) -> JsResult<()> {
+         use crate::bytecode_cache::{Find, SourceKind};
+-        let prefix = module_prefix(&self.key);
++        let prefix = module_prefix(&self.source_url);
+         if let Some(cache) = scope.realm.engine.bytecode_cache_for(prefix.len() + source.len()) {
+             match cache.find(SourceKind::Module, &self.key, &[&prefix, source]) {
+                 Find::Hit(key, entry) => return self.resolve_cached(scope, &cache, key, &entry),
+@@ -246,7 +250,7 @@ impl ModuleRequest {
+         let ctx = scope.realm.global_ctx()?;
+         // The engine itself has what it precompiled from the entry.
+         let precompiled = scope.realm.engine.precompiled_from_cache.borrow().contains(&key);
+-        let url = JsString::new(&self.key);
++        let url = JsString::new(&self.source_url);
+         let cached = crate::bytecode_cache::CachedSource::new(entry, !precompiled);
+         let mut exc: sys::JSValueRef = ptr::null();
+         // SAFETY: a live context of this thread; `cached` is given to this
+@@ -301,8 +305,8 @@ impl ModuleRequest {
+                 scope.realm.global_ctx()?,
+                 source.as_ptr().cast(),
+                 source.len(),
+-                self.key.as_ptr().cast(),
+-                self.key.len(),
++                self.source_url.as_ptr().cast(),
++                self.source_url.len(),
+                 module_type,
+                 &mut err,
+             )
+@@ -487,6 +491,9 @@ pub(crate) struct RealmInner {
+     /// Sources of top-level modules passed to `eval_module`; JSC requests the
+     /// entry module itself through the fetch hook.
+     inline_modules: RefCell<HashMap<String, String>>,
++    /// Inline module script identities and their base URLs
++    /// ([`Scope::inline_module_identity`]).
++    inline_module_bases: RefCell<HashMap<String, String>>,
+     embedder: RefCell<Option<Rc<dyn Any>>>,
+     /// The realm's current event (`window.event`), set by the embedder
+     /// around each listener call ([`Scope::set_current_event`]); null
+@@ -1575,12 +1582,44 @@ impl<'s> Scope<'s> {
+         }
+     }
+ 
++    /// The registry identity of an inline module script whose base URL is
++    /// `base` (the document base URL when it was prepared), for
++    /// [`Scope::eval_module`] and [`Scope::load_module_graph`]; `tag` tells
++    /// the realm's inline scripts apart. JSC evaluates an identity once, so
++    /// each script needs its own, while its `import.meta.url`, the referrer
++    /// its specifiers resolve against (import map scopes included) and its
++    /// stack frames are `base`, fragment and all. With patch 0038 the
++    /// identity is no URL (it starts with U+0001, which a resolved URL
++    /// never holds), registered with its base, so no fetched module can be
++    /// named like it. Without it, `<base without fragment>#inline-module-<tag>`.
++    pub fn inline_module_identity(&self, base: &str, tag: &str) -> String {
++        let identity = format!("\u{1}inline-module-{tag} {base}");
++        let registered = match self.realm.global_ctx() {
++            // SAFETY: a live context of this thread; the slices outlive the call, which copies them.
++            Ok(ctx) => unsafe {
++                sys::modules::pyro_jsc_inline_module_base_set(
++                    ctx,
++                    identity.as_ptr().cast(),
++                    identity.len(),
++                    base.as_ptr().cast(),
++                    base.len(),
++                ) == 1
++            },
++            Err(_) => false,
++        };
++        if registered {
++            self.realm.inline_module_bases.borrow_mut().insert(identity.clone(), base.to_owned());
++            return identity;
++        }
++        format!("{}#inline-module-{tag}", base.split('#').next().unwrap_or(base))
++    }
++
+     /// Evaluates a module script; returns its evaluation promise. Imports go
+     /// through the realm's [`ModuleFetcher`].
+     ///
+     /// JSC's module registry is keyed by URL: a URL evaluated once is not
+-    /// evaluated again, so inline module scripts need distinct URLs (the
+-    /// browser layer appends a fragment, which leaves relative resolution intact).
++    /// evaluated again, so inline module scripts need distinct identities
++    /// ([`Scope::inline_module_identity`]).
+     pub fn eval_module(&self, source: &str, url: &str) -> JsResult<Value<'s>> {
+         if !self.realm.engine.caps.modules {
+             return Err(JsError::Unsupported(&"ES modules (JSScript module SPI)"));
+@@ -2854,6 +2893,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm>
+         native_callback_pending: RefCell::new(None),
+         native_callback_hook_active: Cell::new(false),
+         inline_modules: RefCell::new(HashMap::new()),
++        inline_module_bases: RefCell::new(HashMap::new()),
+         embedder: RefCell::new(None),
+         current_event: Cell::new(ptr::null()),
+         named_properties: RefCell::new(None),
+@@ -3851,10 +3891,12 @@ unsafe extern "C" fn module_fetch(
+             let key = crate::string::to_rust_string(identifier);
+             let origin = realm.origin.borrow().clone();
+             let url = remap_module_url(&key, origin.as_deref());
++            let source_url = realm.inline_module_bases.borrow().get(&key).cloned().unwrap_or_else(|| key.clone());
+             let request = ModuleRequest {
+                 url: url.clone(),
+                 ty: ModuleType::from_raw(module_type),
+                 key,
++                source_url,
+                 realm: Rc::downgrade(realm),
+                 resolve: Persistent::new(scope, Value::from_raw(scope.ctx, resolve as sys::JSValueRef)),
+                 reject: Persistent::new(scope, Value::from_raw(scope.ctx, reject as sys::JSValueRef)),
+diff --git a/crates/pyro-jsc-sys/build.rs b/crates/pyro-jsc-sys/build.rs
+index 69aea43bb..bf1c7be58 100644
+--- a/crates/pyro-jsc-sys/build.rs
++++ b/crates/pyro-jsc-sys/build.rs
+@@ -118,6 +118,10 @@ fn source_shim(lib: &Path) {
+     if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0037-module-graph-phases.patch").is_file()) {
+         build.define("PYRO_JSC_MODULE_PHASES", None);
+     }
++    // Patch 0038: inline module scripts' registered base URLs.
++    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0038-inline-module-bases.patch").is_file()) {
++        build.define("PYRO_JSC_INLINE_MODULE_BASES", None);
++    }
+     build.compile("pyro_jsc_shim");
+ }
+ 
+diff --git a/crates/pyro-jsc-sys/shim/modules.m b/crates/pyro-jsc-sys/shim/modules.m
+index c61380d78..72366b951 100644
+--- a/crates/pyro-jsc-sys/shim/modules.m
++++ b/crates/pyro-jsc-sys/shim/modules.m
+@@ -204,6 +204,17 @@ JSValueRef pyro_jsc_module_evaluate(JSGlobalContextRef ctx, const char *src, siz
+     }
+ }
+ 
++// Inline module base registration is the source-built JavaScriptCore's (patch 0038).
++int pyro_jsc_inline_module_base_set(JSGlobalContextRef ctx, const char *id, size_t id_len, const char *base,
++                                    size_t base_len) {
++    (void)ctx;
++    (void)id;
++    (void)id_len;
++    (void)base;
++    (void)base_len;
++    return 0;
++}
++
+ // The module script phases are the source-built JavaScriptCore's (patch 0037).
+ int pyro_jsc_module_phases_available(void) { return 0; }
+ 
+diff --git a/crates/pyro-jsc-sys/shim/modules_source.c b/crates/pyro-jsc-sys/shim/modules_source.c
+index b85e51b8c..1513c176d 100644
+--- a/crates/pyro-jsc-sys/shim/modules_source.c
++++ b/crates/pyro-jsc-sys/shim/modules_source.c
+@@ -33,6 +33,10 @@ JSObjectRef JSLoadModuleGraph(JSContextRef ctx, JSStringRef url, JSValueRef *exc
+ JSObjectRef JSLinkAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef *exception);
+ #endif
+ bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef *messages);
++#ifdef PYRO_JSC_INLINE_MODULE_BASES
++// Patch 0038-inline-module-bases (build.rs defines this when the archive has it).
++bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef identifier, JSStringRef baseURL);
++#endif
+ typedef JSStringRef (*pyro_module_base_url_cb)(JSGlobalContextRef ctx);
+ bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, pyro_module_base_url_cb callback);
+ 
+@@ -115,6 +119,27 @@ int pyro_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_
+     return merged;
+ }
+ 
++// Registers `id` as an inline module script's registry identity resolving
++// against `base` (patch 0038). Returns 1 when registered, 0 without the patch.
++int pyro_jsc_inline_module_base_set(JSGlobalContextRef ctx, const char *id, size_t id_len, const char *base,
++                                    size_t base_len) {
++#ifdef PYRO_JSC_INLINE_MODULE_BASES
++    JSStringRef identifier = pyro_string(id, id_len);
++    JSStringRef baseURL = pyro_string(base, base_len);
++    bool set = JSGlobalContextSetInlineModuleBase(ctx, identifier, baseURL);
++    JSStringRelease(identifier);
++    JSStringRelease(baseURL);
++    return set;
++#else
++    (void)ctx;
++    (void)id;
++    (void)id_len;
++    (void)base;
++    (void)base_len;
++    return 0;
++#endif
++}
++
+ // `type` is 0 (JavaScript) or 1 (JSON).
+ JSValueRef pyro_jsc_module_script_create(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *url,
+                                        size_t url_len, int type, JSStringRef *error) {
+diff --git a/crates/pyro-jsc-sys/src/lib.rs b/crates/pyro-jsc-sys/src/lib.rs
+index 23409d60b..d4c7c40bb 100644
+--- a/crates/pyro-jsc-sys/src/lib.rs
++++ b/crates/pyro-jsc-sys/src/lib.rs
+@@ -1325,6 +1325,16 @@ pub mod modules {
+         /// 1 when fetch callbacks see the `type` import attribute and JSON
+         /// and CSS module scripts can load (source-built JavaScriptCore).
+         pub fn pyro_jsc_typed_modules_available() -> c_int;
++        /// Registers `id` as an inline module script's registry identity
++        /// whose specifiers resolve against `base` (patch 0038); loading `id`
++        /// keeps it as it is. 1 when registered, 0 without the patch.
++        pub fn pyro_jsc_inline_module_base_set(
++            ctx: JSGlobalContextRef,
++            id: *const c_char,
++            id_len: usize,
++            base: *const c_char,
++            base_len: usize,
++        ) -> c_int;
+         pub fn pyro_jsc_import_map_add(
+             ctx: JSGlobalContextRef,
+             src: *const c_char,
+diff --git a/crates/pyro-jsc-sys/webkit/patches/0038-inline-module-bases.patch b/crates/pyro-jsc-sys/webkit/patches/0038-inline-module-bases.patch
+new file mode 100644
+index 000000000..15c131243
+--- /dev/null
++++ b/crates/pyro-jsc-sys/webkit/patches/0038-inline-module-bases.patch
+@@ -0,0 +1,143 @@
++Pyro patch 0038: inline module scripts resolve against a base URL the embedder registers.
++
++An inline module script needs a registry identity of its own (JSC evaluates a key once), but its
++specifiers resolve against its base URL: the document base URL when it was prepared, fragment and
++all. Patch 0005 had the embedder key it `<document URL>#inline-module-N` and dropped the whole
++fragment of any referrer containing that text before matching import map scopes, which also cut the
++authored fragment of an inline script's base and of a fetched module whose URL merely contained the
++text, and let a fetched module named like an inline identity collide with it.
++JSGlobalContextSetInlineModuleBase (JSModuleLoaderRefPrivate.h) associates an identity with its base
++URL. resolveModuleSpecifier resolves a registered referrer against that base (scopes match it as
++given) and keeps the identity itself when it is loaded as an entry point, so it need not be a URL;
++the text-marker fragment removal is gone. The identity's source carries the base URL (its stack
++frames and dynamic import() referrer), which the fetch resolution accepts for that identity instead
++of requiring the source URL to equal the key.
++
++diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++@@ -190,9 +190,20 @@ static std::expected<URL, String> computeValidImportSpecifier(const URL& base, c
++ 
++ std::expected<String, String> JSAPIGlobalObject::resolveModuleSpecifier(const String& specifier, const String& referrer)
++ {
+++    // An inline module script's registry identity is no URL; it resolves
+++    // against the base URL the embedder registered for it (the document base
+++    // URL when it was prepared), fragment and all.
+++    String referrerBase = referrer;
+++    if (!referrer.isNull()) {
+++        if (auto inlineBase = m_inlineModuleBases.find(referrer); inlineBase != m_inlineModuleBases.end())
+++            referrerBase = inlineBase->value;
+++    }
+++    // The identity itself, loaded as an entry point, stays as it is.
+++    if (referrer.isEmpty() && m_inlineModuleBases.contains(specifier))
+++        return specifier;
++     URL base;
++-    if (!referrer.isNull())
++-        base = URL { { }, referrer };
+++    if (!referrerBase.isNull())
+++        base = URL { { }, referrerBase };
++     // A script without a URL to resolve against (CDP evaluate, an init script)
++     // uses the document base URL, so it gets the same module as the document's
++     // scripts. blob: and data: modules keep their own URL as the base.
++@@ -215,10 +226,6 @@ std::expected<String, String> JSAPIGlobalObject::resolveModuleSpecifier(const St
++     // do not apply to.
++     if (!m_hasImportMap || (referrer.isEmpty() && URL(specifier).isValid()))
++         return resolveWithoutMap();
++-    // An inline module's referrer is `<document URL>#inline-module-N`; scopes
++-    // match the document URL.
++-    if (base.string().contains("#inline-module-"_s))
++-        base.removeFragmentIdentifier();
++     URL resolved = importMap().resolve(specifier, base);
++     if (resolved.isValid())
++         return resolved.string();
++@@ -356,7 +363,9 @@ JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JS
++             return encodedJSUndefined();
++         }
++         const String& sourceURL = source->sourceCode().provider()->sourceURL();
++-        if (Identifier::fromString(vm, sourceURL) != moduleKey) [[unlikely]] {
+++        // An inline module script's source carries its base URL, not its identity.
+++        bool inlineSource = uncheckedDowncast<JSAPIGlobalObject>(globalObject)->isInlineModuleSource(moduleKey.string(), sourceURL);
+++        if (!inlineSource && Identifier::fromString(vm, sourceURL) != moduleKey) [[unlikely]] {
++             promise->reject(vm, createTypeError(globalObject, makeString("The same module source was provided for two different identifiers, previously: "_s, sourceURL, " and now: "_s, moduleKey.string())));
++             return encodedJSUndefined();
++         }
++@@ -566,6 +575,23 @@ bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSS
++     return !!parsed;
++ }
++ 
+++bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef identifier, JSStringRef baseURL)
+++{
+++    JSGlobalObject* globalObject = toJS(ctx);
+++    JSLockHolder locker(globalObject->vm());
+++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
+++    if (!apiGlobalObject || !identifier)
+++        return false;
+++    if (!baseURL) {
+++        apiGlobalObject->removeInlineModuleBase(identifier->string());
+++        return true;
+++    }
+++    // Registered even when it cannot be a base (about:blank): the identity
+++    // still loads, and its specifiers resolve as a script without a URL does.
+++    apiGlobalObject->setInlineModuleBase(identifier->string(), baseURL->string());
+++    return true;
+++}
+++
++ JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception)
++ {
++     return JSModuleSourceCreateWithType(ctx, source, url, kJSModuleTypeJavaScript, exception);
++diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
++--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
++@@ -28,7 +28,9 @@
++ #include "JSGlobalObject.h"
++ #include "ScriptFetchParameters.h"
++ #include <expected>
+++#include <wtf/HashMap.h>
++ #include <wtf/RefPtr.h>
+++#include <wtf/text/StringHash.h>
++ 
++ OBJC_CLASS JSScript;
++ 
++@@ -70,6 +72,14 @@ public:
++     // From the first import map on, specifiers resolve through importMap().
++     void didAddImportMap() { m_hasImportMap = true; }
++     std::expected<String, String> resolveModuleSpecifier(const String& specifier, const String& referrer);
+++    // Inline module scripts (JSGlobalContextSetInlineModuleBase).
+++    void setInlineModuleBase(const String& identifier, const String& baseURL) { m_inlineModuleBases.set(identifier, baseURL); }
+++    void removeInlineModuleBase(const String& identifier) { m_inlineModuleBases.remove(identifier); }
+++    bool isInlineModuleSource(const String& identifier, const String& sourceURL) const
+++    {
+++        auto base = m_inlineModuleBases.find(identifier);
+++        return base != m_inlineModuleBases.end() && base->value == sourceURL;
+++    }
++     // String compilation hooks (JSForkPrivate.h): a JSCodeForEvalCallback and a
++     // JSCanCompileStringsCallback.
++     void setCompileStringsCallbacks(void* codeForEval, void* canCompileStrings)
++@@ -110,6 +120,7 @@ private:
++     void* m_moduleLoaderInfo { nullptr };
++     void* m_moduleBaseURLCallback { nullptr };
++     bool m_hasImportMap { false };
+++    HashMap<String, String> m_inlineModuleBases;
++     // m_moduleLoaderCallback is a JSModuleLoaderTypedFetchCallback.
++     bool m_moduleLoaderTyped { false };
++ #endif
++diff --git a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
++--- a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+++++ b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
++@@ -62,6 +62,16 @@ JS_EXPORT bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, J
++    caller. Contexts without a map never consult one when resolving. */
++ JS_EXPORT bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef* messages);
++ 
+++/* Registers `identifier` as an inline module script's registry identity whose
+++   specifiers resolve against `baseURL` (import maps included: its scope is
+++   matched against `baseURL` as given, fragment and all). Loading `identifier`
+++   as an entry point keeps it unresolved, so it need not be a URL; one that no
+++   resolution can produce cannot collide with a fetched module. A NULL baseURL
+++   removes the registration. A baseURL that cannot be a base (about:blank)
+++   resolves as a script without a URL does. Returns false when the context
+++   cannot load modules. */
+++JS_EXPORT bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef identifier, JSStringRef baseURL);
+++
++ /* Creates the module source value passed to a fetch `resolve` function. */
++ JS_EXPORT JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception);
++ 
+diff --git a/crates/pyro-webapi/src/html.rs b/crates/pyro-webapi/src/html.rs
+index 4da165875..7fad43a93 100644
+--- a/crates/pyro-webapi/src/html.rs
++++ b/crates/pyro-webapi/src/html.rs
+@@ -4824,7 +4824,12 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
+             return queue_written_script(page, doc, node, !info.async_ && !info.defer, "external")
+         }
+         ScriptKind::Module => return queue_written_script(page, doc, node, false, "module"),
+-        // nomodule classic scripts, import maps and data blocks do not run.
++        ScriptKind::ImportMap => {
++            let _ = page.dom.borrow_mut().mark_script_started(node);
++            register_written_import_map(page, doc, &info);
++            return Ok(());
++        }
++        // nomodule classic scripts and data blocks do not run.
+         _ => {
+             let _ = page.dom.borrow_mut().mark_script_started(node);
+             return Ok(());
+@@ -4835,6 +4840,24 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
+     eval_parser_script(page, doc, node, &info.inline_text, &url)
+ }
+ 
++/// An import map in written markup, registered when the parser reaches it (as
++/// the loader's `add_import_map` does for network markup) against the document
++/// base URL then, so the module scripts after it resolve through it.
++fn register_written_import_map(page: &PageDom, doc: NodeId, info: &pyro_dom::script::ScriptInfo) {
++    let Some(realm) = page.main_world_realm() else { return };
++    let Ok(scope) = realm.scope() else { return };
++    if info.src.is_some() {
++        scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
++        return;
++    }
++    let base = page.dom.borrow().document_base_url(doc).map(str::to_owned).unwrap_or_default();
++    match scope.add_import_map(&info.inline_text, &base) {
++        Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
++        Err(JsError::Unsupported(what)) => scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}")),
++        Err(e) => scope.report_exception(&e),
++    }
++}
++
+ /// Hands a script in written markup to the loader, which marks it started. A
+ /// parser-blocking one stops tokenizing until it ran.
+ fn queue_written_script(page: &PageDom, doc: NodeId, node: NodeId, blocking: bool, what: &str) -> JsResult<()> {
