@@ -196,7 +196,12 @@ fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u
                 return true;
             }
             let foreign = |images: &[Option<blitz_dom::node::ImageResourceData>]| {
-                images.iter().flatten().any(|image| !render::Privacy::same_origin(doc.url(), &image.url))
+                // An SVG image paints vector commands the scene scan does not see as an image: it
+                // taints whatever its URL (a same-origin URL may redirect to another origin).
+                images.iter().flatten().any(|image| {
+                    !render::Privacy::same_origin(doc.url(), &image.url)
+                        || !matches!(image.image, blitz_dom::node::ImageData::Raster(_))
+                })
             };
             if foreign(&element.border_images) || foreign(&element.mask_images) || foreign(&element.list_style_images) {
                 return true;

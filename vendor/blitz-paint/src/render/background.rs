@@ -701,10 +701,14 @@ impl ElementCx<'_, '_> {
             GenericImage::Url(_) => {
                 // pyro: HTML-in-Canvas privacy: a layer image of another origin is left out
                 // (`Privacy`).
-                if self.context.privacy.is_some() {
+                if let Some(privacy) = &self.context.privacy {
                     let Some(data) = layer.image_data else { return };
                     if !super::Privacy::same_origin(self.context.dom.as_ref().url(), &data.url) {
                         return;
+                    }
+                    // An SVG layer paints vector commands the scene scan does not see as an image.
+                    if !matches!(data.image, ImageData::Raster(_)) {
+                        privacy.unclassified.set(true);
                     }
                     // Not allowed yet (its pixels taint): a same-origin URL may redirect to another
                     // origin, which only the response's opaque flag tells (see `Privacy`).

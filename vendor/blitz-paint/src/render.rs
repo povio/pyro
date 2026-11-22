@@ -7208,6 +7208,17 @@ impl ElementCx<'_, '_> {
         let Some(svg) = self.svg else {
             return;
         };
+        // pyro: HTML-in-Canvas privacy: an SVG image of another origin is left out; any other one
+        // taints (its vector paint is not an image the scene scan sees, and a same-origin URL may
+        // redirect to another origin).
+        if let Some(privacy) = &self.context.privacy {
+            let dom = self.context.dom.as_ref();
+            let source = self.element.attr(local_name!("src")).and_then(|src| dom.base_url().join(src).ok());
+            if source.is_some_and(|url| !Privacy::same_origin(dom.url(), &url)) {
+                return;
+            }
+            privacy.unclassified.set(true);
+        }
         // pyro: its `prefers-color-scheme` blocks and `light-dark()` colours follow this element's
         // used colour scheme (blitz-dom `SvgImageData::for_color_scheme`).
         let schemed;
