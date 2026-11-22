@@ -1,0 +1,43 @@
+{
+ "preflight-000": {
+  "configSHA256": "f5635f7cef4fab46068a5312e00fd1afdfc4f1f1f4e8642cc35b9ffb0e4d3d6b",
+  "logSHA256": "854965e82e0a3939ff114059e05b25541c6828054fd5a3705ef405305e4847bc",
+  "ports": {
+   "dns": [],
+   "h2": [
+    62062
+   ],
+   "http": [
+    62052,
+    62053
+   ],
+   "http-local": [
+    62056
+   ],
+   "http-public": [
+    62057
+   ],
+   "https": [
+    62054,
+    62055
+   ],
+   "https-local": [
+    62058
+   ],
+   "https-public": [
+    62059
+   ],
+   "webtransport-h3": [],
+   "ws": [
+    62060
+   ],
+   "wss": [
+    62061
+   ]
+  },
+  "receiptSHA256": "7049fc30932eabb96128706cee4a0bba89480c161b95a70c136ee0c19497e2e7",
+  "restarts": 0,
+  "selectionSHA256": "436fb3b727994b1d31eb820d5a018bdde28a5c98abc129e4ed7e4f7c9779deb6",
+  "watchdogKills": 0
+ }
+}

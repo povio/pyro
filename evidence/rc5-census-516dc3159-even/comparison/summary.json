@@ -1,0 +1,192 @@
+{
+ "chrome": "158.0.8127.37",
+ "counts": {
+  "chrome": {
+   "observedNames": 81,
+   "pages": 6,
+   "passingNames": 81,
+   "strictPages": 6
+  },
+  "chromeByArea:html": {
+   "observedNames": 5,
+   "pages": 2,
+   "passingNames": 5,
+   "strictPages": 2
+  },
+  "chromeByArea:webnn": {
+   "observedNames": 76,
+   "pages": 4,
+   "passingNames": 76,
+   "strictPages": 4
+  },
+  "chromeByEnvironment:window": {
+   "observedNames": 81,
+   "pages": 6,
+   "passingNames": 81,
+   "strictPages": 6
+  },
+  "chromeHarnessOutcomes": {
+   "OK": 6
+  },
+  "chromePageOutcomes": {
+   "complete": 6
+  },
+  "coverageByEnvironment:dedicatedworker": {
+   "historicallyWithheld": 114,
+   "newlyWithheld": 14,
+   "outsideRequestedShardSet": 2756
+  },
+  "coverageByEnvironment:dedicatedworker-module": {
+   "outsideRequestedShardSet": 9
+  },
+  "coverageByEnvironment:extension": {
+   "historicallyWithheld": 6
+  },
+  "coverageByEnvironment:jsshell": {
+   "historicallyWithheld": 78
+  },
+  "coverageByEnvironment:serviceworker": {
+   "historicallyWithheld": 21,
+   "newlyWithheld": 7,
+   "outsideRequestedShardSet": 644
+  },
+  "coverageByEnvironment:serviceworker-module": {
+   "outsideRequestedShardSet": 8
+  },
+  "coverageByEnvironment:sharedworker": {
+   "historicallyWithheld": 23,
+   "newlyWithheld": 8,
+   "outsideRequestedShardSet": 668
+  },
+  "coverageByEnvironment:sharedworker-module": {
+   "outsideRequestedShardSet": 12
+  },
+  "coverageByEnvironment:window": {
+   "historicallyWithheld": 1227,
+   "newlyWithheld": 150,
+   "outsideRequestedShardSet": 26073
+  },
+  "coverageByEnvironment:window-module": {
+   "outsideRequestedShardSet": 3
+  },
+  "current": {
+   "observedNames": 26,
+   "pages": 6,
+   "passingNames": 22,
+   "strictPages": 1
+  },
+  "currentByArea:html": {
+   "observedNames": 4,
+   "pages": 2,
+   "passingNames": 3,
+   "strictPages": 0
+  },
+  "currentByArea:webnn": {
+   "observedNames": 22,
+   "pages": 4,
+   "passingNames": 19,
+   "strictPages": 1
+  },
+  "currentByEnvironment:window": {
+   "observedNames": 26,
+   "pages": 6,
+   "passingNames": 22,
+   "strictPages": 1
+  },
+  "currentChrome": {
+   "commonPass": 22,
+   "firstOnly": 0,
+   "firstOnlyNewlyObserved": 0,
+   "firstOnlyPage": 0,
+   "firstOnlyPreviouslyObserved": 0,
+   "firstPass": 22,
+   "matchedPages": 6,
+   "missingFirstName": 58,
+   "missingSecondName": 3,
+   "secondOnly": 59,
+   "secondOnlyNowMissing": 58,
+   "secondOnlyNowObserved": 1,
+   "secondOnlyPage": 5,
+   "secondPass": 81
+  },
+  "currentHarnessOutcomes": {
+   "None": 1,
+   "OK": 5
+  },
+  "currentPageOutcomes": {
+   "complete": 5,
+   "timeout": 1
+  },
+  "currentPrevious": {
+   "commonPass": 22,
+   "firstOnly": 0,
+   "firstOnlyNewlyObserved": 0,
+   "firstOnlyPage": 0,
+   "firstOnlyPreviouslyObserved": 0,
+   "firstPass": 22,
+   "matchedPages": 6,
+   "missingFirstName": 0,
+   "missingSecondName": 0,
+   "secondOnly": 0,
+   "secondOnlyNowMissing": 0,
+   "secondOnlyNowObserved": 0,
+   "secondOnlyPage": 0,
+   "secondPass": 22
+  },
+  "previous": {
+   "observedNames": 26,
+   "pages": 6,
+   "passingNames": 22,
+   "strictPages": 1
+  },
+  "previousByArea:html": {
+   "observedNames": 4,
+   "pages": 2,
+   "passingNames": 3,
+   "strictPages": 0
+  },
+  "previousByArea:webnn": {
+   "observedNames": 22,
+   "pages": 4,
+   "passingNames": 19,
+   "strictPages": 1
+  },
+  "previousByEnvironment:window": {
+   "observedNames": 26,
+   "pages": 6,
+   "passingNames": 22,
+   "strictPages": 1
+  },
+  "previousHarnessOutcomes": {
+   "None": 1,
+   "OK": 5
+  },
+  "previousPageOutcomes": {
+   "complete": 5,
+   "timeout": 1
+  }
+ },
+ "coverage": {
+  "historicallyWithheld": 1469,
+  "measured": 6,
+  "newlyWithheld": 179,
+  "outsideRequestedShardSet": 30173
+ },
+ "fullCensusComplete": false,
+ "head": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
+ "historicalDemonstration": false,
+ "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+ "newlyWithheld": 179,
+ "pendingKeys": [],
+ "planSHA256": "4a3badc8428aa0743c1747b1aecf70082d30e1a69cd9e6a17d8ce200eeb6a63e",
+ "previous": "1f1be032436bfeee9f48cdb5acbc0f71d21d5af9",
+ "referencePublication": "01f49f43da24a20ecb20d99c967fc5de54272120",
+ "requestedScopeComplete": true,
+ "scheduledUrls": 30179,
+ "shardsComplete": 1,
+ "shardsRequested": 1,
+ "shardsScheduled": 320,
+ "snapshot": "d472e8d808b95f7cfbcae09207b9ffc0b98b0515a2c1f49d2f1a8f90576195cd",
+ "tree": "39850661325fc24f3cd9e9f591d14df55a5fa359",
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+}

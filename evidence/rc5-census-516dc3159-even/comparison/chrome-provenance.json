@@ -1,0 +1,12 @@
+{
+ "preflight-000": {
+  "configurationSHA256": "c34655454f3e04483364a5cd3753e90e9431c072b397a46b703685c0901e78ef",
+  "jobs": 4,
+  "launchCount": 1,
+  "logSHA256": "d80d75b4c3aa941912a0285fa0df7fbba3c0e5009c905f46c614b853ae7bd380",
+  "rawSHA256": "46e44f6ab0dc2f83252efec42840f909749d108b27a65296d00c85922840c683",
+  "restarts": 0,
+  "selectionSHA256": "436fb3b727994b1d31eb820d5a018bdde28a5c98abc129e4ed7e4f7c9779deb6",
+  "watchdogKills": 0
+ }
+}
