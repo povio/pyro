@@ -209,3 +209,64 @@ fn markers_before_and_after_the_current_one() {
     assert_eq!(pixel(&img, 30, 75), RED, "after it");
     assert_eq!(pixel(&img, 50, 75), RED, "after it");
 }
+
+/// A live renderer laid out for `html`, and the render keys of its elements by id.
+fn live(html: &str, width: u32, height: u32) -> (Renderer, impl Fn(&str) -> u64) {
+    use pyro_dom::parse::parse_document;
+    use pyro_dom::snapshot::{RenderHtml, RenderNodeKind, render_key};
+    use std::{cell::RefCell, rc::Rc};
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    let dom = Rc::new(RefCell::new(pyro_dom::Dom::new()));
+    let doc = parse_document(&dom, "http://test/", html);
+    let dom = dom.borrow();
+    let tree = dom.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None }).unwrap();
+    let ids: Vec<(String, u64)> = dom
+        .descendants(doc)
+        .unwrap()
+        .filter_map(|n| Some((dom.get_attribute(n, "id").ok().flatten()?.to_owned(), render_key(n))))
+        .collect();
+    let nodes = tree.nodes.into_iter().map(|node| TreeNode { key: node.key, parent: node.parent, kind: match node.kind {
+        RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+        RenderNodeKind::Text(text) => TreeKind::Text(text),
+    }}).collect();
+    let snapshot = Snapshot { base_url: "http://test/".into(), width, height, device_scale_factor: 1., live: Some(Live { page: 1, tree: Arc::new(Tree { nodes }), clip: None, interaction: None }), ..Default::default() };
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&snapshot, &fetcher).unwrap();
+    (renderer, move |id: &str| ids.iter().find(|(i, _)| i == id).map(|(_, k)| *k).unwrap())
+}
+
+#[test]
+fn a_scroll_button_is_hit_with_its_direction_and_state() {
+    // CSS Overflow 5 § 2.2: activating a ::scroll-button() scrolls its originating element in the
+    // button's direction; one whose element cannot scroll that way is disabled (WPT css-overflow
+    // scroll-markers/scroll-buttons-activation, scroll-button-link-activation).
+    let html = "<!doctype html><style>*{margin:0}#sc,#plain{width:100px;height:50px;white-space:nowrap}#sc{overflow:auto}#sc span,#plain span{display:inline-block;width:300px;height:10px}#sc::scroll-button(inline-end){content:'';position:absolute;top:0;left:0;width:20px;height:20px}#sc::scroll-button(up){content:'';position:absolute;top:0;left:40px;width:20px;height:20px}#plain::scroll-button(right){content:'';position:absolute;top:80px;left:0;width:20px;height:20px}</style><div id=sc><span></span></div><div id=plain><span></span></div>";
+    let (mut renderer, key) = live(html, 300, 200);
+    // inline-end of a horizontal-tb ltr scroller: rightwards, enabled (it can scroll right).
+    assert_eq!(renderer.scroll_button_hit(1, key("sc"), 5., 5.), Some(((1, 0), true)));
+    // up: upwards, disabled (it is at the top and has no vertical overflow).
+    assert_eq!(renderer.scroll_button_hit(1, key("sc"), 45., 5.), Some(((0, -1), false)));
+    // The button of an element that is no scroll container is disabled.
+    assert_eq!(renderer.scroll_button_hit(1, key("plain"), 5., 85.), Some(((1, 0), false)));
+    // The scroller's own content between the buttons is no button.
+    assert_eq!(renderer.scroll_button_hit(1, key("sc"), 30., 5.), None);
+    // Another element's button is not this one's.
+    assert_eq!(renderer.scroll_button_hit(1, key("plain"), 5., 5.), None);
+}
+
+#[test]
+fn a_scroll_button_hit_is_the_painted_one() {
+    // Overlapping buttons: the one painted on top is hit (z-index), not the first in tree or
+    // direction order. A button that is `visibility: hidden`, `pointer-events: none` or clipped
+    // out (by an `overflow: hidden` positioned ancestor) is not hit: the point falls through to
+    // what is under it, here the scroller's own content.
+    let html = "<!doctype html><style>*{margin:0}#sc{position:relative;width:200px;height:100px;overflow:auto;white-space:nowrap}#sc span{display:inline-block;width:600px;height:90px}#sc::scroll-button(*){content:'';position:absolute;width:40px;height:40px}#sc::scroll-button(inline-start){top:0;left:0;z-index:1}#sc::scroll-button(inline-end){top:0;left:0;z-index:2}#sc::scroll-button(block-start){top:0;left:60px;visibility:hidden}#sc::scroll-button(block-end){top:0;left:120px;pointer-events:none}#clip{position:relative;width:200px;height:60px;overflow:hidden;margin-top:20px}#c2{width:200px;height:50px;overflow:auto;white-space:nowrap}#c2 span{display:inline-block;width:600px;height:10px}#c2::scroll-button(inline-end){content:'';position:absolute;top:100px;left:0;width:40px;height:40px}</style><div id=sc><span></span></div><div id=clip><div id=c2><span></span></div></div>";
+    let (mut renderer, key) = live(html, 300, 300);
+    // inline-end (z-index 2) over inline-start (z-index 1).
+    assert_eq!(renderer.scroll_button_hit(1, key("sc"), 10., 10.), Some(((1, 0), true)));
+    // Hidden and pointer-events: none buttons are not hit.
+    assert_eq!(renderer.scroll_button_hit(1, key("sc"), 70., 10.), None);
+    assert_eq!(renderer.scroll_button_hit(1, key("sc"), 130., 10.), None);
+    // c2's button sits 100px down in #clip (at y 120 + 100), past its 60px: clipped out.
+    assert_eq!(renderer.scroll_button_hit(1, key("c2"), 10., 230.), None);
+}

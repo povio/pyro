@@ -4046,6 +4046,29 @@ impl Layout {
         }
     }
 
+    /// pyro: the default action of a click on a `::scroll-button()` of `origin` scrolling in the
+    /// physical direction `delta`: `origin` (the viewport for the root element) scrolls by a page,
+    /// 87.5% of its scrollport on that axis (Chromium's minimum page step fraction), landing on a
+    /// snap position past the current offset in that direction when it snaps (a directional
+    /// scroll: an enabled button never snaps back to where it is). CSS Overflow 5 § 2.2; WPT
+    /// css-overflow `scroll-buttons-activation`, `scroll-buttons-scroll-distance`,
+    /// `root-scroll-button-activation`. Returns the scrollers that moved.
+    pub fn activate_scroll_button(&mut self, dom: &Dom, origin: NodeId, delta: (i8, i8)) -> Vec<ScrollTarget> {
+        const PAGE_FRACTION: f64 = 0.875;
+        let root = dom.document_element(self.document()).ok().flatten();
+        let step = |size: f64, sign: i8| (size * PAGE_FRACTION).round().max(1.0) as i32 * sign as i32;
+        let moved = if Some(origin) == root {
+            let left = (delta.0 != 0).then(|| step(self.inner_width() as f64, delta.0));
+            let top = (delta.1 != 0).then(|| step(self.inner_height() as f64, delta.1));
+            self.window_scroll_by(dom, left, top).then_some(ScrollTarget::Viewport)
+        } else {
+            let left = (delta.0 != 0).then(|| step(self.client_width(dom, origin), delta.0));
+            let top = (delta.1 != 0).then(|| step(self.client_height(dom, origin), delta.1));
+            self.element_scroll_by(dom, origin, left, top).then_some(ScrollTarget::Container(origin))
+        };
+        moved.into_iter().collect()
+    }
+
     pub fn scroll_into_view(&mut self, dom: &Dom, el: NodeId) -> bool {
         !self.scroll_into_view_targets(dom, el).is_empty()
     }
