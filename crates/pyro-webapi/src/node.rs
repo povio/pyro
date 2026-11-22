@@ -1962,27 +1962,39 @@ impl JsClass for Document {
             "title",
             |s, n| {
                 let dom = n.page().dom.borrow();
-                let sel = pyro_dom::select::parse_selectors("title").js()?;
-                let t = dom.query_selector(n.id, &sel).js()?;
-                let text = match t {
-                    Some(t) => dom.text_content(t).js()?.unwrap_or_default(),
-                    None => String::new(),
-                };
+                // HTML: the title element's child text content, ASCII whitespace stripped and
+                // collapsed.
+                let text = document_title_element(&dom, n.id).map(|t| dom.child_text_content(t).into_owned()).unwrap_or_default();
                 Ok(s.string(&text.split_ascii_whitespace().collect::<Vec<_>>().join(" ")))
             },
             |_s, n, v| {
                 let title = dom_string(v)?;
                 let mut dom = n.page().dom.borrow_mut();
-                let sel = pyro_dom::select::parse_selectors("title").js()?;
-                let t = match dom.query_selector(n.id, &sel).js()? {
+                let Some(root) = dom.document_element(n.id).js()? else { return Ok(()) };
+                let svg_root = dom.element(root).is_ok_and(|e| &*e.name.ns == SVG_NS && &*e.name.local == "svg");
+                let html_root = dom.element(root).is_ok_and(|e| e.is_html());
+                let t = match document_title_element(&dom, n.id) {
                     Some(t) => t,
-                    None => {
+                    // SVG: a new SVG title as the root's first child.
+                    None if svg_root => {
+                        let t = dom.create_element_ns(n.id, Some(SVG_NS), "title").js()?;
+                        let first = dom.first_child(root).js()?;
+                        dom.insert_before(root, t, first).js()?;
+                        t
+                    }
+                    // HTML: a new title in the head, if there is one.
+                    None if html_root => {
                         let Some(head) = dom.head(n.id).js()? else { return Ok(()) };
                         let t = dom.create_element(n.id, "title").js()?;
                         dom.append_child(head, t).js()?;
                         t
                     }
+                    // Any other document element: nothing is set.
+                    None => return Ok(()),
                 };
+                if !svg_root && !html_root {
+                    return Ok(());
+                }
                 dom.set_text_content(t, &title).js()
             },
         );
@@ -2452,4 +2464,28 @@ fn setattribute_local<'a>(n: &NodeData, name: &'a str) -> std::borrow::Cow<'a, s
     } else {
         std::borrow::Cow::Borrowed(name)
     }
+}
+
+const SVG_NS: &str = "http://www.w3.org/2000/svg";
+
+/// HTML "the title element" of `doc`: with an SVG `svg` document element, its first SVG `title`
+/// child; otherwise the first HTML `title` element in tree order.
+fn document_title_element(dom: &pyro_dom::Dom, doc: NodeId) -> Option<NodeId> {
+    let root = dom.document_element(doc).ok().flatten()?;
+    let is = |n: NodeId, svg: bool, name: &str| {
+        dom.element(n).is_ok_and(|e| &*e.name.local == name && if svg { &*e.name.ns == SVG_NS } else { e.is_html() })
+    };
+    let children = |n: NodeId| std::iter::successors(dom.first_child(n).ok().flatten(), |&c| dom.next_sibling(c).ok().flatten());
+    if is(root, true, "svg") {
+        return children(root).find(|&c| is(c, true, "title"));
+    }
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if is(n, false, "title") {
+            return Some(n);
+        }
+        let kids: Vec<NodeId> = children(n).collect();
+        stack.extend(kids.into_iter().rev());
+    }
+    None
 }
