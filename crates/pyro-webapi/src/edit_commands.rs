@@ -1232,7 +1232,7 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
             }
             // Record the original selection and content only if insertion
             // succeeds. An input listener may invoke undo synchronously.
-            let saved = save(page, host, false);
+            let saved = save(page, host);
             if !editing::insert_replaced_element(page, host, (cmd == "insertimage").then_some(value)) {
                 return false;
             }
@@ -3487,7 +3487,11 @@ impl UndoHistory {
     }
 }
 
-fn save(page: &PageDom, target: NodeId, unchanged_foreground: bool) -> Option<Saved> {
+fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
+    save_snapshot(page, target, false)
+}
+
+fn save_snapshot(page: &PageDom, target: NodeId, unchanged_foreground: bool) -> Option<Saved> {
     let dom = page.dom.borrow();
     if editing::is_text_entry_control(&dom, target) {
         return Some(Saved::Control {
@@ -3547,7 +3551,7 @@ fn record(page: &PageDom, target: NodeId, input_type: &str, control: bool) {
             return;
         }
     }
-    let Some(saved) = save(page, target, false) else { return };
+    let Some(saved) = save(page, target) else { return };
     let mut h = page.undo.borrow_mut();
     h.typing = None;
     h.push(Step { target, saved });
@@ -3582,7 +3586,7 @@ pub(crate) fn note_control_edited(page: &PageDom, el: NodeId) {
 /// An invalid foreground color on a range is undoable even though it leaves
 /// the DOM intact. Keep ordinary snapshots as fallback after external edits.
 fn record_unchanged_foreground(page: &PageDom, host: NodeId) {
-    let Some(saved) = save(page, host, true) else { return };
+    let Some(saved) = save_snapshot(page, host, true) else { return };
     let mut history = page.undo.borrow_mut();
     if !history.replaying {
         history.typing = None;
@@ -3688,7 +3692,7 @@ fn undo(page: &Rc<PageDom>, backward: bool, source: EditSource) -> bool {
         }
         return true;
     }
-    let mut current = save(page, step.target, unchanged_foreground);
+    let mut current = save_snapshot(page, step.target, unchanged_foreground);
     if let (Saved::Control { selection, opposite: Some(other), .. },
         Some(Saved::Control { selection: inverse, opposite, .. })) = (&step.saved, &mut current)
     {
