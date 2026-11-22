@@ -1,0 +1,42 @@
+[
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"<b>foo</b>[bar]<strong>baz</strong>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"[foo]<b>bar</b>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"foo<b>bar</b>[baz]\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<b>foo</b>[bar]<b>baz</b>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<strong>foo</strong>[bar]<b>baz</b>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]
