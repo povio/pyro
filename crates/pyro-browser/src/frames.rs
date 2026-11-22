@@ -268,8 +268,9 @@ pub(crate) struct FrameHost {
     /// Lazy iframes navigated by something else (a link, `location`, a reload) while their
     /// lazy load was pending: HTML clears their lazy load resumption steps, so it never runs.
     pub(crate) lazy_cancelled: RefCell<Vec<FrameKey>>,
-    /// Set while attribute processing navigates its iframe (a navigation that cancels nothing).
-    pub(crate) attribute_navigation: Cell<bool>,
+    /// The frames whose attribute processing is navigating them now (such a navigation cancels
+    /// nothing; another frame's navigation meanwhile still does).
+    pub(crate) attribute_navigation: RefCell<Vec<FrameKey>>,
     /// The layout engine's sync stamp when the hidden objects were last checked.
     pub(crate) hidden_checked_at: Cell<Option<(u64, u64, u32, u32)>>,
 }
@@ -384,7 +385,7 @@ impl FrameHost {
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
             lazy_cancelled: RefCell::new(Vec::new()),
-            attribute_navigation: Cell::new(false),
+            attribute_navigation: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
@@ -465,7 +466,7 @@ impl FrameHost {
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
             lazy_cancelled: RefCell::new(Vec::new()),
-            attribute_navigation: Cell::new(false),
+            attribute_navigation: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
@@ -1963,7 +1964,7 @@ impl Browser {
         if self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref()) {
             return;
         }
-        let was_attribute_navigation = host.attribute_navigation.replace(true);
+        host.attribute_navigation.borrow_mut().push(key);
         let (srcdoc, src, src_base, encoded_src) = {
             let dom = host.dom.borrow();
             // An `<object>` hosting a document navigates to its `data`, an `<embed>` to its `src`
@@ -2077,7 +2078,12 @@ impl Browser {
                 .map(|_| ())
             }
         };
-        host.attribute_navigation.set(was_attribute_navigation);
+        {
+            let mut navigating = host.attribute_navigation.borrow_mut();
+            if let Some(i) = navigating.iter().rposition(|k| *k == key) {
+                navigating.remove(i);
+            }
+        }
         if let Err(e) = result {
             if let Some(realm) = host.frame(key).and_then(|f| f.main_realm().cloned()) {
                 if let Ok(scope) = realm.scope() {
@@ -2151,7 +2157,7 @@ impl Browser {
             return;
         }
         let Some(host) = self.page(key.page).map(|p| p.frames.clone()) else { return };
-        if host.attribute_navigation.get() {
+        if host.attribute_navigation.borrow().contains(&key) {
             return;
         }
         let Some(owner) = host.frame(key).and_then(|f| f.owner) else { return };
