@@ -1,0 +1,173 @@
+[
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/createlink.html",
+    "[[\"createlink\",\"http://www.google.com/\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontname.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"fontname\",\"sans-serif\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontname.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontsize.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"fontsize\",\"4\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontsize.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]
