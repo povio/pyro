@@ -373,6 +373,60 @@ fn wrap(dom: &mut Dom, node: NodeId, fmt: &Format) -> Option<NodeId> {
     Some(el)
 }
 
+/// Replace a selected portion of a single-purpose FONT or SPAN. Keep
+/// the original value on either side of the range, and leave carriers
+/// with unrelated attributes or declarations intact.
+fn format_selected(page: &PageDom, dom: &mut Dom, host: NodeId, node: NodeId, range: (Point, Point), fmt: &Format) -> Option<()> {
+    let parent = dom.parent_element(node).ok()??;
+    if parent != host && dom.element(parent).ok()?.is_html() {
+        let tag = editing::local(dom, parent);
+        let attrs = dom.attributes(parent).ok()?;
+        let carrier = match attrs {
+            [attr] if attr.name.ns.is_empty() && tag == "font" => {
+                fmt.kind.html_attr() == Some(&*attr.name.local)
+            }
+            [attr] if tag == "span" && attr.name.local == markup5ever::local_name!("style") => {
+                matches!(crate::css::parse_declarations(&attr.value).as_slice(), [decl] if decl.name == fmt.kind.property())
+            }
+            _ => false,
+        };
+        if carrier {
+            let outer = dom.parent_element(parent).ok()??;
+            let inherited = if fmt.kind == Kind::Size {
+                // A coincident pixel size is not an inherited HTML size.
+                // Stylo retains keyword provenance through the cascade.
+                page.layout().style().stylo_style(dom, outer).is_some_and(|style| {
+                    let info = style.get_font().font_size.keyword_info;
+                    let size = info.kw.html_size().checked_sub(1).and_then(|i| SIZES.get(i as usize));
+                    info.factor == 1.0 && info.offset.px() == 0.0 && size == Some(&fmt.css.as_str())
+                })
+            } else {
+                equivalent(fmt, &effective(page, dom, fmt.kind, outer))
+            };
+            if fmt.kind == Kind::Background && !inherited {
+                // Across paint boundaries each existing background remains
+                // in place. Within one run the selected paint can be replaced.
+                let in_run = |point: Point| point.0 == parent || dom.parent(point.0).ok().flatten() == Some(parent);
+                if !in_run(range.0) || !in_run(range.1) {
+                    return wrap(dom, node, fmt).map(|_| ());
+                }
+            }
+            let mut edges = [(node, 0), (node, editing::len(dom, node))];
+            let middle = super::alignment::split_edge(dom, outer, node, false, &mut edges)?;
+            super::alignment::split_edge(dom, outer, node, true, &mut edges)?;
+            let doc = dom.node_document(node).ok()?;
+            let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
+            if !inherited && tag == if legacy.is_some() { "font" } else { "span" } {
+                apply_to(dom, middle, fmt, legacy);
+                return Some(());
+            }
+            super::indentation::unwrap(dom, middle, &mut edges)?;
+            if inherited { return Some(()); }
+        }
+    }
+    wrap(dom, node, fmt).map(|_| ())
+}
+
 pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -> bool {
     let Some(fmt) = Format::parse(kind, value) else { return false };
     let Some((start, end)) = editing::selection_range(page) else { return false };
@@ -412,7 +466,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
             if kind == Kind::Background && pyro_dom::color_well::is_fully_transparent(&fmt.css) {
                 changed |= clear_highlight(page, &mut dom, n);
             } else {
-                changed |= wrap(&mut dom, n, &fmt).is_some();
+                changed |= format_selected(page, &mut dom, host, n, (start, end), &fmt).is_some();
             }
         }
     }
