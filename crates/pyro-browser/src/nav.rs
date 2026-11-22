@@ -1453,6 +1453,36 @@ fn set_url_part(s: &Scope<'_>, nav: &PageNav, change: impl FnOnce(&mut Url) -> J
     Ok(())
 }
 
+/// `location.ancestorOrigins`: the origins of the frame's ancestors,
+/// parent first, while the Location's document is the frame's fully active
+/// one; empty once it is not (the frame removed, or navigated away). The
+/// same list on every read until then, a new empty one after. Chrome's list
+/// is a DOMStringList (an array here: the length, the indices, iteration).
+fn ancestor_origins<'s>(s: &Scope<'s>, nav: &Rc<PageNav>, this: pyro_js::Object<'s>) -> JsResult<Value<'s>> {
+    let window = s.global_data::<crate::Window>();
+    let active = window.is_some_and(|w| {
+        let page = pyro_webapi::WindowHost::page(w);
+        page.is_fully_active() && nav.page_dom.borrow().upgrade().is_some_and(|p| Rc::ptr_eq(&p, page))
+    });
+    let key = if active { "lpAncestorOrigins" } else { "lpAncestorOriginsInactive" };
+    if let Some(list) = s.get_hidden(this, key)? {
+        return Ok(list);
+    }
+    let mut origins = Vec::new();
+    if active {
+        if let Some((host, mut frame)) = window.and_then(|w| Some((w.frame_host()?, w.frame_key()?))) {
+            while let Some(parent) = host.frame(frame).and_then(|f| f.parent).and_then(|id| host.key(&id)) {
+                let Some(origin) = host.frame(parent).map(|f| f.origin) else { break };
+                origins.push(s.string(&origin));
+                frame = parent;
+            }
+        }
+    }
+    let list = s.array(&origins)?.value();
+    s.set_hidden(this, key, list)?;
+    Ok(list)
+}
+
 pub struct Location;
 
 impl JsClass for Location {
@@ -1482,6 +1512,7 @@ impl JsClass for Location {
             }
             Ok(s.undefined())
         });
+        def.getter_this("ancestorOrigins", ancestor_origins);
         def.getter("origin", |s, n| {
             Ok(s.string(&url_part(n, |u| match u.origin() {
                 o @ url::Origin::Tuple(..) => o.ascii_serialization(),
