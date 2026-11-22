@@ -538,6 +538,32 @@ impl Browser {
             let Some(bindings) = weak.upgrade() else { return };
             b.finish_image(page, &loader, &bindings, node, generation, result, key);
         };
+        // CSP `img-src`; blocked, a network error. Its violations are at the document, as
+        // Chrome (WPT img-src-targeting). The guard checks the redirects, reported when the
+        // fetch ends.
+        let csp = match url::Url::parse(&url) {
+            Ok(parsed) => {
+                let check = pyro_net::csp::CspRequest::new(parsed, pyro_net::csp::RequestDest::Image);
+                match pyro_webapi::csp::check_request(&bindings, check, None) {
+                    Ok(guard) => guard,
+                    Err(_) => {
+                        let error = format!("{} {url}", pyro_webapi::csp::BLOCKED_BY_CSP);
+                        self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err(error), None));
+                        return;
+                    }
+                }
+            }
+            Err(_) => None,
+        };
+        let finish = {
+            let (bindings, guard) = (Rc::downgrade(&bindings), csp.clone());
+            move |b: &mut Browser, result, key| {
+                if let Some(bindings) = bindings.upgrade() {
+                    pyro_webapi::csp::report_guard(&bindings, guard.as_ref(), None);
+                }
+                finish(b, result, key)
+            }
+        };
         if url.starts_with("blob:") {
             let result = bindings
                 .blob_url(&url)
@@ -568,7 +594,7 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
-            csp: None,
+            csp,
             parser_priority: false,
             credentials: None,
             post: None,

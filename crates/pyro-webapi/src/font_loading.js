@@ -229,6 +229,8 @@
         // `local()` fonts are not looked up: the next source is tried, as for a missing one.
         if (kind !== 'url') { next(i + 1); return; }
         let request;
+        // CSP: the fetch is a "font" request (font-src), not connect-src.
+        native.fontFetch();
         try { request = apply(realmFetch, globalThis, [url, { mode: 'cors', credentials: 'same-origin' }]); }
         catch (e) { next(i + 1); return; }
         apply(then, request, [

@@ -378,6 +378,32 @@ impl Browser {
         if requests.is_empty() {
             return;
         }
+        // CSP: what the document's policies block is not speculated (the element's own request
+        // is checked and reports it); what they allow carries a guard for its redirects, whose
+        // findings are dropped (the element's request reports its own).
+        let list = self
+            .doc(page)
+            .and_then(|p| p.main_frame.page_dom.clone())
+            .and_then(|bindings| pyro_webapi::csp::policy_list(&bindings));
+        let requests: Vec<FetchRequest> = match list {
+            None => requests,
+            Some(list) => requests
+                .into_iter()
+                .filter_map(|mut request| {
+                    let dest = crate::loader::csp_dest(&request);
+                    let (Some(dest), Ok(url)) = (dest, url::Url::parse(&request.url)) else { return Some(request) };
+                    let check = pyro_net::csp::CspRequest::new(url, dest);
+                    if list.pre_request(&check).blocked {
+                        return None;
+                    }
+                    request.csp = Some(pyro_net::csp::RequestCsp::new(list.clone(), check));
+                    Some(request)
+                })
+                .collect(),
+        };
+        if requests.is_empty() {
+            return;
+        }
         {
             let Some(mut load) = self.load_mut(page) else { return };
             for request in requests {

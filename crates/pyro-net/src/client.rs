@@ -848,10 +848,16 @@ impl NetClient {
     }
 
     pub fn fetch_with_id(&self, id: RequestId, req: Request, sink: ResponseSink) {
-        let sink = match req.loader_id.clone() {
+        let mut sink = match req.loader_id.clone() {
             Some(loader) => self.track(id, loader, sink),
             None => sink,
         };
+        // A request its initiator's CSP check blocked (`RequestCsp::blocked`): a network
+        // error, never sent.
+        if req.csp.as_ref().is_some_and(|csp| csp.blocks_request()) {
+            sink(ResponseEvent::Failed(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into())));
+            return;
+        }
         let start = Instant::now();
         let req = Box::new(req);
         match self.inner.local_interceptor(&req) {

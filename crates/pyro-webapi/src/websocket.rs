@@ -370,9 +370,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let _ = http_url.set_scheme(if url.scheme() == "wss" { "https" } else { "http" });
         // Mixed content: a secure context only opens secure connections.
         let insecure = origin.starts_with("https:") && !pyro_net::cookies::is_trustworthy(&http_url);
+        // CSP `connect-src` (the ws:/wss: URL): blocked, the connection fails as one that
+        // could not be established (`error`, then `close`), with no exception.
+        let csp = pyro_net::csp::CspRequest::new(url.clone(), pyro_net::csp::RequestDest::WebSocket);
+        let csp_blocked = crate::csp::check_request(&page, csp, None).is_err();
         let net = page.net.borrow().clone();
         match (net, poster) {
-            (Some(net), Some(poster)) if !insecure => {
+            (Some(net), Some(poster)) if !insecure && !csp_blocked => {
                 let mut defaults = Request::get(http_url, Destination::WebSocket);
                 page.apply_request_defaults(&mut defaults);
                 let request = WebSocketRequest {

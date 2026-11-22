@@ -91,6 +91,9 @@ struct Source {
     realm_id: pyro_js::RealmId,
     callback: Persistent,
     queue: Arc<Mutex<Queue>>,
+    /// The request's CSP guard (`connect-src`): its redirect findings are reported when the
+    /// connection fails.
+    csp: Option<Arc<pyro_net::csp::RequestCsp>>,
 }
 
 thread_local! {
@@ -202,6 +205,9 @@ fn start(
     // The stream is not buffered: no body bound.
     request.max_body = Some(usize::MAX);
     page.apply_request_defaults(&mut request);
+    // CSP `connect-src`: a blocked connection fails for good (no reconnection).
+    let check = pyro_net::csp::CspRequest::new(request.url.clone(), pyro_net::csp::RequestDest::Empty);
+    request.csp = crate::csp::guard_request(page, check, None);
     let id = net.next_request_id();
     let queue = Arc::new(Mutex::new(Queue::default()));
     SOURCES.with(|m| {
@@ -213,6 +219,7 @@ fn start(
                 realm_id: s.realm_id(),
                 callback,
                 queue: queue.clone(),
+                csp: request.csp.clone(),
             },
         )
     });
@@ -240,7 +247,11 @@ fn start(
                 }
                 Report::End
             }
-            ResponseEvent::Failed(error) => Report::Failed(fatal_scheme || matches!(error, NetError::Cors(_))),
+            ResponseEvent::Failed(error) => Report::Failed(
+                fatal_scheme
+                    || matches!(error, NetError::Cors(_))
+                    || matches!(&error, NetError::Blocked(reason) if reason == pyro_net::csp::BLOCKED_BY_CSP),
+            ),
         };
         let post = {
             let mut q = queue.lock().unwrap();
@@ -258,11 +269,16 @@ fn start(
 
 /// Delivers a connection's queued reports to its script.
 fn pump(id: RequestId) {
-    let Some((realm, callback, queue)) = SOURCES.with(|m| {
-        m.borrow().get(&id).map(|source| (source.realm.clone(), source.callback.clone(), source.queue.clone()))
+    let Some((realm, callback, queue, page, csp)) = SOURCES.with(|m| {
+        m.borrow().get(&id).map(|source| {
+            (source.realm.clone(), source.callback.clone(), source.queue.clone(), source.page.clone(), source.csp.clone())
+        })
     }) else {
         return;
     };
+    if let Some(page) = page.upgrade() {
+        crate::csp::report_guard(&page, csp.as_ref(), None);
+    }
     let reports = {
         let mut q = queue.lock().unwrap();
         q.scheduled = false;
