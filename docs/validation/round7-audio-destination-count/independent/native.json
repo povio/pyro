@@ -1,0 +1,131 @@
+{
+  "mode": "native",
+  "version": "158.0.8127.37",
+  "started": "2026-11-22T14:02:08.507Z",
+  "ended": "2026-11-22T14:02:09.002Z",
+  "elapsedNs": "495267250",
+  "sha256": null,
+  "rows": [
+    {
+      "type": "realtime",
+      "label": "0",
+      "before": 2,
+      "max": 2,
+      "value": 0,
+      "exception": "NotSupportedError",
+      "after": 2
+    },
+    {
+      "type": "realtime",
+      "label": "-1",
+      "before": 2,
+      "max": 2,
+      "value": -1,
+      "exception": "IndexSizeError",
+      "after": 2
+    },
+    {
+      "type": "realtime",
+      "label": "33",
+      "before": 2,
+      "max": 2,
+      "value": 33,
+      "exception": "IndexSizeError",
+      "after": 2
+    },
+    {
+      "type": "realtime",
+      "label": "max+1",
+      "before": 2,
+      "max": 2,
+      "value": 3,
+      "exception": "IndexSizeError",
+      "after": 2
+    },
+    {
+      "type": "realtime",
+      "label": "1",
+      "before": 2,
+      "max": 2,
+      "value": 1,
+      "exception": null,
+      "after": 1
+    },
+    {
+      "type": "realtime",
+      "label": "same",
+      "before": 2,
+      "max": 2,
+      "value": 2,
+      "exception": null,
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "0",
+      "before": 2,
+      "max": 2,
+      "value": 0,
+      "exception": "NotSupportedError",
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "-1",
+      "before": 2,
+      "max": 2,
+      "value": -1,
+      "exception": "NotSupportedError",
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "33",
+      "before": 2,
+      "max": 2,
+      "value": 33,
+      "exception": "NotSupportedError",
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "max+1",
+      "before": 2,
+      "max": 2,
+      "value": 3,
+      "exception": null,
+      "after": 3
+    },
+    {
+      "type": "offline",
+      "label": "1",
+      "before": 2,
+      "max": 2,
+      "value": 1,
+      "exception": null,
+      "after": 1
+    },
+    {
+      "type": "offline",
+      "label": "same",
+      "before": 2,
+      "max": 2,
+      "value": 2,
+      "exception": null,
+      "after": 2
+    }
+  ],
+  "pcm": {
+    "channels": 2,
+    "frames": 256,
+    "rate": 48000,
+    "levels": [
+      0.25,
+      -0.5
+    ],
+    "maxAbsError": [
+      0,
+      0
+    ]
+  }
+}
