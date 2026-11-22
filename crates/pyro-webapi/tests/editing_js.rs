@@ -320,6 +320,16 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn remove_format_preserves_deletions_and_splits_ids_only_once() {
+    let e = env("<body><div id=ed contenteditable><del>deleted</del><cite id=work>abcd</cite></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, deletion=ed.firstChild, text=ed.lastChild.firstChild; getSelection().setBaseAndExtent(text,3,text,1)");
+    assert_eq!(eval(r, "document.execCommand('removeFormat'); [ed.querySelectorAll('#work').length,getSelection().toString(),getSelection().direction,ed.firstChild===deletion].join()"), "1,bc,backward,true");
+    assert_eq!(eval(r, "ed.innerHTML"), "<del>deleted</del><cite id=\"work\">a</cite>bc<cite>d</cite>");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn removing_italic_preserves_a_semantic_element_and_backward_selection() {
     let e = env("<body><div id=ed contenteditable>left<cite style='color:red'>abcd</cite>right</div></body>");
     let r = &e.main;
