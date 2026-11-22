@@ -544,15 +544,22 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
             }
         }
         MediaChange::Removed => {
-            // HTML removing steps: after a stable state (not synchronously: `paused` stays false
-            // in the removing script), an element still not in a document pauses.
-            let generation = peek(page, node, |st| st.generation);
-            queue(page, node, generation, move |page| {
-                let connected = page.dom.borrow().is_connected(node).unwrap_or(false);
-                if !connected && !peek(page, node, |st| st.paused) {
-                    internal_pause(page, node);
+            // HTML removing steps: "await a stable state" (the microtask checkpoint after the
+            // removing script, not synchronously: `paused` stays false in that script), then an
+            // element still not in a document runs the internal pause steps. `paused` is true
+            // before any task queued meanwhile runs; the `pause` event is a task of its own.
+            let weak = Rc::downgrade(page);
+            let pause = move || {
+                let Some(page) = weak.upgrade() else { return };
+                if page.is_disposed() || !page.dom.borrow().is_alive(node) {
+                    return;
                 }
-            });
+                let connected = page.dom.borrow().is_connected(node).unwrap_or(false);
+                if !connected && !peek(&page, node, |st| st.paused) {
+                    internal_pause(&page, node);
+                }
+            };
+            removed_at_stable_state(page, pause);
         }
         MediaChange::SourceRemoved { source, previous } => source_removed(page, node, source, previous),
         MediaChange::SourceInserted(_) => {
@@ -593,6 +600,26 @@ fn source_children(page: &PageDom, node: NodeId) -> Vec<NodeId> {
 
 /// Queues a media element task of the load `generation`: it does nothing
 /// once another load started.
+/// Runs `f` at the next stable state: a microtask of the page's main world, so after the
+/// running script and before any task it queued; without a scriptable realm, a task.
+fn removed_at_stable_state(page: &Rc<PageDom>, f: impl FnOnce() + 'static) {
+    let f = std::cell::Cell::new(Some(f));
+    let run = std::rc::Rc::new(move || {
+        if let Some(f) = f.take() {
+            f();
+        }
+    });
+    let queued = page.main_world_realm().is_some_and(|realm| {
+        realm.scope().is_ok_and(|s| {
+            let run = run.clone();
+            s.then(s.undefined(), move |_, _| run(), |_, _| {}).is_ok()
+        })
+    });
+    if !queued {
+        page.post_task(Box::new(move || run()));
+    }
+}
+
 fn queue(page: &Rc<PageDom>, node: NodeId, generation: u32, f: impl FnOnce(&Rc<PageDom>) + 'static) {
     let weak = Rc::downgrade(page);
     page.post_task(Box::new(move || {
