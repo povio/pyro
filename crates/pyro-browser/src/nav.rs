@@ -420,9 +420,13 @@ impl PageNav {
 
     /// `window.stop()` aborted the active document (HTML "stop loading"),
     /// at once: the frame's document load sees it before it parses further
-    /// or fires DOMContentLoaded or load.
+    /// or fires DOMContentLoaded or load. A navigation its scripts queued and
+    /// that has not started is dropped too ([`PageNav::stop_count`]), as one
+    /// fetching is canceled.
     pub(crate) fn abort_document(&self) {
-        self.state.borrow_mut().aborts += 1;
+        let mut st = self.state.borrow_mut();
+        st.aborts += 1;
+        st.stops += 1;
     }
 
     /// Changes when `window.stop()` aborts the frame's document.
