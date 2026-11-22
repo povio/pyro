@@ -1055,7 +1055,35 @@ impl JsClass for DomTokenList {
         });
         def.pure_method("supports", 1, |s, t, a| {
             let tok = dom_string(a.get(0))?;
+            // `rel` per element, as Chromium answers: a `<link>`'s fetch and resource types;
+            // `<a>`, `<area>` and `<form>`'s opener and referrer types.
+            let rel_of = |t: &TokenListData| {
+                t.el.page.dom.borrow().element(t.el.id).ok().filter(|e| e.is_html()).map(|e| match &*e.name.local {
+                    "link" => 0,
+                    "a" | "area" | "form" => 1,
+                    _ => 2,
+                })
+            };
             let supported: &[&str] = match t.attr {
+                "rel" if rel_of(t) == Some(0) => &[
+                    "modulepreload",
+                    "preload",
+                    "preconnect",
+                    "dns-prefetch",
+                    "stylesheet",
+                    "icon",
+                    "alternate",
+                    "prefetch",
+                    "prerender",
+                    "next",
+                    "manifest",
+                    "apple-touch-icon",
+                    "apple-touch-icon-precomposed",
+                    "canonical",
+                    "expect",
+                    "compression-dictionary",
+                ],
+                "rel" if rel_of(t) == Some(1) => &["noreferrer", "noopener", "opener"],
                 "rel" => &[
                     "alternate",
                     "canonical",
