@@ -39,6 +39,8 @@ mod edit_commands;
 pub mod editing;
 mod editing_globals;
 mod encoded_chunks;
+mod audio_data;
+mod audio_decoder;
 mod video_decoder;
 pub mod encoding;
 pub mod event;
@@ -197,6 +199,7 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<file_reader::FileReader>();
     data_transfer::register(engine);
     encoding::register(engine);
+    audio_data::register(engine);
     encoded_chunks::register(engine);
     validity::register(engine);
     window::register(engine);

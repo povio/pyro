@@ -1127,6 +1127,7 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
+        crate::audio_decoder::define(def);
         crate::canvas::define_video_globals(def);
         def.getter("name", |s, g| Ok(s.string(&g.name)));
         def.method("postMessage", 1, |s, g, a| {
@@ -1344,6 +1345,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     if shared_worker {
         return engine.register::<SharedWorkerGlobalScope>();
     }
+    crate::audio_data::register(engine);
     crate::encoded_chunks::register(engine);
     engine.register::<DedicatedWorkerGlobalScope>()
 }
@@ -1408,6 +1410,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         s.global().delete("StorageBucket")?;
     }
     if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !g.secure) {
+        s.global().delete("AudioDecoder")?;
         s.global().delete("VideoDecoder")?;
     }
     // Before the worker's script can change the intrinsics they capture.
