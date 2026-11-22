@@ -1,0 +1,302 @@
+[
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 15, 255)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 15, 255)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 15, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "123"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(17, 34, 51)"
+      ],
+      "first": [
+        "b",
+        "rgb(17, 34, 51)"
+      ],
+      "final": [
+        "b",
+        "rgb(17, 34, 51)"
+      ],
+      "signed": [
+        "b",
+        "rgb(17, 34, 51)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 170, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "caret",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "Q",
+        "rgb(0, 128, 0)"
+      ],
+      "first": [
+        "Q",
+        "rgb(0, 15, 255)"
+      ],
+      "final": [
+        "Q",
+        "rgb(0, 15, 255)"
+      ],
+      "signed": [
+        "Q",
+        "rgb(0, 15, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "caret",
+      "value": "123"
+    },
+    "glyph": {
+      "base": [
+        "Q",
+        "rgb(17, 34, 51)"
+      ],
+      "first": [
+        "Q",
+        "rgb(17, 34, 51)"
+      ],
+      "final": [
+        "Q",
+        "rgb(17, 34, 51)"
+      ],
+      "signed": [
+        "Q",
+        "rgb(17, 34, 51)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "caret",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "Q",
+        "rgb(0, 170, 255)"
+      ],
+      "first": [
+        "Q",
+        "rgb(0, 170, 255)"
+      ],
+      "final": [
+        "Q",
+        "rgb(0, 170, 255)"
+      ],
+      "signed": [
+        "Q",
+        "rgb(0, 170, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 15, 255)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 15, 255)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 15, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "123"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(17, 34, 51)"
+      ],
+      "first": [
+        "b",
+        "rgb(17, 34, 51)"
+      ],
+      "final": [
+        "b",
+        "rgb(17, 34, 51)"
+      ],
+      "signed": [
+        "b",
+        "rgb(17, 34, 51)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 170, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "caret",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "Q",
+        "rgb(0, 128, 0)"
+      ],
+      "first": [
+        "Q",
+        "rgb(0, 15, 255)"
+      ],
+      "final": [
+        "Q",
+        "rgb(0, 15, 255)"
+      ],
+      "signed": [
+        "Q",
+        "rgb(0, 15, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "caret",
+      "value": "123"
+    },
+    "glyph": {
+      "base": [
+        "Q",
+        "rgb(17, 34, 51)"
+      ],
+      "first": [
+        "Q",
+        "rgb(17, 34, 51)"
+      ],
+      "final": [
+        "Q",
+        "rgb(17, 34, 51)"
+      ],
+      "signed": [
+        "Q",
+        "rgb(17, 34, 51)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "caret",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "Q",
+        "rgb(0, 170, 255)"
+      ],
+      "first": [
+        "Q",
+        "rgb(0, 170, 255)"
+      ],
+      "final": [
+        "Q",
+        "rgb(0, 170, 255)"
+      ],
+      "signed": [
+        "Q",
+        "rgb(0, 170, 255)"
+      ]
+    }
+  }
+]

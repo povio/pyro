@@ -1,0 +1,118 @@
+[
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "000000fff"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        null
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "  123  "
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        null
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "000000fff"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        null
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "  123  "
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        null
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  }
+]
