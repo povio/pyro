@@ -487,9 +487,9 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
     let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
     let mut run = text;
     if let Some(carrier) = value_carrier(dom, text, host, fmt) {
-        if fmt.kind == Kind::Size && editing::local(dom, carrier) == "font"
-            && dom.get_attribute(carrier, "size").ok()? == fmt.legacy.as_deref()
-            && equivalent(fmt, &effective(page, dom, Kind::Size, text))
+        if matches!(fmt.kind, Kind::Size | Kind::Family) && editing::local(dom, carrier) == "font"
+            && dom.get_attribute(carrier, fmt.kind.html_attr()?).ok()? == fmt.legacy.as_deref()
+            && equivalent(fmt, &effective(page, dom, fmt.kind, text))
         {
             // Only a plain legacy FONT at the end of its run can absorb a
             // following selection without spreading unrelated styling.
@@ -513,8 +513,9 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
             run = middle;
         }
     }
-    // Preserve the selected SPAN's paint when legacy sizing needs an inner FONT.
-    if fmt.kind == Kind::Size && legacy.is_some() && run != text && editing::local(dom, run) == "span" {
+    // Keep the SPAN around an isolated legacy FONT when it carries other styling.
+    if (fmt.kind == Kind::Size || fmt.kind == Kind::Family && single) && legacy.is_some()
+        && run != text && editing::local(dom, run) == "span" {
         run = text;
     }
     let parent = dom.parent_element(run).ok()??;
@@ -570,7 +571,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
         let dom = page.dom.borrow();
         nodes.iter().map(|&n| !equivalent(&fmt, &effective(page, &dom, kind, n))).collect()
     };
-    let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size) && {
+    let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size | Kind::Family) && {
         let dom = page.dom.borrow();
         nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| {
             value_carrier(&dom, n, host, &fmt).is_some_and(|carrier| {
