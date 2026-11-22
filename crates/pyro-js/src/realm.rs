@@ -1762,6 +1762,24 @@ impl<'s> Scope<'s> {
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
 
+    /// Records `error`, which a module script's evaluation (or linking) threw and which was
+    /// reported, as a module's cached [[EvaluationError]]: the engine rejects a later graph load
+    /// that reaches the module with this same value ([`Scope::is_module_evaluation_error`]). An
+    /// object is held weakly; a primitive is not recorded.
+    pub fn note_module_evaluation_error(&self, error: Value<'_>) {
+        if let Ok(note) = self.realm.cached_helper(self, "noteModuleEvaluationError") {
+            let _ = note.call(None, &[error]);
+        }
+    }
+
+    /// Whether `error` is an object [`Scope::note_module_evaluation_error`] recorded.
+    pub fn is_module_evaluation_error(&self, error: Value<'_>) -> bool {
+        self.realm
+            .cached_helper(self, "isModuleEvaluationError")
+            .and_then(|is| is.call(None, &[error]))
+            .is_ok_and(|v| v.to_bool())
+    }
+
     /// Calls `function_source` (a function expression) with `this` and `args`;
     /// the shape of CDP `Runtime.callFunctionOn`.
     pub fn call_function(

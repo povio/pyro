@@ -2861,12 +2861,7 @@ impl Browser {
                     move |s, e| {
                         // A graph that does not parse still runs: running it
                         // reports the error; one a fetch failed has no result.
-                        let parse_error = e
-                            .as_object()
-                            .and_then(|o| o.get_atom("name").ok())
-                            .and_then(|n| n.as_string())
-                            .is_some_and(|n| n == "SyntaxError");
-                        if parse_error {
+                        if module_graph_has_script(s, e) {
                             s.report_exception(&JsError::thrown(Persistent::new(s, e)));
                             failed(ran);
                         } else {
@@ -3003,17 +2998,52 @@ fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi
         Some(dom) => dom.with_destructive_writes_ignored(|| scope.link_and_evaluate_module(url)),
         None => scope.link_and_evaluate_module(url),
     };
-    let report = |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+    let report = |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| {
+        s.note_module_evaluation_error(e);
+        s.report_exception(&JsError::thrown(Persistent::new(s, e)))
+    };
     let reported = match evaluated {
         Ok(promise) => scope.then(promise, |_s, _v| {}, report),
         Err(JsError::Thrown(error)) => {
             // A microtask later, as a rejection would be reported.
-            scope.then(scope.undefined(), move |s, _v| s.report_exception(&JsError::Thrown(error)), |_s, _v| {})
+            scope.then(
+                scope.undefined(),
+                move |s, _v| {
+                    s.note_module_evaluation_error(error.get(s));
+                    s.report_exception(&JsError::Thrown(error))
+                },
+                |_s, _v| {},
+            )
         }
         Err(e) => Err(e),
     };
     if let Err(e) = reported {
         scope.report_exception(&e);
+    }
+}
+
+/// Whether a module graph whose load rejected with `error` still has a module
+/// script, which runs and reports the error (HTML: the script's "error to
+/// rethrow"), rather than none (a fetch failed: the element gets `error`):
+/// a parse error; a module specifier that does not resolve; and the cached
+/// evaluation error of a module an earlier script's evaluation reached
+/// (`Scope::note_module_evaluation_error`), which the engine rejects with
+/// again. A fetch failure is always a TypeError object, so any other thrown
+/// value is an evaluation error too.
+fn module_graph_has_script(scope: &pyro_js::Scope<'_>, error: pyro_js::Value<'_>) -> bool {
+    let Some(object) = error.as_object() else { return true };
+    if scope.is_module_evaluation_error(error) {
+        return true;
+    }
+    let name = object.get_atom("name").ok().and_then(|n| n.as_string());
+    match name.as_deref() {
+        Some("SyntaxError") => true,
+        Some("TypeError") => object
+            .get_atom("message")
+            .ok()
+            .and_then(|m| m.as_string())
+            .is_some_and(|m| m.starts_with("Failed to resolve module specifier")),
+        _ => false,
     }
 }
 

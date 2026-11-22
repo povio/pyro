@@ -345,6 +345,9 @@
   // Only proxies issued by windowProxy have a native, access-checked target.
   // The weak keys do not retain closed windows.
   let popupWindowTargets;
+  // Values module scripts' evaluations threw (their [[EvaluationError]]), as
+  // the embedder reported them (realm.rs `note_module_evaluation_error`).
+  let moduleEvaluationErrors;
 
   const H = {
     freeze: O.freeze,
@@ -864,6 +867,14 @@
       if (!popupWindowTargets) popupWindowTargets = new WeakMapC();
       apply(wmSet, popupWindowTargets, [proxy, window]);
       return proxy;
+    },
+    noteModuleEvaluationError(value) {
+      if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return;
+      if (!moduleEvaluationErrors) moduleEvaluationErrors = new WM();
+      apply(wmSet, moduleEvaluationErrors, [value, true]);
+    },
+    isModuleEvaluationError(value) {
+      return !!moduleEvaluationErrors && apply(wmHas, moduleEvaluationErrors, [value]);
     },
     accessiblePopupWindow(proxy) {
       if (!popupWindowTargets) return null;
