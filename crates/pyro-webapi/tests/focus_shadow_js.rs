@@ -699,3 +699,15 @@ fn boundary_events_see_the_new_hover_state() {
         "pointerout:false,true pointerover:false,true mouseout:false,true mouseleave:false,true mouseover:false,true mouseenter:false,true"
     );
 }
+
+/// A label's click focuses its control as a mouse focus: a checkbox does not match
+/// `:focus-visible` (Chrome; WPT css/selectors `focus-visible-026`).
+#[test]
+fn a_label_click_focuses_its_checkbox_without_focus_visible() {
+    let e = env("<!DOCTYPE html><body><input type=checkbox id=c><label for=c id=l>label</label></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "l.click(); [document.activeElement === c, c.checked, c.matches(':focus-visible')].join()"),
+        "true,true,false"
+    );
+}
