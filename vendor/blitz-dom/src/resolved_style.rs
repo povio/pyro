@@ -361,11 +361,15 @@ impl BaseDocument {
         if !live.writing_mode.is_horizontal() { return None; }
         let (live, sampled) = (live.get_position(), sampled.get_position());
         let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
-        if matches!(sizes.0.prepared_size(), Size::LengthPercentage(length) if length.0.to_length().is_some()) {
+        let endpoint = sizes.0.prepared_size();
+        let size = sizes.1.prepared_size();
+        let matching_keyword = matches!((endpoint, size),
+            (Size::Auto, Size::CalcSizeAuto(_)) | (Size::MinContent, Size::CalcSizeMinContent(_)) |
+            (Size::MaxContent, Size::CalcSizeMaxContent(_)) | (Size::FitContent, Size::CalcSizeFitContent(_)));
+        if matching_keyword || matches!(endpoint, Size::LengthPercentage(length) if length.0.to_length().is_some()) {
             use style::values::computed::MaxSize;
             let (minimum, maximum) = if width { (&live.min_width, &live.max_width) } else { (&live.min_height, &live.max_height) };
             if !minimum.is_auto() || !matches!(maximum, MaxSize::None) { return None; }
-            let size = sizes.1.prepared_size();
             let calculation = match size {
                 Size::CalcSizeAuto(value) | Size::CalcSizeFitContent(value) | Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeStretch(value) => value,
                 _ => return None,
