@@ -1,0 +1,8 @@
+{
+  "verified": true,
+  "head": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "rows": {
+    "chrome-only-vs-lp": 36815,
+    "lp-only-vs-chrome": 6647
+  }
+}

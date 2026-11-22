@@ -1,0 +1,4258 @@
+{
+ "scope": "local even ordinals only",
+ "head": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+ "previousLP": "1f1be032436bfeee9f48cdb5acbc0f71d21d5af9",
+ "signedChrome": "158.0.8127.37",
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+ "planSHA256": "4a3badc8428aa0743c1747b1aecf70082d30e1a69cd9e6a17d8ce200eeb6a63e",
+ "rawReceiptDigestsVerified": 90,
+ "sources": {
+  "named.jsonl.gz": "afcacd027cfb885e00058736e55aa7996a856d3a6dfa896ec5896fc0d4dcd555",
+  "pages.jsonl.gz": "4f600ad18dc343a836b31fff89c6d736aaf60c9523d19fbd94ffbcdd2e8283fc",
+  "losses.jsonl.gz": "3b9e447f9e9bbdd2c54df326758cca860b64b9e116a474fec39625675067c318",
+  "current-provenance.json": "4e37527a25eabdda9ba47feda3f2cfd8245642cc5f62dec0c7dd57496f2056e6",
+  "previous-provenance.json": "ec655a59e5ccd534f6e3b30db762dcc503af208380fc9b7c474b3f15f0bdf8f2",
+  "chrome-provenance.json": "832fa7296dae52387259c08baf54812bfe2e98a371c9c3835f498d5225d7f501"
+ },
+ "independentLocalExportQA": "e0c7586c462ee9ba23b8bba10779966570518774e7179d7b940d84e725af2607",
+ "summary": {
+  "n": 74,
+  "urls": 32,
+  "currentStatus": {
+   "Fail": 66,
+   "Missing": 6,
+   "Timeout": 2
+  },
+  "signedStatus": {
+   "Fail": 12,
+   "Pass": 52,
+   "Missing": 10
+  },
+  "pagesByLifecycleAndHarness": {
+   "complete/OK": 30,
+   "timeout/Timeout": 1,
+   "error/Error": 1
+  },
+  "observationsByLifecycleAndHarness": {
+   "complete/OK": 72,
+   "timeout/Timeout": 1,
+   "error/Error": 1
+  }
+ },
+ "signatureGroups": [
+  {
+   "signature": "popup-name-not-cleared",
+   "family": "Auxiliary browsing contexts",
+   "interpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "n": 36,
+   "urls": 11,
+   "currentStatus": {
+    "Fail": 36
+   },
+   "signedStatus": {
+    "Missing": 4,
+    "Pass": 32
+   },
+   "rawDiagnostics": {
+    "assert_equals: Popup name is cleared? expected \"true\" but got \"false\"": 36
+   }
+  },
+  {
+   "signature": "dangling-target-name-stash",
+   "family": "Auxiliary browsing contexts",
+   "interpretation": "Target-name round-trip stash result differed for base/form/link target cases. The failure message does not expose the returned value.",
+   "n": 5,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 5
+   },
+   "signedStatus": {
+    "Pass": 5
+   },
+   "rawDiagnostics": {
+    "assert_unreached: Stash result does not equal expected result. Reached unreachable code": 5
+   }
+  },
+  {
+   "signature": "formatblock-merged-siblings",
+   "family": "Editing",
+   "interpretation": "formatBlock produced one div with a br instead of two sibling divs.",
+   "n": 4,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 4
+   },
+   "signedStatus": {
+    "Fail": 4
+   },
+   "rawDiagnostics": {
+    "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\"": 4
+   }
+  },
+  {
+   "signature": "analyser-diagnostic-name",
+   "family": "Recorded name changes",
+   "interpretation": "A still-passing constructor error case includes different TypeError message text in its generated subtest name.",
+   "n": 3,
+   "urls": 1,
+   "currentStatus": {
+    "Missing": 3
+   },
+   "signedStatus": {
+    "Missing": 3
+   },
+   "rawDiagnostics": {
+    "None": 3
+   }
+  },
+  {
+   "signature": "form-target-referrer",
+   "family": "Auxiliary browsing contexts",
+   "interpretation": "Button-targeted form submissions with noreferrer sent a nonempty referrer.",
+   "n": 3,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 3
+   },
+   "signedStatus": {
+    "Pass": 3
+   },
+   "rawDiagnostics": {
+    "assert_equals: referrer expected \"\" but got \"http://web-platform.test:49473/html/semantics/forms/form-submission-target/rel-button-target.html\"": 3
+   }
+  },
+  {
+   "signature": "embedded-image-width",
+   "family": "Element resource loading",
+   "interpretation": "The query-encoding embed probe reported fallback width 300 instead of image width 2. This alone does not establish a URL encoding failure.",
+   "n": 2,
+   "urls": 2,
+   "currentStatus": {
+    "Fail": 2
+   },
+   "signedStatus": {
+    "Fail": 2
+   },
+   "rawDiagnostics": {
+    "assert_equals: expected substring %C3%A5 got default intrinsic width expected 2 but got 300": 2
+   }
+  },
+  {
+   "signature": "flat-tree-text-search",
+   "family": "Focus and text traversal",
+   "interpretation": "Text searches inside shadow-root dialogs returned false, including a slotted-text case.",
+   "n": 2,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 2
+   },
+   "signedStatus": {
+    "Pass": 2
+   },
+   "rawDiagnostics": {
+    "assert_true: expected true got false": 2
+   }
+  },
+  {
+   "signature": "formatblock-value",
+   "family": "Editing",
+   "interpretation": "formatBlock returned an empty query value instead of div.",
+   "n": 2,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 2
+   },
+   "signedStatus": {
+    "Fail": 2
+   },
+   "rawDiagnostics": {
+    "assert_equals: Wrong result returned expected \"div\" but got \"\"": 2
+   }
+  },
+  {
+   "signature": "null-body-status",
+   "family": "Network response",
+   "interpretation": "Worker fetch observed 200 for the expected 204 POST/304 OPTIONS response.",
+   "n": 2,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 2
+   },
+   "signedStatus": {
+    "Fail": 2
+   },
+   "rawDiagnostics": {
+    "assert_equals: expected 204 but got 200": 1,
+    "assert_equals: expected 304 but got 200": 1
+   }
+  },
+  {
+   "signature": "protocol-port-name",
+   "family": "Recorded name changes",
+   "interpretation": "A literal %s followed by a dynamic wptserve port appears in this generated name; the unchanged canonicalizer does not rewrite this token.",
+   "n": 2,
+   "urls": 1,
+   "currentStatus": {
+    "Missing": 2
+   },
+   "signedStatus": {
+    "Missing": 2
+   },
+   "rawDiagnostics": {
+    "None": 2
+   }
+  },
+  {
+   "signature": "video-image-decode",
+   "family": "Canvas and media",
+   "interpretation": "createImageBitmap rejected two cross-origin/redirect video sources with an InvalidStateError decode diagnostic.",
+   "n": 2,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 2
+   },
+   "signedStatus": {
+    "Pass": 2
+   },
+   "rawDiagnostics": {
+    "promise_test: Unhandled rejection with value: object \"InvalidStateError: The source image could not be decoded.\"": 2
+   }
+  },
+  {
+   "signature": "cloned-image-timeout",
+   "family": "Canvas and media",
+   "interpretation": "The cloned ImageBitmap subtest timed out on a page reporting a harness error.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Timeout": 1
+   },
+   "signedStatus": {
+    "Pass": 1
+   },
+   "rawDiagnostics": {
+    "Test timed out": 1
+   }
+  },
+  {
+   "signature": "early-hints-title-name",
+   "family": "Recorded name changes",
+   "interpretation": "The old filename-derived passing name was absent. Current LP and signed Chrome both reported a descriptive failing assertion on the same complete page.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Missing": 1
+   },
+   "signedStatus": {
+    "Missing": 1
+   },
+   "rawDiagnostics": {
+    "None": 1
+   }
+  },
+  {
+   "signature": "inert-frame-focus",
+   "family": "Focus and text traversal",
+   "interpretation": "Sequential focus remained on the preceding element rather than the expected iframe.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 1
+   },
+   "signedStatus": {
+    "Pass": 1
+   },
+   "rawDiagnostics": {
+    "assert_equals: #iframe got outer focus expected Element node <iframe id=\"iframe\" srcdoc=\"\n      <div id=\"start\" tabind... but got Element node <div id=\"before\" tabindex=\"0\">before</div>": 1
+   }
+  },
+  {
+   "signature": "named-iframe-timeout",
+   "family": "Auxiliary browsing contexts",
+   "interpretation": "The noopener/named-iframe case timed out before a final opener assertion.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Timeout": 1
+   },
+   "signedStatus": {
+    "Pass": 1
+   },
+   "rawDiagnostics": {
+    "Test timed out": 1
+   }
+  },
+  {
+   "signature": "navigation-name-stash",
+   "family": "Auxiliary browsing contexts",
+   "interpretation": "Cross-origin navigation with noopener returned an unexpected stash value. The raw assertion does not identify the wrong field.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 1
+   },
+   "signedStatus": {
+    "Fail": 1
+   },
+   "rawDiagnostics": {
+    "assert_unreached: Stash result does not equal expected result. Reached unreachable code": 1
+   }
+  },
+  {
+   "signature": "opaque-window-interface",
+   "family": "Window interface exposure",
+   "interpretation": "A data-URL iframe exposed FileSystemDirectoryHandle when the assertion expected it absent.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 1
+   },
+   "signedStatus": {
+    "Pass": 1
+   },
+   "rawDiagnostics": {
+    "assert_false: Data URI iframes must not define 'FileSystemDirectoryHandle'. expected false got true": 1
+   }
+  },
+  {
+   "signature": "plaintext-designmode-bold",
+   "family": "Editing",
+   "interpretation": "Bold markup was absent from the designMode/plaintext-only result.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 1
+   },
+   "signedStatus": {
+    "Pass": 1
+   },
+   "rawDiagnostics": {
+    "assert_equals: expected \"<div contenteditable=\\\"plaintext-only\\\">A<b>b</b>C</div>\" but got \"<div contenteditable=\\\"plaintext-only\\\">AbC</div>\"": 1
+   }
+  },
+  {
+   "signature": "sw-text-import-loaded",
+   "family": "Module loading",
+   "interpretation": "A service-worker text import reported LOADED when the assertion expected FAILED.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 1
+   },
+   "signedStatus": {
+    "Pass": 1
+   },
+   "rawDiagnostics": {
+    "assert_equals: expected \"FAILED\" but got \"LOADED\"": 1
+   }
+  },
+  {
+   "signature": "text-after-link",
+   "family": "Editing",
+   "interpretation": "Insertion at the end of a link placed the new character outside the link.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 1
+   },
+   "signedStatus": {
+    "Fail": 1
+   },
+   "rawDiagnostics": {
+    "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a href=\\\"/\\\">fooa</a>bar\" but got \"<a href=\\\"/\\\">foo</a>abar\"": 1
+   }
+  },
+  {
+   "signature": "transparent-pixel",
+   "family": "Canvas and media",
+   "interpretation": "A drawImage pixel was transparent black instead of opaque red.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 1
+   },
+   "signedStatus": {
+    "Pass": 1
+   },
+   "rawDiagnostics": {
+    "assert_true: Actual pixel value 0,0,0,0 is approximately equal to 255,0,0,255. expected true got false": 1
+   }
+  },
+  {
+   "signature": "worker-static-data-import",
+   "family": "Module loading",
+   "interpretation": "The dedicated-worker static data-URL import assertion returned false; no lower-level diagnostic was supplied.",
+   "n": 1,
+   "urls": 1,
+   "currentStatus": {
+    "Fail": 1
+   },
+   "signedStatus": {
+    "Pass": 1
+   },
+   "rawDiagnostics": {
+    "assert_true: expected true got false": 1
+   }
+  }
+ ],
+ "records": [
+  {
+   "url": "editing/run/formatblock.html?4001-5000",
+   "canonicalName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+   "occurrence": 1,
+   "behaviorFamily": "Editing",
+   "signature": "formatblock-value",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "formatBlock returned an empty query value instead of div.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 931,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+     "subtestDiagnostic": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 899,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 935,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+     "subtestDiagnostic": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+    }
+   }
+  },
+  {
+   "url": "editing/run/formatblock.html?4001-5000",
+   "canonicalName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+   "occurrence": 1,
+   "behaviorFamily": "Editing",
+   "signature": "formatblock-merged-siblings",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "formatBlock produced one div with a br instead of two sibling divs.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 931,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 899,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 935,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    }
+   }
+  },
+  {
+   "url": "editing/run/formatblock.html?4001-5000",
+   "canonicalName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+   "occurrence": 1,
+   "behaviorFamily": "Editing",
+   "signature": "formatblock-merged-siblings",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "formatBlock produced one div with a br instead of two sibling divs.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 931,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 899,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 935,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    }
+   }
+  },
+  {
+   "url": "editing/run/formatblock.html?4001-5000",
+   "canonicalName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+   "occurrence": 1,
+   "behaviorFamily": "Editing",
+   "signature": "formatblock-value",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "formatBlock returned an empty query value instead of div.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 931,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+     "subtestDiagnostic": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 899,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 935,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+     "subtestDiagnostic": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+    }
+   }
+  },
+  {
+   "url": "editing/run/formatblock.html?4001-5000",
+   "canonicalName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+   "occurrence": 1,
+   "behaviorFamily": "Editing",
+   "signature": "formatblock-merged-siblings",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "formatBlock produced one div with a br instead of two sibling divs.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 931,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 899,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 935,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    }
+   }
+  },
+  {
+   "url": "editing/run/formatblock.html?4001-5000",
+   "canonicalName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+   "occurrence": 1,
+   "behaviorFamily": "Editing",
+   "signature": "formatblock-merged-siblings",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "formatBlock produced one div with a br instead of two sibling divs.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 931,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 899,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 935,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    }
+   }
+  },
+  {
+   "url": "editing/run/inserttext.html?1001-2000",
+   "canonicalName": "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+   "occurrence": 1,
+   "behaviorFamily": "Editing",
+   "signature": "text-after-link",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Insertion at the end of a link placed the new character outside the link.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 964,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a href=\\\"/\\\">fooa</a>bar\" but got \"<a href=\\\"/\\\">foo</a>abar\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 965,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 985,
+     "pageObservedNames": 1000,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+     "subtestDiagnostic": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a href=\\\"/\\\">fooa</a>bar\" but got \"<a href=\\\"/\\\">foo</a>abar\""
+    }
+   }
+  },
+  {
+   "url": "html/canvas/element/manual/imagebitmap/createImageBitmap-origin.sub.html",
+   "canonicalName": "cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+   "occurrence": 1,
+   "behaviorFamily": "Canvas and media",
+   "signature": "video-image-decode",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "createImageBitmap rejected two cross-origin/redirect video sources with an InvalidStateError decode diagnostic.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 14,
+     "pageObservedNames": 27,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+     "subtestDiagnostic": "promise_test: Unhandled rejection with value: object \"InvalidStateError: The source image could not be decoded.\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 15,
+     "pageObservedNames": 27,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 27,
+     "pageObservedNames": 27,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/canvas/element/manual/imagebitmap/createImageBitmap-origin.sub.html",
+   "canonicalName": "redirected to same-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+   "occurrence": 1,
+   "behaviorFamily": "Canvas and media",
+   "signature": "video-image-decode",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "createImageBitmap rejected two cross-origin/redirect video sources with an InvalidStateError decode diagnostic.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 14,
+     "pageObservedNames": 27,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "redirected to same-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+     "subtestDiagnostic": "promise_test: Unhandled rejection with value: object \"InvalidStateError: The source image could not be decoded.\""
+    },
+    "prior": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 15,
+     "pageObservedNames": 27,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "redirected to same-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-history-001",
+     "receiptSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 27,
+     "pageObservedNames": 27,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "redirected to same-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "editing/plaintext-only/plaintext-only-in-designMode.html",
+   "canonicalName": "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+   "occurrence": 1,
+   "behaviorFamily": "Editing",
+   "signature": "plaintext-designmode-bold",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Bold markup was absent from the designMode/plaintext-only result.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-main-004",
+     "receiptSHA256": "71e7222723e68ff1b99995eba1d5ee6fc9e16f1fac9ea5871992304531326cfa",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+     "subtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"plaintext-only\\\">A<b>b</b>C</div>\" but got \"<div contenteditable=\\\"plaintext-only\\\">AbC</div>\""
+    },
+    "prior": {
+     "receiptKey": "guard-main-004",
+     "receiptSHA256": "67ad1cd3acf4729ff984e68df6790766a7afc5bd73fd9410e5c9b6e89505e565",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-main-004",
+     "receiptSHA256": "e24b33a657f83ef43ba54917b782f0a06129a706514c026e5c46dd2d689012ce",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "webaudio/the-audio-api/the-analysernode-interface/ctor-analyser.html",
+   "canonicalName": "  new AnalyserNode() threw TypeError: \"undefined is not a constructor (evaluating 'new window[name]()')\".",
+   "occurrence": 1,
+   "behaviorFamily": "Recorded name changes",
+   "signature": "analyser-diagnostic-name",
+   "observationClass": "missing exact name",
+   "diagnosticInterpretation": "A still-passing constructor error case includes different TypeError message text in its generated subtest name.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "d559e32795b74c9b426227a9703a71bff3876d1f4ff285eab6e1e287f6f77fc1",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 78,
+     "pageObservedNames": 78,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "  new AnalyserNode() threw TypeError: \"Failed to construct 'AnalyserNode': parameter 1 is not of type 'BaseAudioContext'.\".",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    },
+    "prior": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "c5fd0b5b0cafe1740817eec34a71b744b7e83c5cd1369345b2d6827ae723f7f7",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 18,
+     "pageObservedNames": 38,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "  new AnalyserNode() threw TypeError: \"undefined is not a constructor (evaluating 'new window[name]()')\".",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "74e2aa71abf5b45ac4fc7e1f4ae2d55cdb3c9987af724027ed18289b0f6898a3",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 78,
+     "pageObservedNames": 78,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "  new AnalyserNode() threw TypeError: \"Failed to construct 'AnalyserNode': 1 argument required, but only 0 present.\".",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "url": "webaudio/the-audio-api/the-analysernode-interface/ctor-analyser.html",
+   "canonicalName": "  new AnalyserNode(1) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](1)')\".",
+   "occurrence": 1,
+   "behaviorFamily": "Recorded name changes",
+   "signature": "analyser-diagnostic-name",
+   "observationClass": "missing exact name",
+   "diagnosticInterpretation": "A still-passing constructor error case includes different TypeError message text in its generated subtest name.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "d559e32795b74c9b426227a9703a71bff3876d1f4ff285eab6e1e287f6f77fc1",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 78,
+     "pageObservedNames": 78,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "  new AnalyserNode(1) threw TypeError: \"Failed to construct 'AnalyserNode': parameter 1 is not of type 'BaseAudioContext'.\".",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    },
+    "prior": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "c5fd0b5b0cafe1740817eec34a71b744b7e83c5cd1369345b2d6827ae723f7f7",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 18,
+     "pageObservedNames": 38,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "  new AnalyserNode(1) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](1)')\".",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "74e2aa71abf5b45ac4fc7e1f4ae2d55cdb3c9987af724027ed18289b0f6898a3",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 78,
+     "pageObservedNames": 78,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "  new AnalyserNode(1) threw TypeError: \"Failed to construct 'AnalyserNode': parameter 1 is not of type 'BaseAudioContext'.\".",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "url": "webaudio/the-audio-api/the-analysernode-interface/ctor-analyser.html",
+   "canonicalName": "  new AnalyserNode(context, 42) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](context, 42)')\".",
+   "occurrence": 1,
+   "behaviorFamily": "Recorded name changes",
+   "signature": "analyser-diagnostic-name",
+   "observationClass": "missing exact name",
+   "diagnosticInterpretation": "A still-passing constructor error case includes different TypeError message text in its generated subtest name.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "d559e32795b74c9b426227a9703a71bff3876d1f4ff285eab6e1e287f6f77fc1",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 78,
+     "pageObservedNames": 78,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "  new AnalyserNode(context, 42) threw TypeError: \"Failed to construct 'AnalyserNode': The provided value is not of type 'AnalyserNodeOptions'.\".",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    },
+    "prior": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "c5fd0b5b0cafe1740817eec34a71b744b7e83c5cd1369345b2d6827ae723f7f7",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 18,
+     "pageObservedNames": 38,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "  new AnalyserNode(context, 42) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](context, 42)')\".",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "guard-main-028",
+     "receiptSHA256": "74e2aa71abf5b45ac4fc7e1f4ae2d55cdb3c9987af724027ed18289b0f6898a3",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 78,
+     "pageObservedNames": 78,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "  new AnalyserNode(context, 42) threw TypeError: \"Failed to construct 'AnalyserNode': The provided value is not of type 'AnalyserOptions'.\".",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "url": "html/browsers/windows/clear-window-name.https.html",
+   "canonicalName": "Window.name is reset at the first cross-origin navigation with noopener",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "navigation-name-stash",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Cross-origin navigation with noopener returned an unexpected stash value. The raw assertion does not identify the wrong field.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-002",
+     "receiptSHA256": "71789412f7ea942f55d040f140e14019f8ab126268c3be0b08fe858d1cb51b41",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 9,
+     "pageObservedNames": 12,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Window.name is reset at the first cross-origin navigation with noopener",
+     "subtestDiagnostic": "assert_unreached: Stash result does not equal expected result. Reached unreachable code"
+    },
+    "prior": {
+     "receiptKey": "ordinary-002",
+     "receiptSHA256": "1eebc23816913e74a33c3266353e83d939d49056c6ffbeafec84e5e0e0ffa891",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 8,
+     "pageObservedNames": 12,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Window.name is reset at the first cross-origin navigation with noopener",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-002",
+     "receiptSHA256": "f9ac2d647a4b9a4898a3d3229528fd189be36cb98d29731de2efe7e26598920f",
+     "lifecycle": "timeout",
+     "harnessStatus": null,
+     "strictPage": false,
+     "pagePassingNames": 8,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Window.name is reset at the first cross-origin navigation with noopener",
+     "subtestDiagnostic": "assert_unreached: Stash result does not equal expected result. Reached unreachable code"
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?5-6",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "82cf8fdea6055f29cede9e497cb790dafc1ac92d8cf41e423ee01ce5b1461ef0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "c36f3b94e887b4ad45481c137111cc3b3395a00439f88dc8ea15f074ab5f8920",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "99eb5fd3f039e76ee2f35904218981a54acde5a5d08ddc16b67ea9c191b8e67d",
+     "lifecycle": "timeout",
+     "harnessStatus": null,
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?5-6",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "82cf8fdea6055f29cede9e497cb790dafc1ac92d8cf41e423ee01ce5b1461ef0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "c36f3b94e887b4ad45481c137111cc3b3395a00439f88dc8ea15f074ab5f8920",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "99eb5fd3f039e76ee2f35904218981a54acde5a5d08ddc16b67ea9c191b8e67d",
+     "lifecycle": "timeout",
+     "harnessStatus": null,
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?5-6",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same site popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "82cf8fdea6055f29cede9e497cb790dafc1ac92d8cf41e423ee01ce5b1461ef0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same site popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "c36f3b94e887b4ad45481c137111cc3b3395a00439f88dc8ea15f074ab5f8920",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "99eb5fd3f039e76ee2f35904218981a54acde5a5d08ddc16b67ea9c191b8e67d",
+     "lifecycle": "timeout",
+     "harnessStatus": null,
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?5-6",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same site popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "82cf8fdea6055f29cede9e497cb790dafc1ac92d8cf41e423ee01ce5b1461ef0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same site popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "c36f3b94e887b4ad45481c137111cc3b3395a00439f88dc8ea15f074ab5f8920",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-016",
+     "receiptSHA256": "99eb5fd3f039e76ee2f35904218981a54acde5a5d08ddc16b67ea9c191b8e67d",
+     "lifecycle": "timeout",
+     "harnessStatus": null,
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null
+    }
+   }
+  },
+  {
+   "url": "fetch/api/basic/response-null-body.any.worker.html",
+   "canonicalName": "Response.body is null for responses with status=204 (method=POST)",
+   "occurrence": 1,
+   "behaviorFamily": "Network response",
+   "signature": "null-body-status",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Worker fetch observed 200 for the expected 204 POST/304 OPTIONS response.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-018",
+     "receiptSHA256": "e7b61a8cf7548fb34bc8262c1f7ebffeb17e3100eb3b8b2f5ea510b2293dee4d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 6,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Response.body is null for responses with status=204 (method=POST)",
+     "subtestDiagnostic": "assert_equals: expected 204 but got 200"
+    },
+    "prior": {
+     "receiptKey": "ordinary-018",
+     "receiptSHA256": "3ca0b1056de5482205d3160390237fac503fa116aa354b16360256f46507b441",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 7,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Response.body is null for responses with status=204 (method=POST)",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-018",
+     "receiptSHA256": "3e314ea40b634970a282e6ecb7b510207856ba23a862b8dbf2bb32fc2f61bdce",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Response.body is null for responses with status=204 (method=POST)",
+     "subtestDiagnostic": "assert_equals: expected 204 but got 200"
+    }
+   }
+  },
+  {
+   "url": "fetch/api/basic/response-null-body.any.worker.html",
+   "canonicalName": "Response.body is null for responses with status=304 (method=OPTIONS)",
+   "occurrence": 1,
+   "behaviorFamily": "Network response",
+   "signature": "null-body-status",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Worker fetch observed 200 for the expected 204 POST/304 OPTIONS response.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-018",
+     "receiptSHA256": "e7b61a8cf7548fb34bc8262c1f7ebffeb17e3100eb3b8b2f5ea510b2293dee4d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 6,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Response.body is null for responses with status=304 (method=OPTIONS)",
+     "subtestDiagnostic": "assert_equals: expected 304 but got 200"
+    },
+    "prior": {
+     "receiptKey": "ordinary-018",
+     "receiptSHA256": "3ca0b1056de5482205d3160390237fac503fa116aa354b16360256f46507b441",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 7,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Response.body is null for responses with status=304 (method=OPTIONS)",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-018",
+     "receiptSHA256": "3e314ea40b634970a282e6ecb7b510207856ba23a862b8dbf2bb32fc2f61bdce",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Response.body is null for responses with status=304 (method=OPTIONS)",
+     "subtestDiagnostic": "assert_equals: expected 304 but got 200"
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin-allow-popups.https.html?7-8",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same origin iframe, cross origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "9e8402f41d5448a81c2b3b6e8e8b5b00cd461184abc70fd08475d81985bd4e61",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "85704faf70b890870578c94a4c9d9f4ec1177dc3e95615137302c64ca36a8265",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "15a317648154240a59767318d369caf92ca54a9b658e87bf55af4e95a613f64f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin-allow-popups.https.html?7-8",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same origin iframe, cross origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "9e8402f41d5448a81c2b3b6e8e8b5b00cd461184abc70fd08475d81985bd4e61",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same origin iframe, cross origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "85704faf70b890870578c94a4c9d9f4ec1177dc3e95615137302c64ca36a8265",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same origin iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "15a317648154240a59767318d369caf92ca54a9b658e87bf55af4e95a613f64f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same origin iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin-allow-popups.https.html?7-8",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, cross origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "9e8402f41d5448a81c2b3b6e8e8b5b00cd461184abc70fd08475d81985bd4e61",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, cross origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "85704faf70b890870578c94a4c9d9f4ec1177dc3e95615137302c64ca36a8265",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "15a317648154240a59767318d369caf92ca54a9b658e87bf55af4e95a613f64f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin-allow-popups.https.html?7-8",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, cross origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "9e8402f41d5448a81c2b3b6e8e8b5b00cd461184abc70fd08475d81985bd4e61",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, cross origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "85704faf70b890870578c94a4c9d9f4ec1177dc3e95615137302c64ca36a8265",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-020",
+     "receiptSHA256": "15a317648154240a59767318d369caf92ca54a9b658e87bf55af4e95a613f64f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/infrastructure/urls/resolving-urls/query-encoding/utf-16be.html?include=loading",
+   "canonicalName": "loading image <embed src>",
+   "occurrence": 1,
+   "behaviorFamily": "Element resource loading",
+   "signature": "embedded-image-width",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "The query-encoding embed probe reported fallback width 300 instead of image width 2. This alone does not establish a URL encoding failure.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-050",
+     "receiptSHA256": "d896f7a9f8f33d5f13b081ad23fa22c3f1edfa14d8dcb8ac8faeecd8e4df8f53",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 8,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "loading image <embed src>",
+     "subtestDiagnostic": "assert_equals: expected substring %C3%A5 got default intrinsic width expected 2 but got 300"
+    },
+    "prior": {
+     "receiptKey": "ordinary-050",
+     "receiptSHA256": "5696be51e66a77abe859b15c818c76cf926d03e2d48f39e21f29b8fbfadb0513",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 9,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "loading image <embed src>",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-050",
+     "receiptSHA256": "24f73d4376c47c8edaba7441499fec59358926abb7c68e3c1f9e8f7727e0fabd",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 9,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "loading image <embed src>",
+     "subtestDiagnostic": "assert_equals: expected substring %C3%A5 got default intrinsic width expected 2 but got 300"
+    }
+   }
+  },
+  {
+   "url": "html/infrastructure/urls/resolving-urls/query-encoding/utf-8.html?include=loading",
+   "canonicalName": "loading image <embed src>",
+   "occurrence": 1,
+   "behaviorFamily": "Element resource loading",
+   "signature": "embedded-image-width",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "The query-encoding embed probe reported fallback width 300 instead of image width 2. This alone does not establish a URL encoding failure.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-076",
+     "receiptSHA256": "6c116e6005bdeb286c59d8142ca686c4f861c8e42d0549b7230207e749cf17b6",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 8,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "loading image <embed src>",
+     "subtestDiagnostic": "assert_equals: expected substring %C3%A5 got default intrinsic width expected 2 but got 300"
+    },
+    "prior": {
+     "receiptKey": "ordinary-076",
+     "receiptSHA256": "2df7696616ca754f01beb28faf65aa9ef79252121032f326f7f9b92f960c0988",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 9,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "loading image <embed src>",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-076",
+     "receiptSHA256": "0c4f0af70450e1fcfb6fae3c834e68d96a61a5e148da9afd23e52f1ad345d16e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 9,
+     "pageObservedNames": 11,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "loading image <embed src>",
+     "subtestDiagnostic": "assert_equals: expected substring %C3%A5 got default intrinsic width expected 2 but got 300"
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?3-4",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "11069ee0a53dca45e7770ef928221eb041802ba5c4be65d2d0e5fc3a6f505898",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "76643f1467215b4733328716df24cae6227bbd81e21399b23a7e94dca815d200",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "e6776e2d4134704de8d5e24b23093cd1860c8f2d72d976ad20893ad4acd29fe7",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?3-4",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "11069ee0a53dca45e7770ef928221eb041802ba5c4be65d2d0e5fc3a6f505898",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "76643f1467215b4733328716df24cae6227bbd81e21399b23a7e94dca815d200",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "e6776e2d4134704de8d5e24b23093cd1860c8f2d72d976ad20893ad4acd29fe7",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?3-4",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "11069ee0a53dca45e7770ef928221eb041802ba5c4be65d2d0e5fc3a6f505898",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "76643f1467215b4733328716df24cae6227bbd81e21399b23a7e94dca815d200",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "e6776e2d4134704de8d5e24b23093cd1860c8f2d72d976ad20893ad4acd29fe7",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?3-4",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "11069ee0a53dca45e7770ef928221eb041802ba5c4be65d2d0e5fc3a6f505898",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "76643f1467215b4733328716df24cae6227bbd81e21399b23a7e94dca815d200",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-082",
+     "receiptSHA256": "e6776e2d4134704de8d5e24b23093cd1860c8f2d72d976ad20893ad4acd29fe7",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "inert/inert-iframe-tabbing.html",
+   "canonicalName": "Sequential navigation can move within an inert iframe",
+   "occurrence": 1,
+   "behaviorFamily": "Focus and text traversal",
+   "signature": "inert-frame-focus",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Sequential focus remained on the preceding element rather than the expected iframe.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-086",
+     "receiptSHA256": "12d6f7e60db5f6dd09cfc9ccdb35ef47873e8991b34156812c16e60ec8c06c67",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Sequential navigation can move within an inert iframe",
+     "subtestDiagnostic": "assert_equals: #iframe got outer focus expected Element node <iframe id=\"iframe\" srcdoc=\"\n      <div id=\"start\" tabind... but got Element node <div id=\"before\" tabindex=\"0\">before</div>"
+    },
+    "prior": {
+     "receiptKey": "ordinary-086",
+     "receiptSHA256": "a51fb00788348f4effb0c68f43c49cf46abed9265160681b6c071b05e87ac505",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Sequential navigation can move within an inert iframe",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-086",
+     "receiptSHA256": "51cec6ea77821c402fef76077f28921e481e4f7da1e9d0a6972e7d4bd079345e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Sequential navigation can move within an inert iframe",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/browsers/the-window-object/window-open-noopener-existing-iframe.html",
+   "canonicalName": "window.open() with noopener targeting an existing named iframe does not set its opener",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "named-iframe-timeout",
+   "observationClass": "observed subtest timeout",
+   "diagnosticInterpretation": "The noopener/named-iframe case timed out before a final opener assertion.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-102",
+     "receiptSHA256": "b2279ca36568396232654f65967dfe35aeaa01e5da4c9d00eb119921b4315abd",
+     "lifecycle": "timeout",
+     "harnessStatus": "Timeout",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 1,
+     "pageDiagnostic": null,
+     "subtestStatus": "Timeout",
+     "originalReportedName": "window.open() with noopener targeting an existing named iframe does not set its opener",
+     "subtestDiagnostic": "Test timed out"
+    },
+    "prior": {
+     "receiptKey": "ordinary-102",
+     "receiptSHA256": "fd9ad59882f1de9baa332ebb91ce6c91c3a284f0e9e381186492ec8a2f0c2068",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 1,
+     "pageObservedNames": 1,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "window.open() with noopener targeting an existing named iframe does not set its opener",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-102",
+     "receiptSHA256": "79a87515e3be3950ef4f2c3139a6e40446ce015e984fc03009372640de414e84",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 1,
+     "pageObservedNames": 1,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "window.open() with noopener targeting an existing named iframe does not set its opener",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/semantics/scripting-1/the-script-element/text-module/service-worker-test.https.html",
+   "canonicalName": "Text module dynamic import should not load within the context of a service worker",
+   "occurrence": 1,
+   "behaviorFamily": "Module loading",
+   "signature": "sw-text-import-loaded",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "A service-worker text import reported LOADED when the assertion expected FAILED.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-110",
+     "receiptSHA256": "f4a32063bfa99235838f8ebbdc9a4e0a7deeaae535567622134066e60a831c16",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Text module dynamic import should not load within the context of a service worker",
+     "subtestDiagnostic": "assert_equals: expected \"FAILED\" but got \"LOADED\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-110",
+     "receiptSHA256": "ff5759a4512e67d66d1ace9d6a789228e343abfbc8d25220ad4d505dde49da0a",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 3,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Text module dynamic import should not load within the context of a service worker",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-110",
+     "receiptSHA256": "4f4385399de9b9b210a07e81bb4929ad579c19623074d7b5cc9974902b53b5c1",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 3,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Text module dynamic import should not load within the context of a service worker",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/semantics/forms/form-submission-target/rel-button-target.html",
+   "canonicalName": "<form rel=\"noopener noreferrer\"> with <button formtarget>",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "form-target-referrer",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Button-targeted form submissions with noreferrer sent a nonempty referrer.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "7ba51579548a5d429b475cb4947eb7d930255889a09bf26714b57cfbb761ba62",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "<form rel=\"noopener noreferrer\"> with <button formtarget>",
+     "subtestDiagnostic": "assert_equals: referrer expected \"\" but got \"http://web-platform.test:49473/html/semantics/forms/form-submission-target/rel-button-target.html\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "d8d3ee2b37730d98ad7b5be09f7691c67b8e4bc646178a6da719c4540a12870f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "<form rel=\"noopener noreferrer\"> with <button formtarget>",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "4d4646a07e5ec31e6fe37c4032431b837867e349f1a6fe5653ae215bc7037ac3",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 7,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "<form rel=\"noopener noreferrer\"> with <button formtarget>",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/semantics/forms/form-submission-target/rel-button-target.html",
+   "canonicalName": "<form rel=\"noreferrer opener\"> with <button formtarget>",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "form-target-referrer",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Button-targeted form submissions with noreferrer sent a nonempty referrer.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "7ba51579548a5d429b475cb4947eb7d930255889a09bf26714b57cfbb761ba62",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "<form rel=\"noreferrer opener\"> with <button formtarget>",
+     "subtestDiagnostic": "assert_equals: referrer expected \"\" but got \"http://web-platform.test:49473/html/semantics/forms/form-submission-target/rel-button-target.html\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "d8d3ee2b37730d98ad7b5be09f7691c67b8e4bc646178a6da719c4540a12870f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "<form rel=\"noreferrer opener\"> with <button formtarget>",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "4d4646a07e5ec31e6fe37c4032431b837867e349f1a6fe5653ae215bc7037ac3",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 7,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "<form rel=\"noreferrer opener\"> with <button formtarget>",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/semantics/forms/form-submission-target/rel-button-target.html",
+   "canonicalName": "<form rel=\"noreferrer\"> with <button formtarget>",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "form-target-referrer",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Button-targeted form submissions with noreferrer sent a nonempty referrer.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "7ba51579548a5d429b475cb4947eb7d930255889a09bf26714b57cfbb761ba62",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "<form rel=\"noreferrer\"> with <button formtarget>",
+     "subtestDiagnostic": "assert_equals: referrer expected \"\" but got \"http://web-platform.test:49473/html/semantics/forms/form-submission-target/rel-button-target.html\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "d8d3ee2b37730d98ad7b5be09f7691c67b8e4bc646178a6da719c4540a12870f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "<form rel=\"noreferrer\"> with <button formtarget>",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-124",
+     "receiptSHA256": "4d4646a07e5ec31e6fe37c4032431b837867e349f1a6fe5653ae215bc7037ac3",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 7,
+     "pageObservedNames": 7,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "<form rel=\"noreferrer\"> with <button formtarget>",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+   "canonicalName": "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false",
+   "occurrence": 1,
+   "behaviorFamily": "Canvas and media",
+   "signature": "cloned-image-timeout",
+   "observationClass": "observed subtest timeout",
+   "diagnosticInterpretation": "The cloned ImageBitmap subtest timed out on a page reporting a harness error.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-126",
+     "receiptSHA256": "8b4fc5c870e01d9774ed7e9763989e811a806b389f430d23faa37bd56949fa48",
+     "lifecycle": "error",
+     "harnessStatus": "Error",
+     "strictPage": false,
+     "pagePassingNames": 95,
+     "pageObservedNames": 208,
+     "pageDiagnostic": "Unhandled rejection: The source image could not be decoded.",
+     "subtestStatus": "Timeout",
+     "originalReportedName": "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false",
+     "subtestDiagnostic": "Test timed out"
+    },
+    "prior": {
+     "receiptKey": "ordinary-126",
+     "receiptSHA256": "0c4df381491761e8a46652d82ca7b385fd0297ee89e91b9c86477f90c115f392",
+     "lifecycle": "error",
+     "harnessStatus": "Error",
+     "strictPage": false,
+     "pagePassingNames": 95,
+     "pageObservedNames": 208,
+     "pageDiagnostic": "Unhandled rejection: The source image could not be decoded.",
+     "subtestStatus": "Pass",
+     "originalReportedName": "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-126",
+     "receiptSHA256": "b3a389e2ca55d305881ed846a3b5002b050f08b15f53afc3028c1b597fbc3b1d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 192,
+     "pageObservedNames": 208,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin-allow-popups.https.html?9-last",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with cross origin iframe, cross origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-130",
+     "receiptSHA256": "dce803a3a8673821f6a2075e2fabc46cc800065e4bc05c07a4d12826c92d8081",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with cross origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-130",
+     "receiptSHA256": "f03531759aabcb4dcddb62cea6bd1ab5acb3a9df44691ba386dcae977295ecfc",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with cross origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-130",
+     "receiptSHA256": "2efe1c95491097b948fd642ed9fbf650a58bf58b04ba18912bb8bcceb6d0a17d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 3,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with cross origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin-allow-popups.https.html?9-last",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with cross origin iframe, cross origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-130",
+     "receiptSHA256": "dce803a3a8673821f6a2075e2fabc46cc800065e4bc05c07a4d12826c92d8081",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with cross origin iframe, cross origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-130",
+     "receiptSHA256": "f03531759aabcb4dcddb62cea6bd1ab5acb3a9df44691ba386dcae977295ecfc",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with cross origin iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-130",
+     "receiptSHA256": "2efe1c95491097b948fd642ed9fbf650a58bf58b04ba18912bb8bcceb6d0a17d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 3,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with cross origin iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-to-same-origin.https.html?1-2",
+   "canonicalName": "COOP: same-origin to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-136",
+     "receiptSHA256": "99e6ef46e1295e408f0cfd778523455b7bf4315f045422f95e481624e3524a8e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-136",
+     "receiptSHA256": "6ff4c0b8c70a9dcd3479837d0bdfdfda48b29871d4572c5009f4680f5ebeb4be",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-136",
+     "receiptSHA256": "d876124339662bcc69a16a8ea6f6d6b1c3a29d4c5f5c90262e285cb3fef946ba",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-to-same-origin.https.html?1-2",
+   "canonicalName": "COOP: same-origin to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-136",
+     "receiptSHA256": "99e6ef46e1295e408f0cfd778523455b7bf4315f045422f95e481624e3524a8e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-136",
+     "receiptSHA256": "6ff4c0b8c70a9dcd3479837d0bdfdfda48b29871d4572c5009f4680f5ebeb4be",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-136",
+     "receiptSHA256": "d876124339662bcc69a16a8ea6f6d6b1c3a29d4c5f5c90262e285cb3fef946ba",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-to-unsafe-none.https.html?9-last",
+   "canonicalName": "COOP: same-origin to popup COOP: unsafe-none via an iframe, with cross origin iframe, cross origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-154",
+     "receiptSHA256": "cc98cc16208dbc0a0ef707deadfa4ac4f8f7afbcabdc6023255678a7d726dc0b",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin to popup COOP: unsafe-none via an iframe, with cross origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-154",
+     "receiptSHA256": "c960d5866ef412005d90954bbd1cb93f8382d1cd8eb6a2e5372dbc245e089247",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin to popup COOP: unsafe-none via an iframe, with cross origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-154",
+     "receiptSHA256": "0dd94278525d1faf912668511f2cca0716a06a9c3a4c62757a7bfb642d49b338",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 3,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin to popup COOP: unsafe-none via an iframe, with cross origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-to-unsafe-none.https.html?9-last",
+   "canonicalName": "COOP: same-origin to popup COOP: unsafe-none via an iframe, with cross origin iframe, cross origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-154",
+     "receiptSHA256": "cc98cc16208dbc0a0ef707deadfa4ac4f8f7afbcabdc6023255678a7d726dc0b",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin to popup COOP: unsafe-none via an iframe, with cross origin iframe, cross origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-154",
+     "receiptSHA256": "c960d5866ef412005d90954bbd1cb93f8382d1cd8eb6a2e5372dbc245e089247",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin to popup COOP: unsafe-none via an iframe, with cross origin iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-154",
+     "receiptSHA256": "0dd94278525d1faf912668511f2cca0716a06a9c3a4c62757a7bfb642d49b338",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 3,
+     "pageObservedNames": 3,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin to popup COOP: unsafe-none via an iframe, with cross origin iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "speculation-rules/speculation-measurement/performance-speculations-multiple-early-hints-preconnect.tentative.h2.window.html",
+   "canonicalName": "performance-speculations-multiple-early-hints-preconnect",
+   "occurrence": 1,
+   "behaviorFamily": "Recorded name changes",
+   "signature": "early-hints-title-name",
+   "observationClass": "missing exact name",
+   "diagnosticInterpretation": "The old filename-derived passing name was absent. Current LP and signed Chrome both reported a descriptive failing assertion on the same complete page.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-158",
+     "receiptSHA256": "67dbfe9a6dfbed567ddd1d3a3f0d884e433334b0e6cfd77097271a9105d6a9b1",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 1,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "Only the first of multiple 103 Early Hints responses contributes preconnects",
+       "subtestStatus": "Fail",
+       "subtestDiagnostic": "assert_true: SpeculationMeasurement feature must be enabled expected true got false"
+      }
+     ]
+    },
+    "prior": {
+     "receiptKey": "ordinary-158",
+     "receiptSHA256": "5c16ce19a28b87edfd6022a20b3809dd717ae1f002cb4defe002dcf16cbd9535",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 1,
+     "pageObservedNames": 1,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "performance-speculations-multiple-early-hints-preconnect",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-158",
+     "receiptSHA256": "b86bbd4af4c0011a6ed733a8754b24dcfbd38353018847b2bbbe15ce919aad13",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 1,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "Only the first of multiple 103 Early Hints responses contributes preconnects",
+       "subtestStatus": "Fail",
+       "subtestDiagnostic": "assert_true: SpeculationMeasurement feature must be enabled expected true got false"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin-allow-popups.https.html?1-2",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, same origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-164",
+     "receiptSHA256": "bccbf4e6b01ab72e84cbd99be9d89596c84cc656b43ff6293736ec45358ed2e4",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-164",
+     "receiptSHA256": "82a93c0b65f561f8b197ef9757be2a24d1f7a6122765f91ee40df28fb8096bfe",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-164",
+     "receiptSHA256": "68a16a423c1427f4821e88b0a3f50484b24f44c32ba89b501d7554201d4ae3cf",
+     "lifecycle": "timeout",
+     "harnessStatus": null,
+     "strictPage": false,
+     "pagePassingNames": 5,
+     "pageObservedNames": 5,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin-allow-popups.https.html?1-2",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, same origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-164",
+     "receiptSHA256": "bccbf4e6b01ab72e84cbd99be9d89596c84cc656b43ff6293736ec45358ed2e4",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, same origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-164",
+     "receiptSHA256": "82a93c0b65f561f8b197ef9757be2a24d1f7a6122765f91ee40df28fb8096bfe",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin-allow-popups via an iframe, with same site iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-164",
+     "receiptSHA256": "68a16a423c1427f4821e88b0a3f50484b24f44c32ba89b501d7554201d4ae3cf",
+     "lifecycle": "timeout",
+     "harnessStatus": null,
+     "strictPage": false,
+     "pagePassingNames": 5,
+     "pageObservedNames": 5,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null
+    }
+   }
+  },
+  {
+   "url": "file-system-access/opaque-origin.https.window.html",
+   "canonicalName": "FileSystemDirectoryHandle must be undefined for data URI iframes.",
+   "occurrence": 1,
+   "behaviorFamily": "Window interface exposure",
+   "signature": "opaque-window-interface",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "A data-URL iframe exposed FileSystemDirectoryHandle when the assertion expected it absent.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-166",
+     "receiptSHA256": "7735aee0411598b94cd6505f1629b4d02faa860cc716bf504873f607eddd02cc",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 4,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "FileSystemDirectoryHandle must be undefined for data URI iframes.",
+     "subtestDiagnostic": "assert_false: Data URI iframes must not define 'FileSystemDirectoryHandle'. expected false got true"
+    },
+    "prior": {
+     "receiptKey": "ordinary-166",
+     "receiptSHA256": "cf9a0bb437c5b756100d2470c6b9de8d63cb17dd4708b61238c22d7bfda4000f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 2,
+     "pageObservedNames": 4,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "FileSystemDirectoryHandle must be undefined for data URI iframes.",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-166",
+     "receiptSHA256": "31e6c03f6f1127ed6dff7f6830546d7585a945a0041962172747159ef99d028e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 4,
+     "pageObservedNames": 4,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "FileSystemDirectoryHandle must be undefined for data URI iframes.",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?7-8",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, cross origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "961c3487446a0879aea39e8755596ca744978181e6171ece7028e1abc2f90ff0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "6240eaa0cb537e0b2c46dc2c0e53648401c87f9e0067a91d5efab4d3d2591178",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "9ce3a45608a98348e2a7e5d01b0d6b39641aec18011a74c02ce4b66ecee3d9a5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?7-8",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, cross origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "961c3487446a0879aea39e8755596ca744978181e6171ece7028e1abc2f90ff0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, cross origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "6240eaa0cb537e0b2c46dc2c0e53648401c87f9e0067a91d5efab4d3d2591178",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "9ce3a45608a98348e2a7e5d01b0d6b39641aec18011a74c02ce4b66ecee3d9a5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?7-8",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, cross origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "961c3487446a0879aea39e8755596ca744978181e6171ece7028e1abc2f90ff0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, cross origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "6240eaa0cb537e0b2c46dc2c0e53648401c87f9e0067a91d5efab4d3d2591178",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "9ce3a45608a98348e2a7e5d01b0d6b39641aec18011a74c02ce4b66ecee3d9a5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, cross origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?7-8",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, cross origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "961c3487446a0879aea39e8755596ca744978181e6171ece7028e1abc2f90ff0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, cross origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "6240eaa0cb537e0b2c46dc2c0e53648401c87f9e0067a91d5efab4d3d2591178",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-176",
+     "receiptSHA256": "9ce3a45608a98348e2a7e5d01b0d6b39641aec18011a74c02ce4b66ecee3d9a5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, cross origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+   "canonicalName": "sRGB-FF0000FF.png, Context srgb, ImageData srgb, scaleImage=false",
+   "occurrence": 1,
+   "behaviorFamily": "Canvas and media",
+   "signature": "transparent-pixel",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "A drawImage pixel was transparent black instead of opaque red.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-178",
+     "receiptSHA256": "df178980014a600889c4bcc2688a220ee5cf47d60bae8c4fe58e02204f856cf0",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 103,
+     "pageObservedNames": 240,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "sRGB-FF0000FF.png, Context srgb, ImageData srgb, scaleImage=false",
+     "subtestDiagnostic": "assert_true: Actual pixel value 0,0,0,0 is approximately equal to 255,0,0,255. expected true got false"
+    },
+    "prior": {
+     "receiptKey": "ordinary-178",
+     "receiptSHA256": "a8f77ad0890b1c059e7417b1dee4c431a712ff451798b187352c5719a6ffb212",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 103,
+     "pageObservedNames": 240,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "sRGB-FF0000FF.png, Context srgb, ImageData srgb, scaleImage=false",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-178",
+     "receiptSHA256": "895d2d1147cab6dec45d85c56ee8cd0e9a67981ec7c72f3542d0ef682712f8aa",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 224,
+     "pageObservedNames": 240,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "sRGB-FF0000FF.png, Context srgb, ImageData srgb, scaleImage=false",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?5-6",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "5b7869be428082ae983cb5241dcb6bb26b81a7ef34d803a7e00afe5b08a4c52f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "d2db40022473030c6d2f1f1639cbd5511e647a6f26a80feb8a81b7bf5eefeda9",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "f1782fb99319b8338a0a5371c45d3058e1fc98f1a344c52200ef500dbb5aaeed",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?5-6",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "5b7869be428082ae983cb5241dcb6bb26b81a7ef34d803a7e00afe5b08a4c52f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "d2db40022473030c6d2f1f1639cbd5511e647a6f26a80feb8a81b7bf5eefeda9",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "f1782fb99319b8338a0a5371c45d3058e1fc98f1a344c52200ef500dbb5aaeed",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?5-6",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, same site popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "5b7869be428082ae983cb5241dcb6bb26b81a7ef34d803a7e00afe5b08a4c52f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, same site popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "d2db40022473030c6d2f1f1639cbd5511e647a6f26a80feb8a81b7bf5eefeda9",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "f1782fb99319b8338a0a5371c45d3058e1fc98f1a344c52200ef500dbb5aaeed",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?5-6",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, same site popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "5b7869be428082ae983cb5241dcb6bb26b81a7ef34d803a7e00afe5b08a4c52f",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, same site popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "d2db40022473030c6d2f1f1639cbd5511e647a6f26a80feb8a81b7bf5eefeda9",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-180",
+     "receiptSHA256": "f1782fb99319b8338a0a5371c45d3058e1fc98f1a344c52200ef500dbb5aaeed",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same site iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?1-2",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "11c7dcbd530614c7a86a075a8cfba15f5e3241e565a2eb6124e3f73a6ad045e5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "7985fd2a504783710be85255b0f2b745542b4028a775778139d18e8e3174bf3d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "c57808fccedd8f9546ae8899157254576441a25a77b3df29bbc4290604fd6277",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?1-2",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "11c7dcbd530614c7a86a075a8cfba15f5e3241e565a2eb6124e3f73a6ad045e5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "7985fd2a504783710be85255b0f2b745542b4028a775778139d18e8e3174bf3d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "c57808fccedd8f9546ae8899157254576441a25a77b3df29bbc4290604fd6277",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same origin iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?1-2",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "11c7dcbd530614c7a86a075a8cfba15f5e3241e565a2eb6124e3f73a6ad045e5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "7985fd2a504783710be85255b0f2b745542b4028a775778139d18e8e3174bf3d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "c57808fccedd8f9546ae8899157254576441a25a77b3df29bbc4290604fd6277",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-unsafe-none-to-same-origin.https.html?1-2",
+   "canonicalName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "11c7dcbd530614c7a86a075a8cfba15f5e3241e565a2eb6124e3f73a6ad045e5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "7985fd2a504783710be85255b0f2b745542b4028a775778139d18e8e3174bf3d",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-196",
+     "receiptSHA256": "c57808fccedd8f9546ae8899157254576441a25a77b3df29bbc4290604fd6277",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: unsafe-none to popup COOP: same-origin via an iframe, with same site iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/browsers/windows/dangling-markup-window-name.html",
+   "canonicalName": "Dangling Markup in target is reset when set by <base> tag",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "dangling-target-name-stash",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Target-name round-trip stash result differed for base/form/link target cases. The failure message does not expose the returned value.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "5012c6e8e44c38189ccfd19d7d1a30e7923c80be6efcb989a90e5231f09cbee5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Dangling Markup in target is reset when set by <base> tag",
+     "subtestDiagnostic": "assert_unreached: Stash result does not equal expected result. Reached unreachable code"
+    },
+    "prior": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "70f1615953b3bcfc6df98f5b1466d11d6609cd64a2e7e8efe556731d93897251",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup in target is reset when set by <base> tag",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "52012ad5092b619ce084a0d1cfbb3df93718ff6e8a9590b0b15c24b5a5c02239",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup in target is reset when set by <base> tag",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/browsers/windows/dangling-markup-window-name.html",
+   "canonicalName": "Dangling Markup in target is reset when set by <form> tag",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "dangling-target-name-stash",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Target-name round-trip stash result differed for base/form/link target cases. The failure message does not expose the returned value.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "5012c6e8e44c38189ccfd19d7d1a30e7923c80be6efcb989a90e5231f09cbee5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Dangling Markup in target is reset when set by <form> tag",
+     "subtestDiagnostic": "assert_unreached: Stash result does not equal expected result. Reached unreachable code"
+    },
+    "prior": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "70f1615953b3bcfc6df98f5b1466d11d6609cd64a2e7e8efe556731d93897251",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup in target is reset when set by <form> tag",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "52012ad5092b619ce084a0d1cfbb3df93718ff6e8a9590b0b15c24b5a5c02239",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup in target is reset when set by <form> tag",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/browsers/windows/dangling-markup-window-name.html",
+   "canonicalName": "Dangling Markup with \"\\n\" in target is reset when set by <a> tag",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "dangling-target-name-stash",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Target-name round-trip stash result differed for base/form/link target cases. The failure message does not expose the returned value.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "5012c6e8e44c38189ccfd19d7d1a30e7923c80be6efcb989a90e5231f09cbee5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Dangling Markup with \"\\n\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": "assert_unreached: Stash result does not equal expected result. Reached unreachable code"
+    },
+    "prior": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "70f1615953b3bcfc6df98f5b1466d11d6609cd64a2e7e8efe556731d93897251",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup with \"\\n\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "52012ad5092b619ce084a0d1cfbb3df93718ff6e8a9590b0b15c24b5a5c02239",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup with \"\\n\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/browsers/windows/dangling-markup-window-name.html",
+   "canonicalName": "Dangling Markup with \"\\r\" in target is reset when set by <a> tag",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "dangling-target-name-stash",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Target-name round-trip stash result differed for base/form/link target cases. The failure message does not expose the returned value.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "5012c6e8e44c38189ccfd19d7d1a30e7923c80be6efcb989a90e5231f09cbee5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Dangling Markup with \"\\r\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": "assert_unreached: Stash result does not equal expected result. Reached unreachable code"
+    },
+    "prior": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "70f1615953b3bcfc6df98f5b1466d11d6609cd64a2e7e8efe556731d93897251",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup with \"\\r\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "52012ad5092b619ce084a0d1cfbb3df93718ff6e8a9590b0b15c24b5a5c02239",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup with \"\\r\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/browsers/windows/dangling-markup-window-name.html",
+   "canonicalName": "Dangling Markup with \"\\t\" in target is reset when set by <a> tag",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "dangling-target-name-stash",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Target-name round-trip stash result differed for base/form/link target cases. The failure message does not expose the returned value.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "5012c6e8e44c38189ccfd19d7d1a30e7923c80be6efcb989a90e5231f09cbee5",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 1,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Dangling Markup with \"\\t\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": "assert_unreached: Stash result does not equal expected result. Reached unreachable code"
+    },
+    "prior": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "70f1615953b3bcfc6df98f5b1466d11d6609cd64a2e7e8efe556731d93897251",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup with \"\\t\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-210",
+     "receiptSHA256": "52012ad5092b619ce084a0d1cfbb3df93718ff6e8a9590b0b15c24b5a5c02239",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Dangling Markup with \"\\t\" in target is reset when set by <a> tag",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?3-4",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "cedb9d812229efc41a98c0a23b2b9e1dcb28239b80ef4cb7bb701d711ecf4588",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "1b4370cd085f1e8fe228d093fe67e70bdcd4d226a4b3e80a947d8bfb15ac91ae",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "9f5d59b7ca6c5b43a479802661a04ec0c157d5fc567a0ec12ef84fdfd8982e09",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?3-4",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "cedb9d812229efc41a98c0a23b2b9e1dcb28239b80ef4cb7bb701d711ecf4588",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "1b4370cd085f1e8fe228d093fe67e70bdcd4d226a4b3e80a947d8bfb15ac91ae",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "9f5d59b7ca6c5b43a479802661a04ec0c157d5fc567a0ec12ef84fdfd8982e09",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with cross origin iframe, same origin popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?3-4",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with anchor",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "cedb9d812229efc41a98c0a23b2b9e1dcb28239b80ef4cb7bb701d711ecf4588",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with anchor",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "1b4370cd085f1e8fe228d093fe67e70bdcd4d226a4b3e80a947d8bfb15ac91ae",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "9f5d59b7ca6c5b43a479802661a04ec0c157d5fc567a0ec12ef84fdfd8982e09",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with anchor",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/cross-origin-opener-policy/iframe-popup-same-origin-allow-popups-to-same-origin.https.html?3-4",
+   "canonicalName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with form",
+   "occurrence": 1,
+   "behaviorFamily": "Auxiliary browsing contexts",
+   "signature": "popup-name-not-cleared",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "COOP iframe-opened popup retained its name where the assertion expected it cleared.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "cedb9d812229efc41a98c0a23b2b9e1dcb28239b80ef4cb7bb701d711ecf4588",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with form",
+     "subtestDiagnostic": "assert_equals: Popup name is cleared? expected \"true\" but got \"false\""
+    },
+    "prior": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "1b4370cd085f1e8fe228d093fe67e70bdcd4d226a4b3e80a947d8bfb15ac91ae",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 4,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-236",
+     "receiptSHA256": "9f5d59b7ca6c5b43a479802661a04ec0c157d5fc567a0ec12ef84fdfd8982e09",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 6,
+     "pageObservedNames": 6,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "COOP: same-origin-allow-popups to popup COOP: same-origin via an iframe, with same origin iframe, same site popup with form",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "inert/inert-and-find-flat-tree.html",
+   "canonicalName": "Text inside a dialog inside a shadowroot should be findable.",
+   "occurrence": 1,
+   "behaviorFamily": "Focus and text traversal",
+   "signature": "flat-tree-text-search",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Text searches inside shadow-root dialogs returned false, including a slotted-text case.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-244",
+     "receiptSHA256": "d0023bf0f39385eada48ce38270284019ee72c5e4173b31a8741065ea28caf5e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Text inside a dialog inside a shadowroot should be findable.",
+     "subtestDiagnostic": "assert_true: expected true got false"
+    },
+    "prior": {
+     "receiptKey": "ordinary-244",
+     "receiptSHA256": "1855a98d769d08126987cf0bcdf75b0d033e1fe496f2c3423f1ae3f43022e563",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 2,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Text inside a dialog inside a shadowroot should be findable.",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-244",
+     "receiptSHA256": "94384fff92d2db8e68a70819871e15d7d5232eb691603e04c61eec38c1545050",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 2,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Text inside a dialog inside a shadowroot should be findable.",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "inert/inert-and-find-flat-tree.html",
+   "canonicalName": "Text slotted into a dialog which is inside a shadowroot should be findable.",
+   "occurrence": 1,
+   "behaviorFamily": "Focus and text traversal",
+   "signature": "flat-tree-text-search",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "Text searches inside shadow-root dialogs returned false, including a slotted-text case.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-244",
+     "receiptSHA256": "d0023bf0f39385eada48ce38270284019ee72c5e4173b31a8741065ea28caf5e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 0,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "Text slotted into a dialog which is inside a shadowroot should be findable.",
+     "subtestDiagnostic": "assert_true: expected true got false"
+    },
+    "prior": {
+     "receiptKey": "ordinary-244",
+     "receiptSHA256": "1855a98d769d08126987cf0bcdf75b0d033e1fe496f2c3423f1ae3f43022e563",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 2,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Text slotted into a dialog which is inside a shadowroot should be findable.",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-244",
+     "receiptSHA256": "94384fff92d2db8e68a70819871e15d7d5232eb691603e04c61eec38c1545050",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 2,
+     "pageObservedNames": 2,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "Text slotted into a dialog which is inside a shadowroot should be findable.",
+     "subtestDiagnostic": ""
+    }
+   }
+  },
+  {
+   "url": "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html",
+   "canonicalName": "registerProtocolHandler: Invalid URL \"https://web-platform.test:%s50502/html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html\" should throw (but after scheme)",
+   "occurrence": 1,
+   "behaviorFamily": "Recorded name changes",
+   "signature": "protocol-port-name",
+   "observationClass": "missing exact name",
+   "diagnosticInterpretation": "A literal %s followed by a dynamic wptserve port appears in this generated name; the unchanged canonicalizer does not rewrite this token.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-268",
+     "receiptSHA256": "e6993280c190899b48537c1fbc1ae55523cc510c28c0ea911fd669c0f8757777",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 244,
+     "pageObservedNames": 244,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "registerProtocolHandler: Invalid URL \"https://web-platform.test:%s51224/html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html\" should throw (but after scheme)",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    },
+    "prior": {
+     "receiptKey": "ordinary-268",
+     "receiptSHA256": "cac54e0f7fe957a179bcc3d9fb1ab43e9fd31cc8add2478e0666ff1fa3a037fe",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 244,
+     "pageObservedNames": 244,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "registerProtocolHandler: Invalid URL \"https://web-platform.test:%s50502/html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html\" should throw (but after scheme)",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-268",
+     "receiptSHA256": "99a673b001b7676d7bf011ae31536f018ce18ed6fb3a5da5333164630eb0d99e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 244,
+     "pageObservedNames": 244,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "registerProtocolHandler: Invalid URL \"https://web-platform.test:%s59703/html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html\" should throw (but after scheme)",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "url": "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html",
+   "canonicalName": "unregisterProtocolHandler: Invalid URL \"https://web-platform.test:%s50502/html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html\" should throw (but after scheme)",
+   "occurrence": 1,
+   "behaviorFamily": "Recorded name changes",
+   "signature": "protocol-port-name",
+   "observationClass": "missing exact name",
+   "diagnosticInterpretation": "A literal %s followed by a dynamic wptserve port appears in this generated name; the unchanged canonicalizer does not rewrite this token.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-268",
+     "receiptSHA256": "e6993280c190899b48537c1fbc1ae55523cc510c28c0ea911fd669c0f8757777",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 244,
+     "pageObservedNames": 244,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "unregisterProtocolHandler: Invalid URL \"https://web-platform.test:%s51224/html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html\" should throw (but after scheme)",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    },
+    "prior": {
+     "receiptKey": "ordinary-268",
+     "receiptSHA256": "cac54e0f7fe957a179bcc3d9fb1ab43e9fd31cc8add2478e0666ff1fa3a037fe",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 244,
+     "pageObservedNames": 244,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "unregisterProtocolHandler: Invalid URL \"https://web-platform.test:%s50502/html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html\" should throw (but after scheme)",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-268",
+     "receiptSHA256": "99a673b001b7676d7bf011ae31536f018ce18ed6fb3a5da5333164630eb0d99e",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 244,
+     "pageObservedNames": 244,
+     "pageDiagnostic": null,
+     "subtestStatus": null,
+     "originalReportedName": null,
+     "subtestDiagnostic": null,
+     "samePageRelatedObservations": [
+      {
+       "originalReportedName": "unregisterProtocolHandler: Invalid URL \"https://web-platform.test:%s59703/html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html\" should throw (but after scheme)",
+       "subtestStatus": "Pass",
+       "subtestDiagnostic": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "url": "workers/modules/dedicated-worker-import-data-url-cross-origin.html",
+   "canonicalName": "static import script from data: URL should be allowed.",
+   "occurrence": 1,
+   "behaviorFamily": "Module loading",
+   "signature": "worker-static-data-import",
+   "observationClass": "observed subtest failure",
+   "diagnosticInterpretation": "The dedicated-worker static data-URL import assertion returned false; no lower-level diagnostic was supplied.",
+   "implementationCause": "Unverified; isolated receipts establish the reported observation.",
+   "engines": {
+    "current": {
+     "receiptKey": "ordinary-270",
+     "receiptSHA256": "5476a8c5495ce58abde6ade3dadd8c97abee6ed82d6974bdc00ca3d670c24487",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 4,
+     "pageDiagnostic": null,
+     "subtestStatus": "Fail",
+     "originalReportedName": "static import script from data: URL should be allowed.",
+     "subtestDiagnostic": "assert_true: expected true got false"
+    },
+    "prior": {
+     "receiptKey": "ordinary-270",
+     "receiptSHA256": "1ac573f87f6432a5bdce63615ef53710d56c42df27de527c1565b5e0c5e86e61",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": false,
+     "pagePassingNames": 3,
+     "pageObservedNames": 4,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "static import script from data: URL should be allowed.",
+     "subtestDiagnostic": ""
+    },
+    "signed": {
+     "receiptKey": "ordinary-270",
+     "receiptSHA256": "9e5b373f2dcc96bfdbe368efc3c67f9fb6b66f704b726af1da44ede72d996c00",
+     "lifecycle": "complete",
+     "harnessStatus": "OK",
+     "strictPage": true,
+     "pagePassingNames": 4,
+     "pageObservedNames": 4,
+     "pageDiagnostic": null,
+     "subtestStatus": "Pass",
+     "originalReportedName": "static import script from data: URL should be allowed.",
+     "subtestDiagnostic": ""
+    }
+   }
+  }
+ ]
+}
