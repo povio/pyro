@@ -4771,6 +4771,9 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
             dom.erase_listeners(key);
         }
         dom.replace_all(doc, None).js()?;
+        // HTML document open steps: the document is in no-quirks mode until
+        // the written markup's doctype (or its absence) says otherwise.
+        dom.set_quirks_mode(doc, pyro_dom::QuirksMode::NoQuirks).js()?;
     }
     page.set_ready_state(doc, "loading");
     let mut parser = pyro_dom::parse::DocumentParser::new(page.dom.clone(), doc, !page.scripting_disabled()).js()?;

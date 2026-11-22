@@ -962,15 +962,17 @@ pub(crate) fn javascript_url_source(url: &str) -> Option<String> {
 }
 
 /// Every about:blank document's markup.
-const BLANK_MARKUP: &str = "<!doctype html><html><head></head><body></body></html>";
-/// The nodes `BLANK_MARKUP` makes: the document, the doctype, html, head, body.
-const BLANK_NODES: usize = 5;
+/// HTML: an about:blank document has html, head and body and no doctype, so
+/// it is in quirks mode (`compatMode` "BackCompat"), as in Chrome.
+const BLANK_MARKUP: &str = "<html><head></head><body></body></html>";
+/// The nodes `BLANK_MARKUP` makes: the document, html, head, body.
+const BLANK_NODES: usize = 4;
 
 /// An about:blank document has nodes beyond the ones it was made with: a
 /// script or `Runtime.evaluate` filled it through DOM APIs (an inserted
 /// iframe, whose documents are its own, included). A shadow tree is not
 /// among the document's descendants: one attached to body (the only one of
-/// the five that can host one) counts as well.
+/// the four that can host one) counts as well.
 pub(crate) fn blank_document_has_content(page_dom: &PageDom) -> bool {
     let dom = page_dom.dom.borrow();
     let Ok(nodes) = dom.descendants(page_dom.document()) else { return true };
