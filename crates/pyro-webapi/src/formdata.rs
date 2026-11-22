@@ -144,6 +144,7 @@ fn form_entries_with_charset(
                     InputType::Submit | InputType::Reset | InputType::Button => {
                         if ty == InputType::Submit && Some(c) == submitter && !name.is_empty() {
                             out.push((name, EntryValue::Text(dom.value(c).unwrap_or_default())));
+                            push_dirname(&dom, c, &mut out);
                         }
                     }
                     InputType::Image => {
@@ -182,10 +183,23 @@ fn form_entries_with_charset(
                     }
                     InputType::Hidden if name.eq_ignore_ascii_case("_charset_") => {
                         out.push((name, EntryValue::Text(charset.to_owned())));
+                        push_dirname(&dom, c, &mut out);
                     }
                     _ => {
                         if !name.is_empty() {
                             out.push((name, EntryValue::Text(dom.value(c).unwrap_or_default())));
+                            if matches!(
+                                ty,
+                                InputType::Hidden
+                                    | InputType::Text
+                                    | InputType::Search
+                                    | InputType::Tel
+                                    | InputType::Url
+                                    | InputType::Email
+                                    | InputType::Password
+                            ) {
+                                push_dirname(&dom, c, &mut out);
+                            }
                         }
                     }
                 }
@@ -203,12 +217,26 @@ fn form_entries_with_charset(
             "textarea" if !name.is_empty() => {
                 let v = dom.value(c).unwrap_or_default();
                 out.push((name, EntryValue::Text(v)));
+                push_dirname(&dom, c, &mut out);
             }
             _ if dom.is_form_associated(c) => crate::internals::face_entries(&dom, c, &mut out),
             _ => {}
         }
     }
     out
+}
+
+/// HTML "constructing the entry list": a control whose `dirname` applies and is not empty
+/// adds an entry of that name with its directionality, "ltr" or "rtl", after its own.
+fn push_dirname(dom: &Dom, c: NodeId, out: &mut Vec<(String, EntryValue)>) {
+    let Some(dirname) = dom.element(c).ok().and_then(|e| e.attr("dirname")).filter(|d| !d.is_empty()) else {
+        return;
+    };
+    let dir = match dom.directionality(c) {
+        Ok(pyro_dom::direction::Direction::Rtl) => "rtl",
+        _ => "ltr",
+    };
+    out.push((dirname.to_owned(), EntryValue::Text(dir.to_owned())));
 }
 
 /// `s` in the submission encoding, with `&#NNN;` for unmappable characters.
