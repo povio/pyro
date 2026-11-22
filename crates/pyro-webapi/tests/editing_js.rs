@@ -595,6 +595,17 @@ fn word_and_line_keys_in_text_controls() {
 }
 
 #[test]
+fn deleting_an_empty_line_preserves_the_following_paragraph() {
+    let e = env("<body><div id=ed contenteditable>abc<br><br><div id=child>def<br>ghi</div></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, paragraph=child, first=child.firstChild; getSelection().setBaseAndExtent(ed,2,first,1)");
+    assert_eq!(eval(r, "document.execCommand('delete'); [ed.innerHTML,ed.lastChild===paragraph,getSelection().focusNode===first,getSelection().focusOffset].join('|')"),
+        "abc<br><div id=\"child\">ef<br>ghi</div>|true|true|0");
+    assert_eq!(eval(r, "document.execCommand('insertText',false,'X'); paragraph.textContent"), "Xefghi");
+    assert_eq!(eval(r, "document.execCommand('undo'); document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn deletion_at_text_edge_preserves_locked_blocks() {
     let e = env("<body><div id=ed contenteditable><p>abc</p><pre id=locked contenteditable=false>keep</pre></div></body>");
     let r = &e.main;

@@ -845,7 +845,7 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
             let caret = if start == end {
                 start
             } else if let Some(plan) = child_line::Deletion::plan(page, &dom, host, start, end, false) {
-                plan.apply(&mut dom)
+                plan.apply(page, &mut dom, host)
             } else {
                 delete_range(&mut dom, host, start, end, false)
             };
@@ -948,7 +948,7 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
             let rebalance = adjacent_text && whitespace::visible_before_deletion(&dom, from, to);
             let repair = if start == end { whitespace::deletion_repair(page, &dom, host, start, backward) } else { None };
             let caret = if let Some(plan) = child_line {
-                plan.apply(&mut dom)
+                plan.apply(page, &mut dom, host)
             } else if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
                 caret
             } else {
