@@ -1400,6 +1400,25 @@ fn paragraph_for_split(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId, co
     host
 }
 
+/// At a plaintext paragraph edge, a BR inside the inline formatting
+/// keeps the empty line's typing style even after the selection moves away.
+fn formatted_split_edge(dom: &Dom, block: NodeId, point: Point) -> Option<bool> {
+    let (mut node, offset) = point;
+    if !is_text(dom, node) || len(dom, node) == 0 { return None; }
+    let trailing = offset == len(dom, node);
+    if (!trailing && offset != 0) || dom.parent(node).ok()? == Some(block) { return None; }
+    loop {
+        let neighbor = if trailing { dom.next_sibling(node) } else { dom.prev_sibling(node) };
+        if neighbor.ok()?.is_some() { return None; }
+        node = dom.parent_element(node).ok()??;
+        if node == block { return Some(trailing); }
+        if !dom.element(node).ok()?.is_html() || !matches!(local(dom, node).as_str(),
+            "b" | "strong" | "i" | "em" | "u" | "s" | "strike" | "sub" | "sup" | "font" | "span") {
+            return None;
+        }
+    }
+}
+
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     // A DOM caret inside an inline void has no child insertion position.
     // Split at the rendered object's edge so it travels with the right line.
@@ -1530,6 +1549,9 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     // Reconstruct the inline ancestor chain on the right side of the split.
     // The original nodes and their IDs stay in the first paragraph.
     let mut container = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
+    let formatted_edge = if plaintext_at(dom, host) { formatted_split_edge(dom, block, caret) } else { None };
+    let text_parent = container;
+    let mut empty_caret = None;
     let mut right_child = None;
     while let Some(parent) = container {
         let dest = if parent == block {
@@ -1548,6 +1570,17 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         while let Some(child) = next {
             next = dom.next_sibling(child).ok().flatten();
             let _ = dom.append_child(dest, child);
+        }
+        if Some(parent) == text_parent {
+            if let Some(trailing) = formatted_edge {
+                let empty = if trailing { dest } else { parent };
+                if dom.child_count(empty).ok() == Some(0) {
+                    if let Ok(br) = dom.create_element(doc, "br") {
+                        let _ = dom.append_child(empty, br);
+                        if trailing { empty_caret = Some((empty, 0)); }
+                    }
+                }
+            }
         }
         if parent == block {
             break;
@@ -1584,6 +1617,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         let _ = dom.replace_all(new_block, Some(only_child));
     }
     placeholder_if_empty(dom, block);
+    if let Some(point) = empty_caret { return point; }
     if let Some(text) = following_text { return (text, 0); }
     placeholder_if_empty(dom, new_block).unwrap_or_else(|| paragraph_point(dom, new_block, (new_block, 0)).unwrap_or((new_block, 0)))
 }
