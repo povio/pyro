@@ -12,6 +12,10 @@
 //!   already leave out a `<meta>` policy's `report-uri`, as [`ReportTargets::from_policy`] does
 //!   here.
 //!
+//! `crate::reporting` shares two pieces: the `CSPViolationReportBody` fields its
+//! `ReportingObserver`s get (`csp_violation_body`), and the Reporting API send of a report of
+//! another type to a named group (`report_to_group`, for `deprecation` reports).
+//!
 //! Requests go out through the page's network client, shaped like a `navigator.sendBeacon`
 //! POST that outlives its document, with no Resource Timing entry (as in Chrome). The two kinds
 //! stay apart ([`Delivery`]). A `report-uri` report is `no-cors` with credentials `same-origin`
@@ -158,6 +162,24 @@ pub fn serialize_csp_report(v: &Violation) -> String {
 /// The `application/reports+json` body for `report-to`: a list holding one Reporting API report
 /// of type `csp-violation` (CSP 3 `CSPViolationReportBody`). `user_agent` is the sender's.
 pub fn serialize_reporting_api(v: &Violation, user_agent: &str) -> String {
+    reporting_api_list("csp-violation", &strip_url_for_report(&v.url), user_agent, Json::Object(csp_violation_body(v)))
+}
+
+/// An `application/reports+json` body holding one report of `report_type` from `url`.
+fn reporting_api_list(report_type: &str, url: &str, user_agent: &str, body: Json) -> String {
+    let mut report = Map::new();
+    report.insert("type".to_owned(), report_type.into());
+    report.insert("age".to_owned(), 0.into());
+    report.insert("url".to_owned(), url.into());
+    report.insert("user_agent".to_owned(), user_agent.into());
+    report.insert("body".to_owned(), body);
+    Json::Array(vec![Json::Object(report)]).to_string()
+}
+
+/// The fields of `v`'s `CSPViolationReportBody`, as a `report-to` endpoint and a
+/// `ReportingObserver` (`crate::reporting`) both get them. Without a source location,
+/// `sourceFile`, `lineNumber` and `columnNumber` are null.
+pub(crate) fn csp_violation_body(v: &Violation) -> Map<String, Json> {
     let located = !v.source_file.is_empty();
     let mut body = Map::new();
     let mut put = |k: &str, value: Json| {
@@ -174,13 +196,7 @@ pub fn serialize_reporting_api(v: &Violation, user_agent: &str) -> String {
     put("statusCode", v.status_code.into());
     put("lineNumber", if located { v.line.into() } else { Json::Null });
     put("columnNumber", if located { v.column.into() } else { Json::Null });
-    let mut report = Map::new();
-    report.insert("type".to_owned(), "csp-violation".into());
-    report.insert("age".to_owned(), 0.into());
-    report.insert("url".to_owned(), strip_url_for_report(&v.url).into());
-    report.insert("user_agent".to_owned(), user_agent.into());
-    report.insert("body".to_owned(), Json::Object(body));
-    Json::Array(vec![Json::Object(report)]).to_string()
+    body
 }
 
 /// The endpoints of a `Reporting-Endpoints` header value (Reporting API "process reporting
@@ -353,7 +369,7 @@ fn plan(page: &PageDom, v: &Violation, targets: &ReportTargets) -> Vec<Planned> 
 
 /// Fills in the violation's URL and referrer from the page's document when the caller left
 /// them empty.
-fn completed(page: &PageDom, v: &Violation) -> Violation {
+pub(crate) fn completed(page: &PageDom, v: &Violation) -> Violation {
     let mut v = v.clone();
     if v.url.is_empty() {
         v.url = page.document_url();
@@ -378,6 +394,26 @@ pub fn report_violation(page: &Rc<PageDom>, v: &Violation, targets: &ReportTarge
         started += 1;
     }
     started
+}
+
+/// Sends one Reporting API report of `report_type` from `url`, with `body`, to the endpoint the
+/// page's document names `group` (a `deprecation` report goes to `default`), sharing the
+/// document's cap with its CSP reports. Whether a request started: none without a network, an
+/// endpoint of that name, or a free slot.
+pub(crate) fn report_to_group(page: &Rc<PageDom>, group: &str, report_type: &str, url: &str, body: Json) -> bool {
+    let Some(net) = page.net.borrow().clone() else { return false };
+    let endpoint = {
+        let mut state = page.csp_reports.borrow_mut();
+        let state = state.for_doc(page.document());
+        let Some(endpoint) = state.endpoint(group) else { return false };
+        if !state.take_slot() {
+            return false;
+        }
+        endpoint
+    };
+    let json = reporting_api_list(report_type, url, &crate::window::user_agent(page), body);
+    net.fetch(report_request(page, endpoint, Delivery::ReportingApi, json), Box::new(|_| {}));
+    true
 }
 
 /// The report POST of `body` to `endpoint`, as `delivery` makes it.
@@ -615,5 +651,42 @@ mod tests {
         let (page, _dom) = page("https://a.test/doc#f");
         let v = completed(&page, &Violation::default());
         assert_eq!(strip_url_for_report(&v.url), "https://a.test/doc");
+    }
+
+    #[test]
+    fn observer_body_matches_the_endpoint_body() {
+        let v = Violation { source_file: "https://a.test/s.js#x".into(), line: 3, column: 7, ..violation() };
+        let body = csp_violation_body(&v);
+        let json: Json = serde_json::from_str(&serialize_reporting_api(&v, "UA")).unwrap();
+        assert_eq!(json[0]["body"], Json::Object(body.clone()));
+        assert_eq!(body["documentURL"], "https://a.test/page.html");
+        assert_eq!(body["sourceFile"], "https://a.test/s.js");
+        assert_eq!(body["lineNumber"], 3);
+        assert_eq!(body["columnNumber"], 7);
+    }
+
+    #[test]
+    fn report_to_group_without_network_sends_nothing_and_keeps_slots() {
+        let (page, _dom) = page("https://a.test/doc");
+        page.set_reporting_endpoints(Some(r#"default="/r""#));
+        assert!(!report_to_group(&page, "default", "deprecation", "https://a.test/doc", Json::Null));
+        assert_eq!(page.csp_reports.borrow().sent, 0);
+    }
+
+    #[test]
+    fn reporting_api_list_wraps_one_report() {
+        let json: Json = serde_json::from_str(&reporting_api_list(
+            "deprecation",
+            "https://a.test/",
+            "UA",
+            serde_json::json!({"id": "x"}),
+        ))
+        .unwrap();
+        assert_eq!(json.as_array().map(Vec::len), Some(1));
+        assert_eq!(json[0]["type"], "deprecation");
+        assert_eq!(json[0]["age"], 0);
+        assert_eq!(json[0]["url"], "https://a.test/");
+        assert_eq!(json[0]["user_agent"], "UA");
+        assert_eq!(json[0]["body"]["id"], "x");
     }
 }

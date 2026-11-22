@@ -300,6 +300,32 @@ impl JsClass for Window {
             request_animation_frame(s, w, Persistent::new(s, cb.value()))
         });
         def.method("cancelAnimationFrame", 1, clear_timer);
+        // Chrome's prefixed aliases. Each call first reports its deprecation (once per realm),
+        // to ReportingObservers and the document's `default` endpoint.
+        def.method("webkitRequestAnimationFrame", 1, |s, w, a| {
+            pyro_webapi::reporting::deprecation(
+                s,
+                &w.target.page,
+                "PrefixedRequestAnimationFrame",
+                "webkitRequestAnimationFrame is vendor-specific. Please use the standard requestAnimationFrame instead.",
+            );
+            let cb = a.get(0).as_object().filter(|f| f.is_function()).ok_or_else(|| {
+                JsError::Type(
+                    "Failed to execute 'webkitRequestAnimationFrame' on 'Window': parameter 1 is not of type 'Function'."
+                        .into(),
+                )
+            })?;
+            request_animation_frame(s, w, Persistent::new(s, cb.value()))
+        });
+        def.method("webkitCancelAnimationFrame", 1, |s, w, a| {
+            pyro_webapi::reporting::deprecation(
+                s,
+                &w.target.page,
+                "PrefixedCancelAnimationFrame",
+                "webkitCancelAnimationFrame is vendor-specific. Please use the standard cancelAnimationFrame instead.",
+            );
+            clear_timer(s, w, a)
+        });
         def.method("requestIdleCallback", 1, idle::request);
         def.method("cancelIdleCallback", 1, idle::cancel);
         def.accessor("IdleDeadline", idle::interface, idle::replace_interface);

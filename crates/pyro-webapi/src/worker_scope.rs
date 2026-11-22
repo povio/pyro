@@ -1877,6 +1877,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     {
         page.define_properties.borrow_mut().insert(s.realm_id(), Persistent::new(s, define));
     }
+    crate::reporting::install_worker(s)?;
     if secure_worker(s) == Some(true) {
         crate::storage_manager::install_worker_file_system_globals(s)?;
         install_lock_interfaces(s)?;
