@@ -32,10 +32,12 @@ use pyro_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent
 use rustc_hash::{FxHashMap, FxHashSet};
 
 mod association;
+mod values;
+use values::{PendingDefinition, RegistryValue};
 use association::*;
 pub(crate) use association::{node_registry, registry_argument};
 
-pub(crate) fn prune_registry_roots(page: &PageDom) {
+pub(crate) fn prune_registry_roots(page: &Rc<PageDom>) {
     association::prune_unassociated(page);
 }
 
@@ -48,25 +50,26 @@ use crate::util::*;
 /// `define` (HTML: "lifecycle callbacks").
 #[derive(Default)]
 struct Callbacks {
-    connected: Option<Persistent>,
-    disconnected: Option<Persistent>,
-    connected_move: Option<Persistent>,
-    adopted: Option<Persistent>,
-    attribute_changed: Option<Persistent>,
-    form_associated: Option<Persistent>,
-    form_reset: Option<Persistent>,
-    form_disabled: Option<Persistent>,
-    form_state_restore: Option<Persistent>,
+    connected: Option<RegistryValue>,
+    disconnected: Option<RegistryValue>,
+    connected_move: Option<RegistryValue>,
+    adopted: Option<RegistryValue>,
+    attribute_changed: Option<RegistryValue>,
+    form_associated: Option<RegistryValue>,
+    form_reset: Option<RegistryValue>,
+    form_disabled: Option<RegistryValue>,
+    form_state_restore: Option<RegistryValue>,
 }
 
 /// A custom element definition of one realm (HTML "custom element definition").
 struct Definition {
-    ctor: Persistent,
+    ctor: RegistryValue,
     callbacks: Callbacks,
     /// `observedAttributes` (empty without an `attributeChangedCallback`).
     observed: Vec<LocalName>,
     form_associated: bool,
     disable_internals: bool,
+    disable_shadow: bool,
     /// The element's local name: the definition's name, or the element it extends (a customized
     /// built-in element).
     local_name: LocalName,
@@ -81,7 +84,8 @@ pub(crate) struct Registry {
     defs: FxHashMap<(RegistryKey, LocalName), Definition>,
     defining: FxHashSet<RegistryKey>,
     scoped: FxHashMap<u64, ScopedEntry>,
-    waiting: FxHashMap<(RegistryKey, LocalName), Vec<pyro_js::Deferred>>,
+    pinned: FxHashSet<u64>,
+    waiting: FxHashMap<(RegistryKey, LocalName), PendingDefinition>,
     /// The parser hooks were given to the DOM.
     parser_hooks: bool,
     /// Realms whose `CustomStateSet.prototype` has its setlike members.
@@ -131,27 +135,39 @@ fn with_registry<R>(page: &PageDom, f: impl FnOnce(&mut Registry) -> R) -> R {
     f(&mut page.custom_elements.borrow_mut())
 }
 
-/// Forgets the definitions of a disposed realm (their constructors and
-/// callbacks are that realm's) and the promises waiting in it.
+/// A detached document's realms may linger while script holds their objects.
+/// Scoped definitions and waiters have only traced wrapper-owned references;
+/// they stay usable without retaining the old realm through a native root.
+pub(crate) fn release_document(page: &PageDom) {
+    if page.is_disposed() {
+        drop(page.custom_elements.take());
+        return;
+    }
+    let mut state = page.custom_elements.borrow_mut();
+    state.defs.retain(|(key, _), _| key.scoped.is_some());
+    state.waiting.retain(|(key, _), _| key.scoped.is_some());
+    state.setlike_realms.clear();
+}
+
 pub(crate) fn realm_disposed(page: &PageDom, realm: RealmId) {
-    let (defs, waiting) = {
-        let mut r = page.custom_elements.borrow_mut();
-        let defs: Vec<Definition> = {
-            let keys: Vec<_> = r.defs.keys().filter(|k| k.0.realm == realm).cloned().collect();
-            keys.iter().filter_map(|k| r.defs.remove(k)).collect()
-        };
-        let keys: Vec<_> = r.waiting.keys().filter(|k| k.0.realm == realm).cloned().collect();
-        let waiting: Vec<_> = keys.iter().filter_map(|k| r.waiting.remove(k)).collect();
-        r.scoped.retain(|id, entry| {
-            if entry.realm == realm {
-                forget_scoped(*id);
-                false
-            } else { true }
-        });
-        r.setlike_realms.retain(|&id| id != realm);
-        (defs, waiting)
+    let lingering = page.is_detached() && !page.is_disposed();
+    let remove = |key: RegistryKey| key.realm == realm && (!lingering || key.scoped.is_none());
+    let (defs, waiting, scoped) = {
+        let mut state = page.custom_elements.borrow_mut();
+        let keys: Vec<_> = state.defs.keys().filter(|(key, _)| remove(*key)).cloned().collect();
+        let defs: Vec<_> = keys.iter().filter_map(|k| state.defs.remove(k)).collect();
+        let keys: Vec<_> = state.waiting.keys().filter(|(key, _)| remove(*key)).cloned().collect();
+        let waiting: Vec<_> = keys.iter().filter_map(|k| state.waiting.remove(k)).collect();
+        let mut scoped = Vec::new();
+        if !lingering {
+            state.scoped.retain(|id, entry| {
+                if entry.realm == realm { scoped.push(*id); false } else { true }
+            });
+        }
+        state.setlike_realms.retain(|&id| id != realm);
+        (defs, waiting, scoped)
     };
-    // Dropped outside the borrow: releasing a root may release wrappers.
+    for id in scoped { forget_scoped(id); }
     drop(defs);
     drop(waiting);
 }
@@ -397,7 +413,7 @@ fn upgrade_with<'s>(
     let callbacks: (Option<Value<'s>>, Option<Value<'s>>) = {
         let r = owner.custom_elements.borrow();
         let d = r.defs.get(&(key, name.clone()));
-        let pick = |p: Option<&Persistent>| p.map(|p| p.get(s));
+        let pick = |p: Option<&RegistryValue>| p.map(|p| p.get(s));
         (
             pick(d.and_then(|d| d.callbacks.attribute_changed.as_ref())),
             pick(d.and_then(|d| d.callbacks.connected.as_ref())),
@@ -489,12 +505,12 @@ fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: CustomReaction, overfl
     let Some((owner, key)) = element_definition(page, el) else { return };
     let Some(name) = with_registry(&owner, |r| r.def_key(key, &local, is.as_ref())) else { return };
     let realm = owner.realms.borrow().get(&key.realm).and_then(|r| r.upgrade());
-    let Some(realm) = realm.filter(|r| !r.is_disposed()) else { return };
+    let Some(realm) = realm.filter(|r| !r.is_disposed() || (key.scoped.is_some() && r.is_lingering())) else { return };
     let Ok(s) = realm.scope() else { return };
     let callbacks: Vec<Value<'_>> = with_registry(&owner, |r| {
         let Some(d) = r.defs.get(&(key, name.clone())) else { return Vec::new() };
         let c = &d.callbacks;
-        let pick = |p: &Option<Persistent>| p.as_ref().map(|p| p.get(&s));
+        let pick = |p: &Option<RegistryValue>| p.as_ref().map(|p| p.get(&s));
         match &reaction {
             CustomReaction::Connected => pick(&c.connected).into_iter().collect(),
             CustomReaction::Disconnected => pick(&c.disconnected).into_iter().collect(),
@@ -598,7 +614,7 @@ fn try_upgrade_element(page: &Rc<PageDom>, el: NodeId) {
         }
     }
     let realm = owner.realms.borrow().get(&key.realm).and_then(|r| r.upgrade());
-    let Some(realm) = realm.filter(|r| !r.is_disposed()) else { return };
+    let Some(realm) = realm.filter(|r| !r.is_disposed() || (key.scoped.is_some() && r.is_lingering())) else { return };
     let Ok(s) = realm.scope() else { return };
     let Some(ctor) = with_registry(&owner, |r| r.ctor_for(&s, key, &local, is.as_ref())) else { return };
     if let Err(e) = upgrade(&s, page, el, ctor) {
@@ -616,7 +632,7 @@ pub(crate) fn document_page(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDo
     let scope = realm.scope().ok()?;
     page.sibling_realms(&scope).iter().find_map(|sibling| {
         let s = sibling.scope().ok()?;
-        page_of(&s).ok().filter(|p| p.document() == doc && !p.is_disposed())
+        page_of(&s).ok().filter(|p| Rc::ptr_eq(&p.dom, &page.dom) && p.document() == doc && !p.is_disposed())
     })
 }
 
@@ -703,7 +719,7 @@ impl ParserCustomElements for ParserHooks {
         let Some(main) = page.main_world_realm() else { return ParserConstruct::NotDefined };
         let Some((owner, key)) = registry_for_node_realm(&page, el, main.id()) else { return ParserConstruct::NotDefined };
         let realm = owner.realms.borrow().get(&key.realm).and_then(|w| w.upgrade());
-        let Some(realm) = realm.filter(|r| !r.is_disposed()) else { return ParserConstruct::NotDefined };
+        let Some(realm) = realm.filter(|r| !r.is_disposed() || (key.scoped.is_some() && r.is_lingering())) else { return ParserConstruct::NotDefined };
         let Ok(s) = realm.scope() else { return ParserConstruct::NotDefined };
         let Some(ctor) = with_registry(&owner, |r| r.ctor_for(&s, key, &name.0, name.1.as_ref())) else {
             return ParserConstruct::NotDefined;
@@ -803,7 +819,7 @@ impl JsClass for CustomElementRegistry {
                 let Some(proto) = proto.as_object() else {
                     return Err(JsError::Type("Failed to execute 'define' on 'CustomElementRegistry': constructor prototype is not an object".into()));
                 };
-                let lifecycle = |name: &str| -> JsResult<Option<Persistent>> {
+                let lifecycle = |name: &str| -> JsResult<Option<RegistryValue>> {
                     let value = proto.get(name)?;
                     if value.is_undefined() {
                         return Ok(None);
@@ -811,7 +827,7 @@ impl JsClass for CustomElementRegistry {
                     if !value.as_object().is_some_and(|f| f.is_function()) {
                         return Err(JsError::Type(format!("Failed to execute 'define' on 'CustomElementRegistry': {name} is not a function").into()));
                     }
-                    Ok(Some(Persistent::new(s, value)))
+                    Ok(Some(RegistryValue::Global(Persistent::new(s, value))))
                 };
                 let mut callbacks = Callbacks {
                     connected: lifecycle("connectedCallback")?,
@@ -853,16 +869,19 @@ impl JsClass for CustomElementRegistry {
                     callbacks.form_state_restore = lifecycle("formStateRestoreCallback")?;
                 }
                 Ok((Definition {
-                    ctor: Persistent::new(s, ctor),
+                    ctor: RegistryValue::Global(Persistent::new(s, ctor)),
                     callbacks,
                     observed,
                     form_associated,
                     disable_internals,
+                    disable_shadow,
                     local_name,
                 }, disable_shadow))
             })();
             with_registry(page, |r| r.defining.remove(&registry.key));
-            let (definition, disable_shadow) = result?;
+            let (mut definition, disable_shadow) = result?;
+            definition.trace_scoped(s, registry)?;
+            let local_name = definition.local_name.clone();
             let observed = definition.observed.clone();
             with_registry(page, |r| r.defs.insert(key.clone(), definition));
             let association = registry.key.association();
@@ -874,7 +893,7 @@ impl JsClass for CustomElementRegistry {
                 dom.enable_custom_upgrades();
                 dom.note_custom_definition(&key.1, observed.clone());
                 if disable_shadow {
-                    dom.disable_shadow_for_registry(association, &key.1);
+                    dom.disable_shadow_for_registry(page.document(), association, &key.1, &local_name);
                 }
                 if install_hooks {
                     dom.set_parser_custom_elements(page.document(), Some(Rc::new(ParserHooks { page: Rc::downgrade(page) })));
@@ -890,7 +909,7 @@ impl JsClass for CustomElementRegistry {
                         dom.enable_custom_upgrades();
                         dom.note_custom_definition(&key.1, observed.clone());
                         if disable_shadow {
-                            dom.disable_shadow_for_registry(association, &key.1);
+                            dom.disable_shadow_for_registry(doc, association, &key.1, &local_name);
                         }
                     }
                     dom.upgrade_candidates_named(doc, &key.1)
@@ -904,18 +923,18 @@ impl JsClass for CustomElementRegistry {
             for (owner, el) in existing {
                 try_upgrade_element(&owner, el);
             }
-            let waiting = with_registry(page, |r| r.waiting.remove(&key).unwrap_or_default());
-            for d in waiting {
+            let waiting = with_registry(page, |r| r.waiting.remove(&key));
+            if let Some(d) = waiting {
                 d.resolve(s, ctor)?;
             }
             Ok(s.undefined())
         });
-        def.pure_method("get", 1, |s, registry, a| {
+        def.method("get", 1, |s, registry, a| {
             let page = &registry.page;
             let name = with_arg_str(&a, 0, "CustomElementRegistry.get", |name| Ok(LocalName::from(name)))?;
             Ok(with_registry(page, |r| r.ctor(s, registry.key, &name)).unwrap_or(s.undefined()))
         });
-        def.pure_method("getName", 1, |s, registry, a| {
+        def.method("getName", 1, |s, registry, a| {
             let page = &registry.page;
             a.require(1, "CustomElementRegistry.getName")?;
             let ctor = a.get(0);
@@ -943,7 +962,7 @@ impl JsClass for CustomElementRegistry {
                 return Ok(d.promise.get(s));
             }
             let key = (registry.key, LocalName::from(name.as_str()));
-            if let Some(promise) = with_registry(page, |r| r.waiting.get(&key)?.first().map(|d| d.promise.get(s))) {
+            if let Some(promise) = with_registry(page, |r| r.waiting.get(&key).map(|d| d.promise(s))) {
                 return Ok(promise);
             }
             let d = s.deferred()?;
@@ -951,7 +970,10 @@ impl JsClass for CustomElementRegistry {
             let promise = d.promise.get(s);
             match existing {
                 Some(ctor) => d.resolve(s, ctor)?,
-                None => with_registry(page, |r| r.waiting.entry(key).or_default().push(d)),
+                None => {
+                    let pending = PendingDefinition::new(s, registry, d)?;
+                    with_registry(page, |r| r.waiting.insert(key, pending));
+                }
             }
             Ok(promise)
         });
@@ -995,7 +1017,7 @@ impl JsClass for CustomElementRegistry {
             }
             if initialize_root {
                 page.dom.borrow_mut().set_registry_association(root, association).js()?;
-                note_registry_document(registry, &page, doc);
+                pin_registry(registry, &page, doc);
             }
             for el in upgrades {
                 try_upgrade_element(&page, el);

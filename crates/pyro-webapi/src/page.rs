@@ -1170,6 +1170,7 @@ impl PageDom {
         if !self.detached.replace(true) {
             self.release_activity();
         }
+        crate::custom::release_document(self);
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());
     }
@@ -1273,7 +1274,7 @@ impl PageDom {
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
-        drop(self.custom_elements.take());
+        crate::custom::release_document(self);
         let windows = self.window_keys.take();
         let mut dom = self.dom.borrow_mut();
         for (doc, key) in windows {

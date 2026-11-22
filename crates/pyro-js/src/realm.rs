@@ -2669,6 +2669,12 @@ pub struct Deferred {
 }
 
 impl Deferred {
+    /// The resolving function, for a host object that traces its promise
+    /// capability through JavaScriptCore instead of keeping native roots.
+    pub fn resolver<'s>(&self, scope: &Scope<'s>) -> Value<'s> {
+        self.resolve.get(scope)
+    }
+
     pub fn resolve(&self, scope: &Scope<'_>, value: Value<'_>) -> JsResult<()> {
         self.resolve.get(scope).as_object().expect("resolve").call(None, &[value]).map(|_| ())
     }
