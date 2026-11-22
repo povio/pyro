@@ -368,7 +368,7 @@ fn contained_roots(dom: &Dom, s: Point, e: Point, out: &mut Vec<NodeId>) -> JsRe
 }
 
 /// "Delete the contents" of `s..e`; returns the point to collapse to.
-fn delete_contents(dom: &mut Dom, s: Point, e: Point) -> JsResult<Point> {
+pub(crate) fn delete_contents(dom: &mut Dom, s: Point, e: Point) -> JsResult<Point> {
     if s == e {
         return Ok(s);
     }

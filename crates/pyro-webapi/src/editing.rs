@@ -10,6 +10,7 @@
 //! selection when read.
 
 mod character;
+mod child_line;
 mod paragraph_join;
 mod target_range;
 pub(crate) use target_range::rendered;
@@ -841,7 +842,13 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
     edit(page, host, "insertText", Some(text), |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
-            let caret = if start != end { delete_range(&mut dom, host, start, end, false) } else { start };
+            let caret = if start == end {
+                start
+            } else if let Some(plan) = child_line::Deletion::plan(page, &dom, host, start, end, false) {
+                plan.apply(&mut dom)
+            } else {
+                delete_range(&mut dom, host, start, end, false)
+            };
             let mut caret = caret;
             if text.starts_with('\n') && dom.element(caret.0).is_ok_and(|el| el.is_html() && pyro_dom::serialize::is_void(el.local_name())) {
                 let Some(point) = typing_point(page, &dom, host, caret) else { return };
@@ -917,7 +924,10 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
         let Some(host) = current_owner else { return };
         (host, start, end)
     };
-    let (start, end, span) = if start == end {
+    let child_line = child_line::Deletion::plan(page, &page.dom.borrow(), host, start, end, backward);
+    let (start, end, span) = if let Some(plan) = &child_line {
+        (start, end, Some(plan.range))
+    } else if start == end {
         let (caret, span) = target_range::deletion_plan(page, &page.dom.borrow(), host, start, backward);
         (caret, caret, span)
     } else {
@@ -937,7 +947,9 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
                     .any(|s| s.ok().flatten().is_some_and(|n| is_text(&dom, n)));
             let rebalance = adjacent_text && whitespace::visible_before_deletion(&dom, from, to);
             let repair = if start == end { whitespace::deletion_repair(page, &dom, host, start, backward) } else { None };
-            let caret = if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
+            let caret = if let Some(plan) = child_line {
+                plan.apply(&mut dom)
+            } else if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
                 caret
             } else {
                 delete_content(page, &mut dom, host, start, end, backward, (from, to))

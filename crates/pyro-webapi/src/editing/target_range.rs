@@ -11,12 +11,15 @@ pub(super) fn for_input(page: &Rc<PageDom>, host: NodeId, input_type: &str) -> O
         if editing_host(&dom, start.0) != Some(host) || editing_host(&dom, end.0) != Some(host) {
             return None;
         }
-        if start == end && matches!(input_type, "deleteContentBackward" | "deleteContentForward") {
-            let (caret, span) = deletion_plan(page, &dom, host, start, input_type == "deleteContentBackward");
-            span.unwrap_or((caret, caret))
-        } else {
-            (start, end)
-        }
+        if matches!(input_type, "deleteContentBackward" | "deleteContentForward") {
+            let backward = input_type == "deleteContentBackward";
+            if let Some(plan) = child_line::Deletion::plan(page, &dom, host, start, end, backward) {
+                plan.range
+            } else if start == end {
+                let (caret, span) = deletion_plan(page, &dom, host, start, backward);
+                span.unwrap_or((caret, caret))
+            } else { (start, end) }
+        } else { (start, end) }
     };
     crate::range::StaticRangeData::from_points(page, start, end).ok()
 }
