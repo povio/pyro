@@ -111,7 +111,9 @@ pub(crate) fn apply_window_features(
 ) -> (bool, i32, i32) {
     let screen_width = viewport.screen_width.unwrap_or(viewport.width);
     let screen_height = viewport.screen_height.unwrap_or(viewport.height);
-    let dimension = |requested: i32, available: u32| (requested.max(100) as u32).min(available);
+    // A headless surface has no native window decoration. Its smallest
+    // visible viewport is one CSS pixel, including under device emulation.
+    let dimension = |requested: i32, available: u32| (requested.max(1) as u32).min(available);
     if let Some(width) = features.width {
         viewport.screen_width = Some(screen_width);
         viewport.width = dimension(width, screen_width);
