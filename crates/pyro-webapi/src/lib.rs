@@ -57,6 +57,7 @@ pub mod font_loading;
 mod pseudo_element;
 pub mod typed_om;
 pub mod trusted_types;
+pub mod csp_report;
 pub mod form_data;
 pub mod formdata;
 pub mod fullscreen;
