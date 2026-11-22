@@ -14,7 +14,7 @@ pub struct PacketConfig(Format);
 #[derive(Clone, Debug)]
 enum Format {
     Av1(Option<Av1Color>),
-    Avc { length_size: usize, parameter_sets: Vec<u8> },
+    Avc { length_size: usize, parameter_sets: Vec<u8>, limited_bt709: bool },
 }
 
 /// Explicit SDR codec parameters used when the AV1 sequence leaves a
@@ -25,11 +25,16 @@ pub(super) struct Av1Color {
     pub bt709_matrix: bool,
 }
 
+pub enum PacketPixels {
+    Rgba(Vec<u8>),
+    I420LimitedBt709(Vec<u8>),
+}
+
 pub struct PacketFrame {
     pub tag: u64,
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+    pub pixels: PacketPixels,
 }
 
 pub struct PacketDecoder {
@@ -122,7 +127,18 @@ impl PacketConfig {
                 (size, sets)
             }
         };
-        Some(Self(Format::Avc { length_size, parameter_sets }))
+        Some(Self(Format::Avc { length_size, parameter_sets, limited_bt709: false }))
+    }
+
+    /// Keep native AVC planes for an explicit limited-range BT.709 override.
+    pub fn with_limited_bt709(mut self) -> Option<Self> {
+        let Format::Avc { limited_bt709, .. } = &mut self.0 else { return None };
+        *limited_bt709 = true;
+        Some(self)
+    }
+
+    fn limited_bt709(&self) -> bool {
+        matches!(&self.0, Format::Avc { limited_bt709: true, .. })
     }
 
     fn backend(&self) -> Option<Box<dyn Decoder>> {
@@ -130,8 +146,8 @@ impl PacketConfig {
             #[cfg(feature = "av1")]
             Format::Av1(color) => Some(Box::new(super::av1::Av1::open(Some(MAX_PICTURE_PIXELS), *color)?)),
             #[cfg(feature = "h264")]
-            Format::Avc { length_size, parameter_sets } => {
-                Some(Box::new(super::h264::H264::packets(*length_size, parameter_sets.clone())?))
+            Format::Avc { length_size, parameter_sets, limited_bt709 } => {
+                Some(Box::new(super::h264::H264::packets(*length_size, parameter_sets.clone(), *limited_bt709)?))
             }
             #[allow(unreachable_patterns)]
             _ => None,
@@ -153,7 +169,7 @@ impl PacketConfig {
         }
         match &self.0 {
             Format::Av1(_) => av1_unit(data),
-            Format::Avc { length_size, parameter_sets } => {
+            Format::Avc { length_size, parameter_sets, .. } => {
                 let mut first_vcl_is_key = None;
                 let mut sps = !parameter_sets.is_empty();
                 let mut pps = !parameter_sets.is_empty();
@@ -267,18 +283,19 @@ impl PacketDecoder {
             self.backend = self.config.backend();
         }
         let backend = self.backend.as_mut().ok_or("Could not start video decoder")?;
-        collect(|want, out| backend.feed(data, tag, want, out))
+        collect(self.config.limited_bt709(), |want, out| backend.feed(data, tag, want, out))
     }
 
     /// Drains delayed pictures in display order. A subsequent decode opens a
     /// fresh codec context; the caller must supply a key access unit first.
     pub fn flush(&mut self) -> Result<Vec<PacketFrame>, String> {
         let Some(mut backend) = self.backend.take() else { return Ok(Vec::new()) };
-        collect(|want, out| backend.finish(want, out))
+        collect(self.config.limited_bt709(), |want, out| backend.finish(want, out))
     }
 }
 
 fn collect(
+    limited_bt709: bool,
     run: impl FnOnce(&mut dyn FnMut(u64, u32, u32) -> bool, &mut Vec<Decoded>) -> Result<(), String>,
 ) -> Result<Vec<PacketFrame>, String> {
     let mut remaining = MAX_OUTPUT_PIXELS;
@@ -296,8 +313,9 @@ fn collect(
     )?;
     out.into_iter()
         .map(|frame| {
-            let (width, height, rgba) = frame.image.ok_or("Unsupported video picture or output size")?;
-            Ok(PacketFrame { tag: frame.tag, width, height, rgba })
+            let (width, height, bytes) = frame.image.ok_or("Unsupported video picture or output size")?;
+            let pixels = if limited_bt709 { PacketPixels::I420LimitedBt709(bytes) } else { PacketPixels::Rgba(bytes) };
+            Ok(PacketFrame { tag: frame.tag, width, height, pixels })
         })
         .collect()
 }

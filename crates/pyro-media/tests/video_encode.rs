@@ -53,8 +53,9 @@ fn avc_packets_decode_to_input_pattern_and_honor_key_requests() {
             assert_eq!(frames.len(), 3);
             for frame in frames {
                 assert_eq!((frame.width, frame.height), (64, 48));
-                assert!(frame.rgba[(24 * 64 + 16) * 4] < 70);
-                assert!(frame.rgba[(24 * 64 + 48) * 4] > 180);
+                let pyro_media::video::PacketPixels::Rgba(rgba) = frame.pixels else { panic!("expected RGBA") };
+                assert!(rgba[(24 * 64 + 16) * 4] < 70);
+                assert!(rgba[(24 * 64 + 48) * 4] > 180);
             }
         }
     }
@@ -92,5 +93,36 @@ fn profile_level_bitrate_and_constraints() {
         c.codec = codec.into();
         c.bitrate = Some(rate);
         assert_eq!(PacketEncoder::supports(&c), supported, "{codec} at {rate}");
+    }
+}
+
+#[test]
+fn explicit_avc_bt709_preserves_planes_of_a_bt601_stream() {
+    use openh264::encoder::{Encoder, EncoderConfig as NativeConfig, VuiConfig};
+    use openh264::formats::YUVSlices;
+    use openh264::OpenH264API;
+    use pyro_media::video::PacketPixels;
+
+    // Non-macroblock-aligned width exercises decoder-owned row padding.
+    let (w, h) = (50, 32);
+    let y = vec![82; w * h];
+    let u = vec![90; w * h / 4];
+    let v = vec![240; w * h / 4];
+    let input = YUVSlices::new((&y, &u, &v), (w, h), (w, w / 2, w / 2));
+    let mut encoder = Encoder::with_api_config(OpenH264API::from_source(), NativeConfig::new().vui(VuiConfig::bt601())).unwrap();
+    let access_unit = encoder.encode(&input).unwrap().to_vec();
+    let config = PacketConfig::parse("avc1.42001e", None).unwrap().with_limited_bt709().unwrap();
+    let mut decoder = config.decoder().unwrap();
+    let mut frames = decoder.decode(&access_unit, 15).unwrap();
+    frames.extend(decoder.flush().unwrap());
+    assert_eq!(frames.len(), 1);
+    let frame = frames.pop().unwrap();
+    assert_eq!((frame.tag, frame.width, frame.height), (15, w as u32, h as u32));
+    let PacketPixels::I420LimitedBt709(data) = frame.pixels else { panic!("expected native AVC planes") };
+    assert_eq!(data.len(), w * h * 3 / 2);
+    let (luma, chroma) = data.split_at(w * h);
+    let (cb, cr) = chroma.split_at(w * h / 4);
+    for (plane, value) in [(luma, 82), (cb, 90), (cr, 240)] {
+        assert!(plane.iter().all(|sample| sample.abs_diff(value) <= 3));
     }
 }

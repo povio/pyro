@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use pyro_js::{ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope, Value};
-use pyro_media::video::{PacketConfig, PacketDecoder, PacketFrame};
+use pyro_media::video::{PacketConfig, PacketDecoder, PacketFrame, PacketPixels};
 use rustc_hash::FxHashMap;
 
 use crate::lazy_module::{lazy_globals, LazyModule};
@@ -25,13 +25,16 @@ where
 
 fn config(s: &Scope<'_>, value: Value<'_>) -> JsResult<Option<PacketConfig>> {
     let object = value.as_object().ok_or_else(|| JsError::Type("Expected a VideoDecoderConfig".into()))?;
+    let mut limited_bt709 = false;
     if let Some(space) = object.get_atom("colorSpace")?.as_object() {
-        // The shipping decoders convert the bitstream's SDR color description.
-        // They cannot override the decoded matrix, primaries, transfer or range.
-        for name in ["primaries", "transfer", "matrix", "fullRange"] {
-            if !space.get_atom(name)?.is_nullish() {
-                return Ok(None);
-            }
+        let primaries = space.get_atom("primaries")?;
+        let transfer = space.get_atom("transfer")?;
+        let matrix = space.get_atom("matrix")?;
+        let range = space.get_atom("fullRange")?;
+        if [primaries, transfer, matrix, range].iter().any(|v| !v.is_nullish()) {
+            limited_bt709 = primaries.to_string()? == "bt709" && transfer.to_string()? == "bt709" &&
+                matrix.to_string()? == "bt709" && !range.is_nullish() && !range.to_bool();
+            if !limited_bt709 { return Ok(None); }
         }
     }
     let width = object.get_atom("codedWidth")?;
@@ -46,7 +49,8 @@ fn config(s: &Scope<'_>, value: Value<'_>) -> JsResult<Option<PacketConfig>> {
     } else {
         Some(crate::encoding::buffer_source_bytes(s, description)?.ok_or_else(|| JsError::Type("Invalid codec description".into()))?)
     };
-    Ok(PacketConfig::parse(&codec, bytes.as_deref()))
+    let config = PacketConfig::parse(&codec, bytes.as_deref());
+    Ok(if limited_bt709 { config.and_then(PacketConfig::with_limited_bt709) } else { config })
 }
 
 struct Handle {
@@ -109,8 +113,12 @@ fn create<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<'s>> {
         let result = s.array(&[])?;
         for (i, (frame, timestamp, duration)) in timed.into_iter().enumerate() {
             let record = s.object();
-            record.set_atom("data", crate::encoding::uint8_array(s, &frame.rgba)?)?;
-            record.set_atom("format", s.string("RGBA"))?;
+            let (format, data) = match frame.pixels {
+                PacketPixels::Rgba(bytes) => ("RGBA", bytes),
+                PacketPixels::I420LimitedBt709(bytes) => ("I420", bytes),
+            };
+            record.set_atom("data", crate::encoding::uint8_array(s, &data)?)?;
+            record.set_atom("format", s.string(format))?;
             record.set_atom("codedWidth", s.number(f64::from(frame.width)))?;
             record.set_atom("codedHeight", s.number(f64::from(frame.height)))?;
             record.set_atom("timestamp", s.number(timestamp as f64))?;

@@ -17,6 +17,7 @@ pub(super) struct H264 {
     decoder: OpenH264,
     length_size: usize,
     packet_mode: bool,
+    native_planes: bool,
     parameter_sets: Vec<u8>,
     /// Annex B scratch.
     unit: Vec<u8>,
@@ -25,12 +26,13 @@ pub(super) struct H264 {
 impl H264 {
     pub(super) fn new(length_size: usize, parameter_sets: Vec<u8>) -> Option<H264> {
         let decoder = OpenH264::new().ok()?;
-        Some(H264 { decoder, length_size, packet_mode: false, parameter_sets, unit: Vec::new() })
+        Some(H264 { decoder, length_size, packet_mode: false, native_planes: false, parameter_sets, unit: Vec::new() })
     }
 
-    pub(super) fn packets(length_size: usize, parameter_sets: Vec<u8>) -> Option<Self> {
+    pub(super) fn packets(length_size: usize, parameter_sets: Vec<u8>, native_planes: bool) -> Option<Self> {
         let mut decoder = Self::new(length_size, parameter_sets)?;
         decoder.packet_mode = true;
+        decoder.native_planes = native_planes;
         Some(decoder)
     }
 
@@ -48,7 +50,7 @@ impl H264 {
         // SAFETY: iBufferStatus == 1 identifies a completed system-memory picture.
         let buf = unsafe { info.UsrData.sSystemBuffer };
         let image =
-            if want(tag, buf.iWidth as u32, buf.iHeight as u32) { convert(info, dst, self.packet_mode) } else { None };
+            if want(tag, buf.iWidth as u32, buf.iHeight as u32) { convert(info, dst, self.packet_mode, self.native_planes) } else { None };
         out.push(Decoded { tag, image });
     }
 
@@ -62,7 +64,7 @@ impl H264 {
     }
 }
 
-fn convert(info: &SBufferInfo, dst: &[*mut u8; 3], packet_output: bool) -> Option<(u32, u32, Vec<u8>)> {
+fn convert(info: &SBufferInfo, dst: &[*mut u8; 3], packet_output: bool, native_planes: bool) -> Option<(u32, u32, Vec<u8>)> {
     // SAFETY: a ready buffer describes its system-memory planes.
     let buf = unsafe { info.UsrData.sSystemBuffer };
     if buf.iFormat != videoFormatI420 {
@@ -76,6 +78,20 @@ fn convert(info: &SBufferInfo, dst: &[*mut u8; 3], packet_output: bool) -> Optio
         data: unsafe { std::slice::from_raw_parts(p as *const u8, stride * rows) },
         stride,
     };
+    if native_planes {
+        // The decoder owns padded rows until its next call. Retain the visible
+        // samples only, in WebCodecs Y, U, V order, without an RGB conversion.
+        let cw = w.div_ceil(2);
+        if ys < w || cs < cw || w == 0 || h == 0 { return None; }
+        let mut data = Vec::new();
+        data.try_reserve_exact(w * h + 2 * cw * ch).ok()?;
+        for (ptr, stride, rows, width) in [(dst[0], ys, h, w), (dst[1], cs, ch, cw), (dst[2], cs, ch, cw)] {
+            for row in plane(ptr, stride, rows).data.chunks_exact(stride) {
+                data.extend_from_slice(&row[..width]);
+            }
+        }
+        return Some((w as u32, h as u32, data));
+    }
     let picture = Picture {
         width: w,
         height: h,

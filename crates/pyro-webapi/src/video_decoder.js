@@ -53,10 +53,10 @@
         // after deriving the unrotated size from the stream's display aspect.
         const turns = Math.floor(((((c.rotation % 360) + 360) % 360) + 45) / 90);
         if (turns % 2) [displayWidth, displayHeight] = [displayHeight, displayWidth];
-        // The native conversion supplies packed sRGB pixels. VideoFrame's RGBA
-        // defaults describe those bytes; YUV matrix metadata wouldn't.
+        // Native I420 retains the source code values for an explicit override.
+        // The ordinary RGBA output has already been converted to sRGB.
         return new Frame(data, { format, codedWidth, codedHeight, timestamp,
-          duration: duration ?? undefined, displayWidth, displayHeight, rotation: c.rotation, flip: c.flip });
+          duration: duration ?? undefined, colorSpace: format === 'I420' ? c.colorSpace : undefined, displayWidth, displayHeight, rotation: c.rotation, flip: c.flip });
       }
 
       return { readConfig, output, isKey: native.isKeyChunk };
