@@ -692,8 +692,13 @@ impl PageNav {
             }
             let Ok(scope) = realm.scope() else { return };
             let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else { return };
-            if let Err(e) = scope.eval(&source, None, 1) {
-                scope.report_exception(&e);
+            // HTML "evaluate a javascript: URL": a string result replaces the document
+            // (a load the container sees, as for an iframe's src).
+            let Some(html) = crate::frames::javascript_url_result(&scope, &source) else { return };
+            drop(scope);
+            // The script may have navigated or removed the frame meanwhile.
+            if b.doc(key).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+                let _ = b.begin_javascript_result(key, html);
             }
         });
     }
