@@ -320,6 +320,16 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn removing_inherited_bold_preserves_heading_and_selected_color() {
+    let e = env("<body><div id=ed contenteditable><h3 style='color:red'>abcd</h3></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, heading=ed.firstChild, t=heading.firstChild; getSelection().setBaseAndExtent(t,3,t,1)");
+    assert_eq!(eval(r, "document.execCommand('bold'); [ed.firstChild===heading,getSelection().toString(),getSelection().direction,document.queryCommandState('bold')].join()"), "true,bc,backward,false");
+    assert_eq!(eval(r, "const style=getComputedStyle(getSelection().focusNode.parentElement); [style.fontWeight,style.color,getComputedStyle(heading).fontWeight].join('|')"), "400|rgb(255, 0, 0)|700");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn numeric_bold_removal_preserves_the_unselected_text() {
     let e = env("<body><div id=ed contenteditable><span style='font-weight:700'>abcd</span></div></body>");
     let r = &e.main;

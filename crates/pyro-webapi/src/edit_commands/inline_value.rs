@@ -586,6 +586,10 @@ pub(crate) fn format_typed(
                     break;
                 }
             }
+            if tag == "b" {
+                super::clear_remaining_bold(page, dom, host, typed)?;
+                continue;
+            }
             let parent = dom.parent_element(typed).ok()??;
             let style = layout.computed_style_value(dom, parent, property);
             if matches!(style.as_str(), "normal" | "400") {
