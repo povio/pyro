@@ -98,6 +98,9 @@ def main(ledger,out):
       if st in states and pg is not None and isinstance(r.get('est_pages_owner'),int) and r['est_pages_owner']<len(pg): adj+=len(pg)-r['est_pages_owner']
     for p in u: byd['/'.join(p.split('/')[:2]) if p.split('/')[0] in('html','fetch','svg','dom') else p.split('/')[0]]+=1
     MB=('html','fetch','IndexedDB','encoding'); SD=('css','referrer-policy','content-security-policy')
+    W=lambda x: bool(re.search(r'\.(worker|sharedworker|serviceworker)\.html',x))
+    wk_mb=sum(1 for x in u if x.split('/')[0] in MB and W(x)); wk_sd=sum(1 for x in u if x.split('/')[0] in SD and W(x))
+    u_all=u; u={x for x in u if not W(x)}
     mb_list=sum(1 for x in u if x.split('/')[0] in MB); oth=len(u)-mb_list-sum(1 for x in u if x.split('/')[0] in SD); sd_list=len(u)-mb_list-oth
     adj_mb=0; adj_oth=0
     for i,(st,pg,r) in per.items():
@@ -105,7 +108,8 @@ def main(ledger,out):
         d=len(pg)-r['est_pages_owner']
         if all(x.split('/')[0] in MB for x in pg): adj_mb+=d
         else: adj_oth+=d
-    scope={'macbook_in_scope':mb_list-adj_mb+unl,'studio_in_scope':sd_list+len(cssu)+css,'other_dirs_out_of_scope':oth-adj_oth}
+    scope={'macbook_in_scope':mb_list-adj_mb+unl,'studio_in_scope':sd_list+len(cssu)+css,'other_dirs_out_of_scope':oth-adj_oth,'macbook_worker_variants_if_enabled':wk_mb,'studio_worker_variants_if_enabled':wk_sd}
+    u=u_all
     res['tiers'][t]={'scope':scope,'distinct_census_pages':len(u)-adj+unl,'owner_reported_unlisted':unl,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'studio_css_listed_distinct':len(cssu),'by_dir':dict(byd.most_common())}
   INS=('html','fetch','IndexedDB','encoding','css','referrer-policy','content-security-policy')
   res['per_brief']={i:{'state':st,'in_scope_pages':(sum(1 for x in pg if x.split('/')[0] in INS)+len(CSS.get(i,())) if pg is not None else None),'out_of_scope_pages':(sum(1 for x in pg if x.split('/')[0] not in INS) if pg is not None else None),'pages':(len(pg) if pg is not None else None),'tentative':(sum(1 for x in pg if 'tentative' in x) if pg is not None else None)} for i,(st,pg,r) in per.items()}
