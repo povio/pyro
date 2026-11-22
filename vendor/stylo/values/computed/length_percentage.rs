@@ -351,6 +351,24 @@ impl LengthPercentage {
         }
     }
 
+    /// Resolves an intrinsic calculation without assuming an indefinite percentage basis is zero.
+    pub fn resolve_size_with_optional_basis(&self, size: Length, basis: Option<Length>) -> Option<Length> {
+        if let Some(basis) = basis { return Some(self.resolve_size(size, basis)); }
+        match self.unpack() {
+            Unpacked::Length(length) => Some(length),
+            Unpacked::Percentage(_) => None,
+            Unpacked::Calc(calc) => {
+                let value = calc.node.resolve_map(|leaf| match leaf {
+                    ComputedLeaf::Percentage(factor) if factor.size_basis => Ok(ComputedLeaf::Length(size * factor.get())),
+                    ComputedLeaf::Percentage(_) => Err(()),
+                    _ => Ok(leaf.clone()),
+                }).ok()?;
+                let ComputedLeaf::Length(length) = value else { return None };
+                Some(Length::new(calc.clamping_mode.clamp(length.px())).normalized())
+            }
+        }
+    }
+
     /// Resolves the percentage. Just an alias of resolve().
     #[inline]
     pub fn percentage_relative_to(&self, basis: Length) -> Length {

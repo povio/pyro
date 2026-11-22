@@ -588,6 +588,21 @@ fn sampled_keyword_endpoint_does_not_replace_intermediate_size() {
 }
 
 #[test]
+fn sampled_max_content_with_auto_parent_and_fixed_maximum() {
+    let page = Page::new(r#"<!doctype html><style>#live::before{content:'';display:block;width:125px;height:75px}</style><div><div id=live style="width:100px;height:25px;max-height:42px"></div></div><div id=sample style="inline-size:calc-size(max-content,size * 0.5 + 50px);block-size:calc-size(max-content,size * 0.5 + 12.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, endpoint, expected) in [("inline-size", "100px", "112.5px"), ("block-size", "25px", "42px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), endpoint);
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), expected);
+        assert_eq!(used(), endpoint);
+    }
+}
+
+#[test]
 fn sampled_keyword_basis_with_plain_length_endpoint() {
     let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="width:50px;height:50px"><div style="width:100px;height:100px"></div></div></div><div id=sample style="width:calc-size(auto,size * 0.25 + 37.5px);height:calc-size(auto,size * 0.25 + 37.5px)"></div>"#);
     let dom = page.dom.borrow();

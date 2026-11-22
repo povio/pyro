@@ -377,7 +377,12 @@ impl BaseDocument {
         if matching_keyword || matches!(endpoint, Size::LengthPercentage(_)) {
             use style::values::computed::MaxSize;
             let (minimum, maximum) = if width { (&live.min_width, &live.max_width) } else { (&live.min_height, &live.max_height) };
-            if !minimum.is_auto() || !matches!(maximum, MaxSize::None) { return None; }
+            if !minimum.is_auto() { return None; }
+            let ceiling = match maximum {
+                MaxSize::None => f32::INFINITY,
+                MaxSize::LengthPercentage(value) if matches!(size, Size::CalcSizeMaxContent(_)) => value.0.to_length()?.px(),
+                _ => return None,
+            };
             let calculation = match size {
                 Size::CalcSizeAuto(value) | Size::CalcSizeFitContent(value) | Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeStretch(value) => value,
                 _ => return None,
@@ -386,15 +391,15 @@ impl BaseDocument {
             let parent_style = parent.primary_styles()?;
             let parent_position = parent_style.get_position();
             let parent_size = if width { &parent_position.width } else { &parent_position.height };
-            if !matches!(parent_size, Size::LengthPercentage(length) if length.0.to_length().is_some()) { return None; }
             let layout = self.physical_unrounded_layout(parent.id);
-            let percent = if width { layout.content_box_width() } else { layout.content_box_height() };
-            let basis = self.sampled_basis_in_block_flow(node_id, width, Some(percent), size)?;
+            let percent = matches!(parent_size, Size::LengthPercentage(length) if length.0.to_length().is_some())
+                .then(|| if width { layout.content_box_width() } else { layout.content_box_height() });
+            let basis = self.sampled_basis_in_block_flow(node_id, width, percent, size)?;
             let layout = self.physical_unrounded_layout(node_id);
             let floor = if live.box_sizing != BoxSizing::BorderBox { 0.0 } else if width {
                 layout.padding.left + layout.padding.right + layout.border.left + layout.border.right
             } else { layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom };
-            return Some(calculation.0.resolve_size(CSSPixelLength::new(basis), CSSPixelLength::new(percent)).px().max(floor));
+            return Some(calculation.0.resolve_size_with_optional_basis(CSSPixelLength::new(basis), percent.map(CSSPixelLength::new))?.px().min(ceiling).max(floor));
         }
         let (mut basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
         let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
@@ -471,10 +476,11 @@ impl BaseDocument {
         let child_position = child_style.get_position();
         let margins = child_style.get_margin();
         let zero_margin = |value: &Margin| matches!(value, Margin::LengthPercentage(value) if !value.has_percentage() && value.resolve(CSSPixelLength::new(0.0)).px() == 0.0);
+        let allows_max = |maximum: &MaxSize| matches!(maximum, MaxSize::None) || matches!(size, Size::CalcSizeMaxContent(_)) && matches!(maximum, MaxSize::LengthPercentage(value) if value.0.to_length().is_some());
         if !block(&child_style) || child_style.clone_clear() != style::computed_values::clear::T::None { return None; }
         if width {
             let padding = child_style.get_padding();
-            if !fixed(&child_position.width) || !position.min_width.is_auto() || !matches!(position.max_width, MaxSize::None)
+            if !fixed(&child_position.width) || !position.min_width.is_auto() || !allows_max(&position.max_width)
                 || !child_position.min_width.is_auto() || !matches!(child_position.max_width, MaxSize::None)
                 || !zero_margin(&margins.margin_left) || !zero_margin(&margins.margin_right)
                 || padding.padding_left.0.has_percentage() || padding.padding_right.0.has_percentage()
@@ -482,7 +488,7 @@ impl BaseDocument {
             let inset = layout.padding.left + layout.padding.right + layout.border.left + layout.border.right;
             return Some(self.physical_unrounded_layout(*child_id).size.width + if border_box { inset } else { 0.0 });
         }
-        if !position.min_height.is_auto() || !matches!(position.max_height, MaxSize::None)
+        if !position.min_height.is_auto() || !allows_max(&position.max_height)
             || !fixed(&child_position.height) || !child_position.min_height.is_auto() || !matches!(child_position.max_height, MaxSize::None)
             || !zero_margin(&margins.margin_top) || !zero_margin(&margins.margin_bottom)
         { return None; }
