@@ -2100,7 +2100,15 @@ impl Browser {
         owner: NodeId,
         parent_dom: Option<&pyro_webapi::PageDom>,
     ) -> bool {
-        let lazy = is_lazy_iframe(&host.dom.borrow(), owner) && parent_dom.is_some_and(|d| !d.scripting_disabled());
+        // HTML "process the iframe attributes": only the navigation to a `src` URL (not srcdoc,
+        // not about:blank) waits on the lazy loading steps.
+        let lazy = {
+            let dom = host.dom.borrow();
+            let attr = |name| dom.get_attribute(owner, name).ok().flatten().map(str::trim);
+            is_lazy_iframe(&dom, owner)
+                && attr("srcdoc").is_none()
+                && attr("src").is_some_and(|src| !src.is_empty() && !src.eq_ignore_ascii_case("about:blank"))
+        } && parent_dom.is_some_and(|d| !d.scripting_disabled());
         if !lazy {
             return false;
         }
