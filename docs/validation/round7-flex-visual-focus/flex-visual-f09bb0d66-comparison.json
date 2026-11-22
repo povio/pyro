@@ -1,0 +1,102 @@
+{
+  "rows": [
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-visual-fragmentation.html",
+      "name": "CSS order is honored across fragments: flex-visual reading order follows visual placement, not source order",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-visual-fragmentation.html",
+      "name": "Nested reading-flow flex that itself fragments across 3 columns keeps all items in reading order",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-visual-fragmentation.html",
+      "name": "Reading-flow flex items fragmented across 3 columns are all reachable in flex-visual order",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-visual-order.html",
+      "name": "Flex items in flexbox should follow flex-visual reading flow",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-visual-order.html",
+      "name": "Flex items in row-reverse and vertical-lr flexbox should follow flex-visual reading flow",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-visual-order.html",
+      "name": "Flex items in row-reverse flexbox should follow flex-visual reading flow",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-visual-order.html",
+      "name": "Flex items in row-reverse rtl flexbox should follow flex-visual reading flow",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-visual-wrapped-fragmentation.html",
+      "name": "CSS Display: reading-flow: flex-visual finishes reading down each column, across fragments, before moving on to the next column ",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    }
+  ],
+  "parentPages": {
+    "shadow-dom/focus-navigation/reading-flow/flex-visual-fragmentation.html": [
+      "6325c5e03e96f2228f83a3874a5ea5eec82c9ef9",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/flex-visual-wrapped-fragmentation.html": [
+      "ae35700ac54318a0683eea6b1a2a43a354b745a3",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/flex-visual-order.html": [
+      "578eef8c65b3fae851c9aef7bf72d66858b76690",
+      "complete",
+      "OK"
+    ]
+  },
+  "candidatePages": {
+    "shadow-dom/focus-navigation/reading-flow/flex-visual-fragmentation.html": [
+      "6325c5e03e96f2228f83a3874a5ea5eec82c9ef9",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/flex-visual-wrapped-fragmentation.html": [
+      "ae35700ac54318a0683eea6b1a2a43a354b745a3",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/flex-visual-order.html": [
+      "578eef8c65b3fae851c9aef7bf72d66858b76690",
+      "complete",
+      "OK"
+    ]
+  }
+}
