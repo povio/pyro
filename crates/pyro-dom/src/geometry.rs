@@ -937,6 +937,13 @@ pub trait GeometrySource {
     fn force_content_visibility(&self, _key: u64) -> bool {
         false
     }
+    /// pyro: lays out the contents the `content-visibility: hidden` ancestors of the element keyed
+    /// `key` skip, for a geometry query that needs its box (CSS Contain 2 § 4.1, as Chromium
+    /// forces a locked subtree's layout); until the next frame, unpainted and unhit. Whether any
+    /// were skipped (laid out again then).
+    fn force_hidden_contents(&self, _key: u64) -> bool {
+        false
+    }
     /// pyro: a rendering frame starts: `content-visibility: auto` relevance is determined anew
     /// (what queries forced to render since the last frame no longer is).
     fn content_visibility_frame(&self) {}
