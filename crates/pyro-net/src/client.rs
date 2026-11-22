@@ -2410,7 +2410,8 @@ impl Io {
                 return Err(corp_blocked());
             }
             // Redirects.
-            if status.is_redirection() && status != StatusCode::NOT_MODIFIED {
+            // Fetch's redirect statuses: 300, 304, 305 and 306 are ordinary responses.
+            if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
                 // Fetch "HTTP fetch": the CORS check covers a redirect response too, and runs
                 // before the redirect mode is looked at (a manual redirect is checked as well).
                 if cors_cross {
