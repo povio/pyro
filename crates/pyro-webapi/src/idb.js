@@ -1576,9 +1576,9 @@
   // After the upgrade transaction's complete or abort event.
   function upgradeFinished(x, committed) {
     const item = x.openItem, c = x.conn, s = requestState(item.request);
+    s.tx = null;
     maybeClose(c);
     post(() => {
-      s.tx = null;
       N.release(item.name);
       if (committed && !c.closePending) {
         succeed(s, c.db);
