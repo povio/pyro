@@ -59,6 +59,7 @@ pub const STATICS: &[&str] = &[
     "structured_clone::CLONE_SOURCE",
     "structured_clone::WIRE_BLOBS",
     "structured_clone::WIRE_CANVASES",
+    "structured_clone::WIRE_CODECS",
     "target::WATCHED",
     "web_locks::CLIENTS",
     "webaudio::NEXT",

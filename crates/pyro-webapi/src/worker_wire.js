@@ -20,9 +20,9 @@
 // `host([kind, ports], 7)` makes the stream of a decoded 'S' tree.
 // `host(value, 0)` also describes an ImageBitmap or OffscreenCanvas as
 // ['C', index] (its pixels or placeholder travel beside the text);
-// `host(value, 8)` is 'C' for one that can be transferred (DataCloneError
+// `host(value, 8)` is 'C' for one that can be transferred, 'A' for AudioData (DataCloneError
 // if detached), `host(value, 9)` detaches it and `host(index, 10)` makes the
-// one of a decoded 'C' tree. For WebCodecs chunks, host(value, 11) stores
+// one of a decoded 'C' tree. For WebCodecs resources, host(value, 11) stores
 // the immutable slots and returns their index, and host(index, 12) restores
 // a 'Q' record in the receiving realm.
 // Blob bytes travel beside the text, shared, not copied. Transferred
@@ -87,7 +87,7 @@
                 throw new TE('transfer entries must be objects');
             put(entries, entries.length, entry);
         }
-        const buffers = [], ports = [], streams = [], kinds = [], canvases = [], seen = new M();
+        const buffers = [], ports = [], streams = [], kinds = [], resources = [], seen = new M();
         for (let i = 0; i < entries.length; ++i) {
             const entry = entries[i];
             if (call(mapHas, seen, [entry])) fail('An object is listed twice in the transfer list');
@@ -98,8 +98,8 @@
             } else if (host(entry, 4)) {
                 put(ports, ports.length, entry);
             } else if (host(entry, 8) !== undefined) {
-                // An ImageBitmap or OffscreenCanvas.
-                put(canvases, canvases.length, entry);
+                // A transferable canvas object or AudioData.
+                put(resources, resources.length, entry);
             } else {
                 // A ReadableStream, WritableStream or TransformStream ('R',
                 // 'W', 'T'; DataCloneError when locked).
@@ -110,18 +110,18 @@
             }
         }
         if (buffers.length && !abTransfer) fail('ArrayBuffer transfer is not available', true);
-        return [buffers, ports, streams, kinds, canvases];
+        return [buffers, ports, streams, kinds, resources];
     }
 
     function encode(clone, value, options, forStorage) {
         const lists = transferList(options), transfer = lists[0], ports = lists[1];
-        const streams = lists[2], kinds = lists[3], canvases = lists[4];
-        // Listed ports, streams and canvases stay themselves in the copy;
+        const streams = lists[2], kinds = lists[3], resources = lists[4];
+        // Listed ports, streams and resources stay themselves in the copy;
         // the walk numbers them. A stream's ports follow the listed ports.
         const keep = [];
         for (let i = 0; i < ports.length; ++i) put(keep, keep.length, ports[i]);
         for (let i = 0; i < streams.length; ++i) put(keep, keep.length, streams[i]);
-        for (let i = 0; i < canvases.length; ++i) put(keep, keep.length, canvases[i]);
+        for (let i = 0; i < resources.length; ++i) put(keep, keep.length, resources[i]);
         const copy = clone(value, undefined, undefined, keep.length ? keep : undefined, undefined, undefined, forStorage);
         // Only a message that transfers something pays for these lookups.
         const portIndex = ports.length ? new M() : undefined;
@@ -171,10 +171,9 @@
                 const buffer = node(call(dvBuffer, source));
                 return '["w",' + buffer + ',' + call(dvOffset, source) + ',' + call(dvLength, source) + ']';
             }
-            // Preserve native encoded-chunk slots without consulting mutable
-            // JavaScript getters or Symbol.toStringTag on its prototype.
-            const chunk = host(source, 11);
-            if (chunk !== undefined) return '["Q",' + chunk + ']';
+            // Read native WebCodecs slots without consulting public getters.
+            const resource = host(source, 11);
+            if (resource !== undefined) return '["Q",' + resource + ']';
             const kind = call(objectTag, source);
             switch (kind) {
                 case '[object DOMPoint]': case '[object DOMPointReadOnly]':
@@ -252,15 +251,21 @@
         }
         for (let i = 0; i < ports.length; ++i) host(ports[i], 4);
         for (let i = 0; i < streams.length; ++i) host(streams[i], 5);
-        for (let i = 0; i < canvases.length; ++i) host(canvases[i], 8);
+        for (let i = 0; i < resources.length; ++i) {
+            if (host(resources[i], 8) === 'A' && !call(mapHas, memory, [resources[i]])) {
+                // Even a frame only in the transfer list must be readable in
+                // the destination agent cluster when deserializing the message.
+                host(resources[i], 11);
+            }
+        }
         for (let i = 0; i < transfer.length; ++i) call(abTransfer, transfer[i]);
-        for (let i = 0; i < canvases.length; ++i) host(canvases[i], 9);
         const listed = ports.length, sent = [];
         for (let i = 0; i < listed; ++i) put(sent, i, ports[i]);
         for (let i = 0; i < streams.length; ++i) {
             const out = host(streams[i], 6);
             for (let j = 0; j < out.length; ++j) put(sent, sent.length, out[j]);
         }
+        for (let i = 0; i < resources.length; ++i) host(resources[i], 9);
         return [text, buffers, sent, listed];
     }
 

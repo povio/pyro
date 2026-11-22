@@ -12,14 +12,14 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
         if args.len() > 1 {
             return match args.get(1).to_number()? as u32 {
                 0 => {
-                    if let Some(chunk) = crate::encoded_chunks::parts(s, value) {
+                    if let Some(resource) = CodecResource::parts(s, value)? {
                         if args.get(2).to_bool() {
-                            return Err(JsError::dom("DataCloneError", "Encoded chunks cannot be serialized for storage."));
+                            return Err(JsError::dom("DataCloneError", "WebCodecs resources cannot be serialized for storage."));
                         }
                         if let Some(marker) = args.get(3).as_object() {
                             marker.set_index(0, s.boolean(true))?;
                         }
-                        return crate::encoded_chunks::wrap(s, &chunk);
+                        return resource.wrap(s);
                     }
                     Ok(crate::file::clone_host(s, value)?.unwrap_or_else(|| s.undefined()))
                 }
@@ -46,6 +46,22 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
                     None => Ok(s.undefined()),
                 },
                 9 => detach_canvas_object(s, value).map(|()| s.undefined()),
+                // Snapshot the AudioData transfer now, but only close the
+                // sender once graph traversal and validation have succeeded.
+                12 => match crate::audio_data::parts(s, value)? {
+                    Some(frame) => {
+                        if let Some(marker) = args.get(2).as_object() {
+                            marker.set_index(0, s.boolean(true))?;
+                        }
+                        crate::audio_data::wrap(s, &frame)
+                    }
+                    None => Ok(s.undefined()),
+                },
+                13 => Ok(s.boolean(crate::audio_data::parts(s, value)?.is_some())),
+                14 => {
+                    crate::audio_data::detach(s, value);
+                    Ok(s.undefined())
+                }
                 5 => prepare_stream_transfer(s, value),
                 6 => complete_stream_transfer(s, value, args.get(2)).map(|()| s.undefined()),
                 _ => crate::message_channel::complete_transfer(s, value, args.get(2)).map(|()| s.undefined()),
@@ -279,26 +295,26 @@ pub(crate) fn clone_into<'s, 'r>(
         let (copy, ports) = from_source(rs.rehome(value), rs.rehome(options))?;
         return local(copy, ports);
     };
-    let (ports, streams, canvases) = (s.array(&[])?, s.array(&[])?, s.array(&[])?);
+    let (ports, streams, resources) = (s.array(&[])?, s.array(&[])?, s.array(&[])?);
     let cluster_bound = s.array(&[s.boolean(false)])?;
     let copy = clone.call(None, &[
-        value, options, ports.value(), s.undefined(), streams.value(), canvases.value(), s.boolean(false), cluster_bound.value(),
+        value, options, ports.value(), s.undefined(), streams.value(), resources.value(), s.boolean(false), cluster_bound.value(),
     ])?;
     let must_serialize = cluster_bound.get_index(0)?.to_bool();
     if !must_serialize && s.realm_id() == rs.realm_id() {
         return local(rs.rehome(copy), rs.rehome_object(ports));
     }
     // The second pass transfers what the first one made: ports, streams,
-    // then ImageBitmaps and OffscreenCanvases.
+    // then transferred canvas objects and AudioData frames.
     let port_count = ports.get_atom("length")?.to_number()? as u32;
     let stream_count = streams.get_atom("length")?.to_number()? as u32;
-    let canvas_count = canvases.get_atom("length")?.to_number()? as u32;
-    let options = if port_count + stream_count + canvas_count > 0 {
+    let resource_count = resources.get_atom("length")?.to_number()? as u32;
+    let options = if port_count + stream_count + resource_count > 0 {
         for i in 0..stream_count {
             ports.set_index(port_count + i, streams.get_index(i)?)?;
         }
-        for i in 0..canvas_count {
-            ports.set_index(port_count + stream_count + i, canvases.get_index(i)?)?;
+        for i in 0..resource_count {
+            ports.set_index(port_count + stream_count + i, resources.get_index(i)?)?;
         }
         let o = s.object();
         o.set_atom("transfer", ports.value())?;
@@ -327,6 +343,44 @@ pub(crate) fn transfer_options<'s>(s: &Scope<'s>, arg: Option<pyro_js::Value<'s>
     })
 }
 
+/// WebCodecs serialization retains the media resource and its source agent
+/// cluster. Neither the JavaScript wrapper nor its detached state is shared.
+#[derive(Clone)]
+enum CodecResource {
+    Chunk(crate::encoded_chunks::EncodedChunk),
+    Audio(crate::audio_data::AudioResource),
+}
+
+impl CodecResource {
+    fn parts(s: &Scope<'_>, value: pyro_js::Value<'_>) -> JsResult<Option<Self>> {
+        if let Some(chunk) = crate::encoded_chunks::parts(s, value) {
+            return Ok(Some(Self::Chunk(chunk)));
+        }
+        Ok(crate::audio_data::parts(s, value)?.map(Self::Audio))
+    }
+
+    fn wrap<'s>(&self, s: &Scope<'s>) -> JsResult<pyro_js::Value<'s>> {
+        match self {
+            Self::Chunk(chunk) => crate::encoded_chunks::wrap(s, chunk),
+            Self::Audio(frame) => crate::audio_data::wrap(s, frame),
+        }
+    }
+
+    fn readable_in(&self, page: &crate::PageDom) -> bool {
+        match self {
+            Self::Chunk(chunk) => chunk.readable_in(page),
+            Self::Audio(frame) => frame.readable_in(page),
+        }
+    }
+
+    fn byte_length(&self) -> usize {
+        match self {
+            Self::Chunk(chunk) => chunk.byte_length(),
+            Self::Audio(frame) => frame.byte_length(),
+        }
+    }
+}
+
 /// A serialized message, independent of any realm (`worker_wire.js`): on
 /// its way to another VM, or kept by session history.
 pub struct WireMessage {
@@ -344,8 +398,8 @@ pub struct WireMessage {
     /// The ImageBitmaps (pixels shared, not copied) and transferred
     /// OffscreenCanvases it holds.
     canvases: Vec<crate::canvas::CanvasObject>,
-    /// Serialized WebCodecs chunks retain immutable byte storage.
-    chunks: Vec<crate::encoded_chunks::EncodedChunk>,
+    /// Encoded chunks and AudioData frames share immutable byte storage.
+    codecs: Vec<CodecResource>,
 }
 
 impl WireMessage {
@@ -358,7 +412,7 @@ impl WireMessage {
             ports: Vec::new(),
             listed_ports: 0,
             canvases: Vec::new(),
-            chunks: Vec::new(),
+            codecs: Vec::new(),
         }
     }
     #[cfg(test)]
@@ -370,8 +424,8 @@ impl WireMessage {
         self.text.len()
             + self.buffers.iter().map(Vec::len).sum::<usize>()
             + self.blobs.iter().map(bytes::Bytes::len).sum::<usize>()
-            + self.chunks.iter().map(crate::encoded_chunks::EncodedChunk::byte_length).sum::<usize>()
-            + 64 * (1 + self.ports.len() + self.canvases.len() + self.chunks.len())
+            + self.codecs.iter().map(CodecResource::byte_length).sum::<usize>()
+            + 64 * (1 + self.ports.len() + self.canvases.len() + self.codecs.len())
     }
     /// The pipe sides it carries.
     pub(crate) fn transit_ends(&self) -> &[crate::port_link::TransitEnd] {
@@ -395,7 +449,7 @@ thread_local! {
     /// As `WIRE_BLOBS`, for ImageBitmaps and OffscreenCanvases.
     static WIRE_CANVASES: std::cell::RefCell<Vec<crate::canvas::CanvasObject>> =
         const { std::cell::RefCell::new(Vec::new()) };
-    static WIRE_CHUNKS: std::cell::RefCell<Vec<crate::encoded_chunks::EncodedChunk>> =
+    static WIRE_CODECS: std::cell::RefCell<Vec<CodecResource>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -461,11 +515,21 @@ fn wire_host<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>) -> JsResult<pyro_js::V
         4 => Ok(s.boolean(crate::message_channel::is_transferable_port(s, value)?)),
         5 => Ok(crate::streams::transfer_kind(s, value)?.unwrap_or_else(|| s.undefined())),
         6 => Ok(crate::streams::transfer_out(s, value)?.value()),
-        8 => Ok(match crate::canvas::canvas_object_of(s, value, true)? {
-            Some(_) => s.string("C"),
-            None => s.undefined(),
-        }),
-        9 => crate::canvas::detach_canvas_object(s, value).map(|_| s.undefined()),
+        8 => {
+            if crate::audio_data::parts(s, value)?.is_some() {
+                return Ok(s.string("A"));
+            }
+            Ok(match crate::canvas::canvas_object_of(s, value, true)? {
+                Some(_) => s.string("C"),
+                None => s.undefined(),
+            })
+        }
+        9 => {
+            if !crate::audio_data::detach(s, value) {
+                crate::canvas::detach_canvas_object(s, value)?;
+            }
+            Ok(s.undefined())
+        }
         10 => {
             let index = value.to_number()? as usize;
             let object = WIRE_CANVASES.with(|c| c.borrow().get(index).cloned());
@@ -473,19 +537,19 @@ fn wire_host<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>) -> JsResult<pyro_js::V
             crate::canvas::make_canvas_object(s, &object)
         }
         11 => {
-            let Some(chunk) = crate::encoded_chunks::parts(s, value) else { return Ok(s.undefined()) };
-            let index = WIRE_CHUNKS.with_borrow_mut(|chunks| {
-                let index = chunks.len();
-                chunks.push(chunk);
+            let Some(resource) = CodecResource::parts(s, value)? else { return Ok(s.undefined()) };
+            let index = WIRE_CODECS.with_borrow_mut(|codecs| {
+                let index = codecs.len();
+                codecs.push(resource);
                 index
             });
             Ok(s.number(index as f64))
         }
         12 => {
             let index = value.to_number()? as usize;
-            let chunk = WIRE_CHUNKS.with_borrow(|chunks| chunks.get(index).cloned())
-                .ok_or_else(|| JsError::dom("DataCloneError", "Malformed encoded chunk"))?;
-            crate::encoded_chunks::wrap(s, &chunk)
+            let resource = WIRE_CODECS.with_borrow(|codecs| codecs.get(index).cloned())
+                .ok_or_else(|| JsError::dom("DataCloneError", "Malformed WebCodecs resource"))?;
+            resource.wrap(s)
         }
         15 => geometry_parts(s, value),
         16 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "geometryFromParts", &[value, args.get(2)]),
@@ -560,9 +624,9 @@ fn encode<'s>(
     let (encode, _) = wire_functions(s)?;
     let saved = WIRE_BLOBS.with(|b| b.take());
     let saved_canvases = WIRE_CANVASES.with(|c| c.take());
-    let saved_chunks = WIRE_CHUNKS.with(|c| c.take());
+    let saved_codecs = WIRE_CODECS.with(|c| c.take());
     let pair = encode.call(None, &[clone, value, options, s.boolean(for_storage)]);
-    let chunks = WIRE_CHUNKS.with(|c| c.replace(saved_chunks));
+    let codecs = WIRE_CODECS.with(|c| c.replace(saved_codecs));
     let blobs = WIRE_BLOBS.with(|b| b.replace(saved));
     let canvases = WIRE_CANVASES.with(|c| c.replace(saved_canvases));
     let pair = pair?;
@@ -595,7 +659,7 @@ fn encode<'s>(
         ports.push(crate::message_channel::export_port(s, port)?);
     }
     let listed_ports = (pair.get_index(3)?.to_number()? as usize).min(ports.len());
-    Ok(WireMessage { text, buffers, blobs, ports, listed_ports, canvases, chunks })
+    Ok(WireMessage { text, buffers, blobs, ports, listed_ports, canvases, codecs })
 }
 
 /// StructuredDeserialize into `s`'s realm.
@@ -612,10 +676,10 @@ pub(crate) fn decode_with_ports<'s>(
     message: &WireMessage,
 ) -> JsResult<(pyro_js::Value<'s>, Option<pyro_js::Object<'s>>)> {
     // Reject an incompatible recipient before claiming any transferred ports.
-    if !message.chunks.is_empty() {
+    if !message.codecs.is_empty() {
         let page = crate::target::page_of(s)?;
-        if !crate::encoded_chunks::exposed_in(s) || message.chunks.iter().any(|chunk| !chunk.readable_in(&page)) {
-            return Err(JsError::dom("DataCloneError", "Encoded chunks are not available to the receiving agent cluster"));
+        if !crate::encoded_chunks::exposed_in(s) || message.codecs.iter().any(|resource| !resource.readable_in(&page)) {
+            return Err(JsError::dom("DataCloneError", "WebCodecs resources are not available to the receiving agent cluster"));
         }
     }
     let (_, decode) = wire_functions(s)?;
@@ -626,9 +690,9 @@ pub(crate) fn decode_with_ports<'s>(
     let run = |ports: pyro_js::Value<'s>| {
         let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
         let saved_canvases = WIRE_CANVASES.with(|c| c.replace(message.canvases.clone()));
-        let saved_chunks = WIRE_CHUNKS.with(|c| c.replace(message.chunks.clone()));
+        let saved_codecs = WIRE_CODECS.with(|c| c.replace(message.codecs.clone()));
         let result = decode.call(None, &[s.string(&message.text), list.value(), ports]);
-        WIRE_CHUNKS.with(|c| *c.borrow_mut() = saved_chunks);
+        WIRE_CODECS.with(|c| *c.borrow_mut() = saved_codecs);
         WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
         WIRE_CANVASES.with(|c| *c.borrow_mut() = saved_canvases);
         result
@@ -686,5 +750,8 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     if WIRE_BLOBS.with(|b| !b.borrow().is_empty()) {
         return Some("structured_clone::WIRE_BLOBS");
     }
-    WIRE_CANVASES.with(|c| !c.borrow().is_empty()).then_some("structured_clone::WIRE_CANVASES")
+    if WIRE_CANVASES.with(|c| !c.borrow().is_empty()) {
+        return Some("structured_clone::WIRE_CANVASES");
+    }
+    WIRE_CODECS.with_borrow(|codecs| !codecs.is_empty()).then_some("structured_clone::WIRE_CODECS")
 }
