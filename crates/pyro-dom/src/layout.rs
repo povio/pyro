@@ -330,6 +330,9 @@ pub struct Layout {
     /// (x, y), to fire `scrollsnapchanging` / `scrollsnapchange` when they change
     /// ([`Self::take_snap_changes`]).
     reported_snaps: FxHashMap<Option<NodeId>, [Option<NodeId>; 2]>,
+    /// pyro: the DOM version the unsnapped mandatory snap containers were last snapped at
+    /// ([`Self::snap_unsnapped`]).
+    unsnapped_checked: Option<u64>,
     /// pyro: the mandatory snap containers whose initial scroll position snapped
     /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
     initially_snapped: rustc_hash::FxHashSet<NodeId>,
@@ -631,6 +634,7 @@ impl Layout {
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
             reported_snaps: FxHashMap::default(),
+            unsnapped_checked: None,
             initially_snapped: Default::default(),
             pseudo_scroll: FxHashMap::default(),
             viewport_initially_snapped: false,
@@ -3614,6 +3618,76 @@ impl Layout {
         }
     }
 
+    /// pyro: whether the document has an element styled with a `scroll-snap-type` (as of the last
+    /// sync): its scroll offsets are re-clamped after DOM changes though none is scrolled, for
+    /// [`Self::snap_unsnapped`].
+    pub fn snap_owed(&self) -> bool {
+        self.external.as_ref().filter(|s| s.active()).is_some_and(|s| s.uses_scroll_snap())
+    }
+
+    /// pyro: CSS Scroll Snap 1 § 6.2.3: a mandatory snap container that is not snapped (it had no
+    /// snap position when it last snapped, or its `scroll-snap-type` just became mandatory) snaps
+    /// at its scroll position after the DOM or a style changes, as Chromium snaps after layout: an
+    /// area added or given a `scroll-snap-align`, or the snap type set or changed, snaps it (WPT
+    /// css-scroll-snap `snap-after-relayout/*`). Snapped ones re-snap in [`Self::resnap`]. Looked
+    /// for once per DOM version. Adds the scrollers that moved to `moved`.
+    fn snap_unsnapped(&mut self, dom: &Dom, moved: &mut Vec<ScrollTarget>) {
+        if !self.snap_owed() {
+            return;
+        }
+        let version = dom.version();
+        if self.unsnapped_checked.replace(version) == Some(version) {
+            return;
+        }
+        let Some(source) = self.synced_geometry_source(dom).cloned() else { return };
+        let mut containers: Vec<NodeId> =
+            source.mandatory_snap_containers().into_iter().filter_map(|key| node_of(dom, key)).collect();
+        containers.sort_by_key(|k| (k.idx, k.gen));
+        containers.dedup();
+        let doc = self.style.document();
+        let root = dom.document_element(doc).ok().flatten();
+        for el in containers {
+            // (The root's snap type is the viewport's, below.)
+            if Some(el) == root
+                || self.snapped.contains_key(&Some(el))
+                || !dom.is_connected(el).unwrap_or(false)
+                || !self.is_visible(dom, el)
+            {
+                continue;
+            }
+            let current = self.element_scroll.get(&el).copied().unwrap_or((0, 0));
+            let (cx, cy) = (Some(current.0 as i64), Some(current.1 as i64));
+            let (tx, ty) = self.snap_scroll(dom, Some(el), current, cx, cy, None);
+            let x = tx.map_or(current.0, |t| self.clamp_scroll(dom, el, Axis::Width, t));
+            let y = ty.map_or(current.1, |t| self.clamp_scroll(dom, el, Axis::Height, t));
+            if (x, y) != current {
+                self.element_scroll.insert(el, (x, y));
+                self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                if !moved.contains(&ScrollTarget::Container(el)) {
+                    moved.push(ScrollTarget::Container(el));
+                }
+            }
+        }
+        // The viewport, when the root's `scroll-snap-type` snaps mandatorily.
+        if !self.snapped.contains_key(&None) {
+            let mandatory = root.is_some_and(|root| {
+                self.style.computed_value(dom, root, "scroll-snap-type").unwrap_or_default().ends_with("mandatory")
+            });
+            if mandatory {
+                let (x, y) = self.window_scroll;
+                // (A snap that does not move it keeps its scroll target.)
+                let target = self.scroll_targets.get(&None).copied();
+                if self.window_scroll_to(dom, Some(x), Some(y)) {
+                    if !moved.contains(&ScrollTarget::Viewport) {
+                        moved.push(ScrollTarget::Viewport);
+                    }
+                } else if let Some(target) = target {
+                    self.scroll_targets.insert(None, target);
+                }
+            }
+        }
+    }
+
     /// pyro: CSS Scroll Snap 2 § 5.1: the scrollers (`None`: the viewport) whose snap targets
     /// changed since their snap events last reported them, with their new targets (block,
     /// inline; `None`: not snapped on that axis), in element order, the viewport first. Each is
@@ -4005,6 +4079,7 @@ impl Layout {
     /// Flow geometry only; hidden or detached elements keep their offsets.
     pub fn clamp_scroll_offsets(&mut self, dom: &Dom) -> Vec<ScrollTarget> {
         let mut moved = Vec::new();
+        self.snap_unsnapped(dom, &mut moved);
         if !self.has_scroll_offsets() {
             return moved;
         }
