@@ -255,6 +255,7 @@ fn formattable_nodes(page: &PageDom, dom: &Dom, scope: NodeId, start: Point, end
         if crate::range::compare_boundary_points_dom(dom, finish, start) > 0
             && crate::range::compare_boundary_points_dom(dom, begin, end) < 0
             && super::rich_node(dom, node)
+            && !editing::invisible_formatting_space(page, dom, scope, node)
             && super::alignment::visible(page, dom, node)
         {
             nodes.push(node);

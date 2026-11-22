@@ -1,0 +1,338 @@
+[
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/createlink.html",
+    "[[\"createlink\",\"http://www.google.com/\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/createlink.html",
+    "[[\"createlink\",\"http://www.google.com/\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontname.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"fontname\",\"sans-serif\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontname.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"fontname\",\"sans-serif\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontname.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontname.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontsize.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"fontsize\",\"4\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontsize.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"fontsize\",\"4\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontsize.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/fontsize.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/formatblock.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/formatblock.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/formatblock.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/formatblock.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<p>\"]] \"{<p><p> <p>foo</p>}\" queryCommandValue(\"formatblock\") before",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1-1000",
+    "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1-1000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"{<p><p> <p>foo</p>}\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]

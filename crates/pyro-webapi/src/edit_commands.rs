@@ -1323,9 +1323,9 @@ fn rich_node(dom: &Dom, node: NodeId) -> bool {
 
 /// A locked island is skipped, but a rich descendant can opt back into editing.
 /// The caller restricts the walk to the selection's enclosing editing host.
-fn inline_texts(dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<NodeId> {
+fn inline_texts(page: &PageDom, dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<NodeId> {
     let mut texts = texts_in(dom, host, start, end);
-    texts.retain(|&node| rich_node(dom, node));
+    texts.retain(|&node| rich_node(dom, node) && !editing::invisible_formatting_space(page, dom, host, node));
     texts
 }
 
@@ -1498,7 +1498,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
     let collapsed = start == end;
     let selected = {
         let dom = page.dom.borrow();
-        let mut texts = inline_texts(&dom, host, start, end);
+        let mut texts = inline_texts(page, &dom, host, start, end);
         texts.retain(|&text| accepts_html_formatting(&dom, text));
         texts
     };
@@ -1513,7 +1513,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 // createLink at a caret inserts the URL as the link's text.
                 let p = editing::insert_at(&mut dom, start, href.unwrap_or(""));
                 if p.0 == start.0 && p.1 > start.1 {
-                    let inserted = inline_texts(&dom, host, start, p);
+                    let inserted = inline_texts(page, &dom, host, start, p);
                     split_texts(&mut dom, inserted, start, p)
                 } else {
                     vec![p.0]
@@ -2367,7 +2367,7 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
         vec![start.0]
     } else {
         let texts = match editing::editing_host(&dom, start.0) {
-            Some(host) if editing::editing_host(&dom, end.0) == Some(host) => inline_texts(&dom, host, start, end),
+            Some(host) if editing::editing_host(&dom, end.0) == Some(host) => inline_texts(page, &dom, host, start, end),
             _ => texts_in(&dom, scope, start, end),
         };
         texts.into_iter()
