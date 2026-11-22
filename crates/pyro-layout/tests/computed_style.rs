@@ -500,6 +500,21 @@ fn sampled_intrinsic_block_height_uses_fixed_child_not_endpoint() {
 }
 
 #[test]
+fn sampled_discrete_keyword_uses_selected_endpoint_geometry() {
+    let page = Page::new(r#"<!doctype html><div style="width:150px;height:200px"><div id=live style="width:fit-content;height:stretch"><div style="width:100px;height:50px"></div></div></div><div id=sample style="width:auto;height:max-content"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, endpoint, selected) in [("width", "100px", "150px"), ("height", "200px", "50px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), endpoint);
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), selected);
+        assert_eq!(used(), endpoint);
+    }
+}
+
+#[test]
 fn sampled_keyword_endpoint_does_not_replace_intermediate_size() {
     let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="width:fit-content;height:auto"><div style="width:100px;height:50px"></div></div></div><div id=sample style="width:calc-size(fit-content,size * 0.5 + 100px);height:calc-size(auto,size * 0.5)"></div>"#);
     let dom = page.dom.borrow();
