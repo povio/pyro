@@ -798,6 +798,8 @@ impl FrameHost {
                 preloads: Default::default(),
                 refresh: Default::default(),
                 _owner_pin: Some(loader::ResourceNode { dom: self.dom.clone(), node }),
+                required_csp: None,
+                committing_required_csp: None,
             },
         );
         self.refresh_indices(parent);

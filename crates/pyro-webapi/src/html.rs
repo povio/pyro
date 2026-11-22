@@ -3221,6 +3221,8 @@ simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
     reflect_str!(def, "srcdoc", "srcdoc");
     reflect_str!(def, "name", "name");
     reflect_str!(def, "allow", "allow");
+    // CSP Embedded Enforcement: the policy the frame's documents must accept.
+    reflect_str!(def, "csp", "csp");
     reflect_str!(def, "width", "width");
     reflect_str!(def, "height", "height");
     reflect_enum!(def, "loading", "loading", LOADING);

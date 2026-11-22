@@ -437,6 +437,19 @@ impl ResourceLoader for NetLoader {
             }
             req.origin = request.frame_id.as_deref().and_then(|id| frame_origin(browser, request.page, id));
         }
+        // CSP Embedded Enforcement: a child frame's navigation sends the policy its frame
+        // requires (kept across redirects) and its response must accept or subsume it.
+        let required_csp = match (request.kind, request.frame_id.as_deref()) {
+            (ResourceKind::Iframe, Some(frame_id)) => {
+                crate::csp_embedded::requirement(browser, request.page, frame_id, &request.url)
+            }
+            _ => None,
+        };
+        if let Some(required) = &required_csp {
+            if let Ok(value) = pyro_net::http::HeaderValue::from_str(&required.policy) {
+                req.headers.insert(pyro_net::http::HeaderName::from_static("sec-required-csp"), value);
+            }
+        }
         // Resource Timing: an iframe navigation's entry goes to the parent,
         // so its TAO check runs against the parent's origin, not `origin`
         // (a POST's: the frame's own document).
@@ -508,6 +521,9 @@ impl ResourceLoader for NetLoader {
                 nosniff: false,
                 opaque: false,
             };
+            // A file answered here has no headers: nothing accepts or subsumes a required policy.
+            let verdict = required_csp.as_ref().map(|r| r.check(&resource.url, &pyro_net::http::HeaderMap::new()));
+            let resource = crate::csp_embedded::apply(verdict, resource);
             browser.scheduler().post(TaskSource::Networking, move |b| {
                 b.report_resource_delivery(
                     delivery_page,
@@ -515,7 +531,7 @@ impl ResourceLoader for NetLoader {
                     network_id,
                     pyro_net::NetworkDelivery { response: true, data_bytes: delivery_bytes, terminal: true },
                 );
-                b.fetch_ready(priority, id, Ok(resource));
+                b.fetch_ready(priority, id, resource);
             });
             return None;
         }
@@ -607,48 +623,56 @@ impl ResourceLoader for NetLoader {
                     }))
                 };
                 let result = match head.take() {
-                    Some(h) => Ok(Resource {
-                        timing: timing(&h),
-                        partial: None,
-                        opaque: h.kind == pyro_net::ResponseKind::Opaque,
-                        nosniff: h
-                            .headers
-                            .get("x-content-type-options")
-                            .and_then(|v| v.to_str().ok())
-                            .is_some_and(|v| v.split(',').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("nosniff"))),
-                        url: h.url.to_string(),
-                        status: h.status.as_u16(),
-                        mime: h.mime,
-                        charset: h.charset,
-                        content_disposition: h
-                            .headers
-                            .get(http::header::CONTENT_DISPOSITION)
-                            .and_then(|v| v.to_str().ok())
-                            .map(str::to_owned),
-                        header_csp: {
-                            let joined = |name: http::header::HeaderName| -> String {
-                                let values: Vec<&str> =
-                                    h.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
-                                values.join(",")
-                            };
-                            let enforce = joined(http::header::CONTENT_SECURITY_POLICY);
-                            let report_only = joined(http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY);
-                            (!enforce.is_empty() || !report_only.is_empty()).then(|| format!("{enforce}\n{report_only}"))
-                        },
-                        // Only a document honours it; other kinds skip the lookup.
-                        refresh: document
-                            .then(|| h.headers.get(http::header::REFRESH)?.to_str().ok().map(str::to_owned))
-                            .flatten(),
-                        content_language: document
-                            .then(|| h.headers.get(http::header::CONTENT_LANGUAGE)?.to_str().ok().map(str::to_owned))
-                            .flatten(),
-                        referrer_policy: pyro_net::ReferrerPolicy::from_header(
-                            h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
-                        ),
-                        sent_referrer: chain.as_ref().map(|c| c.header(&h.url).unwrap_or_default()),
-                        body: std::mem::take(&mut body).into(),
-                        immutable_local: false,
-                    }),
+                    Some(h) => {
+                        let verdict = required_csp.as_ref().map(|r| r.check(h.url.as_str(), &h.headers));
+                        crate::csp_embedded::apply(verdict, Resource {
+                            timing: timing(&h),
+                            partial: None,
+                            opaque: h.kind == pyro_net::ResponseKind::Opaque,
+                            nosniff: h
+                                .headers
+                                .get("x-content-type-options")
+                                .and_then(|v| v.to_str().ok())
+                                .is_some_and(|v| {
+                                    v.split(',').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("nosniff"))
+                                }),
+                            url: h.url.to_string(),
+                            status: h.status.as_u16(),
+                            mime: h.mime,
+                            charset: h.charset,
+                            content_disposition: h
+                                .headers
+                                .get(http::header::CONTENT_DISPOSITION)
+                                .and_then(|v| v.to_str().ok())
+                                .map(str::to_owned),
+                            header_csp: {
+                                let joined = |name: http::header::HeaderName| -> String {
+                                    let values: Vec<&str> =
+                                        h.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+                                    values.join(",")
+                                };
+                                let enforce = joined(http::header::CONTENT_SECURITY_POLICY);
+                                let report_only = joined(http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY);
+                                (!enforce.is_empty() || !report_only.is_empty())
+                                    .then(|| format!("{enforce}\n{report_only}"))
+                            },
+                            // Only a document honours it; other kinds skip the lookup.
+                            refresh: document
+                                .then(|| h.headers.get(http::header::REFRESH)?.to_str().ok().map(str::to_owned))
+                                .flatten(),
+                            content_language: document
+                                .then(|| {
+                                    h.headers.get(http::header::CONTENT_LANGUAGE)?.to_str().ok().map(str::to_owned)
+                                })
+                                .flatten(),
+                            referrer_policy: pyro_net::ReferrerPolicy::from_header(
+                                h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
+                            ),
+                            sent_referrer: chain.as_ref().map(|c| c.header(&h.url).unwrap_or_default()),
+                            body: std::mem::take(&mut body).into(),
+                            immutable_local: false,
+                        })
+                    }
                     None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
                 };
                 // Err: the browser thread has exited; nothing to deliver.
@@ -1352,6 +1376,12 @@ impl Browser {
             p.pending_loader = Some(loader_id.clone());
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
         }
+        // CSP Embedded Enforcement: the policy a child frame's document must accept, which it
+        // then requires of its own frames (the loader sends it and checks the response).
+        let required_csp = match (&frame_id, page.child) {
+            (Some(id), Some(_)) => crate::csp_embedded::requirement(self, page.page, id, &opts.url).map(|r| r.policy),
+            _ => None,
+        };
         let req = FetchRequest {
             parser_priority: false,
             credentials: None,
@@ -1422,6 +1452,9 @@ impl Browser {
                     Ok(resource) if (200..300).contains(&resource.status) || resource.status == 0 => {
                         let mut opts = opts;
                         opts.url = resource.url.clone();
+                        if let Some(mut p) = b.doc_mut(page) {
+                            p.committing_required_csp = required_csp;
+                        }
                         if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, history) {
                             b.navigation_failed(page, &opts, loader_id, e.to_string());
                         }
@@ -1430,6 +1463,9 @@ impl Browser {
                         // Error pages still commit in browsers; keep their body.
                         let mut opts = opts;
                         opts.url = resource.url.clone();
+                        if let Some(mut p) = b.doc_mut(page) {
+                            p.committing_required_csp = required_csp;
+                        }
                         if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, history) {
                             b.navigation_failed(page, &opts, loader_id, e.to_string());
                         }
@@ -1461,7 +1497,11 @@ impl Browser {
         history: HistoryHandling,
     ) {
         let new_window = page.child.is_none() && self.doc(page).is_some_and(|d| d.nav.is_first_blank());
-        if new_window && shows_error_document(&error) {
+        // A frame whose response its required policy blocked (CSP Embedded Enforcement) shows
+        // the error document, as Chrome does: it loads, and its opaque origin keeps the blocked
+        // document's origin out of reach.
+        let blocked_frame = page.child.is_some() && error == crate::csp_embedded::BLOCKED_ERROR;
+        if (new_window || blocked_frame) && shows_error_document(&error) {
             self.commit_error_document(page, opts, loader_id, error, history);
         } else {
             self.navigation_failed(page, &opts, loader_id, error);

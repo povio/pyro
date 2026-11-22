@@ -8,6 +8,7 @@
 
 mod bindings;
 pub mod clock;
+mod csp_embedded;
 mod focus;
 mod frames;
 mod images;
@@ -590,6 +591,12 @@ pub struct DocumentState {
     pub(crate) preloads: preload::Preloads,
     pub(crate) refresh: refresh::Refresh,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
+    /// CSP Embedded Enforcement: the policy the current document's navigation required (its
+    /// frame's `Sec-Required-CSP`), which bounds what its own child frames may require.
+    pub(crate) required_csp: Option<String>,
+    /// The required policy of the navigation about to commit, which `commit_document` makes
+    /// `required_csp` (a commit that did not set it, such as about:blank, leaves none).
+    pub(crate) committing_required_csp: Option<String>,
 }
 
 impl DocumentState {
@@ -1613,6 +1620,8 @@ impl Browser {
                 preloads: Default::default(),
                 refresh: Default::default(),
                 _owner_pin: None,
+                required_csp: None,
+                committing_required_csp: None,
             },
             session_storage,
             popup: None,
@@ -2228,6 +2237,8 @@ impl Browser {
             p.images = Default::default();
             p.preloads = Default::default();
             p.refresh = Default::default();
+            let required_csp = p.committing_required_csp.take();
+            p.required_csp = required_csp;
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             // What the commit replaces: nothing (a new frame's first
             // document) or the initial about:blank one as it was made; that
