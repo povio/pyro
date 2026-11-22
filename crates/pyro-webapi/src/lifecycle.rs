@@ -40,8 +40,29 @@ pub fn dom_content_loaded(page: &Rc<PageDom>, doc: NodeId) {
 /// update (HTML "flush autofocus candidates"), which the page may not have asked for yet.
 fn flush_autofocus(page: &Rc<PageDom>, _doc: NodeId) {
     if page.dom.borrow().has_autofocus_insertions() {
+        request_top_level_frames(page);
+    }
+}
+
+/// Asks for a rendering update of the top-level page(s) sharing `page`'s DOM, whose flush
+/// handles the autofocus candidates: a child frame's candidates join its top-level
+/// document's, whose page may be idle (no animation frame of its own pending).
+fn request_top_level_frames(page: &Rc<PageDom>) {
+    if !page.is_nested_frame() {
         if let Some(hooks) = page.hooks() {
             hooks.request_animation_frame();
+        }
+        return;
+    }
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(scope) = realm.scope() else { return };
+    for sibling in page.sibling_realms(&scope) {
+        let Ok(s) = sibling.scope() else { continue };
+        let Ok(other) = crate::target::page_of(&s) else { continue };
+        if Rc::ptr_eq(&other.dom, &page.dom) && !other.is_nested_frame() && !other.is_disposed() {
+            if let Some(hooks) = other.hooks() {
+                hooks.request_animation_frame();
+            }
         }
     }
 }
@@ -81,7 +102,15 @@ fn collect_autofocus_candidates(page: &Rc<PageDom>) {
 /// either way autofocus is then processed for good. An element in a `<dialog>` is left to
 /// the dialog's own focusing steps.
 pub fn flush_autofocus_candidates(page: &Rc<PageDom>) {
-    if page.is_disposed() || page.is_nested_frame() {
+    if page.is_disposed() {
+        return;
+    }
+    // A child frame's rendering update hands its document's new candidates to the top-level
+    // page's next one.
+    if page.is_nested_frame() {
+        if page.dom.borrow().has_autofocus_insertions() {
+            request_top_level_frames(page);
+        }
         return;
     }
     collect_autofocus_candidates(page);
