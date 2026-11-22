@@ -2393,6 +2393,26 @@ impl<'s> Scope<'s> {
         self.realm.engine.realm_for_global(context).map(|inner| Realm { inner })
     }
 
+    /// Whether `object` was created in a realm of this engine that is gone for
+    /// its embedder: disposed (calls into its functions throw "Execution
+    /// context was destroyed.") or lingering (its document is not fully
+    /// active). A Web IDL callback from such a realm is not run. `false` when
+    /// that cannot be told: without the global-context SPI, or for an object
+    /// of another engine. Runs no script.
+    pub fn object_realm_gone(&self, object: Object<'_>) -> bool {
+        let Some(get_context) = sys::spi::get().get_object_global_context else { return false };
+        if unsafe { sys::JSContextGetGroup(object.ctx) } != self.realm.engine.group() {
+            return false;
+        }
+        // SAFETY: object is live in this VM; reading its global runs no script.
+        let context = unsafe { get_context(object.raw) };
+        if context.is_null() || context == self.realm.ctx.get() {
+            return false;
+        }
+        // A disposed realm leaves the engine's map (RealmInner::dispose).
+        self.realm.engine.realm_for_global(context).is_none_or(|inner| inner.ctx.get().is_null() || inner.is_lingering())
+    }
+
     /// Tests for one of this engine's native wrappers/closures or a same-VM
     /// global object, without invoking getters, proxy traps, or other JS.
     /// Includes globals retained by another realm after their owner is disposed.
@@ -4131,5 +4151,29 @@ mod tests {
         }
         assert_eq!(retired(), 0, "the payloads outlived their realm's global");
         assert_eq!(engine.inner.member_payloads.borrow().len(), 0);
+    }
+
+    /// A function of a disposed realm is "gone" to every other realm; live
+    /// realms' functions, and the caller's own, are not.
+    #[test]
+    fn object_realm_gone_tells_disposed_realms_functions() {
+        if crate::sys::spi::get().get_object_global_context.is_none() {
+            return;
+        }
+        let engine = crate::Engine::new().unwrap();
+        let keep = engine.create_realm(Default::default()).unwrap();
+        let other = engine.create_realm(Default::default()).unwrap();
+        let f = other.scope().unwrap().eval("Function('')", None, 1).unwrap();
+        keep.scope().unwrap().global().set("foreign", f).unwrap();
+        let gone = |realm: &crate::Realm, src: &str| {
+            let s = realm.scope().unwrap();
+            let value = s.eval(src, None, 1).unwrap();
+            s.object_realm_gone(value.as_object().unwrap())
+        };
+        assert!(!gone(&keep, "foreign"));
+        assert!(!gone(&keep, "Function('')"));
+        other.dispose();
+        assert!(gone(&keep, "foreign"));
+        assert!(!gone(&keep, "Function('')"));
     }
 }

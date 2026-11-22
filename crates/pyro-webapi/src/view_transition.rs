@@ -94,7 +94,9 @@ impl Drop for Capture {
     }
 }
 
-fn admit(mut page: Rc<PageDom>, local_slots: usize) -> Option<Capture> {
+/// The top-level page above `page` and how many frames up it is, or `None` when a
+/// document on the way is detached or disposed (not fully active).
+fn top_page(mut page: Rc<PageDom>) -> Option<(Rc<PageDom>, usize)> {
     for depth in 0..64 {
         if page.is_detached() || page.is_disposed() { return None; }
         if page.hooks().is_some() {
@@ -104,15 +106,20 @@ fn admit(mut page: Rc<PageDom>, local_slots: usize) -> Option<Capture> {
                 crate::page::FrameContainer::Top => (),
             }
         }
-        let quota = page.transition_quota.borrow_mut().get_or_insert_with(Default::default).clone();
-        let mut used = quota.used.lock().unwrap();
-        let child = depth > 0;
-        if used.slots >= 16 || (child && (used.slots >= 12 || local_slots >= 4)) { return None; }
-        used.slots += 1;
-        drop(used);
-        return Some(Capture { reservation: Arc::new(Reservation { scope:true, child, quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None });
+        return Some((page, depth));
     }
     None
+}
+
+fn admit(page: Rc<PageDom>, local_slots: usize) -> Option<Capture> {
+    let (page, depth) = top_page(page)?;
+    let quota = page.transition_quota.borrow_mut().get_or_insert_with(Default::default).clone();
+    let mut used = quota.used.lock().unwrap();
+    let child = depth > 0;
+    if used.slots >= 16 || (child && (used.slots >= 12 || local_slots >= 4)) { return None; }
+    used.slots += 1;
+    drop(used);
+    Some(Capture { reservation: Arc::new(Reservation { scope:true, child, quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None })
 }
 
 pub(crate) static MODULE: crate::lazy_module::LazyModule = crate::lazy_module::LazyModule {
@@ -214,6 +221,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         Ok(s.boolean(success))
     })?;
     out.set_atom("sample",sample.value())?;
+    // Whether an update callback comes from a realm that is gone (a removed
+    // iframe's): it is not run and the transition aborts, as in Chrome.
+    let gone = s.function("callbackGone", |s, _, args| {
+        Ok(s.boolean(args.get(0).as_object().is_some_and(|callback| s.object_realm_gone(callback))))
+    })?;
+    out.set_atom("callbackGone", gone.value())?;
     Ok(out)
 }
 
@@ -291,7 +304,8 @@ pub(crate) fn active<'s>(s: &Scope<'s>, node: &crate::node::NodeData) -> JsResul
 }
 
 /// `startViewTransition(callbackOptions)` on `scope` (a document, or an element for a scoped
-/// transition), whose `transitionRoot` is `root`.
+/// transition), whose `transitionRoot` is `root`. A document that is not fully active (a
+/// removed iframe's) returns a transition skipped with AbortError.
 pub(crate) fn start<'s>(
     s: &Scope<'s>,
     page: &Rc<PageDom>,
@@ -299,5 +313,6 @@ pub(crate) fn start<'s>(
     root: Value<'s>,
     arg: Value<'s>,
 ) -> JsResult<Value<'s>> {
-    MODULE.helper(s, page, "start", &[scope, root, arg, s.boolean(page.is_hidden())])
+    let inactive = top_page(page.clone()).is_none();
+    MODULE.helper(s, page, "start", &[scope, root, arg, s.boolean(page.is_hidden()), s.boolean(inactive)])
 }
