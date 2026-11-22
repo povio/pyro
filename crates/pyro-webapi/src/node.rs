@@ -1244,10 +1244,15 @@ impl JsClass for ShadowRoot {
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
             |s, n, v| {
                 let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "ShadowRoot innerHTML", true)?;
-                let mut dom = n.page().dom.borrow_mut();
-                let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
-                let frag = pyro_dom::parse::parse_setter_fragment_in(&mut dom, host, n.id, &html).js()?;
-                dom.replace_all(n.id, Some(frag)).js()
+                crate::handlers::drain_inline_before_fragment(n.page());
+                {
+                    let mut dom = n.page().dom.borrow_mut();
+                    let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
+                    let frag = pyro_dom::parse::parse_setter_fragment_in(&mut dom, host, n.id, &html).js()?;
+                    dom.replace_all(n.id, Some(frag)).js()?;
+                }
+                crate::handlers::drain_inline_after_fragment(s, n.page());
+                Ok(())
             },
         );
     }
@@ -1577,7 +1582,10 @@ impl JsClass for Element {
             |s, n, v| {
                 let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element innerHTML", true)?;
                 crate::input::blur_before_removal(n.page(), n.id, true);
-                pyro_dom::parse::set_inner_html(&mut n.page().dom.borrow_mut(), n.id, &html).js()
+                crate::handlers::drain_inline_before_fragment(n.page());
+                pyro_dom::parse::set_inner_html(&mut n.page().dom.borrow_mut(), n.id, &html).js()?;
+                crate::handlers::drain_inline_after_fragment(s, n.page());
+                Ok(())
             },
         );
         def.accessor(

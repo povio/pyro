@@ -67,17 +67,13 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     module.as_object().ok_or_else(unavailable)
 }
 
-/// URL prefixes of the engine's own scripts in a stack trace (this module's
-/// and pyro-js's helpers).
-const INTERNAL_URLS: [&str; 2] = ["pyro://", "lightpanda://"];
-
 /// HTML "report an exception" with `value`. An Error carries the location it
 /// was made at; any other value (`subscriber.error("text")`) is reported at
 /// the script that is running, where a `throw` of it would have been.
 pub(crate) fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
     let mut details = JsException::from_value(s, value);
     if details.line.is_none() {
-        if let Some((url, line, column)) = running_script_location(s) {
+        if let Some((url, line, column)) = crate::csp::running_script_location(s) {
             details.url = Some(url);
             details.line = Some(line);
             details.column = Some(column);
@@ -88,21 +84,6 @@ pub(crate) fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
     if !crate::lifecycle::report_exception(s, &details) {
         crate::lifecycle::report_diagnostic(s, &JsError::thrown(Persistent::new(s, value)));
     }
-}
-
-/// `(url, line, column)` of the innermost frame of page script on the stack.
-fn running_script_location(s: &Scope<'_>) -> Option<(String, u32, u32)> {
-    let stack = s.current_stack().ok()?;
-    stack.lines().find_map(|frame| {
-        // JavaScriptCore: `function@url:line:column`.
-        let location = frame.split_once('@').map_or(frame, |(_, location)| location);
-        let (rest, column) = location.rsplit_once(':')?;
-        let (url, line) = rest.rsplit_once(':')?;
-        if url.is_empty() || INTERNAL_URLS.iter().any(|prefix| url.starts_with(prefix)) {
-            return None;
-        }
-        Some((url.to_owned(), line.parse().ok()?, column.parse().ok()?))
-    })
 }
 
 /// The engine's helpers of observable.js.
