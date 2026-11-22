@@ -2924,3 +2924,8 @@ Test `block_end_trims_self_collapsing_boxes_nested_at_the_bottom` (pyro-render).
 `src/stylo.rs`, `is_empty`: an element whose children are all comments or empty text nodes (an empty CDATA
 section, a script's `createTextNode('')`) matches `:empty` (Selectors 4 § 14.2, as Chrome). Upstream counted any
 child. WPT css/selectors/old-tests `css3-modsel-153`, `css3-modsel-d1b`.
+
+## `:lang()` against an ill-formed tag
+
+`src/lang.rs`, `range_matches`: a language tag with a subtag longer than 8 characters matches no range, as in
+Chrome (and pyro-dom's `lang_range_matches`). WPT css/selectors/selectors-4 `lang-singleton-subtag-matching`.

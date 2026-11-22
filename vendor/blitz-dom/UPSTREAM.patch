@@ -7239,7 +7239,7 @@ diff --git a/packages/blitz-dom/src/lang.rs b/packages/blitz-dom/src/lang.rs
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/lang.rs
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,148 @@
 +//! pyro: the language of an element, for `:lang()` (HTML, "The lang and xml:lang attributes"):
 +//! the nearest inclusive ancestor's `xml:lang`, or `lang` on an HTML, SVG or MathML element, else
 +//! the document's default language, which a `<meta http-equiv="content-language">` sets (else the
@@ -7324,6 +7324,11 @@ new file mode 100644
 +/// matches `en-US`).
 +pub(crate) fn range_matches(tag: &str, range: &str) -> bool {
 +    if range.is_empty() || tag.is_empty() {
++        return false;
++    }
++    // A subtag longer than 8 characters makes the tag ill-formed (BCP 47): Chrome matches no
++    // range against it (WPT css/selectors/selectors-4 `lang-singleton-subtag-matching`).
++    if tag.split('-').any(|t| t.len() > 8) {
 +        return false;
 +    }
 +    let mut tags = tag.split('-');
