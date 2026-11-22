@@ -182,6 +182,8 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRe
         }
         // The element may have been removed (or the document deactivated) in between.
         if granted && ready(&page, el) {
+            // The popovers that do not contain the element close first.
+            crate::popover::hide_popovers_for_fullscreen(&page, el);
             {
                 let mut stack = page.fullscreen_stack.borrow_mut();
                 stack.retain(|&e| e != el);

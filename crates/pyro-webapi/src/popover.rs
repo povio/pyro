@@ -440,6 +440,14 @@ fn hide_all_popovers_until(page: &Rc<PageDom>, endpoint: Option<NodeId>, focus_p
     close_stack_until(page, PopoverStack::Auto, auto_endpoint, focus_previous, fire_events);
 }
 
+/// Fullscreen "requestFullscreen()", as the element becomes fullscreen: the popovers that do
+/// not contain it close (the topmost auto popover ancestor's stack above it, or all of them),
+/// as for a modal dialog.
+pub(crate) fn hide_popovers_for_fullscreen(page: &Rc<PageDom>, el: NodeId) {
+    let until = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, None);
+    hide_all_popovers_until(page, until, false, true);
+}
+
 fn remove_watcher(page: &PageDom, el: NodeId) {
     page.popover.watchers.borrow_mut().retain(|&w| w != el);
 }
