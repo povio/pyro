@@ -8,10 +8,12 @@
 //! Window's `onerror` for an ErrorEvent, which cancels by returning `true`
 //! (HTML "process the event handler return value").
 //!
-//! Content attributes: `setAttribute('onx', body)` compiles `body` as
-//! `function (event) { body }` in the calling realm, with the document, form
-//! owner and element on its scope chain, and installs it as the IDL handler;
-//! `removeAttribute` clears it. Attributes from the HTML parser, `innerHTML`
+//! Content attributes: `setAttribute('onx', body)` installs `body` as the
+//! raw uncompiled handler, compiled as `function (event) { body }` (with the
+//! document, form owner and element on its scope chain) when the handler is
+//! first read or called; one that does not compile is reported then and
+//! leaves the handler null in its listener position. `removeAttribute`
+//! clears it. Attributes from the HTML parser, `innerHTML`
 //! and cloning are compiled in the main world before the next event dispatch,
 //! listener registration or handler access (`drain_inline`), so pages without
 //! them pay one emptiness check. Gap (documented): `onbeforeunload` return
@@ -198,47 +200,50 @@ where
     window_events!(window_reflecting_accessors!(def,));
 }
 
-/// `setAttribute('on<type>', body)` on an element: compiles and installs the
-/// handler; `None` (removeAttribute) clears it.
+/// `setAttribute('on<type>', body)` on an element: installs the handler as its raw body, compiled
+/// when first read or called (`target::resolve_raw_handler`); `None` (removeAttribute) clears it.
 pub(crate) fn content_attribute_changed(
     s: &Scope<'_>,
     target: &EventTargetData,
     ty: &'static str,
     body: Option<&str>,
 ) -> JsResult<()> {
-    if target.page.scripting_disabled() {
-        return set_event_handler(s, target, ty, s.null());
+    match body {
+        Some(body) if !target.page.scripting_disabled() => crate::target::set_raw_event_handler(s, target, ty, body),
+        _ => set_event_handler(s, target, ty, s.null()),
     }
-    let handler: Value<'_> = match body {
-        Some(body) => {
-            let ctor = s.global().get_atom("Function")?;
-            // HTML "getting the current value of the event handler": the
-            // document, form owner and element are on the scope chain.
-            let scoped =
-                format!("with(this.ownerDocument||document){{with(this.form||{{}}){{with(this){{{body}\n}}}}}}");
-            // An SVG element's handler names its argument `evt` (SVG 2, as browsers do).
-            let svg = {
-                let dom = target.page.dom.borrow();
-                dom.key_node(target.key).and_then(|n| dom.element(n).ok()).is_some_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg")
-            };
-            // The Window's onerror (OnErrorEventHandler, from <body onerror>)
-            // takes the five ErrorEvent arguments.
-            let params: &[&str] = if ty == "error" && target.page.is_window_key(target.key) {
-                &["event", "source", "lineno", "colno", "error"]
-            } else if svg {
-                &["evt"]
-            } else {
-                &["event"]
-            };
-            let mut args: Vec<Value<'_>> = params.iter().map(|p| s.string(p)).collect();
-            args.push(s.string(&scoped));
-            // The body passed the Trusted Types attribute check already.
-            let f = s.compile_exempt(|| ctor.as_object().expect("Function constructor").construct(&args))?;
-            f.value()
-        }
-        None => s.null(),
+}
+
+/// HTML "getting the current value of the event handler": compiles a content attribute's handler
+/// body as a function in `s`'s realm, with the document, form owner and element on its scope chain.
+pub(crate) fn compile_handler<'s>(
+    s: &Scope<'s>,
+    page: &crate::page::PageDom,
+    key: pyro_dom::events::TargetKey,
+    ty: &str,
+    body: &str,
+) -> JsResult<Value<'s>> {
+    let ctor = s.global().get_atom("Function")?;
+    let scoped = format!("with(this.ownerDocument||document){{with(this.form||{{}}){{with(this){{{body}\n}}}}}}");
+    // An SVG element's handler names its argument `evt` (SVG 2, as browsers do).
+    let svg = {
+        let dom = page.dom.borrow();
+        dom.key_node(key).and_then(|n| dom.element(n).ok()).is_some_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg")
     };
-    set_event_handler(s, target, ty, handler)
+    // The Window's onerror (OnErrorEventHandler, from <body onerror>)
+    // takes the five ErrorEvent arguments.
+    let params: &[&str] = if ty == "error" && page.is_window_key(key) {
+        &["event", "source", "lineno", "colno", "error"]
+    } else if svg {
+        &["evt"]
+    } else {
+        &["event"]
+    };
+    let mut args: Vec<Value<'_>> = params.iter().map(|p| s.string(p)).collect();
+    args.push(s.string(&scoped));
+    // The body passed the Trusted Types attribute check already.
+    let f = s.compile_exempt(|| ctor.as_object().expect("Function constructor").construct(&args))?;
+    Ok(f.value())
 }
 
 /// Whether `ty` on `<body>`/`<frameset>` targets the Window (HTML "Window-

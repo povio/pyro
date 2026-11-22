@@ -4713,6 +4713,27 @@ fn iframe_hooks_parser_flush_and_document_routing() {
     assert_eq!(state.calls.borrow().len(), 1);
 }
 
+/// HTML: an `on*` content attribute is compiled when the handler is first read or called, not
+/// when set; one that does not compile reads as null and keeps its listener's position.
+#[test]
+fn content_attribute_handlers_compile_lazily_and_keep_their_position() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "globalThis.log=[]; const d=document.createElement('div'); \
+             d.addEventListener('click',()=>log.push(1)); d.setAttribute('onclick','}'); \
+             d.addEventListener('click',()=>log.push(3)); const before=d.onclick; \
+             d.onclick=()=>log.push(2); d.dispatchEvent(new Event('click')); String(before)+':'+log.join()"
+        ),
+        "null:1,2,3"
+    );
+    assert_eq!(
+        eval(&e.main, "const f=document.createElement('div'); f.setAttribute('onclick','return 5'); f.onclick()"),
+        "5"
+    );
+}
+
 #[test]
 fn scripting_disabled_blocks_handlers_and_javascript_navigation_but_not_eval() {
     let e = env("<body><button id=b></button><a id=a href='javascript:globalThis.ran=99'>link</a>");

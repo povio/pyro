@@ -941,7 +941,39 @@ pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &'s
     if handler_slot(s, target, object, ty)?.is_none() {
         return Ok(s.null());
     }
-    Ok(handler_get(s, object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null()))
+    let value = handler_get(s, object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null());
+    resolve_raw_handler(s, &target.page, target.key, object, ty, value)
+}
+
+/// HTML "getting the current value of the event handler": a content attribute's handler is kept
+/// as its raw body (a string, which the IDL setter can never store) until first read or called,
+/// then compiled. A body that does not compile leaves the handler null, set before the error is
+/// reported (so a `<body onerror>` that fails is not itself called), and keeps its listener's
+/// position among the target's listeners.
+fn resolve_raw_handler<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    key: TargetKey,
+    object: Object<'_>,
+    ty: &str,
+    value: Value<'s>,
+) -> JsResult<Value<'s>> {
+    if !value.is_string() {
+        return Ok(value);
+    }
+    let body = dom_string(value)?;
+    let value_key = format!("__lpHandler_{ty}");
+    match crate::handlers::compile_handler(s, page, key, ty, &body) {
+        Ok(handler) => {
+            handler_set(s, object, &value_key, handler)?;
+            Ok(handler)
+        }
+        Err(error) => {
+            handler_set(s, object, &value_key, s.null())?;
+            s.report_exception(&error);
+            Ok(s.null())
+        }
+    }
 }
 
 /// The handler's listener slot while its native listener is still
@@ -963,8 +995,27 @@ pub(crate) fn set_event_handler(
     ty: &'static str,
     value: Value<'_>,
 ) -> JsResult<()> {
+    // EventHandler is [LegacyTreatNonObjectAsNull]: any object is kept
+    // (and registers the listener), a non-callable one is never called.
+    let value = if value.as_object().is_some() { value } else { s.null() };
+    store_event_handler(s, target, ty, value)
+}
+
+/// An `on*` content attribute's handler: its raw uncompiled body, compiled when the handler is
+/// first read or called ([`resolve_raw_handler`]).
+pub(crate) fn set_raw_event_handler(
+    s: &Scope<'_>,
+    target: &EventTargetData,
+    ty: &'static str,
+    body: &str,
+) -> JsResult<()> {
+    store_event_handler(s, target, ty, s.string(body))
+}
+
+/// Stores an event handler's value: null, a callback object, or a raw body (a string).
+fn store_event_handler(s: &Scope<'_>, target: &EventTargetData, ty: &'static str, value: Value<'_>) -> JsResult<()> {
     if let Some(window) = forwarded_target(target, ty) {
-        return set_event_handler(s, &window, ty, value);
+        return store_event_handler(s, &window, ty, value);
     }
     let ty = handler_event_type(ty);
     crate::handlers::drain_inline(&target.page);
@@ -972,9 +1023,6 @@ pub(crate) fn set_event_handler(
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
     let value_key = format!("__lpHandler_{ty}");
     let slot_key = format!("__lpHandlerSlot_{ty}");
-    // EventHandler is [LegacyTreatNonObjectAsNull]: any object is kept
-    // (and registers the listener), a non-callable one is never called.
-    let value = if value.as_object().is_some() { value } else { s.null() };
     let slot = handler_slot(s, target, object, ty)?;
     handler_set(s, object, &value_key, value)?;
     if let Some(slot) = slot {
@@ -994,9 +1042,19 @@ pub(crate) fn set_event_handler(
         return Ok(());
     }
     let window_error = ty == "error" && target.page.is_window_key(target.key);
+    // For compiling a raw handler when it is called; weak, as the page owns the realm that keeps
+    // this function.
+    let (page, target_key) = (Rc::downgrade(&target.page), target.key);
     let callback = s.function("eventHandler", move |s, this, args| {
         if let Some(object) = this.as_object() {
-            if let Some(handler) = handler_get(s, object, &value_key)?.and_then(|v| v.as_object()).filter(|h| h.is_function()) {
+            let mut handler = handler_get(s, object, &value_key)?;
+            if let Some(raw) = handler.filter(|v| v.is_string()) {
+                handler = match page.upgrade() {
+                    Some(page) => Some(resolve_raw_handler(s, &page, target_key, object, ty, raw)?),
+                    None => None,
+                };
+            }
+            if let Some(handler) = handler.and_then(|v| v.as_object()).filter(|h| h.is_function()) {
                 let event = args.get(0);
                 // HTML "special error event handling" (OnErrorEventHandler):
                 // the Window's `onerror` gets an ErrorEvent's fields as five
