@@ -1,7 +1,7 @@
 //! Per-realm text track interfaces and private hooks for the media loader.
 use std::rc::Rc;
 
-use pyro_js::{ClassDef, JsClass, JsError, JsResult, Object, Scope, Value};
+use pyro_js::{ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope, Value};
 
 use crate::lazy_module::{lazy_globals, LazyModule};
 use crate::node::{node_value, Node, NodeData};
@@ -49,8 +49,69 @@ pub(crate) fn element_helper<'s>(s: &Scope<'s>, n: &NodeData, name: &str, extra:
     helper(s, n.page(), name, &args)
 }
 
+/// Look up private slots in the object's creating realm; never use public
+/// properties or prototypes for cross-realm Web IDL brand checks.
+fn foreign_state<'s>(s: &Scope<'s>, kind: &str, value: Value<'s>) -> JsResult<Value<'s>> {
+    if !matches!(kind, "cue" | "region" | "track") {
+        return Ok(s.undefined());
+    }
+    let Some(realm) = value.as_object().and_then(|object| s.object_realm(object)) else { return Ok(s.undefined()) };
+    if realm.id() == s.realm_id() || realm.is_disposed() {
+        return Ok(s.undefined());
+    }
+    let home = realm.scope()?;
+    let page = crate::target::page_of(&home)?;
+    if page.origin_key() != crate::target::page_of(s)?.origin_key() {
+        return Ok(s.undefined());
+    }
+    let Some(module) = MODULE.existing(&home, &page)? else { return Ok(s.undefined()) };
+    let lookup = module.get_atom("localState")?.as_object().ok_or(JsError::ContextDestroyed)?;
+    let result = lookup.call(None, &[home.string(kind), home.rehome(value)])?;
+    Ok(Persistent::new(&home, result).get(s))
+}
+
+/// Only enter JS for an existing media wrapper and track module.
+fn on_media<T>(
+    page: &Rc<PageDom>,
+    node: pyro_dom::NodeId,
+    run: impl for<'s> FnOnce(&Scope<'s>, Object<'s>, Value<'s>) -> JsResult<T>,
+) -> Option<T> {
+    let realm = page.main_world_realm()?;
+    let s = realm.scope().ok()?;
+    let wrapper = page.node_wrapper(&s, node)?;
+    let module = MODULE.existing(&s, page).ok()??;
+    match run(&s, module, wrapper.value()) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            s.report_exception(&error);
+            None
+        }
+    }
+}
+
+pub(crate) fn playback(page: &Rc<PageDom>, node: pyro_dom::NodeId, normal: bool) -> bool {
+    on_media(page, node, |s, module, media| {
+        let callback = module.get_atom("advancePlayback")?.as_object().ok_or(JsError::ContextDestroyed)?;
+        Ok(callback.call(None, &[media, s.boolean(normal)])?.to_bool())
+    })
+    .unwrap_or(false)
+}
+
+/// A pause-on-exit cue is a media deadline even between periodic timeupdates.
+pub(crate) fn next_pause(page: &Rc<PageDom>, node: pyro_dom::NodeId, position: f64) -> f64 {
+    on_media(page, node, |s, module, media| {
+        let callback = module.get_atom("nextPause")?.as_object().ok_or(JsError::ContextDestroyed)?;
+        callback.call(None, &[media, s.number(position)])?.to_number()
+    })
+    .unwrap_or(f64::INFINITY)
+}
+
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let methods = s.object();
+    methods.set_atom(
+        "foreignState",
+        s.function("foreignState", |s, _, a| foreign_state(s, &a.get(0).to_string()?, a.get(1)))?.value(),
+    )?;
     methods.set_atom(
         "decodeCueText",
         s.function("decodeCueText", |s, _, a| {

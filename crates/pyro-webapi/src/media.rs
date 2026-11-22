@@ -598,7 +598,7 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
                 } else {
                     f64::INFINITY
                 };
-                plan = Some((remaining.min(TIMEUPDATE_MS), st.timer_serial));
+                plan = Some((remaining.min(TIMEUPDATE_MS), st.timer_serial, st.position, st.rate));
             }
         }
         (old, plan)
@@ -608,7 +608,9 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
         hooks.clear_media_timer(id);
     }
     want_frame(page, node);
-    let Some((delay, serial)) = plan else { return };
+    let Some((delay, serial, position, rate)) = plan else { return };
+    let cue_delay = (crate::text_tracks::next_pause(page, node, position) - position) / rate * 1000.;
+    let delay = delay.min(cue_delay);
     let weak = Rc::downgrade(page);
     let task: Box<dyn FnOnce()> = Box::new(move || {
         if let Some(page) = weak.upgrade() {
@@ -646,6 +648,10 @@ fn tick(page: &Rc<PageDom>, node: NodeId, serial: u32) {
         None => {}
         Some(true) => reached_end(page, node),
         Some(false) => {
+            if crate::text_tracks::playback(page, node, true) {
+                internal_pause(page, node);
+                return;
+            }
             crate::input::fire_simple(page, node, "timeupdate", false, false);
             sync_clock(page, node);
         }
@@ -669,6 +675,7 @@ fn reached_end(page: &Rc<PageDom>, node: NodeId) {
     if let (Some(id), Some(hooks)) = (timer, page.hooks()) {
         hooks.clear_media_timer(id);
     }
+    if crate::text_tracks::playback(page, node, true) { internal_pause(page, node); }
     if !fire(page, node, generation, "timeupdate") {
         return;
     }
@@ -703,6 +710,7 @@ fn seek(page: &Rc<PageDom>, node: NodeId, to: f64) {
         (st.seek_serial, st.generation)
     });
     sync_clock(page, node);
+    crate::text_tracks::playback(page, node, false);
     queue_event(page, node, generation, "seeking");
     // Every byte is at hand: the seek completes in the next task.
     queue(page, node, generation, move |page| {
@@ -725,6 +733,7 @@ fn notify_playing(page: &Rc<PageDom>, node: NodeId, generation: u32) {
     if !fire(page, node, generation, "playing") {
         return;
     }
+    crate::text_tracks::playback(page, node, false);
     let pending = with(page, node, |st| std::mem::take(&mut st.pending_play));
     resolve_all(pending);
 }

@@ -2,7 +2,7 @@
 (function(makeCues, parseFile) {
   'use strict';
   return function(native) {
-    const cueAPI = makeCues(native.decodeCueText);
+    const cueAPI = makeCues(native.decodeCueText, native.foreignState);
     const {cueOwner, setCueOwner, cueTiming, parsedCue, parsedRegion} = cueAPI;
     const token = Symbol(), tracks = new WeakMap(), lists = new WeakMap(), cueLists = new WeakMap();
     const elementTracks = new WeakMap(), mediaLists = new WeakMap(), eventTracks = new WeakMap();
@@ -13,7 +13,7 @@
     const unlisten = Function.prototype.call.bind(EventTarget.prototype.removeEventListener);
     const mediaTime = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime').get;
     const slot = (map, o) => {
-      const s = map.get(o);
+      const s = map.get(o) ?? (map === tracks ? native.foreignState('track',o) : undefined);
       if (!s) throw new TypeError('Illegal invocation');
       return s;
     };
@@ -26,7 +26,7 @@
         required(arguments.length);
         super(type, init);
         const track = init?.track ?? null;
-        if (track !== null && !tracks.has(track)) throw new TypeError('Expected a track');
+        if (track !== null && !tracks.has(track) && !native.foreignState('track',track)) throw new TypeError('Expected a track');
         eventTracks.set(this, track);
       }
       get track() {
@@ -59,6 +59,7 @@
       for (const c of s.cues) setCueOwner(c, null);
       s.cues = [];
       s.active = [];
+      s.previousCues.clear();
     }
     function updateSource(s) {
       if (!s.element) return;
@@ -115,7 +116,7 @@
     class TextTrack extends EventTarget {
       constructor(secret, s) {
         requireToken(secret); super(); tracks.set(this,s);
-        s.track = this; s.cues = []; s.active = [];
+        s.track = this; s.cues = []; s.active = []; s.previousCues = new Set();
         s.all = new TextTrackCueList(token,s,false);
         s.current = new TextTrackCueList(token,s,true);
       }
@@ -151,7 +152,7 @@
         const s=slot(tracks,this); required(arguments.length); updateSource(s);
         const owner=cueOwner(cue);
         if (owner === this) return;
-        if (owner) removeFrom(tracks.get(owner),cue);
+        if (owner) removeFrom(slot(tracks,owner),cue);
         setCueOwner(cue,this);
         s.cues.push(cue);
       }
@@ -176,26 +177,37 @@
     function updatePlayback(l, normal) {
       const now=mediaTime.call(l.media), prev=l.lastTime;
       l.lastTime=now;
-      for (const track of l.items) {
-        const s=tracks.get(track), next=s.mode === 'disabled' ? [] : active(s,now);
-        const events=[];
-        for (const cue of s.active) if (!next.includes(cue)) events.push([cueTiming(cue)[1],cue,'exit']);
-        for (const cue of next) if (!s.active.includes(cue)) events.push([cueTiming(cue)[0],cue,'enter']);
-        if (normal && s.mode !== 'disabled' && prev < now) {
-          for (const cue of sorted(s)) {
-            const [start,end]=cueTiming(cue);
-            if (start>prev && end<=now && !next.includes(cue) && !s.active.includes(cue))
-              events.push([start,cue,'enter'],[Math.max(start,end),cue,'exit']);
+      const events=[], affected=[];
+      let pause=false;
+      for (let trackIndex=0;trackIndex<l.items.length;trackIndex++) {
+        const track=l.items[trackIndex], s=tracks.get(track);
+        const ordered=sorted(s), next=s.mode==='disabled' ? [] : active(s,now);
+        const previous=s.active;
+        const count=events.length;
+        for (const cue of new Set([...ordered,...previous])) {
+          const [start,end,,pauseOnExit]=cueTiming(cue);
+          const was=previous.includes(cue), is=next.includes(cue);
+          const missed=normal && s.mode!=='disabled' && now>prev && start>=prev && start<=now &&
+            end<=now && !was && !is && s.previousCues.has(cue) && ordered.includes(cue);
+          const cueIndex=ordered.indexOf(cue);
+          if ((!was && is) || missed) events.push({time:start,trackIndex,cueIndex,cue,type:'enter'});
+          if ((was && !is) || missed) {
+            events.push({time:Math.max(start,end),trackIndex,cueIndex,cue,type:'exit'});
+            if (normal && pauseOnExit) pause=true;
           }
         }
         s.active=next;
-        if (events.length) {
-          events.sort((a,b)=>a[0]-b[0]);
-          for (const [,cue,type] of events) queue(cue,new E(type));
-          queue(track,new E('cuechange'));
-          if (s.element) queue(s.element,new E('cuechange'));
-        }
+        s.previousCues=new Set(ordered);
+        if (events.length!==count) affected.push(s);
       }
+      events.sort((a,b)=>a.time-b.time || a.trackIndex-b.trackIndex || a.cueIndex-b.cueIndex ||
+        (a.type===b.type ? 0 : a.type==='enter' ? -1 : 1));
+      for (const {cue,type} of events) queue(cue,new E(type));
+      for (const s of affected) {
+        queue(s.track,new E('cuechange'));
+        if (s.element) queue(s.element,new E('cuechange'));
+      }
+      return pause;
     }
     class TextTrackList extends EventTarget {
       constructor(secret,l) { requireToken(secret); super(); lists.set(this,l); }
@@ -211,8 +223,6 @@
       if (!list) {
         const l={media, items:[], script:[], lastTime:mediaTime.call(media)};
         list=new TextTrackList(token,l); mediaLists.set(media,list);
-        listen(media,'timeupdate',()=>updatePlayback(l,!media.seeking));
-        listen(media,'seeking',()=>updatePlayback(l,false));
       }
       const l=lists.get(list);
       const elements=native.children(media).map(elementTrack);
@@ -260,6 +270,29 @@
     }
     return {
       ...cueAPI,TextTrack,TextTrackList,TextTrackCueList,TrackEvent,syncMedia,addTextTrack,elementTrack,
+      localState(kind,obj) {return kind==='track' ? tracks.get(obj) : cueAPI.localState(kind,obj);},
+      advancePlayback(media,normal) {
+        const list=mediaLists.get(media);
+        return !!list && updatePlayback(lists.get(list),normal);
+      },
+      nextPause(media,position) {
+        const list=mediaLists.get(media);
+        let earliest=Infinity;
+        if (list) for (const track of lists.get(list).items) {
+          const s=tracks.get(track);
+          if (s.mode==='disabled') continue;
+          for (const cue of s.cues) {
+            const [start,end,,pause]=cueTiming(cue), boundary=Math.max(start,end);
+            if (pause && boundary>position && boundary<earliest) earliest=boundary;
+          }
+        }
+        return earliest;
+      },
+      resetResourceCues(el) {
+        const s=tracks.get(elementTrack(el));
+        s.src=attr(el,'src');
+        resetCues(s);
+      },
       trackMode(el) {return tracks.get(elementTrack(el)).mode;},
       clearCues(el) {const s=tracks.get(elementTrack(el)); updateSource(s);},
       loadText(el,text) {
