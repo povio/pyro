@@ -40196,7 +40196,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  /// The nodes themsleves, and their data.
  pub mod node;
-@@ -45,22 +48,50 @@
+@@ -45,22 +48,52 @@
  mod debug;
  mod events;
  mod font_metrics;
@@ -40216,6 +40216,8 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 +#[cfg(feature = "svg")]
 +pub use layout::shape_outside::{SvgRasterizer, set_svg_rasterizer};
  mod mutator;
++/// pyro: the size of an `<mspace>`, as presentational hints.
++mod mathml_space;
  mod query_selector;
  mod resolve;
 +pub use resolve::phase_profile;
@@ -40247,7 +40249,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  mod stylo_device;
  mod stylo_to_cursor_icon;
  mod stylo_to_kurbo;
-@@ -76,7 +107,7 @@
+@@ -76,7 +109,7 @@
      css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
  };
  pub use stylo_taffy::CopyStyleGetters;
@@ -40256,7 +40258,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  pub mod net;
  pub mod util;
-@@ -84,7 +115,7 @@
+@@ -84,7 +117,7 @@
  #[cfg(feature = "accessibility")]
  mod accessibility;
  
@@ -40265,7 +40267,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  pub use crate::layout::replaced::IntrinsicSizes;
  pub use crate::layout::text_transform::{full_size_kana, full_width};
  #[cfg(feature = "custom-widget")]
-@@ -93,10 +124,18 @@
+@@ -93,10 +126,18 @@
  pub use blitz_traits::node_id::NodeId;
  // Re-export taffy: it is part of blitz-dom's public API (e.g. `Node::style`,
  // `Node::final_layout`)
@@ -40286,6 +40288,100 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  pub use markup5ever::{
      LocalName, Namespace, NamespaceStaticSet, Prefix, PrefixStaticSet, QualName, local_name,
      namespace_prefix, namespace_url, ns,
+diff --git a/packages/blitz-dom/src/mathml_space.rs b/packages/blitz-dom/src/mathml_space.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/mathml_space.rs
+@@ -0,0 +1,89 @@
++//! pyro: the size of an `<mspace>` (MathML Core 3.2.4), as presentational hints.
++//!
++//! pyro lays no MathML out (MathML content flows as inline boxes), so an `<mspace>` is an
++//! inline-block whose `width` attribute sets its `width`, and whose `height` and `depth`
++//! attributes set its `height` (height + depth), lowered by `depth` so that `height` lies above
++//! the baseline and `depth` below it. Each attribute must be a non-negative CSS `<length>` (no
++//! percentage, no unitless number): an invalid, negative or percentage value counts as absent,
++//! which gives the same 0 as MathML Core's clamp. Author styles (`display`, `width`, ...) override
++//! the hints, as for every presentational hint.
++
++use markup5ever::{local_name, ns};
++use style::properties::{PropertyDeclaration, PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
++use style::stylesheets::{CssRuleType, Origin};
++use style_traits::ParsingMode;
++
++use crate::node::ElementData;
++
++/// The declarations an `<mspace>`'s attributes map to, or none for any other element.
++pub(crate) fn hints(elem: &ElementData) -> Vec<PropertyDeclaration> {
++    if elem.name.ns != ns!(mathml) || elem.name.local != local_name!("mspace") {
++        return Vec::new();
++    }
++    let length = |name: markup5ever::LocalName| elem.attr(name).map(str::trim).filter(|value| is_length(value));
++    let width = length(local_name!("width"));
++    let height = length(local_name!("height"));
++    let depth = length(local_name!("depth"));
++
++    let mut declarations = parse("display", "inline-block");
++    if let Some(width) = width {
++        declarations.extend(parse("width", width));
++    }
++    let block_size = match (height, depth) {
++        (Some(height), Some(depth)) => Some(format!("calc({height} + {depth})")),
++        (Some(size), None) | (None, Some(size)) => Some(size.to_owned()),
++        (None, None) => None,
++    };
++    if let Some(block_size) = block_size {
++        declarations.extend(parse("height", &block_size));
++    }
++    // An inline-block without line boxes has its baseline at its bottom edge.
++    if let Some(depth) = depth {
++        declarations.extend(parse("vertical-align", &format!("calc(0px - {depth})")));
++    }
++    declarations
++}
++
++/// Whether `value` is a non-negative CSS `<length>`.
++fn is_length(value: &str) -> bool {
++    use style::parser::ParserContext;
++    use style::values::specified::Length;
++
++    let url_data = crate::url::DocumentUrl::default().url_extra_data();
++    let context = ParserContext::new(
++        Origin::Author,
++        &url_data,
++        Some(CssRuleType::Style),
++        ParsingMode::DEFAULT,
++        style::context::QuirksMode::NoQuirks,
++        Default::default(),
++        None,
++        None,
++        Default::default(),
++    );
++    let mut parser = cssparser::Parser::new(value);
++    parser.parse_entirely(|input| Length::parse_non_negative(&context, input)).is_ok()
++}
++
++/// `value` parsed as the CSS `property`'s value: its declarations, or none.
++fn parse(property: &str, value: &str) -> Vec<PropertyDeclaration> {
++    let Ok(property) = PropertyId::parse_enabled_for_all_content(property) else {
++        return Vec::new();
++    };
++    let mut declarations = SourcePropertyDeclaration::default();
++    let parsed = parse_one_declaration_into(
++        &mut declarations,
++        property,
++        value,
++        Origin::Author,
++        &crate::url::DocumentUrl::default().url_extra_data(),
++        None,
++        ParsingMode::DEFAULT,
++        style::context::QuirksMode::NoQuirks,
++        CssRuleType::Style,
++    );
++    match parsed {
++        Ok(()) => declarations.drain().declarations.collect(),
++        Err(_) => Vec::new(),
++    }
++}
 diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.rs
 --- a/packages/blitz-dom/src/mutator.rs
 +++ b/packages/blitz-dom/src/mutator.rs
@@ -56747,7 +56843,19 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1938,28 @@
+@@ -1092,6 +1930,11 @@
+                 attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
+             });
+ 
++        // pyro: an `<mspace>`'s width, height and depth attributes (`mathml_space`).
++        for declaration in crate::mathml_space::hints(elem) {
++            push_style(declaration);
++        }
++
+         // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
+         let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
+         let mut lang = None;
+@@ -1100,6 +1943,28 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -56776,7 +56884,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +1985,42 @@
+@@ -1125,12 +1990,42 @@
                  }
              }
  
@@ -56819,7 +56927,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1164,7 +2054,7 @@
+@@ -1164,7 +2059,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -56828,7 +56936,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2160,9 @@
+@@ -1270,7 +2165,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -56839,7 +56947,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2250,16 @@
+@@ -1358,6 +2255,16 @@
                  }
              }
  
@@ -56856,7 +56964,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2275,59 @@
+@@ -1373,148 +2280,59 @@
              }
          }
  
@@ -57044,7 +57152,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2340,41 @@
+@@ -1527,6 +2345,41 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -57086,7 +57194,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2382,206 @@
+@@ -1534,11 +2387,206 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -57293,7 +57401,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2589,259 @@
+@@ -1546,14 +2594,259 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -57553,7 +57661,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2885,12 @@
+@@ -1597,6 +2890,12 @@
      }
  }
  
@@ -57566,7 +57674,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2963,41 @@
+@@ -1669,12 +2968,41 @@
                      .push(pe_node_id);
              }
          }
@@ -57608,7 +57716,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3012,46 @@
+@@ -1689,24 +3017,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -57663,7 +57771,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3082,842 @@
+@@ -1737,3 +3087,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

@@ -1930,6 +1930,11 @@ impl Node {
                 attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
             });
 
+        // pyro: an `<mspace>`'s width, height and depth attributes (`mathml_space`).
+        for declaration in crate::mathml_space::hints(elem) {
+            push_style(declaration);
+        }
+
         // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
         let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
         let mut lang = None;
