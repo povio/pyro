@@ -15,7 +15,6 @@
   const typeOfView = getOwnPropertyDescriptor(typed, Symbol.toStringTag).get;
   const getReader = ReadableStream.prototype.getReader;
   const readerRead = ReadableStreamDefaultReader.prototype.read;
-  const readerCancel = ReadableStreamDefaultReader.prototype.cancel;
   const byteLength = value => apply(lengthOf, value, []);
   const invalid = () => new DE('The image decoder is closed or has no selected track.', 'InvalidStateError');
   const aborted = () => new DE('Image decoding was aborted.', 'AbortError');
@@ -76,10 +75,9 @@
     state.track = null;
     state.selected = false;
     state.source.close();
-    if (!state.complete) {
-      state.completed.reject(reason);
-      if (state.reader) apply(readerCancel, state.reader, [reason]).catch(() => {});
-    }
+    if (!state.complete) state.completed.reject(reason);
+    // Close releases decoder resources; it does not cancel the caller's stream.
+    // An outstanding read observes closed before appending any further data.
     state.reader = null;
   }
 
