@@ -30889,7 +30889,7 @@ diff --git a/packages/blitz-dom/src/layout/scroll_markers.rs b/packages/blitz-do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/scroll_markers.rs
-@@ -0,0 +1,1641 @@
+@@ -0,0 +1,1682 @@
 +//! pyro: CSS Overflow 5's scroll markers and scroll buttons: the boxes of `::scroll-marker-group`,
 +//! `::scroll-marker` and `::scroll-button()`, and `:target-current`.
 +//!
@@ -32239,6 +32239,47 @@ new file mode 100644
 +            }
 +        }
 +        None
++    }
++
++    /// pyro: the `::scroll-button()` of `owner` hit at the document point (`x`, `y`), by the
++    /// painted hit test (`hit`: stacking order, clips, `visibility` and `pointer-events` as for any
++    /// box): the physical direction it scrolls (`(dx, dy)`, each -1, 0 or 1) and whether it is
++    /// enabled (`owner` can scroll that way, `can_scroll_towards`). The hit box must be the button
++    /// or inside it (its text): one of `owner`'s own boxes or a child's covering the button is no
++    /// button hit. Nothing is hit-tested for an element without buttons. CSS Overflow 5 § 2.2: a
++    /// button's activation scrolls its originating element by a page in its direction.
++    pub fn scroll_button_hit(&mut self, owner: NodeId, x: f32, y: f32) -> Option<((i8, i8), bool)> {
++        use style::logical_geometry::PhysicalSide;
++        let buttons = self.nodes.get(owner)?.scroll_pseudos()?.buttons;
++        if buttons.iter().all(Option::is_none) {
++            return None;
++        }
++        let hit = self.hit(x, y)?;
++        // From the hit box up to `owner`: a button's box is a child of its originating element.
++        let mut id = hit.node_id;
++        let direction = loop {
++            if id == owner {
++                return None;
++            }
++            if let Some(direction) = buttons.iter().position(|&button| button == Some(id)) {
++                break direction;
++            }
++            id = self.nodes.get(id)?.parent?;
++        };
++        let wm = self.nodes[owner].primary_styles()?.writing_mode;
++        let side = match direction {
++            0 => wm.block_start_physical_side(),
++            1 => wm.inline_start_physical_side(),
++            2 => wm.inline_end_physical_side(),
++            _ => wm.block_end_physical_side(),
++        };
++        let delta = match side {
++            PhysicalSide::Top => (0, -1),
++            PhysicalSide::Bottom => (0, 1),
++            PhysicalSide::Left => (-1, 0),
++            PhysicalSide::Right => (1, 0),
++        };
++        Some((delta, self.can_scroll_towards(owner, direction as u8)))
 +    }
 +
 +    /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.

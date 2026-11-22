@@ -914,6 +914,12 @@ pub trait GeometrySource {
     fn scroll_marker_at(&self, _x: f64, _y: f64) -> Option<(u64, Option<u32>)> {
         None
     }
+    /// pyro: the `::scroll-button()` of the element `owner` that the painted hit test finds at the
+    /// client point (`x`, `y`), as [`Self::generated_hit`]: the physical direction it scrolls
+    /// (`(dx, dy)`, each -1, 0 or 1) and whether it is enabled (`owner` can still scroll that way).
+    fn scroll_button_hit(&self, _owner: u64, _x: f64, _y: f64) -> Option<((i8, i8), bool)> {
+        None
+    }
     /// pyro: whether an element was ever styled with a `scroll-snap-type`, as of the last sync
     /// (no snapping to look for otherwise).
     fn uses_scroll_snap(&self) -> bool {

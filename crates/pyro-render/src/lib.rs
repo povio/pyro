@@ -1114,6 +1114,16 @@ impl Renderer {
         Some((m.key_of(id)?, column))
     }
 
+    /// pyro: the `::scroll-button()` of the element `owner` that the painted hit test finds at the
+    /// client point (`x`, `y`) of `page` (as [`Self::generated_hit`]): the physical direction it
+    /// scrolls and whether it is enabled (blitz-dom `BaseDocument::scroll_button_hit`).
+    pub fn scroll_button_hit(&mut self, page: u64, owner: u64, x: f64, y: f64) -> Option<((i8, i8), bool)> {
+        let mirror = self.mirrors.get_mut(&page)?;
+        let owner = mirror.node(owner)?;
+        let scroll = mirror.doc.viewport_scroll();
+        mirror.doc.scroll_button_hit(owner, (x + scroll.x) as f32, (y + scroll.y) as f32)
+    }
+
     /// pyro: whether an element of the page's document was ever styled with a `scroll-snap-type`.
     pub fn uses_scroll_snap(&self, page: u64) -> bool {
         self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_snap())
