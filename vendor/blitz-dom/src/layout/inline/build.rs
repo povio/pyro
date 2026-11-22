@@ -1367,8 +1367,9 @@ fn build_inline_layout_with(
                             if let Some(computed) = node.primary_styles() {
                                 style.text_box_trim = crate::layout::text_box::span_trim(&computed);
                                 // pyro: an inline bidi isolate breaks shaping at its edges (CSS
-                                // Text 3 § 7.3). A `<ruby>` (an inline box here, which the UA
-                                // sheet isolates) lays its bases out as one text.
+                                // Text 3 § 7.3). A `<ruby>` (an inline box here; an author may
+                                // isolate it, as the UA sheet's `rb` and `rtc` are) lays its bases out
+                                // as one text.
                                 use style::computed_values::unicode_bidi::T as UnicodeBidi;
                                 // pyro: CSS Text 4 `wrap-inside: avoid` on it and the inline boxes around
                                 // it in this inline formatting context.

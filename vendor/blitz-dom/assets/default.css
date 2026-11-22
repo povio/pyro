@@ -56,7 +56,11 @@ bdi:dir(rtl) {
     direction: rtl;
 }
 
-[dir] {
+/* pyro: only the three valid values isolate (HTML § 15.3.5): an invalid dir
+   keeps the element's own default, as in Chrome. */
+[dir="ltr" i],
+[dir="rtl" i],
+[dir="auto" i] {
     unicode-bidi: isolate;
 }
 
@@ -439,13 +443,15 @@ source {
  * inherited value) to the transformed element."
  *
  * and the rules in http://dev.w3.org/html5/spec/rendering.html#rendering
+ *
+ * pyro: the HTML spec's list (§ 15.3.5), as Chrome computes it: html, body and
+ * fieldset are not isolated.
  */
 
 address,
 article,
 aside,
 blockquote,
-body,
 caption,
 center,
 col,
@@ -455,7 +461,6 @@ dir,
 div,
 dl,
 dt,
-fieldset,
 figcaption,
 figure,
 footer,
@@ -469,7 +474,6 @@ h6,
 header,
 hgroup,
 hr,
-html,
 legend,
 li,
 listing,
@@ -502,7 +506,7 @@ output {
     unicode-bidi: isolate;
 }
 
-/* pyro: `bdo[dir]` outweighs the `[dir]` rules above, as Gecko's
+/* pyro: `bdo[dir]` outweighs the `[dir=…]` rules above, as Gecko's
    "bdo:-moz-has-dir-attr" does; Stylo does not parse that pseudo-class, which
    dropped the whole rule (and the next one). */
 bdo,
@@ -510,6 +514,7 @@ bdo[dir] {
     unicode-bidi: isolate-override;
 }
 
+input[dir="auto" i]:is([type="search" i], [type="tel" i], [type="url" i], [type="email" i]),
 textarea[dir="auto" i],
 pre[dir="auto" i] {
     unicode-bidi: plaintext;
@@ -1415,9 +1420,9 @@ rtc>rt {
     font-size: unset;
 }
 
-ruby,
+/* pyro: not ruby or rt, which Chrome leaves `normal` (WPT html/rendering
+   unicode-bidi-ua-rules). */
 rb,
-rt,
 rtc {
     unicode-bidi: isolate;
 }
