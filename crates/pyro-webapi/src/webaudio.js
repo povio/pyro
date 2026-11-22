@@ -2144,7 +2144,8 @@
       if (arguments.length < 1) return PromiseC.reject(new TypeErrorC("Failed to execute 'suspend' on 'OfflineAudioContext': 1 argument required, but only 0 present."));
       const t = +suspendTime;
       if (!(t >= 0)) return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': negative suspend time (${t}) is not allowed`, 'InvalidStateError'));
-      const frame = floor(t * c.rate / QUANTUM) * QUANTUM;
+      const lower = floor(t * c.rate / QUANTUM) * QUANTUM;
+      const frame = t > lower / c.rate ? lower + QUANTUM : lower;
       if (frame >= c.length) {
         return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': cannot schedule a suspend at frame ${frame} (${t} seconds) because it is greater than or equal to the total render duration of ${c.length} frames`, 'InvalidStateError'));
       }
