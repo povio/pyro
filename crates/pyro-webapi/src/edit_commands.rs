@@ -1449,6 +1449,10 @@ fn ancestor_named(dom: &Dom, node: NodeId, host: NodeId, names: &[&str]) -> Opti
     ancestor_format(dom, node, host, names, false)
 }
 
+fn numeric_bold_weight(value: &str) -> bool {
+    value.parse::<f64>().is_ok_and(|weight| (600.0..=1000.0).contains(&weight))
+}
+
 fn ancestor_format(dom: &Dom, node: NodeId, host: NodeId, names: &[&str], removing: bool) -> Option<NodeId> {
     let mut cur = dom.parent_element(node).ok().flatten();
     while let Some(c) = cur {
@@ -1466,6 +1470,7 @@ fn ancestor_format(dom: &Dom, node: NodeId, host: NodeId, names: &[&str], removi
                 names.iter().filter_map(|tag| inline_css(tag)).any(|(property, value)| {
                     declaration.name.eq_ignore_ascii_case(property)
                             && (declaration.value.eq_ignore_ascii_case(value)
+                                || removing && property == "font-weight" && numeric_bold_weight(&declaration.value)
                                 || removing && property == "font-style" && declaration.value.eq_ignore_ascii_case("oblique"))
                 })
             });
@@ -1917,7 +1922,7 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
             false
         };
         match command {
-            "bold" => value("font-weight").parse::<f64>().is_ok_and(|w| w >= 600.0),
+            "bold" => numeric_bold_weight(&value("font-weight")),
             "italic" => {
                 matches!(value("font-style").as_str(), s if s.starts_with("italic") || s.starts_with("oblique"))
             }

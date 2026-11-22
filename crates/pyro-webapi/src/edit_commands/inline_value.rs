@@ -542,7 +542,7 @@ pub(crate) fn format_typed(
         let active = if matches!(tag, "sub" | "sup") {
             script_carrier(page, dom, end.0, host).is_some_and(|(_, active)| active == tag)
         } else if tag == "b" {
-            layout.computed_style_value(dom, parent, "font-weight").parse::<f64>().is_ok_and(|w| w >= 600.0)
+            super::numeric_bold_weight(&layout.computed_style_value(dom, parent, "font-weight"))
         } else {
             let style = layout.computed_style_value(dom, parent, "font-style");
             style.starts_with("italic") || style.starts_with("oblique")
