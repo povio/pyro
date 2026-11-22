@@ -1519,7 +1519,8 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 (restored_format_point(page, &dom, host, (first, 0)),
                  restored_format_point(page, &dom, host, (last, editing::len(&dom, last))))
             };
-            if reversed { editing::set_selection(page, end, start); }
+            if start == end && !collapsed { editing::set_adjusted_caret(page, start, reversed); }
+            else if reversed { editing::set_selection(page, end, start); }
             else { editing::set_selection(page, start, end); }
         } else {
             select_texts(page, &texts, reversed);

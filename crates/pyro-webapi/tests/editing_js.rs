@@ -324,8 +324,9 @@ fn formatting_svg_text_restores_a_visible_caret() {
     let e = env("<body><div id=ed contenteditable>left<svg><text id=label>abcd</text></svg>right</div></body>");
     let r = &e.main;
     eval(r, "ed.focus(); const original=ed.innerHTML, t=label.firstChild, s=getSelection(); s.setBaseAndExtent(t,3,t,1); document.execCommand('strikeThrough')");
-    assert_eq!(eval(r, "[label.innerHTML,s.isCollapsed,s.anchorNode===t,s.anchorOffset,document.queryCommandState('strikeThrough')].join('|')"), "a<strike>bc</strike>d|true|true|1|false");
+    assert_eq!(eval(r, "[label.innerHTML,s.isCollapsed,s.direction,s.anchorNode===t,s.anchorOffset,document.queryCommandState('strikeThrough')].join('|')"), "a<strike>bc</strike>d|true|backward|true|1|false");
     assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+    assert_eq!(eval(r, "s.collapse(label.firstChild,0); s.direction"), "none");
 }
 
 #[test]

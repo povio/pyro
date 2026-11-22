@@ -934,7 +934,11 @@ impl JsClass for Selection {
         def.getter("direction", |s, sel| {
             Ok(s.string(match editing::selection(&sel.page) {
                 None => "none",
-                Some((a, f)) if a == f => "none",
+                Some((a, f)) if a == f => match sel.page.selection.borrow().as_ref().and_then(|s| s.retained_backward) {
+                    Some(true) => "backward",
+                    Some(false) => "forward",
+                    None => "none",
+                },
                 Some((a, f)) if composed_order(&sel.page.dom.borrow(), a, f)? <= 0 => "forward",
                 Some(_) => "backward",
             }))
