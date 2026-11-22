@@ -1731,7 +1731,10 @@ impl JsClass for WorkerNavigator {
         def.getter("appCodeName", |s, _ua| Ok(s.string("Mozilla")));
         def.getter("appName", |s, _ua| Ok(s.string("Netscape")));
         def.getter("product", |s, _ua| Ok(s.string("Gecko")));
-        def.getter("platform", |s, _ua| Ok(s.string(&crate::window::platform(&crate::target::page_of(s)?))));
+        def.getter("platform", |s, _ua| {
+            let page = crate::target::page_of(s)?;
+            Ok(s.string(&crate::window::platform(&page)))
+        });
         def.getter("hardwareConcurrency", |s, _ua| Ok(s.number(4.0)));
         def.getter("onLine", |s, _ua| Ok(s.boolean(true)));
         def.getter("language", |s, _ua| Ok(s.string("en-US")));
