@@ -101,6 +101,11 @@ pub(crate) fn inherited_policies(page: &PageDom) -> Vec<pyro_dom::CspPolicy> {
     page.dom.borrow().csp_policies(page.document()).to_vec()
 }
 
+/// Whether `page`'s document has a CSP policy (a cheap test before capturing a source location).
+pub(crate) fn has_policies(page: &PageDom) -> bool {
+    !page.dom.borrow().csp_policies(page.document()).is_empty()
+}
+
 /// The pre-request check of `request` against `page`'s CSP list (CSP3 "Should request be
 /// blocked by Content Security Policy?"). Its violations are reported at `target` (an element of
 /// the document), else the document. `Ok` carries the guard the request should carry for its
@@ -156,8 +161,23 @@ pub fn inline_allowed_in(
     source: &str,
     target: Option<NodeId>,
 ) -> bool {
+    inline_allowed_in_at(page, list, kind, nonce, source, target, None)
+}
+
+/// [`inline_allowed_in`] with the violations located at `location` (the script that navigated
+/// to the `javascript:` URL, captured when it did).
+pub fn inline_allowed_in_at(
+    page: &Rc<PageDom>,
+    list: Option<&PolicyList>,
+    kind: InlineKind,
+    nonce: &str,
+    source: &str,
+    target: Option<NodeId>,
+    location: Option<&SourceLocation>,
+) -> bool {
     let Some(list) = list else { return true };
-    let outcome = list.inline_check(kind, nonce, source);
+    let mut outcome = list.inline_check(kind, nonce, source);
+    locate(&mut outcome.violations, location);
     report(page, outcome.violations, target);
     !outcome.blocked
 }
@@ -168,29 +188,152 @@ pub fn inline_allowed_in(
 pub struct NavigationInitiator {
     pub page: Rc<PageDom>,
     pub list: Option<Arc<PolicyList>>,
+    /// Where the script that navigated was when it did ([`NavigationInitiator::at`]); `None`
+    /// without one: a blocked URL's violation is then unlocated.
+    pub location: Option<SourceLocation>,
 }
 
 impl NavigationInitiator {
     /// `page`'s policies, now.
     pub fn of(page: &Rc<PageDom>) -> NavigationInitiator {
-        NavigationInitiator { page: page.clone(), list: policy_list(page) }
+        NavigationInitiator { page: page.clone(), list: policy_list(page), location: None }
+    }
+
+    /// This initiator, its violations located at the page script running in `s` now (read only
+    /// when it has a policy).
+    pub fn at(mut self, s: &Scope<'_>) -> NavigationInitiator {
+        if self.list.is_some() {
+            self.location = SourceLocation::running(s);
+        }
+        self
     }
 
     /// CSP3 for a `javascript:` navigation (`url`, the whole URL, is what a hash-source with
     /// 'unsafe-hashes' matches): `script-src-elem` of the initiator's policies. Whether its
     /// script may run.
     pub fn allows_javascript_url(&self, url: &str) -> bool {
-        inline_allowed_in(&self.page, self.list.as_deref(), InlineKind::Navigation, "", url, None)
+        let (list, location) = (self.list.as_deref(), self.location.as_ref());
+        inline_allowed_in_at(&self.page, list, InlineKind::Navigation, "", url, None, location)
     }
 }
 
 /// CSP3 "EnsureCSPDoesNotBlockStringCompilation" for `page`: `eval`, `Function` (`source`: the
 /// compiled string). Violations at the document. Whether it may compile.
 pub fn eval_allowed(page: &Rc<PageDom>, source: &str) -> bool {
+    eval_allowed_at(page, source, None)
+}
+
+/// [`eval_allowed`] with the violations located at `location` (the script that called `eval`
+/// or `Function`).
+pub fn eval_allowed_at(page: &Rc<PageDom>, source: &str, location: Option<&SourceLocation>) -> bool {
     let Some(list) = policy_list(page) else { return true };
-    let outcome = list.eval_check(source);
+    let mut outcome = list.eval_check(source);
+    locate(&mut outcome.violations, location);
     report(page, outcome.violations, None);
     !outcome.blocked
+}
+
+/// Where a violation happened (CSP3 violation's source file, line number and column number):
+/// the innermost frame of page script on the stack when the violating operation ran. The URL is
+/// already stripped for reports ([`strip_source_file`]). Only ever read off a real stack: a
+/// violation with no script on the stack (a parser-inserted handler or script) has none, and
+/// reports an empty `sourceFile` with line and column 0.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceLocation {
+    pub source_file: String,
+    /// 1-based, as the engine's stack reports them.
+    pub line: u32,
+    pub column: u32,
+}
+
+impl SourceLocation {
+    /// The location of the page script running in `s`, `None` when none is on the stack (only
+    /// engine-internal frames, or a stack the engine could not give).
+    pub fn running(s: &Scope<'_>) -> Option<SourceLocation> {
+        let (url, line, column) = running_script_location(s)?;
+        Some(SourceLocation { source_file: strip_source_file(&url), line, column })
+    }
+
+    /// Fills `violation`'s source file, line and column.
+    pub fn apply(&self, violation: &mut Violation) {
+        violation.source_file = self.source_file.clone();
+        violation.line = self.line;
+        violation.column = self.column;
+    }
+}
+
+/// Sets the location of each of `violations` (fresh from a check, without one).
+pub(crate) fn locate(violations: &mut [Violation], location: Option<&SourceLocation>) {
+    let Some(location) = location else { return };
+    for violation in violations {
+        location.apply(violation);
+    }
+}
+
+/// URL prefixes of the engine's own scripts in a stack trace (pyro-webapi's modules and
+/// pyro-js's helpers): never a violation's location.
+const INTERNAL_URLS: [&str; 2] = ["pyro://", "lightpanda://"];
+
+/// `(url, line, column)` of the innermost frame of page script on the stack of `s`, as the
+/// engine reports it (unstripped).
+pub(crate) fn running_script_location(s: &Scope<'_>) -> Option<(String, u32, u32)> {
+    let stack = s.current_stack().ok()?;
+    stack.lines().find_map(parse_stack_frame)
+}
+
+/// One JavaScriptCore stack line, `function@url:line:column` or `url:line:column`: its page
+/// script location. `None` for native frames (`[native code]`), frames without a URL and the
+/// engine's own scripts.
+fn parse_stack_frame(frame: &str) -> Option<(String, u32, u32)> {
+    let location = frame.split_once('@').map_or(frame, |(_, location)| location);
+    let (rest, column) = location.rsplit_once(':')?;
+    let (url, line) = rest.rsplit_once(':')?;
+    if url.is_empty() || INTERNAL_URLS.iter().any(|prefix| url.starts_with(prefix)) {
+        return None;
+    }
+    Some((url.to_owned(), line.parse().ok()?, column.parse().ok()?))
+}
+
+/// A violation's source file as `SecurityPolicyViolationEvent.sourceFile` shows it, as Chrome
+/// does (WPT securitypolicyviolation/source-file.html): an http(s), ws(s) or ftp URL without
+/// its fragment, query, username and password; any other URL is only its scheme (`data`,
+/// `blob`, `file`, `about`, `javascript`, a custom one); a string that is not a URL (a relative
+/// `sourceURL`) is empty.
+pub fn strip_source_file(value: &str) -> String {
+    let Ok(mut url) = url::Url::parse(value) else { return String::new() };
+    if !matches!(url.scheme(), "http" | "https" | "ws" | "wss" | "ftp") {
+        return url.scheme().to_owned();
+    }
+    url.set_fragment(None);
+    url.set_query(None);
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.into()
+}
+
+thread_local! {
+    /// The location event handler content attributes compiled now are set at, while
+    /// [`with_handler_location`] runs (`Some(None)`: no script set them, the parser did).
+    static HANDLER_LOCATION: std::cell::RefCell<Option<Option<SourceLocation>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with handler attributes compiled in it located at `location` instead of the script
+/// on the stack: `drain_inline` compiles attributes the parser or a fragment parse made, whose
+/// location is not that of whatever script triggered the drain.
+pub(crate) fn with_handler_location<R>(location: Option<SourceLocation>, f: impl FnOnce() -> R) -> R {
+    let previous = HANDLER_LOCATION.with(|l| l.borrow_mut().replace(location));
+    let result = f();
+    HANDLER_LOCATION.with(|l| *l.borrow_mut() = previous);
+    result
+}
+
+/// The location of an event handler content attribute set now in `s`: the one
+/// [`with_handler_location`] gives, else the running script's (`setAttribute`).
+pub(crate) fn handler_location(s: &Scope<'_>) -> Option<SourceLocation> {
+    match HANDLER_LOCATION.with(|l| l.borrow().clone()) {
+        Some(location) => location,
+        None => SourceLocation::running(s),
+    }
 }
 
 /// Whether `page`'s policies make string compilation need a check: 2 when an enforced policy
@@ -272,5 +415,82 @@ pub fn module_dest(ty: pyro_js::ModuleType) -> RequestDest {
         pyro_js::ModuleType::Json | pyro_js::ModuleType::Text => RequestDest::Json,
         pyro_js::ModuleType::Css => RequestDest::Style,
         _ => RequestDest::Script,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stack_frames_give_page_script_locations_only() {
+        assert_eq!(
+            parse_stack_frame("f@https://a.test/s.js:3:17"),
+            Some(("https://a.test/s.js".to_owned(), 3, 17))
+        );
+        assert_eq!(parse_stack_frame("https://a.test/s.js:10:7"), Some(("https://a.test/s.js".to_owned(), 10, 7)));
+        assert_eq!(
+            parse_stack_frame("global code@data:text/javascript,%0Aeval(1):3:17"),
+            Some(("data:text/javascript,%0Aeval(1)".to_owned(), 3, 17))
+        );
+        assert_eq!(parse_stack_frame("eval@[native code]"), None);
+        assert_eq!(parse_stack_frame("eval code@"), None);
+        assert_eq!(parse_stack_frame("canCompile@pyro://internal/trusted_types.js:333:7"), None);
+        assert_eq!(parse_stack_frame("stack@lightpanda://internal/helpers.js:1:1"), None);
+    }
+
+    #[test]
+    fn source_files_strip_as_chrome() {
+        let cases = [
+            ("http://dummy.test/script1.js", "http://dummy.test/script1.js"),
+            ("https://dummy.test/script1.js#frag", "https://dummy.test/script1.js"),
+            ("https://dummy.test/script1.js?query", "https://dummy.test/script1.js"),
+            ("https://dummy.test:8080/script1.js", "https://dummy.test:8080/script1.js"),
+            ("https://user:password@dummy.test/script1.js", "https://dummy.test/script1.js"),
+            ("https://user@dummy.test/script1.js", "https://dummy.test/script1.js"),
+            ("wss://dummy.test/script1.js", "wss://dummy.test/script1.js"),
+            ("ws://dummy.test/script1.js", "ws://dummy.test/script1.js"),
+            ("script2.js", ""),
+            ("file:///temp/script3.js", "file"),
+            ("webpack://node_modules/sample/script4.js", "webpack"),
+            ("about:blank", "about"),
+            ("about:custom", "about"),
+            ("data:text/html;charset=utf8,<html></html>", "data"),
+            ("blob:http://test.test/012345-6789-abcd-efab-0123456789", "blob"),
+            ("javascript:void(0)", "javascript"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(strip_source_file(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn handler_location_override_nests_and_restores() {
+        let at = SourceLocation { source_file: "https://a.test/".into(), line: 10, column: 5 };
+        assert_eq!(HANDLER_LOCATION.with(|l| l.borrow().clone()), None);
+        with_handler_location(Some(at.clone()), || {
+            assert_eq!(HANDLER_LOCATION.with(|l| l.borrow().clone()), Some(Some(at.clone())));
+            with_handler_location(None, || {
+                assert_eq!(HANDLER_LOCATION.with(|l| l.borrow().clone()), Some(None));
+            });
+            assert_eq!(HANDLER_LOCATION.with(|l| l.borrow().clone()), Some(Some(at.clone())));
+        });
+        assert_eq!(HANDLER_LOCATION.with(|l| l.borrow().clone()), None);
+    }
+
+    #[test]
+    fn located_violations_carry_the_location() {
+        let mut list = PolicyList::for_origin(Some("https://a.test"));
+        list.add("script-src 'none'", PolicySource::Header, Disposition::Enforce);
+        let mut outcome = list.eval_check("1");
+        assert_eq!(outcome.violations.len(), 1);
+        let at = SourceLocation { source_file: "https://a.test/s.js".into(), line: 3, column: 17 };
+        locate(&mut outcome.violations, Some(&at));
+        let v = &outcome.violations[0];
+        assert_eq!((v.source_file.as_str(), v.line, v.column), ("https://a.test/s.js", 3, 17));
+        let mut unlocated = list.eval_check("1");
+        locate(&mut unlocated.violations, None);
+        let v = &unlocated.violations[0];
+        assert_eq!((v.source_file.as_str(), v.line, v.column), ("", 0, 0));
     }
 }
