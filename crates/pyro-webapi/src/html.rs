@@ -1845,6 +1845,16 @@ impl JsClass for HtmlElement {
             },
         );
         def.accessor(
+            "autocorrect",
+            |s, n| Ok(s.boolean(autocorrect_on(&n.page().dom.borrow(), n.id))),
+            |_s, n, v| set_attr(n, "autocorrect", if v.to_bool() { "on" } else { "off" }),
+        );
+        def.accessor(
+            "autocapitalize",
+            |s, n| Ok(s.string(autocapitalize_state(&n.page().dom.borrow(), n.id))),
+            |_s, n, v| set_attr(n, "autocapitalize", &dom_string(v)?),
+        );
+        def.accessor(
             "translate",
             |s, n| Ok(s.boolean(translation_enabled(&n.page().dom.borrow(), n.id))),
             |_s, n, v| {
@@ -5778,4 +5788,58 @@ fn translation_enabled(dom: &pyro_dom::Dom, id: pyro_dom::NodeId) -> bool {
         current = dom.parent_element(el).ok().flatten();
     }
     true
+}
+
+/// HTML "autocapitalize-and-autocorrect inheriting elements": form-associated elements that take
+/// their form owner's state when they have none of their own.
+fn inherits_autocap(dom: &Dom, id: NodeId) -> bool {
+    dom.element(id).is_ok_and(|e| {
+        e.is_html() && matches!(&*e.name.local, "button" | "fieldset" | "input" | "output" | "select" | "textarea")
+    })
+}
+
+/// The attribute `name` of `id`, else (for an inheriting element) of its form owner.
+fn own_or_form_attr<'d>(dom: &'d Dom, id: NodeId, name: &str) -> Option<&'d str> {
+    if let Some(v) = dom.get_attribute(id, name).ok().flatten() {
+        return Some(v);
+    }
+    if !inherits_autocap(dom, id) {
+        return None;
+    }
+    let form = dom.form_owner(id).ok().flatten()?;
+    dom.get_attribute(form, name).ok().flatten()
+}
+
+/// HTML "used autocorrection state": off only for an `off` value (ASCII case-insensitive), of the
+/// element or (inheriting) its form owner; on otherwise.
+fn autocorrect_on(dom: &Dom, id: NodeId) -> bool {
+    !own_or_form_attr(dom, id, "autocorrect").is_some_and(|v| v.eq_ignore_ascii_case("off"))
+}
+
+/// HTML "own autocapitalization hint" (inherited from the form owner when default), as the IDL
+/// attribute returns it: "" for default, else none/sentences/words/characters (`off` is none,
+/// `on` and invalid values sentences).
+fn autocapitalize_state(dom: &Dom, id: NodeId) -> &'static str {
+    let state = |v: Option<&str>| -> Option<&'static str> {
+        let v = v?;
+        Some(match v.to_ascii_lowercase().as_str() {
+            "" => return None,
+            "off" | "none" => "none",
+            "on" | "sentences" => "sentences",
+            "words" => "words",
+            "characters" => "characters",
+            _ => "sentences",
+        })
+    };
+    if let Some(own) = state(dom.get_attribute(id, "autocapitalize").ok().flatten()) {
+        return own;
+    }
+    if inherits_autocap(dom, id) {
+        if let Some(form) = dom.form_owner(id).ok().flatten() {
+            if let Some(inherited) = state(dom.get_attribute(form, "autocapitalize").ok().flatten()) {
+                return inherited;
+            }
+        }
+    }
+    ""
 }
