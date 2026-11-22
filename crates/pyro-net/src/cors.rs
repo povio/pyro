@@ -226,7 +226,13 @@ fn validate_preflight(status: u16, resp: &HeaderMap, req: &Request, origin: &str
     let headers: Vec<String> =
         list(resp, header::ACCESS_CONTROL_ALLOW_HEADERS).into_iter().map(|h| h.to_ascii_lowercase()).collect();
     // Fetch "CORS-preflight fetch": either list failing to parse (`#method`, `#field-name`:
-    // tokens) is a network error.
+    // tokens) is a network error, a value line `list` skips (not visible ASCII) included.
+    let unreadable = [header::ACCESS_CONTROL_ALLOW_METHODS, header::ACCESS_CONTROL_ALLOW_HEADERS]
+        .into_iter()
+        .any(|name| resp.get_all(name).iter().any(|v| v.to_str().is_err()));
+    if unreadable {
+        return Err("Invalid value in the preflight response's allow lists".into());
+    }
     if let Some(bad) = methods.iter().chain(&headers).find(|t| !is_token(t)) {
         return Err(format!("Invalid token '{bad}' in the preflight response's allow lists"));
     }
