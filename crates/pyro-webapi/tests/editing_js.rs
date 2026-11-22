@@ -504,6 +504,17 @@ fn deletion_at_text_edge_preserves_locked_blocks() {
 }
 
 #[test]
+fn nested_paragraph_join_preserves_the_destination_and_undo() {
+    let e = env("<body><div id=ed contenteditable><div><div>a&nbsp;&nbsp;&nbsp;</div>&nbsp;&nbsp;&nbsp;b</div></div>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const outer=ed.firstChild, inner=outer.firstChild, text=inner.firstChild; getSelection().collapse(text,4)");
+    press(&e.page, "Delete", "", input::Modifiers::default());
+    assert_eq!(eval(r, "ed.innerHTML"), "<div>a&nbsp; &nbsp; &nbsp; b</div>");
+    assert_eq!(eval(r, "[ed.firstChild===inner, getSelection().focusNode===text, getSelection().focusOffset].join()"), "true,true,4");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML"), "<div><div>a&nbsp;&nbsp;&nbsp;</div>&nbsp;&nbsp;&nbsp;b</div>");
+}
+
+#[test]
 fn paragraph_insertion_leaves_select_subtrees_intact() {
     let e = env("<body><div id=ed contenteditable><div>L<select><optgroup><option>abc</option><option selected>def</option></optgroup></select>R</div></div></body>");
     let r = &e.main;
