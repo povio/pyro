@@ -1616,18 +1616,20 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         block = wrapper;
     }
     let tag = local(dom, block);
-    let mut exit_heading = false;
+    let mut at_heading_end = false;
     if matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
         if terminal_break && dom.parent(void).ok().flatten() == Some(block) {
-            exit_heading = true;
+            at_heading_end = true;
         } else if kind.is_none() && dom.contains(block, void).unwrap_or(false) {
             if let Some(edge) = heading_end(dom, block, caret) {
                 caret = edge;
-                exit_heading = true;
+                at_heading_end = true;
             }
         }
     }
-    let new_block = if exit_heading {
+    // Chromium continues an h6 for ordinary heading-end carets. Keep the
+    // established separator handling for a DOM caret inside a terminal void.
+    let new_block = if at_heading_end && (tag != "h6" || terminal_break) {
         let separator = dom.document_data(doc).map(|d| d.default_paragraph_separator).unwrap_or("div").to_owned();
         dom.create_element(doc, &separator)
     } else {
@@ -1654,7 +1656,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     // Reconstruct the inline ancestor chain on the right side of the split.
     // The original nodes and their IDs stay in the first paragraph.
     let mut container = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
-    let formatted_edge = if exit_heading || plaintext_at(dom, host) { formatted_split_edge(dom, block, caret) } else { None };
+    let formatted_edge = if at_heading_end || plaintext_at(dom, host) { formatted_split_edge(dom, block, caret) } else { None };
     let text_parent = container;
     let mut empty_caret = None;
     let mut right_child = None;
