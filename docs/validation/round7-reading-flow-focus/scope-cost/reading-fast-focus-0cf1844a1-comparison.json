@@ -1,0 +1,147 @@
+{
+  "rows": [
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-flow.html",
+      "name": "Flex items in flexbox should follow flex-flow reading flow",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-flow.html",
+      "name": "Flex items in rtl flexbox should follow flex-flow reading flow",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-flow.html",
+      "name": "Flex items in vertical-lr flexbox should follow flex-flow reading flow",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/flex-flow.html",
+      "name": "Flex-flow follows order-modified items with row-reverse and wrap-reverse",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-columns.html",
+      "name": "Grid items in grid template columns should follow grid-columns reading flow",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/normal.html",
+      "name": "Block elements. Focus should be in DOM tabindexed-order.",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/normal.html",
+      "name": "Grid items. Focus should be in DOM tabindexed-order.",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/source-order-valid.html",
+      "name": "Block elements. Focus should be in DOM tabindexed-order, but reading-order takes effect.",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/source-order-valid.html",
+      "name": "Block inline elements. Focus should be in DOM tabindexed-order, but reading-order takes effect.",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/source-order-valid.html",
+      "name": "Flex elements. Focus should be in DOM tabindexed-order, but reading-order takes effect.",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/source-order-valid.html",
+      "name": "Flow root elements. Focus should be in DOM tabindexed-order, but reading-order takes effect.",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/source-order-valid.html",
+      "name": "Grid elements. Focus should be in DOM tabindexed-order, but reading-order takes effect.",
+      "occurrence": 1,
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "comparator": "Pass"
+    }
+  ],
+  "candidatePages": {
+    "shadow-dom/focus-navigation/reading-flow/flex-flow.html": [
+      "0f6cdef4f0ef0a93f8cfd403b5f9f241bd76be06",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/grid-columns.html": [
+      "dd952ca066ad3ffffb2f8e50e38a8ae25ffa538a",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/normal.html": [
+      "6386c972af6899e4b8a0bd94482ec2367e04e31a",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/source-order-valid.html": [
+      "9aa9500a5688dbc6f2831a3a235b61dd15eada82",
+      "complete",
+      "OK"
+    ]
+  },
+  "candidateCommit": "0cf1844a12906f9db732a192dd9ffce82f7dc610",
+  "gitParent": "f065eb497630b342f6e57e88085c222623a0636e",
+  "measuredComparator": "0952a65d21b35fcd1e3467d58127e247d3812fcf",
+  "comparatorPages": {
+    "shadow-dom/focus-navigation/reading-flow/flex-flow.html": [
+      "0f6cdef4f0ef0a93f8cfd403b5f9f241bd76be06",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/grid-columns.html": [
+      "dd952ca066ad3ffffb2f8e50e38a8ae25ffa538a",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/normal.html": [
+      "6386c972af6899e4b8a0bd94482ec2367e04e31a",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/source-order-valid.html": [
+      "9aa9500a5688dbc6f2831a3a235b61dd15eada82",
+      "complete",
+      "OK"
+    ]
+  }
+}
