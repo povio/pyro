@@ -10,7 +10,9 @@
 //     failed), or null when the engine cannot wait for one
 //   evaluate(source, url, credentials, graph) -> promise of the module's evaluation in the worklet
 //     global as graph `graph` (its imports recorded as that graph's),
-//     its imports fetched with `credentials`; one graph at a time (see `graphs`)
+//     its imports fetched with `credentials`; one graph at a time (see `graphs`). It rejects when the
+//     graph fails to load or link, and fulfills once the module ran, also when evaluation threw
+//     (reported, not rethrown)
 (function (native) {
   'use strict';
   const token = Symbol('pyro');
