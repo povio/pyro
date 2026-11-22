@@ -159,6 +159,11 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.motion-path.enabled", true);
         style_config::set_pref!("layout.css.overscroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scroll-driven-animations.enabled", true);
+        // pyro: `display` in `@keyframes` and Web Animations keyframes, and Stylo's `Animate for
+        // Display` (css-display-4 §2.1: the non-`none` value throughout, `none` only at its end).
+        // Without it a `@keyframes` rule animating only `display` has no steps, and keyframes to
+        // or from `none` flip halfway (WPT css-display `animations/display-interpolation{,-none}`).
+        style_config::set_pref!("layout.css.display-animations.enabled", true);
         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
