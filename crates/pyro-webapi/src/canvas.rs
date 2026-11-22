@@ -1654,8 +1654,9 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     c.sync_size();
     let state = c.state.borrow().clone();
     // Privacy: what the page must not read back (an image of unknown origin, a nested
-    // document, a visited link) leaves the canvas not origin-clean, as a cross-origin drawImage.
-    if image.taints {
+    // document, a visited link) leaves the canvas not origin-clean, as a cross-origin drawImage;
+    // so does a filter that taints (as drawImage's `filter_taints`).
+    if image.taints || state.filter_taints {
         c.clean.set(false);
     }
     if let Some((pw, ph, rgba)) = image.pixels {
@@ -1665,11 +1666,6 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
             .and_then(Bitmap::new)
             .and_then(|bitmap| convert_bitmap(bitmap, Space::Srgb, c.space));
         if let Some(bitmap) = bitmap {
-            // Stopgap until the element painting leaves out what the WICG privacy model forbids
-            // (cross-origin images, backgrounds, video and iframes, visited-link colours): any
-            // drawn element taints the canvas, so getImageData/toDataURL/toBlob cannot read
-            // cross-origin pixels or history.
-            c.clean.set(false);
             let (px, py) = (f64::from(pw) / w.max(1.0), f64::from(ph) / h.max(1.0));
             let src = Rect::new(src.x0 * px, src.y0 * py, src.x1 * px, src.y1 * py);
             c.surface.borrow_mut().draw_image(&bitmap, src, dst, &state.draw_state());
