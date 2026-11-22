@@ -34,8 +34,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// XHR send(): preserve the author's header verbatim unless a Document
-/// or USVString body needs an explicit non-UTF-8 charset corrected.
+/// XHR send(): preserve the author's header verbatim unless a Document,
+/// USVString or URLSearchParams body needs an explicit non-UTF-8 charset
+/// corrected.
 fn normalize_utf8_charset(header: &mut HeaderValue) -> JsResult<()> {
     let text: String = header.as_bytes().iter().copied().map(char::from).collect();
     let Ok(mut mime) = text.parse::<Mime>() else { return Ok(()) };
@@ -578,7 +579,11 @@ impl Xhr {
             } else if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
                 (blob.bytes.clone(), blob.mime.clone(), false)
             } else if let Some(params) = s.unwrap::<crate::url_search_params::URLSearchParams>(body) {
-                (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into(), false)
+                // The spec reconciles the charset only for Document and string
+                // bodies; Blink, Gecko and WebKit also do it for
+                // URLSearchParams, whose bytes are always UTF-8 (WPT
+                // xhr/send-usp, xhr/setrequestheader-content-type).
+                (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into(), true)
             } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, body)? {
                 (Bytes::from(bytes), String::new(), false)
             } else {
