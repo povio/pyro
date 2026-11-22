@@ -985,6 +985,14 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.origin = get_str(init, "origin")?;
     let last_event_id = get_str(init, "lastEventId")?;
     f.last_event_id = (!last_event_id.is_empty()).then(|| last_event_id.into());
+    // `source` (a WindowProxy, MessagePort or ServiceWorker; null by default): given back as is.
+    if let Some(o) = init {
+        let source = o.get_atom("source")?;
+        if !source.is_nullish() {
+            let source = Persistent::new(s, source);
+            f.message_source_window = Some(Rc::new(move |s| Ok(s.rehome(source.get(s)))));
+        }
+    }
     Ok(())
 }
 
@@ -2320,6 +2328,36 @@ impl JsClass for MessageEvent {
         def.getter("ports", |s, e| match e.fields.borrow().message_ports.as_ref() {
             Some(ports) => Ok(s.rehome(ports.get(s))),
             None => Ok(s.array(&[])?.value()),
+        });
+        // `initMessageEvent(type, bubbles, cancelable, data, origin, lastEventId, source, ports)`
+        // (legacy): like the constructor's dictionary, ignored while the event is dispatched.
+        def.method("initMessageEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "MessageEvent.initMessageEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            let init = s.object();
+            init.set_atom("data", if a.len() > 3 { a.get(3) } else { s.null() })?;
+            init.set_atom("origin", a.get(4))?;
+            init.set_atom("lastEventId", a.get(5))?;
+            init.set_atom("source", a.get(6))?;
+            let ports = a.get(7);
+            init.set_atom("ports", if ports.is_undefined() { s.array(&[])?.value() } else { ports })?;
+            // Filled apart, then moved in: reading the ports runs no code holding this event.
+            let mut filled = EventFields::default();
+            fill_message(s, &mut filled, Some(init))?;
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            {
+                let mut f = e.fields.borrow_mut();
+                f.message_data = filled.message_data.take();
+                f.message_ports = filled.message_ports.take();
+                f.origin = std::mem::take(&mut filled.origin);
+                f.last_event_id = filled.last_event_id.take();
+                f.message_source_window = filled.message_source_window.take();
+                f.message_source = None;
+            }
+            e.refresh_wrappers();
+            Ok(s.undefined())
         });
     }
 }
