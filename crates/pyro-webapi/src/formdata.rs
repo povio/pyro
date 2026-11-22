@@ -462,9 +462,14 @@ pub(crate) fn form_submission(
     // HTML "submit": a form that navigates its own document before it has
     // completely loaded replaces the document's entry.
     let replace = target.is_none() && page.navigates_by_replacing();
+    let noopener = crate::window::element_noopener(&rel, target.as_deref());
+    // HTML "submit" planned navigation: rel=noreferrer sends no referrer.
+    let referrer_policy = rel
+        .split_ascii_whitespace()
+        .any(|t| t.eq_ignore_ascii_case("noreferrer"))
+        .then_some(pyro_net::ReferrerPolicy::NoReferrer);
     if method == "GET" {
         url.set_query(Some(&urlencode(&entries, enc)));
-        let noopener = crate::window::element_noopener(&rel, target.as_deref());
         let popup = crate::window::element_popup_ticket(page, target.as_deref(), noopener);
         return Some(NavigationRequest {
             url: url.to_string(),
@@ -475,7 +480,7 @@ pub(crate) fn form_submission(
             opener: popup.is_some(),
             popup,
             window_features: Default::default(),
-            referrer_policy: None,
+            referrer_policy,
             source: Some(submitter.unwrap_or(form)),
             form_entries: None,
             replace,
@@ -505,7 +510,7 @@ pub(crate) fn form_submission(
         opener: false,
         popup: None,
         window_features: Default::default(),
-        referrer_policy: None,
+        referrer_policy,
         source: Some(submitter.unwrap_or(form)),
         form_entries: Some(FormEntries(Rc::new(entries))),
         replace,
