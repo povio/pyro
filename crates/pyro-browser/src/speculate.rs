@@ -378,6 +378,28 @@ impl Browser {
         if requests.is_empty() {
             return;
         }
+        // CSP: a request whose destination a policy of the document governs is not speculated.
+        // The scanner knows neither the element's nonce nor where a redirect goes, and a
+        // speculative result an element claims would skip the element's own check and its
+        // violations (or block what the element's nonce allows). Its element fetches it, checked.
+        let list = self
+            .doc(page)
+            .and_then(|p| p.main_frame.page_dom.clone())
+            .and_then(|bindings| pyro_webapi::csp::policy_list(&bindings));
+        let requests: Vec<FetchRequest> = match list {
+            None => requests,
+            Some(list) => requests
+                .into_iter()
+                .filter(|request| {
+                    let Some(dest) = crate::loader::csp_dest(request) else { return true };
+                    let Some(effective) = pyro_net::csp::effective_directive(dest) else { return true };
+                    !list.policies.iter().any(|policy| policy.directive_for(effective).is_some())
+                })
+                .collect(),
+        };
+        if requests.is_empty() {
+            return;
+        }
         {
             let Some(mut load) = self.load_mut(page) else { return };
             for request in requests {

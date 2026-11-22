@@ -145,6 +145,9 @@ struct Xhr {
     upload_listeners: Cell<bool>,
     upload_complete: Cell<bool>,
     upload_total: Cell<usize>,
+    /// The sent request's CSP guard (`connect-src`): what its redirect checks found is
+    /// reported when the request fails.
+    csp: RefCell<Option<Arc<pyro_net::csp::RequestCsp>>>,
 }
 impl Drop for Xhr {
     fn drop(&mut self) {
@@ -227,6 +230,7 @@ fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut Cl
             upload_listeners: Cell::new(false),
             upload_complete: Cell::new(true),
             upload_total: Cell::new(0),
+            csp: RefCell::new(None),
         });
         page.xhr_state.instances.borrow_mut().insert(instance, Rc::downgrade(&state));
         let wrapper = s.wrap_new::<C>(XhrData { target, state }, nt, Some(identity))?;
@@ -629,6 +633,10 @@ impl Xhr {
         page.apply_request_defaults(&mut request);
         crate::fetch::attach_blob(&page, &mut request);
         request.max_body = Some(limits.max_body_bytes);
+        // CSP `connect-src`: a blocked request fails as a network error (the client's).
+        let check = pyro_net::csp::CspRequest::new(request.url.clone(), pyro_net::csp::RequestDest::Empty);
+        request.csp = crate::csp::guard_request(&page, check, None);
+        *self.csp.borrow_mut() = request.csp.clone();
         let id = net.next_request_id();
         let wire = Arc::new(Mutex::new(Delivery::new(page.xhr_state.budget.clone())));
         *self.wire.borrow_mut() = Some(wire.clone());
@@ -756,9 +764,11 @@ impl Xhr {
             self.head.take();
             self.text.take();
             self.ready.set(4);
+            crate::csp::report_guard(page, self.csp.take().as_ref(), None);
             let name = if timed_out { "TimeoutError" } else { "NetworkError" };
             return Err(JsError::dom(name, format!("Failed to execute 'send': {reason}")));
         }
+        crate::csp::report_guard(page, self.csp.take().as_ref(), None);
         self.active.set(None);
         self.sent.set(false);
         self.ready.set(4);
@@ -849,6 +859,9 @@ impl Xhr {
     fn fail(&self, kind: &str) {
         if self.active.get().is_none() {
             return;
+        }
+        if let Some(page) = self.page.upgrade() {
+            crate::csp::report_guard(&page, self.csp.take().as_ref(), None);
         }
         let generation = self.generation.get();
         let _keep = self.stop();

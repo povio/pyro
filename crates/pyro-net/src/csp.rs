@@ -909,6 +909,9 @@ pub struct RequestCsp {
     /// The URL the last check covered (the request's, then each redirect target's): a response
     /// of that URL is not checked again (its report-only violations were reported once).
     last_checked: Mutex<Url>,
+    /// The pre-request check blocked the request: the client fails it before sending, with
+    /// [`BLOCKED_BY_CSP`] (an initiator that reuses its network-error path this way).
+    blocked: bool,
     violations: Mutex<Vec<Violation>>,
 }
 
@@ -916,7 +919,18 @@ impl RequestCsp {
     /// The guard of `request`, whose pre-request check against `list` its initiator ran.
     pub fn new(list: Arc<PolicyList>, request: CspRequest) -> Arc<RequestCsp> {
         let last_checked = Mutex::new(request.url.clone());
-        Arc::new(RequestCsp { list, request, last_checked, violations: Mutex::new(Vec::new()) })
+        Arc::new(RequestCsp { list, request, last_checked, blocked: false, violations: Mutex::new(Vec::new()) })
+    }
+
+    /// The guard of a request its pre-request check blocked: the client fails it unsent.
+    pub fn blocked(list: Arc<PolicyList>, request: CspRequest) -> Arc<RequestCsp> {
+        let last_checked = Mutex::new(request.url.clone());
+        Arc::new(RequestCsp { list, request, last_checked, blocked: true, violations: Mutex::new(Vec::new()) })
+    }
+
+    /// Whether the client must fail the request before sending it.
+    pub fn blocks_request(&self) -> bool {
+        self.blocked
     }
 
     /// The check of a redirect to `target` (the pre-request check of the next hop, redirect

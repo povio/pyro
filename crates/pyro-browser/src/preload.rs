@@ -288,7 +288,7 @@ impl Browser {
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
             return;
         };
-        let request = FetchRequest {
+        let mut request = FetchRequest {
             csp: None,
             parser_priority: false,
             credentials: None,
@@ -305,7 +305,9 @@ impl Browser {
             module: None,
             part: None,
         };
-        if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish)) {
+        // CSP for the preload's destination, with the link's nonce.
+        let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
+        if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, finish) {
             cancel.disarm();
         }
     }

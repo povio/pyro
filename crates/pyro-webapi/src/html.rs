@@ -4934,6 +4934,12 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
         }
     }
     let _ = page.dom.borrow_mut().mark_script_started(node);
+    // CSP `script-src-elem` for an inline script (its nonce, a hash, 'unsafe-inline'): blocked,
+    // it does not run (no event).
+    let nonce = crate::csp::element_nonce(page, node);
+    if !crate::csp::inline_allowed(page, crate::csp::InlineKind::Script, &nonce, &info.inline_text, Some(node)) {
+        return Ok(());
+    }
     let url = page.dom.borrow().document_data(doc).map(|d| d.url.clone()).unwrap_or_default();
     eval_parser_script(page, doc, node, &info.inline_text, &url)
 }

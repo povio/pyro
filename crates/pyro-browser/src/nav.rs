@@ -497,12 +497,19 @@ impl PageNav {
         let page = self.page;
         let frame_id = self.frame_id.clone();
         let document = self.state.borrow().doc_seq;
+        let url = url.to_owned();
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(key) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(doc) = b.doc(key).filter(|p| p.nav.state.borrow().doc_seq == document) else { return };
             let (realm, page_dom) = (doc.main_frame.main_realm().cloned(), doc.main_frame.page_dom.clone());
             drop(doc);
             let (Some(realm), Some(page_dom)) = (realm, page_dom) else { return };
+            // CSP `script-src-elem` for a navigation ('unsafe-inline', or with 'unsafe-hashes' a
+            // hash of the whole URL): blocked, nothing runs.
+            let kind = pyro_webapi::csp::InlineKind::Navigation;
+            if !pyro_webapi::csp::inline_allowed(&page_dom, kind, "", &url, None) {
+                return;
+            }
             let Ok(scope) = realm.scope() else { return };
             let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else { return };
             if let Err(e) = scope.eval(&source, None, 1) {
