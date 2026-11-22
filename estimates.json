@@ -38,23 +38,23 @@
     "workers": 9,
     "encoding": 7,
     "fetch/range": 6,
-    "fetch/data-urls": 6,
     "fetch/corb": 6,
+    "fetch/data-urls": 6,
     "fetch/stale-while-revalidate": 5,
-    "html/obsolete": 4,
     "FileAPI": 4,
+    "html/obsolete": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "fetch/orb": 2,
     "xhr": 2,
     "html/user-activation": 2,
-    "fetch/redirect-navigate": 1,
-    "fetch/security": 1,
-    "fetch/redirects": 1,
-    "html/select": 1,
-    "IndexedDB": 1,
-    "svg/styling": 1,
+    "fetch/orb": 2,
     "fetch/content-type": 1,
+    "fetch/redirect-navigate": 1,
+    "IndexedDB": 1,
+    "fetch/redirects": 1,
+    "fetch/security": 1,
+    "html/select": 1,
+    "svg/styling": 1,
     "quirks": 1
    }
   },
@@ -79,8 +79,8 @@
     "html/semantics": 50,
     "html/syntax": 30,
     "html/webappapis": 27,
-    "fetch/api": 5,
-    "html/dom": 5
+    "html/dom": 5,
+    "fetch/api": 5
    }
   },
   "queued": {

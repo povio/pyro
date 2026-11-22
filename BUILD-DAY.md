@@ -24,7 +24,7 @@ Build the JSC archive through patch **0041**:
 ## 2. Pre-build branch hygiene
 
 - The evidence commit 5c95c55d1 (18 files under `evidence/round7-inline-module-base-url/`) is removed by **3047718ed**, which is an ancestor of the tip. Verified: 0 files under that path at the tip.
-- The integrator has the compile fix for 0206f4243 (frames.rs `let` in argument position). Confirm it before the first compile.
+- 0206f4243 compile break fixed by ea7daf4c4 (integrator; rustfmt parses frames.rs at tip).
 - Run `git show --stat` and confirm the tip matches what is being built.
 
 ## 3. Security smoke tests (mandatory)
@@ -109,7 +109,7 @@ Build the JSC archive through patch **0041**:
 - f47805459 (JSC 0041): run named-access-on-the-window-object/window-named-properties-object*.html + WebIDL global-object/legacy-platform-object pages before vs after; expect lost subtests for defineProperty/delete/preventExtensions/setPrototypeOf on Object.getPrototypeOf(Window.prototype) until 0041 gains false-returning overrides (batch reviewer …660de521).
 - 8c117ae60 (smooth scrolling): drop-in e2e with html{scroll-behavior:smooth}: elementHandle.scrollIntoViewIfNeeded() then boundingBox()/screenshot show the final position.
 - 3db74cb02: img.src="http://["; await img.decode() must reject, not hang — fixed at tip by ffd49eb93 (settle_image_decodes on the invalid path); verify on build day.
-- 0206f4243: compile fix pending (frames.rs:2244 `let` in argument position) — forwarded to integrator; must be fixed before build.
+- 0206f4243 compile break FIXED by ea7daf4c4 (integrator; history handling computed into a local; rustfmt parses frames.rs at tip).
 - SC-CSP-audioworklet 491b3a3eb: webaudio/idlharness.https.window.html passes ≥358; audioworklet-audioparam-size, audioworkletnode-automatic-pull, -construction, audioworkletprocessor-process-frozen-array, -process-zero-outputs expect harness ERROR not timeout; the 14 worklet-paint CSP pages + worklets/ no paint regression; pyro-webapi paint-worklet tests.
 - SC-CSP-frame-ancestors 6d12c0e4b (blocked child frame → opaque chrome-error doc firing load; touches MacBook html nav): cargo test -p pyro-net csp::tests; pyro-browser --test child_frames --test loading; pyro-cdp --test engine_cdp; WPT frame-ancestors/, CSP frame-src/* child-src/*, blob/frame-src-*, sandbox/iframe-self-all-directives.sub, form-action-src-default-ignored.sub, reporting-api-works-on-frame-ancestors.https.sub, html …/navigating-across-documents/failure-check-sequence.https, resource-timing/iframe-failed-commit; also MacBook sandbox/B-7 iframe pages.
 - R-HTML-RENDER-a (32e2affad etc.): fieldsets are now flow roots — text no longer wraps around outside floats; check fieldset-heavy e2e/screenshots (Shippy).
