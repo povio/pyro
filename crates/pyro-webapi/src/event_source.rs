@@ -101,11 +101,12 @@ thread_local! {
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
     // The absolute URL of `url` against the document (or worker) base, or
-    // null when it does not parse.
+    // null when it does not parse. HTML "encoding-parse a URL": the query is in
+    // the document's encoding.
     let resolve = s.function("resolve", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let input = crate::util::dom_string(a.get(0))?;
-        let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
+        let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &input);
         Ok(match pyro_net::Url::parse(&resolved) {
             Ok(url) => s.string(url.as_str()),
             Err(_) => s.null(),

@@ -1964,7 +1964,7 @@ impl Browser {
             return;
         }
         let was_attribute_navigation = host.attribute_navigation.replace(true);
-        let (srcdoc, src, src_base) = {
+        let (srcdoc, src, src_base, encoded_src) = {
             let dom = host.dom.borrow();
             // An `<object>` hosting a document navigates to its `data`, an `<embed>` to its `src`
             // (neither has `srcdoc`).
@@ -1975,6 +1975,11 @@ impl Browser {
                 dom.get_attribute(owner, if object { "data" } else { "src" }).ok().flatten().map(str::to_owned),
                 // `<base href>` aware.
                 crate::loader::node_base_url(&dom, owner),
+                // HTML "encoding-parse a URL": the query in the container document's encoding.
+                dom.get_attribute(owner, if object { "data" } else { "src" })
+                    .ok()
+                    .flatten()
+                    .map(|raw| pyro_webapi::html::resolve_url(&dom, owner, raw)),
             )
         };
         let result = if let Some(html) = srcdoc {
@@ -1984,6 +1989,8 @@ impl Browser {
             let raw = src.unwrap_or_default();
             let url = if raw.trim().is_empty() {
                 "about:blank".to_string()
+            } else if let Some(encoded) = encoded_src.filter(|_| src_base.is_some()) {
+                encoded
             } else {
                 url::Url::parse(src_base.as_deref().unwrap_or(&parent.base_url))
                     .and_then(|u| u.join(&raw))
