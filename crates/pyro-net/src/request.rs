@@ -439,6 +439,19 @@ pub fn is_json_mime(essence: &str) -> bool {
 
 /// Decodes a body to UTF-8 using the response charset (BOM wins), falling
 /// back to UTF-8 with replacement. Borrowed when no transcoding is needed.
+/// [`decode_text`] with the first of `labels` that names an encoding, else
+/// UTF-8 (a classic script: its response's charset, then its element's
+/// `charset`, then its document's encoding). A byte order mark wins.
+pub fn decode_text_first<'a>(body: &'a [u8], labels: &[Option<&str>]) -> std::borrow::Cow<'a, str> {
+    let enc = labels
+        .iter()
+        .flatten()
+        .find_map(|c| encoding_rs::Encoding::for_label(c.as_bytes()))
+        .unwrap_or(encoding_rs::UTF_8);
+    let (text, _, _) = enc.decode(body);
+    text
+}
+
 pub fn decode_text<'a>(body: &'a [u8], charset: Option<&str>) -> std::borrow::Cow<'a, str> {
     let enc = charset.and_then(|c| encoding_rs::Encoding::for_label(c.as_bytes())).unwrap_or(encoding_rs::UTF_8);
     let (text, _, _) = enc.decode(body);

@@ -40,6 +40,9 @@ pub struct ScriptInfo {
     pub integrity: Option<String>,
     /// The `referrerpolicy` content attribute.
     pub referrerpolicy: Option<String>,
+    /// The `charset` content attribute of an HTML script (a classic script's
+    /// fallback encoding when its response names none).
+    pub charset: Option<String>,
 }
 
 const JS_MIME: &[&str] = &[
@@ -590,6 +593,7 @@ impl Dom {
             crossorigin: e.attr_local(&local_name!("crossorigin")).map(str::to_owned),
             integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
             referrerpolicy: e.attr_local(&markup5ever::LocalName::from("referrerpolicy")).map(str::to_owned),
+            charset: if svg { None } else { e.attr_local(&local_name!("charset")).map(str::to_owned) },
         })
     }
 

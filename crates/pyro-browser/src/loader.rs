@@ -1285,6 +1285,8 @@ pub(crate) struct ScriptFetch {
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// The fetch's credentials mode, set by its initiator (a worklet's module graph).
     pub credentials: Option<pyro_net::Credentials>,
+    /// A script element's `charset` attribute, as prepare saw it.
+    pub charset: Option<String>,
 }
 
 impl ScriptFetch {
@@ -1296,6 +1298,7 @@ impl ScriptFetch {
             module: None,
             referrer_policy: pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref()),
             credentials: None,
+            charset: info.charset.clone(),
         }
     }
 }
@@ -2129,7 +2132,19 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let ScriptFetch { integrity, crossorigin, module, referrer_policy, credentials, parser_priority } = opts;
+        let ScriptFetch { integrity, crossorigin, module, referrer_policy, credentials, parser_priority, charset } =
+            opts;
+        // HTML "fetch a classic script": without a charset in the response, the
+        // element's `charset` encoding, else the document's encoding.
+        let document_charset = (kind == ResourceKind::Script)
+            .then(|| self.doc(page).and_then(|p| p.main_frame.page_dom.clone()))
+            .flatten()
+            .and_then(|pd| {
+                let dom = pd.dom.borrow();
+                let charset = dom.document_data(pd.document()).ok().map(|d| d.charset);
+                charset
+            });
+        let charset = charset.filter(|_| kind == ResourceKind::Script);
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
@@ -2181,7 +2196,11 @@ impl Browser {
                             // A module script is UTF-8 whatever its charset
                             // says (HTML "fetch a single module script").
                             None if module.is_some() => Ok(pyro_webapi::module_script::utf8_decode(&r.body)),
-                            None => Ok(r.text()),
+                            None => Ok(pyro_net::decode_text_first(
+                                &r.body,
+                                &[r.charset.as_deref(), charset.as_deref(), document_charset],
+                            )
+                            .into_owned()),
                         }
                     }
                     Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
