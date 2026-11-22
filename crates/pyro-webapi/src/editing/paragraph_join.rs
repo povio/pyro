@@ -495,7 +495,19 @@ fn text_style(page: &PageDom, dom: &Dom, node: NodeId) -> Option<Vec<String>> {
 /// Retain the author's declaration text (including custom and unsupported
 /// properties). Add only the declarations affected by moving this node.
 fn preserve_style(page: &PageDom, dom: &mut Dom, node: NodeId, source: &[String]) -> Option<()> {
-    let after = text_style(page, dom, node)?;
+    preserve_line_style(page, dom, node, source, None)
+}
+
+// A moved inline carrier lives in a new paragraph. Compare its line mode
+// with the destination paragraph even if a matching stylesheet rule still
+// applies to the carrier at its new location.
+fn preserve_line_style(
+    page: &PageDom, dom: &mut Dom, node: NodeId, source: &[String], paragraph_white_space: Option<&str>,
+) -> Option<()> {
+    let mut after = text_style(page, dom, node)?;
+    if let Some(mode) = paragraph_white_space {
+        after[0] = mode.to_owned();
+    }
     let differences: Vec<_> = TEXT_STYLE
         .iter()
         .zip(source)
@@ -601,8 +613,22 @@ pub(super) fn join_anonymous_right(
     let fragment = extract_line(dom, host, start, end)?;
     let moved: Vec<_> = dom.descendants(fragment).ok()?.skip(1).collect();
     dom.append_child(left, fragment).ok()?;
-    for (child, values) in moved.into_iter().zip(styles) {
-        preserve_style(page, dom, child, &values)?;
+    let paragraph_mode = page.layout().computed_style_value(dom, left, "white-space");
+    let mut authored_mode = None;
+    for (child, mut values) in moved.into_iter().zip(styles) {
+        let root = dom.parent_element(child).ok()? == Some(left);
+        if root {
+            let style = page.layout();
+            let declared = ["white-space", "white-space-collapse", "text-wrap-mode", "text-wrap"]
+                .iter().any(|name| style.style().inline_declared_value(dom, child, name).is_some());
+            authored_mode = declared.then(|| values[0].clone());
+        }
+        // Relative declarations resolve in the new context. Keep dependent
+        // descendants inheriting that value instead of freezing the old one.
+        if authored_mode.as_ref() == values.first() {
+            values[0].clear();
+        }
+        preserve_line_style(page, dom, child, &values, root.then_some(paragraph_mode.as_str()))?;
     }
     Some(seam)
 }
