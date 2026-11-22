@@ -551,6 +551,11 @@ impl StepRange {
 /// compile is ignored, as in browsers. Compiled per check: only elements
 /// with a pattern pay for it.
 fn pattern_mismatch(p: &str, value: &str) -> bool {
+    // HTML: a pattern that does not compile on its own (with the v flag) applies no constraint,
+    // even when the wrapped `^(?:p)$` would ("a)(b" escaping the group).
+    if regress::Regex::with_flags(p, "v").is_err() {
+        return false;
+    }
     match regress::Regex::with_flags(&format!("^(?:{p})$"), "v") {
         Ok(re) => re.find(value).is_none(),
         Err(_) => false,
