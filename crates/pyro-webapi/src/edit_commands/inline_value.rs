@@ -539,9 +539,8 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     let Some(fmt) = Format::parse(kind, value) else {
         if kind != Kind::Foreground { return false; }
         if start == end {
-            if let Some(pending) = page.typing_values.borrow_mut().as_mut().filter(|p| p.range == (start, end)) {
-                pending.values.retain(|v| v.kind != Kind::Foreground);
-            }
+            // The next insertion takes its style from the live caret again.
+            page.typing_values.take();
         } else {
             super::record_unchanged_foreground(page, host);
             editing::input_event(page, host, "input", "", None, false);
