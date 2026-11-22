@@ -1142,7 +1142,14 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_empty(&self) -> bool {
-        self.dom_children().next().is_none()
+        // pyro: children that are comments or empty text (an empty CDATA section, a script's
+        // `createTextNode('')`) leave it empty (Selectors 4 § 14.2, as Chrome; WPT
+        // css/selectors/old-tests `css3-modsel-153`, `-d1b`).
+        self.dom_children().all(|child| match &child.data {
+            NodeData::Text(text) => text.content.is_empty(),
+            NodeData::Comment { .. } => true,
+            _ => false,
+        })
     }
 
     fn is_root(&self) -> bool {

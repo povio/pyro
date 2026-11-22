@@ -2918,3 +2918,9 @@ parent's `margin-trim: block-end` reaching the margins that collapse through its
 README.pyro.md) is laid out afresh and its layout cache cleared after it, as for a block among floats: the cache
 does not key on the flag. WPT css-box `margin-trim/block-container-block-end-self-collapsing-children-nested-*`.
 Test `block_end_trims_self_collapsing_boxes_nested_at_the_bottom` (pyro-render).
+
+## `:empty` with comments and empty text
+
+`src/stylo.rs`, `is_empty`: an element whose children are all comments or empty text nodes (an empty CDATA
+section, a script's `createTextNode('')`) matches `:empty` (Selectors 4 § 14.2, as Chrome). Upstream counted any
+child. WPT css/selectors/old-tests `css3-modsel-153`, `css3-modsel-d1b`.
