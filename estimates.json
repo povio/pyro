@@ -2,22 +2,22 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 233,
-   "of_which_tentative": 2,
+   "distinct_census_pages": 235,
+   "of_which_tentative": 4,
    "studio_css_reported_pages_not_deduped": 0,
    "by_dir": {
     "html/canvas": 207,
-    "FileAPI": 4,
-    "html/semantics": 4,
     "fetch/api": 4,
+    "FileAPI": 4,
+    "html/syntax": 4,
+    "html/semantics": 4,
     "fetch/data-urls": 3,
-    "html/syntax": 2,
-    "encoding": 2,
-    "xhr": 2,
     "mathml": 2,
-    "quirks": 1,
+    "xhr": 2,
+    "encoding": 2,
     "svg/styling": 1,
-    "html/rendering": 1
+    "html/rendering": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -35,27 +35,27 @@
     "html/dom": 17,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
-    "shadow-dom": 7,
     "selection": 7,
+    "shadow-dom": 7,
     "navigation-api": 6,
+    "html/editing": 5,
     "uievents": 5,
     "intersection-observer": 5,
-    "html/editing": 5,
     "svg/types": 4,
     "inert": 3,
-    "mathml": 3,
     "event-timing": 3,
     "close-watcher": 3,
+    "mathml": 3,
     "resource-timing": 2,
-    "dom/nodes": 2,
     "fetch/fetch-later": 2,
+    "dom/nodes": 2,
     "svg/animations": 2,
-    "html/rendering": 2,
     "soft-navigation-heuristics": 2,
-    "html/browsers": 1,
-    "pointerlock": 1,
+    "html/rendering": 2,
     "editing": 1,
-    "document-picture-in-picture": 1
+    "document-picture-in-picture": 1,
+    "pointerlock": 1,
+    "html/browsers": 1
    }
   },
   "queued": {
@@ -575,6 +575,11 @@
    "pages": 2,
    "tentative": 2
   },
+  "F10b": {
+   "state": "implemented-unbuilt",
+   "pages": 2,
+   "tentative": 2
+  },
   "OWN-body-textstream": {
    "state": "implemented-unbuilt",
    "pages": 4,
@@ -586,11 +591,11 @@
    "tentative": 0
   },
   "E02": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "pages": null,
    "tentative": null
   }
  },
- "implemented_total_estimate": 233,
+ "implemented_total_estimate": 235,
  "milestones_reached": []
 }
