@@ -2374,6 +2374,64 @@ fn convert_list_items(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, st
     Some((if start.0 == source { first_point } else { start }, if end.0 == source { last_point } else { end }))
 }
 
+/// Listify the anonymous paragraph containing a selected host text node.
+/// Its adjacent lists are boundaries, not children of the new item.
+fn listify_bare_text(
+    page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point,
+) -> Option<(Point, Point)> {
+    let (text, from) = editing::deep_forward(dom, start);
+    let (last, to) = editing::deep_backward(dom, end);
+    if text != last || !editing::is_text(dom, text) || dom.parent(text).ok()? != Some(host)
+        || editing::editing_host(dom, text) != Some(host) { return None; }
+
+    let line_boundary = |n| {
+        if editing::is_text(dom, n) { return false; }
+        let display = page.layout().computed_style_value(dom, n, "display");
+        editing::local(dom, n) == "br" || !(display == "contents" || display.starts_with("inline"))
+    };
+    let children: Vec<_> = dom.children(host).ok()?.collect();
+    let index = dom.index_in_parent(text).ok()? as usize;
+    let begin = children[..index].iter().rposition(|&n| line_boundary(n)).map_or(0, |i| i + 1);
+    let end = children[index + 1..].iter().position(|&n| line_boundary(n)).map_or(children.len(), |i| index + 1 + i);
+    let left = begin.checked_sub(1).map(|i| children[i]);
+    let right = children.get(end).copied();
+    let list_tag = |n| dom.element(n).ok().filter(|el| el.is_html()).map(|el| el.local_name());
+    if ![left, right].into_iter().flatten().any(|n| list_tag(n).is_some_and(|name| matches!(&**name, "ol" | "ul"))) {
+        return None;
+    }
+    let matches = |n| list_tag(n).is_some_and(|name| &**name == tag) && editing::editing_host(dom, n) == Some(host);
+    let left = left.filter(|&n| matches(n));
+    let right = right.filter(|&n| matches(n));
+    let doc = dom.node_document(host).ok()?;
+    let item = dom.create_element(doc, "li").ok()?;
+    let content = dom.clone_node(text, false, None).ok()?;
+    if let Some(right) = right {
+        let first = dom.first_child(right).ok()?;
+        dom.insert_before(right, item, first).ok()?;
+        if let Some(left) = left {
+            while let Some(child) = dom.first_child(left).ok()? {
+                dom.insert_before(right, child, Some(item)).ok()?;
+            }
+            dom.remove_node(left).ok()?;
+        }
+    } else if let Some(left) = left {
+        dom.append_child(left, item).ok()?;
+    } else {
+        let list = dom.create_element(doc, tag).ok()?;
+        dom.insert_before(host, list, Some(children[begin])).ok()?;
+        dom.append_child(list, item).ok()?;
+    }
+    for &child in &children[begin..end] {
+        if child == text {
+            dom.append_child(item, content).ok()?;
+            dom.remove_node(text).ok()?;
+        } else {
+            dom.append_child(item, child).ok()?;
+        }
+    }
+    Some(((content, from), (content, to)))
+}
+
 /// insertOrderedList / insertUnorderedList: the selected blocks become
 /// items of a new list; inside such a list already, its items become `div`
 /// lines again.
@@ -2384,6 +2442,11 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
             if let Some((a, b)) = convert_list_items(page, &mut dom, host, tag, start, end) {
+                drop(dom);
+                editing::set_selection(page, a, b);
+                return;
+            }
+            if let Some((a, b)) = listify_bare_text(page, &mut dom, host, tag, start, end) {
                 drop(dom);
                 editing::set_selection(page, a, b);
                 return;
