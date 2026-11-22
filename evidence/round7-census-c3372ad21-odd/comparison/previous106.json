@@ -2393,12 +2393,21 @@
   "shard": "ordinary-199"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "error",
+   "Error",
+   false,
+   95,
+   208
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false",
    "chrome158": [

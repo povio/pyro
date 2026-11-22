@@ -1,0 +1,39 @@
+{
+ "logSHA256": "ba6f2fe6875562dd04d1fa7e6a06ba01dce1ef1a2134e07e84514dc9f448d173",
+ "proof": {
+  "sha256": "9ac4c273e2969030d0dcab9fc71e5f74a5c828bdbe11efc5f8ffbec862d9c976",
+  "ports": {
+   "http": [
+    52420,
+    52421
+   ],
+   "https": [
+    52422,
+    52423
+   ],
+   "http-local": [
+    52424
+   ],
+   "http-public": [
+    52425
+   ],
+   "https-local": [
+    52426
+   ],
+   "https-public": [
+    52427
+   ],
+   "ws": [
+    52428
+   ],
+   "wss": [
+    52429
+   ],
+   "h2": [
+    52430
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  }
+ }
+}
