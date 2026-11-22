@@ -1,4 +1,4 @@
-// Buffer-backed WebCodecs frames. Plane bytes are private and immutable;
+// WebCodecs frames. Plane bytes are private and immutable;
 // a cloned wrapper shares the resource and may be closed independently.
 (function (limits) {
   'use strict';
@@ -354,10 +354,102 @@
       }
     }
   }
+  function to64(value, signed) {
+    const number = +value;
+    if (!Number.isFinite(number)) return 0;
+    const bits = BigInt(Math.trunc(number));
+    return Number(signed ? BigInt.asIntN(64, bits) : BigInt.asUintN(64, bits));
+  }
+
+  // Convert the image overload's dictionary before checking usability and
+  // taking the bitmap snapshot. An author's getter can resize or draw to
+  // the source; each member is read once and in Web IDL dictionary order.
+  function canvasInit(init) {
+    const alpha = init.alpha;
+    const result = {__proto__: null, alpha: alpha === undefined ? 'keep' : enumValue(alpha, ['keep', 'discard'])};
+    const displayHeight = init.displayHeight;
+    if (displayHeight !== undefined) result.displayHeight = displayHeight >>> 0;
+    const displayWidth = init.displayWidth;
+    if (displayWidth !== undefined) result.displayWidth = displayWidth >>> 0;
+    const duration = init.duration;
+    if (duration !== undefined) result.duration = to64(duration, false);
+    result.flip = !!init.flip;
+    // The core VideoFrameMetadata dictionary has no defined members.
+    dictionary(init.metadata);
+    const rotation = init.rotation;
+    result.rotation = rotation === undefined ? 0 : +rotation;
+    if (!Number.isFinite(result.rotation)) invalid();
+    const timestamp = init.timestamp;
+    if (timestamp !== undefined) result.timestamp = to64(timestamp, true);
+    const rect = init.visibleRect;
+    if (rect !== undefined) {
+      const d = dictionary(rect);
+      result.visibleRect = {__proto__: null};
+      for (const key of ['height', 'width', 'x', 'y']) {
+        const member = d[key];
+        result.visibleRect[key] = member === undefined ? 0 : +member;
+      }
+    }
+    return result;
+  }
+
+  function applyGeometry(s, init) {
+    const oldRect = s.rect;
+    if (init.visibleRect !== undefined) s.rect = rectOf(init.visibleRect, s.width, s.height, s.format);
+    if ((init.displayWidth === undefined) !== (init.displayHeight === undefined)) invalid();
+    s.displayW =
+      init.displayWidth === undefined
+        ? Math.round((s.displayW * s.rect.width) / oldRect.width)
+        : integer(init.displayWidth, 1);
+    s.displayH =
+      init.displayHeight === undefined
+        ? Math.round((s.displayH * s.rect.height) / oldRect.height)
+        : integer(init.displayHeight, 1);
+    if (!s.displayW || !s.displayH) invalid();
+    const angle = +(init.rotation ?? 0);
+    if (!Number.isFinite(angle)) invalid();
+    const turn = Math.floor(((((angle % 360) + 360) % 360) + 45) / 90) * 90;
+    s.rotation = (s.rotation + (s.flip ? -turn : turn) + 360) % 360;
+    s.flip = s.flip !== Boolean(init.flip);
+    if (init.displayWidth !== undefined && s.rotation % 180) {
+      [s.displayW, s.displayH] = [s.displayH, s.displayW];
+    }
+  }
+
+  function fromCanvas(target, source, init) {
+    // Only branded, usable, origin-clean sources reach a pixel snapshot.
+    // The native bridge owns the charge until construction succeeds.
+    const bitmap = limits.canvasSnapshot(source);
+    try {
+      if (init.timestamp === undefined) throw new TypeError('A timestamp is required for a bitmap source.');
+      const {width, height} = bitmap;
+      const format = bitmap.opaque || init.alpha === 'discard' ? 'RGBX' : 'RGBA';
+      const colorSpace = bitmap.colorSpace === 'display-p3' ? {
+        primaries: 'smpte432', transfer: 'iec61966-2-1', matrix: 'rgb', fullRange: true
+      } : undefined;
+      const s = {
+        data: bitmap.data, imageLease: bitmap.lease, format, width, height,
+        layout: [{offset: 0, stride: width * 4}],
+        rect: {x: 0, y: 0, width, height}, displayW: width, displayH: height,
+        rotation: 0, flip: false, timestamp: init.timestamp, duration: init.duration ?? null,
+        ...colorInfo(format, colorSpace)
+      };
+      applyGeometry(s, init);
+      frames.set(target, s);
+    } catch (error) {
+      bitmap.lease(false);
+      throw error;
+    }
+  }
+
   const decoderOwned = Symbol('decoder-owned frame bytes');
   class VideoFrame {
     constructor(source, init = {}, privateToken) {
       init = dictionary(init);
+      if (privateToken !== decoderOwned && !frames.has(source) && limits.isCanvasSource(source)) {
+        fromCanvas(this, source, canvasInit(init));
+        return;
+      }
       let s;
       if (frames.has(source)) {
         s = { ...requireLive(source) };
@@ -399,37 +491,12 @@
         };
       }
       if (frames.has(source)) {
-        const to64 = (value, signed) => {
-          const number = +value;
-          if (!Number.isFinite(number)) return 0;
-          const bits = BigInt(Math.trunc(number));
-          return Number(signed ? BigInt.asIntN(64, bits) : BigInt.asUintN(64, bits));
-        };
         if (init.timestamp !== undefined) s.timestamp = to64(init.timestamp, true);
         if (init.duration !== undefined) s.duration = to64(init.duration, false);
       } else if (init.duration !== undefined) {
         s.duration = integer(init.duration, 0, Number.MAX_SAFE_INTEGER);
       }
-      const oldRect = s.rect;
-      if (init.visibleRect !== undefined) s.rect = rectOf(init.visibleRect, s.width, s.height, s.format);
-      if ((init.displayWidth === undefined) !== (init.displayHeight === undefined)) invalid();
-      s.displayW =
-        init.displayWidth === undefined
-          ? Math.round((s.displayW * s.rect.width) / oldRect.width)
-          : integer(init.displayWidth, 1);
-      s.displayH =
-        init.displayHeight === undefined
-          ? Math.round((s.displayH * s.rect.height) / oldRect.height)
-          : integer(init.displayHeight, 1);
-      if (!s.displayW || !s.displayH) invalid();
-      const angle = +(init.rotation ?? 0);
-      if (!Number.isFinite(angle)) invalid();
-      const turn = Math.floor(((((angle % 360) + 360) % 360) + 45) / 90) * 90;
-      s.rotation = (s.rotation + (s.flip ? -turn : turn) + 360) % 360;
-      s.flip = s.flip !== Boolean(init.flip);
-      if (init.displayWidth !== undefined && s.rotation % 180) {
-        [s.displayW, s.displayH] = [s.displayH, s.displayW];
-      }
+      applyGeometry(s, init);
       if (!frames.has(source) && init.transfer !== undefined) {
         const transfers = Array.from(init.transfer);
         for (const entry of transfers) bufferGetters[0].call(entry);
