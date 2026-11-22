@@ -13648,7 +13648,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7559,131 @@
+@@ -1312,7 +7559,130 @@
          );
      }
  
@@ -13769,18 +13769,17 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    .is_some_and(|parent| parent.name.local == local_name!("picture"));
 +            match source {
 +                Some(url) if !chosen && !Privacy::same_origin(dom.url(), &url) => return,
-+                Some(_) if !chosen => {
-+                    if let Some(image) = self.element.raster_image_data() {
-+                        privacy.allowed.borrow_mut().push(image.data.id());
-+                    }
-+                }
++                // Not allowed yet: a same-origin URL may redirect to another origin (or a service
++                // worker may answer it opaquely), so until the response's opaque flag is carried
++                // here, its pixels taint as an unclassified image does.
++                Some(_) if !chosen => {}
 +                _ => privacy.unclassified.set(true),
 +            }
 +        }
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7700,22 @@
+@@ -1329,9 +7699,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -13806,7 +13805,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7731,28 @@
+@@ -1347,10 +7730,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -13835,7 +13834,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7760,23 @@
+@@ -1358,8 +7759,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -13860,7 +13859,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7800,32 @@
+@@ -1383,22 +7799,32 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -13903,7 +13902,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7854,32 @@
+@@ -1427,6 +7853,32 @@
      }
  }
  
@@ -13936,7 +13935,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7891,13 @@
+@@ -1438,6 +7890,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -13950,7 +13949,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7917,364 @@
+@@ -1457,12 +7916,364 @@
          }
      };
      let s_border = style.get_border();
@@ -14960,7 +14959,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -226,20 +665,54 @@
+@@ -226,20 +665,53 @@
              BoxModelBox::BorderBox => self.frame.border_box,
              BoxModelBox::PaddingBox => self.frame.padding_box,
              BoxModelBox::ContentBox => self.frame.content_box,
@@ -15000,16 +14999,15 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            }
              GenericImage::Url(_) => {
 -                self.draw_raster_image_layer(scene, layer);
-+                // pyro: HTML-in-Canvas privacy: a layer image of another origin is left out, one
-+                // of the document's own is allowed (`Privacy`).
-+                if let Some(privacy) = &self.context.privacy {
++                // pyro: HTML-in-Canvas privacy: a layer image of another origin is left out
++                // (`Privacy`).
++                if self.context.privacy.is_some() {
 +                    let Some(data) = layer.image_data else { return };
 +                    if !super::Privacy::same_origin(self.context.dom.as_ref().url(), &data.url) {
 +                        return;
 +                    }
-+                    if let ImageData::Raster(raster) = &data.image {
-+                        privacy.allowed.borrow_mut().push(raster.data.id());
-+                    }
++                    // Not allowed yet (its pixels taint): a same-origin URL may redirect to another
++                    // origin, which only the response's opaque flag tells (see `Privacy`).
 +                }
 +                self.draw_raster_image_layer(scene, layer, area);
                  #[cfg(feature = "svg")]
@@ -15018,7 +15016,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -249,18 +722,182 @@
+@@ -249,18 +721,182 @@
                  #[cfg(feature = "tracing")]
                  warn!("Implement image layer drawing for Image::PaintWorklet")
              }
@@ -15211,7 +15209,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -275,7 +912,18 @@
+@@ -275,7 +911,18 @@
              return;
          };
  
@@ -15230,7 +15228,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              let node = self.context.dom.get_node(node_id)?;
              let style = node.primary_styles()?;
              let current_color = style.clone_color();
-@@ -308,11 +956,51 @@
+@@ -308,11 +955,51 @@
                  ]
              })
              .collect();
@@ -15283,7 +15281,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let cell_rect = |cell_id: NodeId| -> Option<Rect> {
              let layout = self.context.dom.get_node(cell_id)?.final_layout();
-@@ -344,13 +1032,29 @@
+@@ -344,13 +1031,29 @@
          let after = gutter - before;
  
          for cell in &table.cells {
@@ -15314,7 +15312,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
                  continue;
              }
              let Some(mut rect) = cell_rect(cell.node_id) else {
-@@ -367,25 +1071,249 @@
+@@ -367,25 +1070,249 @@
              }
  
              let shape = rect.scale_from_origin(self.scale);
@@ -15575,7 +15573,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,43 +1338,68 @@
+@@ -410,43 +1337,68 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -15656,7 +15654,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +1414,7 @@
+@@ -461,7 +1413,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -15665,7 +15663,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +1429,112 @@
+@@ -476,29 +1428,112 @@
              return;
          }
  
@@ -15791,7 +15789,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,95 +1545,212 @@
+@@ -509,95 +1544,212 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -16053,7 +16051,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
              origin_rect.width() / self.scale,
-@@ -629,24 +1782,50 @@
+@@ -629,24 +1781,50 @@
              bg_size.height,
          );
  
@@ -16117,7 +16115,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
              y: y.translate,
-@@ -681,35 +1860,84 @@
+@@ -681,35 +1859,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -16222,7 +16220,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +2103,64 @@
+@@ -875,48 +2102,64 @@
      stride: f64,
  }
  
@@ -16316,7 +16314,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +2202,24 @@
+@@ -958,11 +2201,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -16346,7 +16344,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +2243,16 @@
+@@ -986,6 +2242,16 @@
      (count, stride)
  }
  
@@ -16363,7 +16361,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +2276,63 @@
+@@ -1009,3 +2275,63 @@
          -extend_length
      }
  }

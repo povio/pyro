@@ -7676,11 +7676,10 @@ impl ElementCx<'_, '_> {
                     .is_some_and(|parent| parent.name.local == local_name!("picture"));
             match source {
                 Some(url) if !chosen && !Privacy::same_origin(dom.url(), &url) => return,
-                Some(_) if !chosen => {
-                    if let Some(image) = self.element.raster_image_data() {
-                        privacy.allowed.borrow_mut().push(image.data.id());
-                    }
-                }
+                // Not allowed yet: a same-origin URL may redirect to another origin (or a service
+                // worker may answer it opaquely), so until the response's opaque flag is carried
+                // here, its pixels taint as an unclassified image does.
+                Some(_) if !chosen => {}
                 _ => privacy.unclassified.set(true),
             }
         }
