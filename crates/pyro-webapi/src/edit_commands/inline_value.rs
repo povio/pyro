@@ -91,7 +91,11 @@ impl Format {
             }
             Kind::Foreground | Kind::Background => {
                 let (color, html) = pyro_dom::color_well::editing_color(value)
-                    .or_else(|| pyro_dom::color_well::editing_color(&format!("#{value}")))?;
+                    .or_else(|| if kind == Kind::Foreground {
+                        pyro_dom::color_well::hashless_foreground(value)
+                    } else {
+                        pyro_dom::color_well::editing_color(&format!("#{value}"))
+                    })?;
                 (color, if kind == Kind::Foreground { html } else { None })
             }
         };
