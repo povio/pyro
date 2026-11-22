@@ -2979,3 +2979,20 @@ document made with `DocumentConfig::quirks_mode` gives its `Stylist` `QuirksMode
 selectors match ASCII case-insensitively there, as in every browser (HTML "case-sensitivity of selectors"). Its
 author sheets already parsed in quirks mode (`BaseDocument::sheet_quirks_mode`); style attributes and CSSOM edits
 still parse in no-quirks mode. WPT css/selectors/invalidation `quirks-mode-stylesheet-dynamic-add-001`.
+## MathML fractions (`layout/math.rs`)
+
+An ordinary `<mfrac>` (MathML namespace, `display: inline`, exactly two element children that are in flow
+and hold no block box, no `::before`/`::after`, no text beside them) is built with its numerator and
+denominator as its layout children (`NodeFlags::IS_MATH_FRACTION`, `construct_fraction`) and laid out by
+`LayoutPassState::compute_math_fraction_layout` (Chromium's `MathMLFractionLayoutAlgorithm`): each child at its
+max-content size, centred, its baseline shifted up or down from the fraction's by the primary font's OpenType
+MATH constants (`BlitzFontMetricsProvider::math_parameters_for` reads the `MathConstants` table directly) or
+Chromium's fallbacks without a MATH table (bar 0.05em, gaps one bar or three in display style, stack gap three or
+seven, shifts zero, axis half the x-height). `linethickness` is a length or a percentage of the default. The bar
+is recorded on the element (`ElementData::math_fraction_bar`) and painted by blitz-paint
+(`draw_math_fraction_bar`). Every `mfrac` is an atomic inline (`replaced::is_inline_box`): one that is not
+ordinary holds its children's inline layout. `assets/default.css` gets MathML Core's fraction rules
+(`math-style`, `padding-inline: 1px`, `math-depth: auto-add; font-size: math` on its children). Not done: operator
+spacing, `numalign`/`denomalign`/`bevelled`, `math-shift`, vertical or right-to-left math, the `math` root's own
+layout (display centring, `font-family: math`). Tests: `crates/pyro-render/tests/mathml_fraction.rs`, unit tests in
+`layout/math.rs`.

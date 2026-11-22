@@ -202,6 +202,9 @@ bitflags! {
         /// out (`BaseDocument::force_hidden_contents`): they get boxes until the next frame, still
         /// unpainted, unhit and not sizing it (its size containment stays).
         const CV_HIDDEN_FORCED = 1 << 41;
+        /// pyro: the node is an ordinary MathML fraction whose numerator and denominator are its
+        /// layout children (`layout::math`). Set by its construction.
+        const IS_MATH_FRACTION = 1 << 42;
     }
 }
 
@@ -402,6 +405,7 @@ impl NodeFlags {
         self.remove(Self::IS_TABLE_ROOT);
         self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
         self.remove(Self::IS_SPLIT_INLINE);
+        self.remove(Self::IS_MATH_FRACTION);
     }
 }
 

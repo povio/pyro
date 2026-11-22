@@ -870,6 +870,12 @@ fn collect_layout_children_with_wrap(
         return;
     }
 
+    // pyro: an ordinary MathML fraction: its numerator and denominator are its layout children
+    // (`layout::math`).
+    if super::math::construct_fraction(doc, container_node_id, &mut out.children) {
+        return;
+    }
+
     if super::multicol::has_multicol_content_box(&doc.nodes[container_node_id]) {
         out.create_anonymous_block(container_node_id, doc);
         let wrapper = out.anonymous_block_id.take().unwrap();

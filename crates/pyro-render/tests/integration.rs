@@ -73,6 +73,7 @@ mod initial_letter;
 mod inline_box_decorations;
 mod inline_fragments;
 mod inline_leftovers;
+mod mathml_fraction;
 mod inline_relative_position;
 mod inline_size_containment;
 mod inline_svg_viewport;

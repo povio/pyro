@@ -1158,3 +1158,9 @@ text split by position, not by the box's edge. Covered by `crates/pyro-render/te
   whose stacking context is further up is still not painted (it would need the root's transform before the root
   paints). WPT css-contain `contain-layout-016`, `contain-paint-020`; test
   `a_negative_z_index_inline_box_paints_over_its_stacking_contexts_background` (pyro-render).
+
+## MathML fraction bars
+
+`draw_math_fraction_bar` fills the bar an ordinary `<mfrac>`'s layout recorded (`ElementData::math_fraction_bar`,
+blitz-dom `layout/math.rs`) across the fraction's content box in its `color`, after its content image and before
+its children (Chromium's `MathMLPainter::PaintFractionBar`). Tests: `crates/pyro-render/tests/mathml_fraction.rs`.

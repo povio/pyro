@@ -7,6 +7,8 @@
 @namespace xul url(http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul);
 /* pyro: for the `svg|svg` rule below. */
 @namespace svg url(http://www.w3.org/2000/svg);
+/* pyro: for the MathML fraction rules at the end. */
+@namespace m url(http://www.w3.org/1998/Math/MathML);
 
 *|*:root { view-transition-name: root; }
 /* pyro: the scope of an active element-scoped view transition (css-view-transitions-2, as in
@@ -1653,3 +1655,12 @@ geolocation, install, usermedia, camera, microphone {
     contain-intrinsic-size: none !important;
     corner-shape: round !important;
 }
+
+/* pyro: MathML Core's user agent rules for fractions (MathML Core Appendix A; Chromium's
+ * mathml.css): inline math is compact and display math normal, a fraction's children are a
+ * script level deeper in compact math (their font 0.71 times smaller), and a fraction has 1px
+ * of padding beside its bar. Its layout is `layout::math`. */
+m|math { math-style: compact; }
+m|math[display="block" i] { math-style: normal; }
+m|mfrac { padding-inline: 1px; }
+m|mfrac > * { math-depth: auto-add; math-style: compact; font-size: math; }

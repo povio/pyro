@@ -178,7 +178,12 @@ pub(crate) fn is_inline_box(element: &ElementData) -> bool {
     if element.image_broken && !is_content_image(element) {
         return false;
     }
-    is_inline_box_element(&element.name.local) || is_image_object(element) || is_document_object(element)
+    is_inline_box_element(&element.name.local)
+        || is_image_object(element)
+        || is_document_object(element)
+        // pyro: a MathML fraction is an atomic inline (`layout::math`; one that is not an
+        // ordinary fraction holds its children's inline layout, as an inline-block would).
+        || (element.name.ns == markup5ever::ns!(mathml) && element.name.local == markup5ever::local_name!("mfrac"))
 }
 
 /// The intrinsic dimensions of a replaced element per CSS Images 3
