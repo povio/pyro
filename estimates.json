@@ -2,8 +2,8 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 338,
-   "owner_reported_unlisted": 45,
+   "distinct_census_pages": 348,
+   "owner_reported_unlisted": 55,
    "selector_union": 299,
    "owner_estimate_reduction": 6,
    "of_which_tentative": 4,
@@ -13,22 +13,22 @@
     "html/canvas": 263,
     "html/syntax": 12,
     "html/semantics": 5,
-    "fetch/api": 4,
     "FileAPI": 4,
+    "fetch/api": 4,
     "fetch/data-urls": 3,
     "xhr": 2,
     "encoding": 2,
+    "dom/collections": 1,
     "svg/styling": 1,
     "html/rendering": 1,
-    "dom/collections": 1,
     "quirks": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 574,
+   "distinct_census_pages": 564,
    "owner_reported_unlisted": 0,
    "selector_union": 619,
-   "owner_estimate_reduction": 45,
+   "owner_estimate_reduction": 55,
    "of_which_tentative": 196,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
@@ -39,32 +39,32 @@
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
-    "selection": 7,
     "shadow-dom": 7,
+    "selection": 7,
     "navigation-api": 6,
     "uievents": 5,
-    "html/editing": 5,
     "intersection-observer": 5,
+    "html/editing": 5,
     "svg/types": 4,
     "event-timing": 3,
-    "inert": 3,
     "close-watcher": 3,
     "mathml": 3,
-    "soft-navigation-heuristics": 2,
+    "inert": 3,
     "dom/nodes": 2,
     "svg/animations": 2,
     "fetch/fetch-later": 2,
     "resource-timing": 2,
     "html/rendering": 2,
-    "html/browsers": 1,
+    "soft-navigation-heuristics": 2,
+    "pointerlock": 1,
     "document-picture-in-picture": 1,
     "custom-elements": 1,
     "editing": 1,
-    "pointerlock": 1
+    "html/browsers": 1
    }
   },
   "queued": {
@@ -592,7 +592,7 @@
    "tentative": 0
   },
   "F08a": {
-   "state": "active",
+   "state": "implemented-unbuilt",
    "pages": null,
    "tentative": null
   },
@@ -682,7 +682,7 @@
    "tentative": null
   }
  },
- "implemented_total_estimate": 376,
+ "implemented_total_estimate": 386,
  "milestones_reached": [
   250
  ]
