@@ -2404,6 +2404,13 @@
     // Body "unusable" check.
     isLocked: (s) => rsLocked(rsOf(s)),
     isDisturbed: (s) => rsOf(s).disturbed,
+    // A body stream made after the body was consumed: locked and disturbed,
+    // as the consuming read left the stream it would have used.
+    markConsumed(s) {
+      const st = rsOf(s);
+      if (!rsLocked(st)) newReader(st);
+      st.disturbed = true;
+    },
     // A byte stream over a native source: read() -> {value, done}, cancel().
     fromBody(source, read, cancel) {
       return byteBody((c) => then(apply(read, source, []), (r) => {

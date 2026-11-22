@@ -203,6 +203,10 @@ fn body_stream<'s>(s: &Scope<'s>, d: &ResponseData) -> JsResult<Value<'s>> {
     let read = source.get_atom("read")?;
     let cancel = source.get_atom("cancel")?;
     let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
+    if d.used.get() {
+        // text()/json()/... already read the body: its stream is unusable.
+        crate::streams::helper(s, &page, "markConsumed", &[stream])?;
+    }
     let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
     let owner = realm.scope()?;
     let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
@@ -224,8 +228,7 @@ fn is_null_body_status(status: u16) -> bool {
 
 /// `ResponseInit`: status (200..=599, default 200), statusText (reason-phrase
 /// characters only), headers. `set-cookie`/`set-cookie2` are dropped (the
-/// "response" guard forbids them); later `headers.set('set-cookie')` on a
-/// script response is not filtered (documented gap).
+/// "response" guard forbids them, as it does later writes: `wrap_script`).
 fn parse_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<(u16, String, HeadersData)> {
     let get = |key: &str| -> JsResult<Value<'_>> {
         match init.as_object() {
