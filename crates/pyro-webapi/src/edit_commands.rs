@@ -1430,6 +1430,66 @@ fn restored_format_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) 
         .unwrap_or(point)
 }
 
+/// Remove a conflicting numeric weight from the selected portion before
+/// applying bold. Other attributes and declarations stay on their span.
+fn prepare_numeric_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, use_css: bool) -> Option<bool> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let span = dom.parent_element(text).ok()??;
+    if span == host || !dom.element(span).is_ok_and(|el| el.is_html() && &**el.local_name() == "span") {
+        return None;
+    }
+    let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()??);
+    let weight = style.value("font-weight").parse::<f64>().ok()?;
+    if !(1.0..600.0).contains(&weight) { return None; }
+    // split_texts has already isolated the selected text. If there are
+    // unselected siblings, keep their carrier and apply bold inside it.
+    if dom.child_count(span).ok()? != 1 { return Some(false); }
+    style.remove("font-weight");
+    if style.is_empty() && dom.attributes(span).ok()?.len() == 1 {
+        hoist(dom, text, span);
+        return None;
+    }
+    if style.is_empty() {
+        dom.remove_attribute(span, "style").ok()?;
+    } else {
+        dom.set_attribute(span, "style", &style.css_text()).ok()?;
+    }
+    if FontToggle::Bold.active(&page.layout().computed_style_value(dom, span, "font-weight")) {
+        return Some(true);
+    }
+    if use_css {
+        style.set("font-weight", "bold", false)?;
+        dom.set_attribute(span, "style", &style.css_text()).ok()?;
+    }
+    Some(use_css)
+}
+
+/// The UA styles B as bolder. Under a very light or already-heavy
+/// numeric weight that can produce 400 or 900 instead of the command's
+/// bold weight. Isolate the affected portion only when that happens.
+fn resolve_relative_bold(page: &PageDom, dom: &mut Dom, span: NodeId, bold: NodeId) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    if !dom.element(span).is_ok_and(|el| el.is_html() && &**el.local_name() == "span") { return None; }
+    let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()??);
+    style.value("font-weight").parse::<f64>().ok()?;
+    let layout = page.layout();
+    if layout.computed_style_value(dom, bold, "font-weight") == "700" { return Some(()); }
+    style.remove("font-weight");
+    if style.is_empty() && dom.attributes(span).ok()?.len() == 1 {
+        hoist(dom, bold, span);
+    } else {
+        let outer = dom.parent_element(span).ok()??;
+        let middle = alignment::split_edge(dom, outer, bold, false, &mut [])?;
+        alignment::split_edge(dom, outer, bold, true, &mut [])?;
+        if style.is_empty() { dom.remove_attribute(middle, "style").ok()?; }
+        else { dom.set_attribute(middle, "style", &style.css_text()).ok()?; }
+    }
+    if layout.computed_style_value(dom, bold, "font-weight") != "700" {
+        dom.set_attribute(bold, "style", "font-weight: bold;").ok()?;
+    }
+    Some(())
+}
+
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
@@ -1465,8 +1525,10 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 return;
             };
             let mut last_wrapper: Option<NodeId> = None;
+            let use_css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
             for &t in &texts {
-                let carried = carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some());
+                let prepared = if tag == "b" { prepare_numeric_bold(page, &mut dom, host, t, use_css) } else { None };
+                let carried = prepared.unwrap_or_else(|| carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some()));
                 if carried {
                     continue;
                 }
@@ -1495,7 +1557,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                         continue;
                     }
                 }
-                let style = if dom.document_data(doc).is_ok_and(|d| d.style_with_css) { inline_css(tag) } else { None };
+                let style = if use_css { inline_css(tag) } else { None };
                 let Ok(w) = dom.create_element(doc, if style.is_some() { "span" } else { tag }) else {
                     continue;
                 };
@@ -1508,6 +1570,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 wrapped_svg |= dom.element(parent).is_ok_and(|el| el.namespace() == &markup5ever::ns!(svg));
                 let _ = dom.insert_before(parent, w, Some(t));
                 let _ = dom.append_child(w, t);
+                if tag == "b" && !use_css { resolve_relative_bold(page, &mut dom, parent, w); }
                 last_wrapper = Some(w);
             }
             texts
