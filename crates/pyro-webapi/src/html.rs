@@ -2206,12 +2206,12 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         // Unlike the JSC C API's number conversion, the JS unsigned shift
         // rejects BigInt even when an object's primitive conversion returns it.
         const CONVERTER: &str = "lpValueRangeUnsignedLong";
-        let global = s.global();
-        let convert = match s.get_hidden(global, CONVERTER)?.and_then(|v| v.as_object()) {
+        let holder = crate::worker_scope::module_holder(s, n.page())?;
+        let convert = match s.get_hidden(holder, CONVERTER)?.and_then(|v| v.as_object()) {
             Some(convert) => convert,
             None => {
                 let convert = s.eval("(value => value >>> 0)", None, 1)?.as_object().expect("conversion function");
-                s.set_hidden(global, CONVERTER, convert.value())?;
+                s.set_hidden(holder, CONVERTER, convert.value())?;
                 convert
             }
         };
