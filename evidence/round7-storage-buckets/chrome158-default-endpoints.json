@@ -1,0 +1,20 @@
+{
+  "cache": [
+    true,
+    "bytes"
+  ],
+  "kept": "bytes",
+  "idb": [
+    true,
+    true,
+    true,
+    "default-check",
+    1,
+    1
+  ],
+  "opfs": [
+    true,
+    true,
+    "value"
+  ]
+}

@@ -1,0 +1,12 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const read = (name) => JSON.parse(fs.readFileSync(path.join(__dirname, name + '.json')));
+const endpoint = read('candidate-default-endpoints');
+if (JSON.stringify(endpoint) !== JSON.stringify(read('base-default-endpoints'))) throw Error('default storage endpoint compatibility');
+const catalog = read('candidate-catalog');
+if (!catalog.surface[2] || !catalog.identity[0] || catalog.reopen[4] !== 65536) throw Error('bucket catalog identity/policy');
+const backend = read('candidate-backends');
+if (!backend.surface || !backend.brand.every(Boolean) || !backend.stable.every(Boolean)) throw Error('endpoint identity/prototypes');
+if (backend.cache[0] !== 'abc' || backend.cache[1] !== 0 || backend.cache[2] !== false || !backend.cache[3]) throw Error('isolated cache storage and accounting');
+if (JSON.stringify(backend.files) !== JSON.stringify(['hello',true,false,false])) throw Error('isolated OPFS');
+if (JSON.stringify(backend.idb) !== JSON.stringify([true,true,true,false,false])) throw Error('isolated IDB');

@@ -1,0 +1,48 @@
+{
+  "surface": true,
+  "brand": [
+    true,
+    true,
+    true
+  ],
+  "stable": [
+    true,
+    true
+  ],
+  "cache": [
+    "abc",
+    0,
+    false,
+    true
+  ],
+  "files": [
+    "hello",
+    true,
+    false,
+    false
+  ],
+  "idb": [
+    true,
+    true,
+    true,
+    false,
+    false
+  ],
+  "recreate": [
+    0,
+    0,
+    "NotFoundError"
+  ],
+  "stale": [
+    "InvalidStateError",
+    "NotFoundError",
+    "NotFoundError",
+    "UnknownError",
+    "ok",
+    "NotFoundError"
+  ],
+  "freshAfterStale": [
+    0,
+    "NotFoundError"
+  ]
+}

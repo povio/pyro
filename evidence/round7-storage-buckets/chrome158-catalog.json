@@ -1,0 +1,56 @@
+{
+  "surface": [
+    "function",
+    "function",
+    true
+  ],
+  "identity": [
+    true,
+    true,
+    0,
+    0
+  ],
+  "reopen": [
+    true,
+    "a1",
+    "a1",
+    true,
+    65536
+  ],
+  "methods": [
+    "undefined",
+    "function",
+    false,
+    "function"
+  ],
+  "names": [
+    "a1",
+    "z"
+  ],
+  "nameLimits": [
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError"
+  ],
+  "quotaInvalid": [
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError"
+  ],
+  "expiryInvalid": [
+    "TypeError",
+    "ok"
+  ],
+  "generations": [
+    "UnknownError",
+    "UnknownError",
+    null,
+    131072
+  ],
+  "sorted": true
+}
