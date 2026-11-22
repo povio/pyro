@@ -3873,6 +3873,22 @@ simple_class!(HtmlMarqueeElement, "HTMLMarqueeElement", HtmlElement, |def| {
     reflect_enum!(def, "direction", "direction", MARQUEE_DIRECTION);
     reflect_str!(def, "height", "height");
     reflect_ulong!(def, "hspace", "hspace", 0);
+    // HTML: a valid integer greater than 0, else -1 (loop forever); setting accepts -1 or more
+    // than 0.
+    def.accessor(
+        "loop",
+        |s, n| {
+            let v = parsed_attr(n, "loop", parse_html_int)?.filter(|&v| v > 0);
+            Ok(s.number(v.map_or(-1.0, |v| v as f64)))
+        },
+        |_s, n, v| {
+            let x = to_i32(v)?;
+            if x != -1 && x <= 0 {
+                return Err(index_size_error("loop"));
+            }
+            set_attr(n, "loop", &x.to_string())
+        },
+    );
     reflect_ulong!(def, "scrollAmount", "scrollamount", 6);
     reflect_ulong!(def, "scrollDelay", "scrolldelay", 85);
     reflect_bool!(def, "trueSpeed", "truespeed");
