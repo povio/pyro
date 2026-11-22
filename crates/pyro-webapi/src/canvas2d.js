@@ -729,6 +729,12 @@
   webidl(ImageBitmap, 'ImageBitmap');
   function newBitmap(made) { return new ImageBitmap(secret, made[0], made[1], made[2]); }
   const PromiseC = Promise;
+  // HTML: createImageBitmap snapshots its source now and resolves (or, for
+  // a Blob that does not decode, rejects) in a later task.
+  const setTimeoutC = globalThis.setTimeout;
+  const queueTask = (f) => {
+    try { setTimeoutC(f, 0); } catch (e) { /* the global is closing */ }
+  };
   function createImageBitmap(image, sx, sy, sw, sh, options) {
     try {
       if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'createImageBitmap' on 'Window': 1 argument required, but only 0 present.`);
@@ -752,8 +758,14 @@
       }
       const flip = o.imageOrientation === 'flipY';
       const smooth = o.resizeQuality !== 'pixelated';
-      const made = natives.makeBitmap(image, crop, rw, rh, flip, smooth);
-      return PromiseC.resolve(newBitmap(made));
+      let made;
+      try {
+        made = natives.makeBitmap(image, crop, rw, rh, flip, smooth);
+      } catch (e) {
+        if (!natives.isBlob(image)) throw e;
+        return new PromiseC((resolve, reject) => queueTask(() => reject(e)));
+      }
+      return new PromiseC((resolve) => queueTask(() => resolve(newBitmap(made))));
     } catch (e) {
       return PromiseC.reject(e);
     }
