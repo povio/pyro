@@ -1455,10 +1455,10 @@ fn parse_location(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
             nav.document.borrow().as_ref().map(|(dom, doc)| pyro_webapi::html::resolve_url(&dom.borrow(), *doc, &href))
         }
     };
-    match resolved {
-        Some(resolved) => {
-            Url::parse(&resolved).map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))
-        }
+    match resolved.and_then(|resolved| Url::parse(&resolved).ok()) {
+        Some(url) => Ok(url),
+        // No document to resolve against, or one without a base URL (its relative href came back
+        // as it was): against the Location's document's base, else the navigable's URL.
         None => parse_str(nav, &href),
     }
 }
