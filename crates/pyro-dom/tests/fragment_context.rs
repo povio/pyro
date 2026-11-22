@@ -92,9 +92,13 @@ fn range_patches_its_output_while_editing_and_external_templates_keep_their_cont
     assert_eq!(dom.inner_html(fragment).unwrap(), "<p>range</p>");
 
     set_inner_html(&mut dom, context, "<i><?marker name='outside'></i>").unwrap();
-    let unmatched = parse_contextual_fragment(&mut dom, context, "<template for=outside>leave alone</template>").unwrap();
-    assert_eq!(dom.inner_html(unmatched).unwrap(), "<template for=\"outside\">leave alone</template>");
-    assert_eq!(dom.text_content(context).unwrap().as_deref(), Some(""));
+    let before = dom.inner_html(context).unwrap();
+    let scoped = parse_contextual_fragment(
+        &mut dom, context,
+        "<p><?marker name='inside'></p><template for=inside>local</template><template for=outside>leave alone</template>",
+    ).unwrap();
+    assert_eq!(dom.inner_html(scoped).unwrap(), "<p>local</p><template for=\"outside\">leave alone</template>");
+    assert_eq!(dom.inner_html(context).unwrap(), before);
 
     let editing_fragment =
         parse_fragment(&mut dom, context, "<p><?marker name='a'></p><template for=a>editing</template>").unwrap();
