@@ -1443,5 +1443,19 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         Some("pyro://internal/worker-scope.js"),
         1,
     )?;
+    // `origin` is WorkerGlobalScope's (not [Global]), so it is inherited, not
+    // the global's own: assignment shadows it ([Replaceable]) and deleting
+    // the shadow shows it again. The global's chain lacks the interface
+    // prototype objects, so the copy moves to the global's own prototype
+    // (one per realm) instead.
+    s.eval(
+        "(() => { const p = Object.getPrototypeOf(self), d = Object.getOwnPropertyDescriptor(self, 'origin');
+           if (d && p && p !== Object.prototype && !Object.hasOwn(p, 'origin')) {
+             Object.defineProperty(p, 'origin', d);
+             delete self.origin;
+           } })()",
+        Some("pyro://internal/worker-scope.js"),
+        1,
+    )?;
     Ok(())
 }

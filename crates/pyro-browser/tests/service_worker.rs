@@ -149,9 +149,12 @@ const kind = (k) => {
   }
   return 'missing';
 };
+// Another realm's global prototype keeps its own `origin`; this one is per realm.
+const owner = (k) => { for (let o = self; o; o = Object.getPrototypeOf(o)) if (Object.hasOwn(o, k)) return o === self ? 'self' : o === Object.getPrototypeOf(self) ? 'global-proto' : 'other'; return 'none'; };
 const desc = (k) => { const d = Object.getOwnPropertyDescriptor(self, k); return [d.value, d.writable, d.enumerable, d.configurable].join(':'); };
 const probe = async () => {
   const real = [self.origin, self.name];
+  const layout = [owner('origin'), owner('name')].join();
   const before = [kind('origin'), kind('name')].join();
   self.origin = 'replaced-origin';
   self.name = 42;
@@ -163,7 +166,7 @@ const probe = async () => {
   self.origin = 'kept';
   self.name = 'kept-name';
   const body = await (await fetch('/real')).text();
-  return [real.join('|'), before, after, again, deleted, body, new URL(location.href).origin === real[0]].join(' / ');
+  return [layout, real.join('|'), before, after, again, deleted, body, new URL(location.href).origin === real[0]].join(' / ');
 };
 const answer = (target, data) => {
   if (data === 'probe') probe().then((r) => target.postMessage(r), (e) => target.postMessage('error:' + e));
@@ -1304,9 +1307,11 @@ fn shared_workers_are_shared_between_documents_by_url_and_name() {
 
 /// [Replaceable] `origin` (Window and workers) and `name` (dedicated and
 /// shared workers): assignment shadows the attribute with an own writable,
-/// enumerable, configurable data property of that global only. The
-/// attributes are the global's own accessors ([Global]), so deleting the
-/// replacement leaves no property, as in Chrome. The realm's origin (postMessage's origin,
+/// enumerable, configurable data property of that global only. Window
+/// `origin` and worker `name` are the global's own accessors ([Global]), so
+/// deleting the replacement leaves no property, as in Chrome; worker `origin`
+/// is inherited (WorkerGlobalScope), so deleting it shows the original
+/// again. The realm's origin (postMessage's origin,
 /// same-origin fetch) and the worker's name (SharedWorker matching) stay.
 #[test]
 fn origin_and_worker_name_are_replaceable_per_global() {
@@ -1358,8 +1363,9 @@ fn origin_and_worker_name_are_replaceable_per_global() {
     until(&mut thread, a, "got.one.length === 1");
     let expected = |name: &str| {
         format!(
-            "{origin}|{name} / own-accessor,own-accessor / replaced-origin:true:true:true,42:true:true:true,number,own-data,own-data / \
-             again / true,true,true,true,missing,missing / from network / true"
+            "global-proto,self / {origin}|{name} / proto-accessor,own-accessor / \
+             replaced-origin:true:true:true,42:true:true:true,number,own-data,own-data / again / \
+             true,true,true,true,proto-accessor,missing / from network / true"
         )
     };
     assert_eq!(eval(&thread, a, "got.one[0]"), expected("dw-one"));

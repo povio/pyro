@@ -289,13 +289,18 @@ where
     def.getter("opener", |s, _w| Ok(s.null()));
     def.getter("closed", |s, _w| Ok(s.boolean(false)));
     def.getter("length", |s, _w| Ok(s.number(0.0)));
-    def.getter("origin", |s, w| {
-        let url =
-            w.page().dom.borrow().document_data(w.page().document()).map(|d| d.url.to_string()).unwrap_or_default();
-        Ok(s.string(
-            &pyro_net::Url::parse(&url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into()),
-        ))
-    });
+    // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it with
+    // an own data property; the document's origin is left as it is.
+    def.accessor(
+        "origin",
+        |s, w| {
+            let url = w.page().dom.borrow().document_data(w.page().document()).map(|d| d.url.to_string()).unwrap_or_default();
+            Ok(s.string(
+                &pyro_net::Url::parse(&url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into()),
+            ))
+        },
+        |s, w, value| replace_window_attribute(s, w.page(), "origin", value),
+    );
     def.method("focus", 0, |s, w, _a| {
         crate::input::focus_window(w.page());
         Ok(s.undefined())
