@@ -185,6 +185,18 @@ pub struct ModuleRequest {
     done: bool,
 }
 
+/// An inline module script's base URL from its registry key: the browser
+/// keys each one `<document base URL>#inline-module-…` (JSC evaluates a key
+/// once), and its `import.meta.url` is the base URL, authored fragment kept.
+/// JSC drops the fragment of such a referrer when matching import map scopes
+/// (patch 0005). Other URLs are returned unchanged.
+pub(crate) fn inline_module_base_url(key: &str) -> &str {
+    match key.rfind("#inline-module-") {
+        Some(at) => &key[..at],
+        None => key,
+    }
+}
+
 // JavaScriptCore's module SPI creates an empty import.meta object. Initialize
 // the canonical module key before evaluating source so user code sees its URL.
 pub(crate) fn module_source_with_url(source: &str, url: &str) -> String {
@@ -195,7 +207,7 @@ pub(crate) fn module_source_with_url(source: &str, url: &str) -> String {
 
 /// What [`module_source_with_url`] puts before the source.
 pub(crate) fn module_prefix(url: &str) -> String {
-    let url = serde_json::to_string(url)
+    let url = serde_json::to_string(inline_module_base_url(url))
         .expect("a URL string is serializable")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029");
@@ -3919,6 +3931,17 @@ mod tests {
     fn module_source_url_is_encoded_as_a_javascript_string() {
         let source = module_source_with_url("export {}", "https://site.test/a\"b\u{2028}.js");
         assert_eq!(source, "import.meta.url = \"https://site.test/a\\\"b\\u2028.js\";\nexport {}");
+    }
+
+    /// An inline module's `import.meta.url` is its base URL: the registry
+    /// key's `#inline-module-…` suffix goes, an authored fragment stays.
+    #[test]
+    fn inline_module_import_meta_url_is_its_base_url() {
+        let p = |key| module_source_with_url("", key);
+        assert_eq!(p("https://a.test/x/y.html#inline-module-3"), "import.meta.url = \"https://a.test/x/y.html\";\n");
+        assert_eq!(p("https://a.test/s/foo.mjs#inline-module-dyn-7"), "import.meta.url = \"https://a.test/s/foo.mjs\";\n");
+        assert_eq!(p("https://a.test/p#frag#inline-module-dyn-1"), "import.meta.url = \"https://a.test/p#frag\";\n");
+        assert_eq!(p("https://a.test/m.js#inline"), "import.meta.url = \"https://a.test/m.js#inline\";\n");
     }
 
     #[test]

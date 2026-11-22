@@ -4824,7 +4824,12 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
             return queue_written_script(page, doc, node, !info.async_ && !info.defer, "external")
         }
         ScriptKind::Module => return queue_written_script(page, doc, node, false, "module"),
-        // nomodule classic scripts, import maps and data blocks do not run.
+        ScriptKind::ImportMap => {
+            let _ = page.dom.borrow_mut().mark_script_started(node);
+            register_written_import_map(page, doc, &info);
+            return Ok(());
+        }
+        // nomodule classic scripts and data blocks do not run.
         _ => {
             let _ = page.dom.borrow_mut().mark_script_started(node);
             return Ok(());
@@ -4833,6 +4838,24 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
     let _ = page.dom.borrow_mut().mark_script_started(node);
     let url = page.dom.borrow().document_data(doc).map(|d| d.url.clone()).unwrap_or_default();
     eval_parser_script(page, doc, node, &info.inline_text, &url)
+}
+
+/// An import map in written markup, registered when the parser reaches it (as
+/// the loader's `add_import_map` does for network markup) against the document
+/// base URL then, so the module scripts after it resolve through it.
+fn register_written_import_map(page: &PageDom, doc: NodeId, info: &pyro_dom::script::ScriptInfo) {
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(scope) = realm.scope() else { return };
+    if info.src.is_some() {
+        scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
+        return;
+    }
+    let base = page.dom.borrow().document_base_url(doc).map(str::to_owned).unwrap_or_default();
+    match scope.add_import_map(&info.inline_text, &base) {
+        Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
+        Err(JsError::Unsupported(what)) => scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}")),
+        Err(e) => scope.report_exception(&e),
+    }
 }
 
 /// Hands a script in written markup to the loader, which marks it started. A
