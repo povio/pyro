@@ -65,3 +65,9 @@ HTML document ran (WPT html/semantics/scripting-1/the-script-element/execution-t
 - The sinks see the same `TokenizerResult::Script` as for an HTML script; drivers that ignore scripts keep resuming.
 
 Tests: `crates/pyro-dom/tests/svg_script_parsing.rs`.
+
+## Empty DOCTYPE system identifiers
+
+`src/tree_builder/data.rs` (`doctype_error_and_quirks`): an HTML 4.01 Frameset or Transitional public identifier with an
+empty system identifier gives quirks mode, as a missing one does (whatwg/html#12023, Chromium; WPT html/syntax/parsing
+`doctype-system-identifier-distinction.html`); a non-empty one still gives limited quirks.
