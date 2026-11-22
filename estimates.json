@@ -37,51 +37,51 @@
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
-    "fetch/range": 6,
-    "fetch/corb": 6,
     "fetch/data-urls": 6,
+    "fetch/corb": 6,
+    "fetch/range": 6,
     "fetch/stale-while-revalidate": 5,
     "html/obsolete": 4,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "html/user-activation": 2,
+    "fetch/nosniff": 3,
     "fetch/orb": 2,
+    "html/user-activation": 2,
     "xhr": 2,
-    "fetch/content-type": 1,
     "fetch/redirect-navigate": 1,
-    "IndexedDB": 1,
-    "quirks": 1,
-    "svg/styling": 1,
+    "fetch/content-type": 1,
     "fetch/security": 1,
-    "fetch/redirects": 1
+    "fetch/redirects": 1,
+    "IndexedDB": 1,
+    "svg/styling": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 18,
+    "macbook_in_scope": 11,
     "studio_in_scope": 22,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 6,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 16,
+   "distinct_census_pages": 9,
    "owner_reported_unlisted": 0,
-   "selector_union": 352,
+   "selector_union": 345,
    "owner_estimate_reduction": 336,
-   "of_which_tentative": 171,
+   "of_which_tentative": 169,
    "studio_css_reported_pages_not_deduped": 22,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 124,
-    "html/semantics": 84,
+    "html/semantics": 77,
     "html/browsers": 64,
     "html/syntax": 30,
     "html/webappapis": 27,
     "fetch/compression-dictionary": 8,
-    "html/interaction": 5,
+    "fetch/api": 5,
     "html/dom": 5,
-    "fetch/api": 5
+    "html/interaction": 5
    }
   },
   "queued": {
@@ -2776,7 +2776,7 @@
    "tentative": 1
   },
   "BUCKET-forms-2": {
-   "state": "active",
+   "state": "deferred",
    "in_scope_pages": 7,
    "out_of_scope_pages": 0,
    "pages": 7,
