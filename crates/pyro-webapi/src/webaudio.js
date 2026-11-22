@@ -2315,7 +2315,10 @@
     c.chunks.shift();
     if (c.chunks.length) setTimer(() => render(c), 0);
     flushEnded(c);
-    if (final) setState(c, 'closed');
+    if (final) {
+      c.state = 'closed';
+      setTimer(() => fire(c.self, 'statechange'), 0);
+    }
     chunk.resolve(rendered);
     if (final) apply(dispatch, c.self, [new OfflineAudioCompletionEvent('complete', { renderedBuffer: rendered })]);
   }
