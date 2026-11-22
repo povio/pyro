@@ -878,6 +878,10 @@ pub trait PageHooks {
     /// is loading again, so DOMContentLoaded/load can be reported anew, and
     /// the document is no longer the initial about:blank one.
     fn document_reopened(&self) {}
+    /// `window.stop()`: HTML "stop loading" the frame. Its ongoing
+    /// navigation is canceled and its document aborted: the parser stops and
+    /// neither DOMContentLoaded nor load fires (the caller sets readyState).
+    fn stop_loading(&self) {}
     /// `document.close()` finished the script-created parser (readyState is
     /// already "interactive"): fire DOMContentLoaded, then load once nothing
     /// blocks it. Returns false when the embedder does not handle it.

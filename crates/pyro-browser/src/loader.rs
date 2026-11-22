@@ -1167,6 +1167,9 @@ pub(crate) struct DocumentLoad {
     /// count means `document.open()` aborted it (HTML "abort" stops "the end",
     /// so no deferred script of it runs and it fires no DOMContentLoaded).
     stops: u64,
+    /// The frame's `PageNav::abort_count` when this load began: a different
+    /// count means `window.stop()` aborted it ([`Browser::abort_document_load`]).
+    aborts: u64,
     deferred: VecDeque<Rc<RefCell<PendingScript>>>,
     /// A deferred module is evaluating; wait for its promise.
     awaiting_module: bool,
@@ -2275,8 +2278,10 @@ impl Browser {
         p.main_frame.document = Some(doc);
         p.nav.set_document(Some((dom.clone(), doc)));
         let stops = p.nav.stop_count();
+        let aborts = p.nav.abort_count();
         p.load = Some(DocumentLoad {
             stops,
+            aborts,
             loader_id,
             url: p.main_frame.base_url.clone(),
             dom,
@@ -2309,6 +2314,10 @@ impl Browser {
     /// Runs the parser until it blocks on a script or finishes.
     fn continue_parsing(&mut self, page: FrameKey) {
         loop {
+            if self.document_aborted(page) {
+                self.abort_document_load(page);
+                return;
+            }
             // The parser runs with no borrow of the frame state held: it
             // runs custom element constructors and callbacks (HTML "create
             // an element for a token"), which may reach the frame tree.
@@ -3363,6 +3372,45 @@ impl Browser {
         self.sync_root(page.page);
     }
 
+    /// `window.stop()` ran in the frame (`PageHooks::stop_loading`): HTML
+    /// "stop loading" cancels the frame's ongoing navigation and aborts its
+    /// document.
+    pub(crate) fn stop_loading(&mut self, page: FrameKey) {
+        if self.doc(page).is_some_and(|d| d.pending_loader().is_some()) {
+            self.cancel_pending_document(page);
+        }
+        if self.document_aborted(page) {
+            self.abort_document_load(page);
+        }
+    }
+
+    /// `window.stop()` aborted the frame's document load since it began.
+    fn document_aborted(&self, page: FrameKey) -> bool {
+        self.doc(page).is_some_and(|d| d.load.as_ref().is_some_and(|l| l.aborts != d.nav.abort_count()))
+    }
+
+    /// HTML "abort a document" (`window.stop()`): the parser is dropped with
+    /// the rest of the input, no deferred script runs, and neither
+    /// DOMContentLoaded nor load (nor pageshow) fires; readyState became
+    /// "complete" in `window.stop()`, as in Chromium.
+    fn abort_document_load(&mut self, page: FrameKey) {
+        let Some(mut state) = self.doc_mut(page) else { return };
+        if let Some(load) = &mut state.load {
+            load.parser = None;
+            load.phase = ParsePhase::Done;
+            load.parsing_done = true;
+            load.blocked = false;
+            load.stylesheet_blocked_script = None;
+            load.deferred.clear();
+            load.dcl_fired = true;
+            load.load_fired = true;
+        }
+        state.main_frame.dom_content_loaded = true;
+        state.main_frame.loaded = true;
+        drop(state);
+        self.sync_root(page.page);
+    }
+
     /// `document.close()` ended the script-created parser: "the end" steps
     /// after readyState became interactive.
     pub(crate) fn finish_written_document(&mut self, page: FrameKey) {
@@ -3387,6 +3435,10 @@ impl Browser {
     }
 
     fn fire_dom_content_loaded(&mut self, page: FrameKey) {
+        if self.document_aborted(page) {
+            self.abort_document_load(page);
+            return;
+        }
         let Some(mut load) = self.load_mut(page) else { return };
         if load.dcl_fired {
             return;
@@ -3414,6 +3466,10 @@ impl Browser {
     pub(crate) fn fire_load_if_ready(&mut self, page: FrameKey) {
         // Runs at every checkpoint: a loaded frame has nothing left to fire.
         if self.doc(page).is_none_or(|d| d.main_frame.loaded) {
+            return;
+        }
+        if self.document_aborted(page) {
+            self.abort_document_load(page);
             return;
         }
         // HTML "navigate" aborts the document a cross-document navigation

@@ -388,7 +388,21 @@ where
             _ => Ok(s.null()),
         }
     });
-    def.method("stop", 0, |s, _w, _a| Ok(s.undefined()));
+    // HTML `window.stop()`: "stop loading" the navigable. The embedder cancels its ongoing
+    // navigation and aborts the document (no more parsing, no DOMContentLoaded, load or
+    // pageshow); an aborted document's readiness is "complete" at once (Chromium, WPT
+    // abort-document-load, window-stop-in-image-load-handler).
+    def.method("stop", 0, |s, w, _a| {
+        let page = w.page().clone();
+        if let Some(hooks) = page.hooks() {
+            hooks.stop_loading();
+            let doc = page.document();
+            if page.ready_state(doc) != "complete" {
+                crate::lifecycle::set_ready_state(&page, doc, "complete");
+            }
+        }
+        Ok(s.undefined())
+    });
     // Closes a script-closable top-level browsing context (a popup); the
     // embedder decides and closes the page later. No-op elsewhere.
     def.method("close", 0, |s, w, _a| {

@@ -165,6 +165,9 @@ struct NavState {
     /// `document.open()` calls on the frame's documents (HTML "stop
     /// loading"): a navigation its scripts started before one is dropped.
     stops: u64,
+    /// `window.stop()` calls (HTML "stop loading" aborts the document): a
+    /// document load begun before one fires no DOMContentLoaded or load.
+    aborts: u64,
 }
 
 impl NavState {
@@ -311,6 +314,7 @@ impl PageNav {
                 initial: false,
                 first_blank: false,
                 stops: 0,
+                aborts: 0,
             }),
             document: RefCell::new(None),
             page_dom: RefCell::new(std::rc::Weak::new()),
@@ -412,6 +416,18 @@ impl PageNav {
         let mut st = self.state.borrow_mut();
         st.initial = false;
         st.stops += 1;
+    }
+
+    /// `window.stop()` aborted the active document (HTML "stop loading"),
+    /// at once: the frame's document load sees it before it parses further
+    /// or fires DOMContentLoaded or load.
+    pub(crate) fn abort_document(&self) {
+        self.state.borrow_mut().aborts += 1;
+    }
+
+    /// Changes when `window.stop()` aborts the frame's document.
+    pub(crate) fn abort_count(&self) -> u64 {
+        self.state.borrow().aborts
     }
 
     /// Changes when the frame stops loading ([`PageNav::document_opened`]):

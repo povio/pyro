@@ -697,6 +697,22 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn stop_loading(&self) {
+        // At once: the parser and the load steps check the count before
+        // they go on, even within the script's own parser task.
+        let host = self.frames.upgrade().filter(|host| host.matches(self.page, &self.loader));
+        if let Some(nav) = host.as_ref().and_then(|host| host.nav(self.page)) {
+            nav.abort_document();
+        }
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Navigation, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.stop_loading(page);
+            }
+        });
+    }
+
     fn document_closed(&self) -> bool {
         let page = self.page;
         let loader = self.loader.clone();
