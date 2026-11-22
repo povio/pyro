@@ -259,11 +259,16 @@ pub(crate) fn check_popover_validity(page: &PageDom, el: NodeId, expect_showing:
     if !dom.is_connected(el).unwrap_or(false) || dom.node_document(el).ok() != Some(page.document()) {
         return fail("InvalidStateError", "Invalid on disconnected popover elements.");
     }
-    if !expect_showing && is_html(&dom, el, "dialog") && is_open(&dom, el) {
+    // HTML "check popover validity": a modal dialog (one shown by show() or the `open`
+    // attribute may also be a popover) and an element in fullscreen cannot be shown as popovers.
+    if !expect_showing && is_html(&dom, el, "dialog") && dom.is_modal(el) {
         return fail(
             "InvalidStateError",
-            "The dialog is already open as a dialog, and therefore cannot be opened as a popover.",
+            "The dialog is already open as a modal dialog, and therefore cannot be opened as a popover.",
         );
+    }
+    if !expect_showing && page.fullscreen_stack.borrow().contains(&el) {
+        return fail("InvalidStateError", "The element is fullscreen, and therefore cannot be opened as a popover.");
     }
     Ok(true)
 }
@@ -529,7 +534,10 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
         }
     }
     if stack.is_some() {
-        page.popover.watchers.borrow_mut().push(el);
+        // Once: an open dialog that is also shown as a popover is one watcher entry.
+        let mut watchers = page.popover.watchers.borrow_mut();
+        watchers.retain(|&w| w != el);
+        watchers.push(el);
     }
     // Popover focusing steps.
     if let Some(control) = autofocus_delegate(page, el) {
@@ -631,7 +639,14 @@ pub(crate) fn hide_showing_popover(
         }
         dom.set_popover_showing(el, false).js()?;
     }
-    remove_watcher(page, el);
+    // A dialog still open (with show() or `open`) keeps its watcher.
+    let open_dialog = {
+        let dom = page.dom.borrow();
+        is_html(&dom, el, "dialog") && is_open(&dom, el)
+    };
+    if !open_dialog {
+        remove_watcher(page, el);
+    }
     let previous = page.popover.previously_focused.borrow_mut().remove(&el);
     if let Some(prev) = previous.filter(|_| focus_previous) {
         let inside = focused(page).is_none_or(|f| page.dom.borrow().contains(el, f).unwrap_or(false));
@@ -1052,7 +1067,10 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
     if let Some(r) = result {
         page.set_dialog_return(el, r);
     }
-    remove_watcher(page, el);
+    // A dialog still shown as a popover keeps its watcher.
+    if !page.dom.borrow().is_popover_showing(el) {
+        remove_watcher(page, el);
+    }
     let previous = page.popover.previously_focused.borrow_mut().remove(&el);
     // The focused element, when it is in the dialog in the flat tree (a shadow tree inside it, an
     // element slotted into it).
