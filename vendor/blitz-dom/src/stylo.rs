@@ -1614,7 +1614,18 @@ impl<'a> TElement for BlitzNode<'a> {
         &self,
         display: &style::values::specified::Display,
     ) -> euclid::default::Size2D<Option<app_units::Au>> {
-        if !self.flags.is_in_document() || display.is_none() || display.is_contents() || display.is_inline_flow() {
+        // pyro: nor a table or an internal table box, to which size containment does not apply
+        // (CSS Contain 2 § 3.1): the query finds the container but no size, and container units
+        // resolve against the next one out (WPT css-conditional container-queries
+        // `ineligible-containment`, `container-units-ineligible-container`).
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        if !self.flags.is_in_document()
+            || display.is_none()
+            || display.is_contents()
+            || display.is_inline_flow()
+            || display.inside() == DisplayInside::Table
+            || display.outside() == DisplayOutside::InternalTable
+        {
             return Default::default();
         }
         // Stylo can call while holding this element's mutable style data for

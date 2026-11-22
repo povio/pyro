@@ -2585,6 +2585,9 @@ does not let margins collapse through it, even when its lines have no height (CS
   SVG), so stylo's `display: contents` unboxing rules apply (an outer `<svg>`, other SVG and MathML elements: none).
   `query_container_size`: a first query from a laid-out element outside the traversal (a lazy `::highlight()`/
   `::backdrop` style) samples the content box at once (no later pass fills it).
+  A table or an internal table box (no size containment, CSS Contain 2 § 3.1) has no queried size there and in
+  `resolve.rs` `refresh_container_query_sizes` (a box that becomes one drops its size, which restyles its subtree),
+  as Chrome (WPT css-conditional container-queries `ineligible-containment`, `container-units-ineligible-container`).
 - `node/svg_css.rs`: `display: contents` on `<g>`, `<tspan>`, `<a>`, nested `<svg>` writes a bare wrapper with only the
   inherited properties declared on it; a `<use>` keeps only its reference and position; other elements nothing.
 - `lang.rs`: a node assigned to a slot takes its language from the slot's host, not the slot.
