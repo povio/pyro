@@ -252,9 +252,13 @@ impl Dom {
         }
         let pos = items.iter().position(|&n| n == current)?;
         let target = |n: NodeId| n != current && self.tab_index(n).is_ok_and(|t| t >= 0);
+        // Home and End go to the first and last sequentially focusable item, which is `current`
+        // itself on the first (last) item: focus stays (WPT focusgroup `home-end-keys.optional`).
+        // A focused tabindex=-1 item is not one of them.
+        let edge = |n: NodeId| self.tab_index(n).is_ok_and(|t| t >= 0);
         let found = match mv {
-            FocusgroupMove::First => items.iter().copied().find(|&n| target(n)),
-            FocusgroupMove::Last => items.iter().rev().copied().find(|&n| target(n)),
+            FocusgroupMove::First => items.iter().copied().find(|&n| edge(n)),
+            FocusgroupMove::Last => items.iter().rev().copied().find(|&n| edge(n)),
             FocusgroupMove::Next { inline } | FocusgroupMove::Previous { inline } => {
                 if !(if inline { flags.inline } else { flags.block }) {
                     return None;

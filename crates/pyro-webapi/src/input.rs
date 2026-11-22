@@ -1432,9 +1432,11 @@ fn is_directional_input_handler(dom: &Dom, el: NodeId) -> bool {
 /// Scoped focusgroup arrow keys (Chrome's `FocusgroupController`): on a
 /// focused focusgroup item, an arrow along an axis the owner allows moves
 /// focus to the next or previous item (wrapping when the owner wraps), Home
-/// and End to the first and last item. Arrows map to the owner's logical
-/// axes through its `writing-mode` and `direction`. Text controls keep the
-/// keys for their caret. Returns whether focus moved.
+/// and End to the first and last item. Arrows map to logical axes through the
+/// focused item's own `writing-mode` and `direction` (an RTL item in an LTR
+/// owner moves forward with ArrowLeft: WPT focusgroup
+/// `mixed-ltr-rtl-visual-order`). Text controls keep the keys for their
+/// caret. Returns whether focus moved.
 fn focusgroup_key_action(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool {
     use pyro_dom::focus_group::FocusgroupMove;
     if !matches!(key, "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End") {
@@ -1446,12 +1448,14 @@ fn focusgroup_key_action(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool 
         if is_directional_input_handler(&dom, target) {
             return false;
         }
-        let Some((owner, _)) = dom.focusgroup_owner_of(target) else { return false };
+        if dom.focusgroup_owner_of(target).is_none() {
+            return false;
+        }
         let (writing_mode, direction) = {
             let style = layout.style();
             (
-                style.computed_value(&dom, owner, "writing-mode").unwrap_or_default(),
-                style.computed_value(&dom, owner, "direction").unwrap_or_default(),
+                style.computed_value(&dom, target, "writing-mode").unwrap_or_default(),
+                style.computed_value(&dom, target, "direction").unwrap_or_default(),
             )
         };
         let vertical = writing_mode.starts_with("vertical") || writing_mode.starts_with("sideways");
