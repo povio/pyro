@@ -37,3 +37,5 @@ After executing undo the original markup was present in all 48 candidate fixture
 The compiler inputs were clean tracked source. The last three build provenance snapshots list the untracked evidence directory being assembled alongside the build. The superseded Rust 2021 syntax-only precursor 3cb60814c was never built.
 
 Independent QA reran the target WPT and the frozen head probes. All 111 named results and all recorded rows from the 54, 36, 48 mixed and 48 explicit outer-caret head probes matched the owner receipts. The native paragraph/select boundary regression passed. Static and child-line guards were measured by the implementation owner.
+
+Independent QA placed the fourth candidate on hold for disposition of the eight Backspace cases. In the fresh mixed arm the complete restored snapshot matched Chrome in 0/48, despite identical restored markup in 48/48. In the fresh explicit-caret arm complete restoration matched in 8/48. The latter starts with a collapsed caret, which accounts for the 48/48 post-command direction agreement even where no edit is performed. Integration remains coordinator-owned.
