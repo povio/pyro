@@ -245,6 +245,10 @@ pub trait CoreStyle {
     fn calc_size_min(&self) -> Size<Option<CalcSizeFunction>> {
         Size { width: None, height: None }
     }
+    /// Whether a numeric calculated maximum has a percentage basis (`None` for other maxima).
+    fn max_size_percentage_basis(&self) -> Size<Option<bool>> {
+        Size { width: None, height: None }
+    }
     /// pyro: the natural aspect ratio of a replaced element whose `aspect-ratio` is `auto` (its
     /// preferred aspect ratio, css-sizing-4 §5.1), width over height in the layout's axes. Read by
     /// the flex algorithm only: elsewhere the element's measure function applies it.
@@ -1229,6 +1233,9 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
     fn max_size(&self) -> Size<LengthPercentageAuto> {
         (*self).max_size()
     }
+    fn max_size_percentage_basis(&self) -> Size<Option<bool>> {
+        (*self).max_size_percentage_basis()
+    }
     #[inline(always)]
     fn aspect_ratio(&self) -> Option<f32> {
         (*self).aspect_ratio()
@@ -1363,6 +1370,10 @@ impl<S: CheapCloneStr> BlockItemStyle for Style<S> {
 
 #[cfg(feature = "block_layout")]
 impl<T: BlockItemStyle> BlockItemStyle for &'_ T {
+    fn max_size_calculation(&self) -> Size<Option<(Dimension, CalcSizeFunction)>> {
+        (*self).max_size_calculation()
+    }
+
     #[inline(always)]
     fn is_table(&self) -> bool {
         (*self).is_table()

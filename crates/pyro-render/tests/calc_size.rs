@@ -86,3 +86,43 @@ fn a_calc_minimum_against_an_indefinite_height_takes_its_percentages_as_zero() {
     );
     check(&img, &[(25, 20, GREEN), (25, 30, WHITE)]);
 }
+
+#[test]
+fn calculated_maxima_resolve_against_the_containing_axis() {
+    let img = render("<div style='width:200px;height:120px'><div style='width:200px;height:120px;max-inline-size:calc-size(calc-size(25%, size + 10px), size * 2);max-block-size:calc-size(any, 25% + 5px);background:green'></div></div>");
+    check(&img, &[(119, 34, GREEN), (120, 34, WHITE), (119, 35, WHITE)]);
+}
+
+#[test]
+fn intrinsic_maxima_calculate_in_the_sizing_box() {
+    for (sizing, width, height) in [("content-box", 60, 50), ("border-box", 50, 40)] {
+        let img = render(&format!("<div style='width:200px;height:120px'><div style='box-sizing:{sizing};padding:10px;width:180px;height:100px;max-width:calc-size(min-content, size / 2);max-height:calc-size(max-content, size / 2);background:green'><div style='width:80px;height:60px'></div></div></div>"));
+        check(&img, &[(width - 1, height - 1, GREEN), (width, 0, WHITE), (0, height, WHITE)]);
+    }
+}
+
+#[test]
+fn intrinsic_maxima_bound_auto_height_but_do_not_enlarge_it() {
+    for (calculation, expected) in [("size / 2 + 10%", 50), ("size + 20px", 80)] {
+        let img = render(&format!("<div style='width:200px;height:100px'><div style='max-height:calc-size(fit-content, {calculation});background:green'><div style='height:80px'></div></div></div>"));
+        check(&img, &[(10, expected - 1, GREEN), (10, expected, WHITE)]);
+    }
+}
+
+#[test]
+fn numeric_minima_win_over_calculated_maxima() {
+    let img = render("<div style='width:200px;height:100px'><div style='margin-left:20px;min-width:110px;max-width:calc-size(stretch, size / 2);min-height:50px;max-height:calc-size(min-content, size / 2);background:green'><div style='height:80px'></div></div></div>");
+    check(&img, &[(129, 49, GREEN), (130, 49, WHITE), (129, 50, WHITE)]);
+}
+
+#[test]
+fn calculated_stretch_excludes_margins_and_distinguishes_size_from_percent() {
+    let img = render("<div style='width:200px;height:100px'><div style='margin-left:20px;height:100px;max-width:calc-size(stretch, size / 2 + 10%);max-height:calc-size(stretch, size / 2);background:green'></div></div>");
+    check(&img, &[(129, 49, GREEN), (130, 49, WHITE), (129, 50, WHITE)]);
+}
+
+#[test]
+fn only_percentages_in_the_calculation_become_zero_in_an_indefinite_axis() {
+    let img = render("<div><div style='height:80px;max-height:calc-size(any, 30px + 10%);background:green'></div><div style='height:60px;max-height:calc-size(50%, size + 10px);background:green'></div></div>");
+    check(&img, &[(10, 89, GREEN), (10, 90, WHITE)]);
+}

@@ -560,6 +560,37 @@ impl Size {
 /// A computed value for `max-width` or `max-height` property.
 pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
 
+impl crate::values::animated::Animate for MaxSize {
+    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
+        self.animate_size(other, procedure, false)
+    }
+}
+
+impl MaxSize {
+    pub(crate) fn animate_size(&self, other: &Self, procedure: crate::values::animated::Procedure, allow_keywords: bool) -> Result<Self, ()> {
+        use crate::values::animated::Animate;
+        use std::borrow::Cow;
+        fn operand(value: &MaxSize) -> Result<Cow<'_, Size>, ()> {
+            Ok(match value {
+                MaxSize::Calculation(value) => Cow::Borrowed(value.as_ref()),
+                MaxSize::LengthPercentage(value) => Cow::Owned(Size::LengthPercentage(value.clone())),
+                MaxSize::MinContent => Cow::Owned(Size::MinContent),
+                MaxSize::MaxContent => Cow::Owned(Size::MaxContent),
+                MaxSize::FitContent => Cow::Owned(Size::FitContent),
+                MaxSize::Stretch => Cow::Owned(Size::Stretch),
+                _ => return Err(()),
+            })
+        }
+        match (self, other) {
+            (Self::None, Self::None) => Ok(Self::None),
+            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
+            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
+            _ => Ok(Self::Calculation(Box::new(operand(self)?.animate_size(operand(other)?.as_ref(), procedure, allow_keywords)?))),
+        }
+    }
+}
+
 #[cfg(feature = "gecko")]
 use crate::{
     gecko_bindings::structs::AnchorPosResolutionParams, logical_geometry::PhysicalAxis,
@@ -607,6 +638,7 @@ impl TryTacticAdjustment for MaxSize {
             "Sizes should only change axes"
         );
         match self {
+            Self::Calculation(value) => value.try_tactic_adjustment(old_side, new_side),
             Self::FitContentFunction(lp)
             | Self::LengthPercentage(lp)
             | Self::AnchorContainingCalcFunction(lp) => {

@@ -49,6 +49,31 @@ impl Page {
 }
 
 #[test]
+fn max_size_samples_keep_the_intrinsic_axis_and_policy() {
+    use ::style::properties::animated_properties::AnimationValue;
+    use ::style::values::animated::Procedure;
+    use ::style::values::computed::{length::CSSPixelLength, MaxSize, Size};
+
+    let page = Page::new(r#"<div id=keyword style="max-width:min-content;max-height:min-content"></div><div id=numeric style="max-width:80px;max-height:80px"></div>"#);
+    let position = |selector| page.layout.style().stylo_style(&page.dom.borrow(), page.find(selector)).unwrap();
+    let keyword = position("#keyword");
+    let numeric = position("#numeric");
+    for (from, to) in [
+        (AnimationValue::MaxWidth(keyword.get_position().max_width.clone()), AnimationValue::MaxWidth(numeric.get_position().max_width.clone())),
+        (AnimationValue::MaxHeight(keyword.get_position().max_height.clone()), AnimationValue::MaxHeight(numeric.get_position().max_height.clone())),
+    ] {
+        let midpoint = Procedure::Interpolate { progress: 0.5 };
+        assert!(from.animate_with_size_policy(&to, midpoint, false).is_err());
+        for (procedure, expected) in [(midpoint, 60.0), (Procedure::Add, 120.0)] {
+            let sample = from.animate_with_size_policy(&to, procedure, true).unwrap();
+            let (AnimationValue::MaxWidth(MaxSize::Calculation(value)) | AnimationValue::MaxHeight(MaxSize::Calculation(value))) = sample else { panic!("lost max-size formula") };
+            let Size::CalcSizeMinContent(calculation) = value.as_ref() else { panic!("lost min-content basis") };
+            assert_eq!(calculation.0.resolve_size(CSSPixelLength::new(40.0), CSSPixelLength::new(200.0)).px(), expected);
+        }
+    }
+}
+
+#[test]
 fn computed_custom_names_exclude_invalid_and_unrelated_values() {
     let page = Page::new(r#"<style>@property --count { syntax: '<integer>'; inherits: false; initial-value: 2 } #parent { --shared: 1; } #target { --cyclic: var(--cyclic); } #other { --other: 0; }</style><div id=parent><i id=target></i><i id=other></i></div>"#);
     let target = page.find("#target");

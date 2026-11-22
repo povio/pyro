@@ -1,0 +1,1288 @@
+{
+ "css/css-values/calc-size/animation/interpolate-size-max-height-composition.html": {
+  "total": 20,
+  "before": 4,
+  "after": 20,
+  "signed": 20,
+  "changes": [
+   {
+    "name": "Compositing CSS Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (-0.3) should be [calc-size(fit-content, (100px + size) * 1.3 + (200px + size) * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (0) should be [calc-size(fit-content, (100px + size) * 1 + (200px + size) * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (0.5) should be [calc-size(fit-content, (100px + size) * 0.5 + (200px + size) * 0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (1) should be [calc-size(fit-content, (100px + size) * 0 + (200px + size) * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (1.5) should be [calc-size(fit-content, (100px + size) * -0.5 + (200px + size) * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (-0.3) should be [calc-size(fit-content, (100px + size) * 1.3 + (200px + size) * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (0) should be [calc-size(fit-content, (100px + size) * 1 + (200px + size) * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (0.5) should be [calc-size(fit-content, (100px + size) * 0.5 + (200px + size) * 0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (1) should be [calc-size(fit-content, (100px + size) * 0 + (200px + size) * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-height> underlying [fit-content] from add [100px] to add [200px] at (1.5) should be [calc-size(fit-content, (100px + size) * -0.5 + (200px + size) * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-height> underlying [fit-content] from add [min-content] to add [200px] at (0.5) should be [calc-size(fit-content, 200px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-height> underlying [fit-content] from add [min-content] to add [200px] at (1) should be [calc-size(fit-content, 200px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-height> underlying [fit-content] from add [min-content] to add [200px] at (1.5) should be [calc-size(fit-content, 200px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-height> underlying [fit-content] from add [min-content] to add [200px] at (0.5) should be [calc-size(fit-content, 200px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-height> underlying [fit-content] from add [min-content] to add [200px] at (1) should be [calc-size(fit-content, 200px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-height> underlying [fit-content] from add [min-content] to add [200px] at (1.5) should be [calc-size(fit-content, 200px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   }
+  ]
+ },
+ "css/css-values/calc-size/animation/interpolate-size-max-width-composition.html": {
+  "total": 30,
+  "before": 6,
+  "after": 30,
+  "signed": 30,
+  "changes": [
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (-0.3) should be [calc-size(fit-content, 260px + (100px + size) * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (0) should be [calc-size(fit-content, 200px + (100px + size) * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (0.5) should be [calc-size(fit-content, 100px + (100px + size) * 0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (1) should be [calc-size(fit-content, 0px + (100px + size) * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (1.5) should be [calc-size(fit-content, -100px + (100px + size) * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (-0.3) should be [calc-size(fit-content, 260px + (100px + size) * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (0) should be [calc-size(fit-content, 200px + (100px + size) * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (0.5) should be [calc-size(fit-content, 100px + (100px + size) * 0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (1) should be [calc-size(fit-content, 0px + (100px + size) * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [100px] to add [fit-content] at (1.5) should be [calc-size(fit-content, -100px + (100px + size) * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (-0.3) should be [calc-size(fit-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (0) should be [calc-size(fit-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (0.5) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (1) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (1.5) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (-0.3) should be [calc-size(fit-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (0) should be [calc-size(fit-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (0.5) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (1) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [100px] from add [fit-content] to add [max-content] at (1.5) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [max-content] from add [100px] to add [min-content] at (-0.3) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing CSS Animations: property <max-width> underlying [max-content] from add [100px] to add [min-content] at (0) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [max-content] from add [100px] to add [min-content] at (-0.3) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Compositing Web Animations: property <max-width> underlying [max-content] from add [100px] to add [min-content] at (0) should be [calc-size(max-content, 100px + size)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   }
+  ]
+ },
+ "css/css-values/calc-size/animation/interpolate-size-logical-properties-interpolation.html": {
+  "total": 144,
+  "before": 82,
+  "after": 124,
+  "signed": 144,
+  "changes": [
+   {
+    "name": "CSS Transitions: property <max-block-size> from neutral to [fit-content] at (-0.3) should be [calc-size(fit-content, 130px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-block-size> from neutral to [fit-content] at (0) should be [calc-size(fit-content, 100px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-block-size> from neutral to [fit-content] at (0.3) should be [calc-size(fit-content, 70px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-block-size> from neutral to [fit-content] at (0.6) should be [calc-size(fit-content, 40px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-block-size> from neutral to [fit-content] at (1) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-block-size> from neutral to [fit-content] at (1.5) should be [calc-size(fit-content, -50px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-block-size> from neutral to [fit-content] at (-0.3) should be [calc-size(fit-content, 130px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-block-size> from neutral to [fit-content] at (0) should be [calc-size(fit-content, 100px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-block-size> from neutral to [fit-content] at (0.3) should be [calc-size(fit-content, 70px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-block-size> from neutral to [fit-content] at (0.6) should be [calc-size(fit-content, 40px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-block-size> from neutral to [fit-content] at (1) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-block-size> from neutral to [fit-content] at (1.5) should be [calc-size(fit-content, -50px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-block-size> from neutral to [fit-content] at (0.6) should be [calc-size(fit-content, 40px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-block-size> from neutral to [fit-content] at (1) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-block-size> from neutral to [fit-content] at (1.5) should be [calc-size(fit-content, -50px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-block-size> from neutral to [fit-content] at (0.6) should be [calc-size(fit-content, 40px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-block-size> from neutral to [fit-content] at (1) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-block-size> from neutral to [fit-content] at (1.5) should be [calc-size(fit-content, -50px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-inline-size> from [max-content] to [100px] at (-0.3) should be [calc-size(max-content, -30px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-inline-size> from [max-content] to [100px] at (0) should be [calc-size(max-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-inline-size> from [max-content] to [100px] at (0.3) should be [calc-size(max-content, 30px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-inline-size> from [max-content] to [100px] at (0.6) should be [calc-size(max-content, 60px + size * 0.4)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-inline-size> from [max-content] to [100px] at (1) should be [calc-size(max-content, 100px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-inline-size> from [max-content] to [100px] at (1.5) should be [calc-size(max-content, 150px + size * -0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-inline-size> from [max-content] to [100px] at (-0.3) should be [calc-size(max-content, -30px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-inline-size> from [max-content] to [100px] at (0) should be [calc-size(max-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-inline-size> from [max-content] to [100px] at (0.3) should be [calc-size(max-content, 30px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-inline-size> from [max-content] to [100px] at (0.6) should be [calc-size(max-content, 60px + size * 0.4)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-inline-size> from [max-content] to [100px] at (1) should be [calc-size(max-content, 100px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-inline-size> from [max-content] to [100px] at (1.5) should be [calc-size(max-content, 150px + size * -0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-inline-size> from [max-content] to [100px] at (-0.3) should be [calc-size(max-content, -30px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-inline-size> from [max-content] to [100px] at (0) should be [calc-size(max-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-inline-size> from [max-content] to [100px] at (0.3) should be [calc-size(max-content, 30px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-inline-size> from [max-content] to [100px] at (0.6) should be [calc-size(max-content, 60px + size * 0.4)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-inline-size> from [max-content] to [100px] at (1) should be [calc-size(max-content, 100px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-inline-size> from [max-content] to [100px] at (1.5) should be [calc-size(max-content, 150px + size * -0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-inline-size> from [max-content] to [100px] at (-0.3) should be [calc-size(max-content, -30px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-inline-size> from [max-content] to [100px] at (0) should be [calc-size(max-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-inline-size> from [max-content] to [100px] at (0.3) should be [calc-size(max-content, 30px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-inline-size> from [max-content] to [100px] at (0.6) should be [calc-size(max-content, 60px + size * 0.4)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-inline-size> from [max-content] to [100px] at (1) should be [calc-size(max-content, 100px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-inline-size> from [max-content] to [100px] at (1.5) should be [calc-size(max-content, 150px + size * -0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   }
+  ]
+ },
+ "css/css-values/calc-size/animation/interpolate-size-max-height-interpolation.html": {
+  "total": 282,
+  "before": 234,
+  "after": 282,
+  "signed": 282,
+  "changes": [
+   {
+    "name": "CSS Transitions: property <max-height> from [150px] to [min-content] at (-0.3) should be [calc-size(min-content, 195px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from [150px] to [min-content] at (0) should be [calc-size(min-content, 150px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from [150px] to [min-content] at (0.3) should be [calc-size(min-content, 105px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from [150px] to [min-content] at (0.6) should be [calc-size(min-content, 60px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from [150px] to [min-content] at (1) should be [calc-size(min-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from [150px] to [min-content] at (1.5) should be [calc-size(min-content, -75px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from [150px] to [min-content] at (-0.3) should be [calc-size(min-content, 195px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from [150px] to [min-content] at (0) should be [calc-size(min-content, 150px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from [150px] to [min-content] at (0.3) should be [calc-size(min-content, 105px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from [150px] to [min-content] at (0.6) should be [calc-size(min-content, 60px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from [150px] to [min-content] at (1) should be [calc-size(min-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from [150px] to [min-content] at (1.5) should be [calc-size(min-content, -75px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [150px] to [min-content] at (-0.3) should be [calc-size(min-content, 195px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [150px] to [min-content] at (0) should be [calc-size(min-content, 150px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [150px] to [min-content] at (0.3) should be [calc-size(min-content, 105px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [150px] to [min-content] at (0.6) should be [calc-size(min-content, 60px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [150px] to [min-content] at (1) should be [calc-size(min-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [150px] to [min-content] at (1.5) should be [calc-size(min-content, -75px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [150px] to [min-content] at (-0.3) should be [calc-size(min-content, 195px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [150px] to [min-content] at (0) should be [calc-size(min-content, 150px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [150px] to [min-content] at (0.3) should be [calc-size(min-content, 105px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [150px] to [min-content] at (0.6) should be [calc-size(min-content, 60px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [150px] to [min-content] at (1) should be [calc-size(min-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [150px] to [min-content] at (1.5) should be [calc-size(min-content, -75px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [min-content] to neutral at (-0.3) should be [calc-size(min-content, -30px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [min-content] to neutral at (0) should be [calc-size(min-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from [min-content] to neutral at (0.3) should be [calc-size(min-content, 30px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [min-content] to neutral at (-0.3) should be [calc-size(min-content, -30px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [min-content] to neutral at (0) should be [calc-size(min-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from [min-content] to neutral at (0.3) should be [calc-size(min-content, 30px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from neutral to [max-content] at (-0.3) should be [calc-size(max-content, 130px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from neutral to [max-content] at (0) should be [calc-size(max-content, 100px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from neutral to [max-content] at (0.3) should be [calc-size(max-content, 70px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from neutral to [max-content] at (0.6) should be [calc-size(max-content, 40px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from neutral to [max-content] at (1) should be [calc-size(max-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-height> from neutral to [max-content] at (1.5) should be [calc-size(max-content, -50px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from neutral to [max-content] at (-0.3) should be [calc-size(max-content, 130px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from neutral to [max-content] at (0) should be [calc-size(max-content, 100px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from neutral to [max-content] at (0.3) should be [calc-size(max-content, 70px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from neutral to [max-content] at (0.6) should be [calc-size(max-content, 40px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from neutral to [max-content] at (1) should be [calc-size(max-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-height> from neutral to [max-content] at (1.5) should be [calc-size(max-content, -50px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from neutral to [max-content] at (0.6) should be [calc-size(max-content, 40px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from neutral to [max-content] at (1) should be [calc-size(max-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-height> from neutral to [max-content] at (1.5) should be [calc-size(max-content, -50px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from neutral to [max-content] at (0.6) should be [calc-size(max-content, 40px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from neutral to [max-content] at (1) should be [calc-size(max-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-height> from neutral to [max-content] at (1.5) should be [calc-size(max-content, -50px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   }
+  ]
+ },
+ "css/css-values/calc-size/animation/interpolate-size-max-width-interpolation.html": {
+  "total": 282,
+  "before": 234,
+  "after": 282,
+  "signed": 282,
+  "changes": [
+   {
+    "name": "CSS Transitions: property <max-width> from [fit-content] to [50px] at (-0.3) should be [calc-size(fit-content, -15px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from [fit-content] to [50px] at (0) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from [fit-content] to [50px] at (0.3) should be [calc-size(fit-content, 15px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from [fit-content] to [50px] at (0.6) should be [calc-size(fit-content, 30px + size * 0.4)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from [fit-content] to [50px] at (1) should be [calc-size(fit-content, 50px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from [fit-content] to [50px] at (1.5) should be [calc-size(fit-content, 75px + size * -0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from [fit-content] to [50px] at (-0.3) should be [calc-size(fit-content, -15px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from [fit-content] to [50px] at (0) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from [fit-content] to [50px] at (0.3) should be [calc-size(fit-content, 15px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from [fit-content] to [50px] at (0.6) should be [calc-size(fit-content, 30px + size * 0.4)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from [fit-content] to [50px] at (1) should be [calc-size(fit-content, 50px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from [fit-content] to [50px] at (1.5) should be [calc-size(fit-content, 75px + size * -0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [fit-content] to [50px] at (-0.3) should be [calc-size(fit-content, -15px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [fit-content] to [50px] at (0) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [fit-content] to [50px] at (0.3) should be [calc-size(fit-content, 15px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [fit-content] to [50px] at (0.6) should be [calc-size(fit-content, 30px + size * 0.4)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [fit-content] to [50px] at (1) should be [calc-size(fit-content, 50px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [fit-content] to [50px] at (1.5) should be [calc-size(fit-content, 75px + size * -0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [fit-content] to [50px] at (-0.3) should be [calc-size(fit-content, -15px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [fit-content] to [50px] at (0) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [fit-content] to [50px] at (0.3) should be [calc-size(fit-content, 15px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [fit-content] to [50px] at (0.6) should be [calc-size(fit-content, 30px + size * 0.4)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [fit-content] to [50px] at (1) should be [calc-size(fit-content, 50px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [fit-content] to [50px] at (1.5) should be [calc-size(fit-content, 75px + size * -0.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [min-content] to neutral at (-0.3) should be [calc-size(min-content, -45px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [min-content] to neutral at (0) should be [calc-size(min-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from [min-content] to neutral at (0.3) should be [calc-size(min-content, 45px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [min-content] to neutral at (-0.3) should be [calc-size(min-content, -45px + size * 1.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [min-content] to neutral at (0) should be [calc-size(min-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from [min-content] to neutral at (0.3) should be [calc-size(min-content, 45px + size * 0.7)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from neutral to [fit-content] at (-0.3) should be [calc-size(fit-content, 195px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from neutral to [fit-content] at (0) should be [calc-size(fit-content, 150px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from neutral to [fit-content] at (0.3) should be [calc-size(fit-content, 105px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from neutral to [fit-content] at (0.6) should be [calc-size(fit-content, 60px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from neutral to [fit-content] at (1) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions: property <max-width> from neutral to [fit-content] at (1.5) should be [calc-size(fit-content, -75px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from neutral to [fit-content] at (-0.3) should be [calc-size(fit-content, 195px + size * -0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from neutral to [fit-content] at (0) should be [calc-size(fit-content, 150px + size * 0)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from neutral to [fit-content] at (0.3) should be [calc-size(fit-content, 105px + size * 0.3)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from neutral to [fit-content] at (0.6) should be [calc-size(fit-content, 60px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from neutral to [fit-content] at (1) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Transitions with transition: all: property <max-width> from neutral to [fit-content] at (1.5) should be [calc-size(fit-content, -75px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from neutral to [fit-content] at (0.6) should be [calc-size(fit-content, 60px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from neutral to [fit-content] at (1) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "CSS Animations: property <max-width> from neutral to [fit-content] at (1.5) should be [calc-size(fit-content, -75px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from neutral to [fit-content] at (0.6) should be [calc-size(fit-content, 60px + size * 0.6)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from neutral to [fit-content] at (1) should be [calc-size(fit-content, 0px + size * 1)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   },
+   {
+    "name": "Web Animations: property <max-width> from neutral to [fit-content] at (1.5) should be [calc-size(fit-content, -75px + size * 1.5)]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signed": "Pass"
+   }
+  ]
+ }
+}

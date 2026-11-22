@@ -1,0 +1,434 @@
+[
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-width",
+  "value": "calc-size(any, 17px)",
+  "specified": "calc-size(any, 17px)",
+  "computed": "calc-size(any, 17px)",
+  "used": 17,
+  "expected": 17,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-width",
+  "value": "calc-size(min-content, size + 10px)",
+  "specified": "calc-size(min-content, size + 10px)",
+  "computed": "calc-size(min-content, size + 10px)",
+  "used": 50,
+  "expected": 50,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-width",
+  "value": "calc-size(calc-size(20px, size * 2), size - 3px)",
+  "specified": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "computed": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "used": 37,
+  "expected": 37,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-width",
+  "value": "calc-size(none, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-width",
+  "value": "calc-size(auto, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-width",
+  "value": "calc-size(content, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-width",
+  "value": "calc-size(calc-size(auto, size), size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-height",
+  "value": "calc-size(any, 17px)",
+  "specified": "calc-size(any, 17px)",
+  "computed": "calc-size(any, 17px)",
+  "used": 17,
+  "expected": 17,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-height",
+  "value": "calc-size(min-content, size + 10px)",
+  "specified": "calc-size(min-content, size + 10px)",
+  "computed": "calc-size(min-content, size + 10px)",
+  "used": 50,
+  "expected": 50,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-height",
+  "value": "calc-size(calc-size(20px, size * 2), size - 3px)",
+  "specified": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "computed": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "used": 37,
+  "expected": 37,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-height",
+  "value": "calc-size(none, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-height",
+  "value": "calc-size(auto, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-height",
+  "value": "calc-size(content, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-height",
+  "value": "calc-size(calc-size(auto, size), size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-inline-size",
+  "value": "calc-size(any, 17px)",
+  "specified": "calc-size(any, 17px)",
+  "computed": "calc-size(any, 17px)",
+  "used": 17,
+  "expected": 17,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-inline-size",
+  "value": "calc-size(min-content, size + 10px)",
+  "specified": "calc-size(min-content, size + 10px)",
+  "computed": "calc-size(min-content, size + 10px)",
+  "used": 50,
+  "expected": 50,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-inline-size",
+  "value": "calc-size(calc-size(20px, size * 2), size - 3px)",
+  "specified": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "computed": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "used": 37,
+  "expected": 37,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-inline-size",
+  "value": "calc-size(none, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-inline-size",
+  "value": "calc-size(auto, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-inline-size",
+  "value": "calc-size(content, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-inline-size",
+  "value": "calc-size(calc-size(auto, size), size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-block-size",
+  "value": "calc-size(any, 17px)",
+  "specified": "calc-size(any, 17px)",
+  "computed": "calc-size(any, 17px)",
+  "used": 17,
+  "expected": 17,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-block-size",
+  "value": "calc-size(min-content, size + 10px)",
+  "specified": "calc-size(min-content, size + 10px)",
+  "computed": "calc-size(min-content, size + 10px)",
+  "used": 50,
+  "expected": 50,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-block-size",
+  "value": "calc-size(calc-size(20px, size * 2), size - 3px)",
+  "specified": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "computed": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "used": 37,
+  "expected": 37,
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-block-size",
+  "value": "calc-size(none, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-block-size",
+  "value": "calc-size(auto, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-block-size",
+  "value": "calc-size(content, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "horizontal-tb",
+  "prop": "max-block-size",
+  "value": "calc-size(calc-size(auto, size), size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-width",
+  "value": "calc-size(any, 17px)",
+  "specified": "calc-size(any, 17px)",
+  "computed": "calc-size(any, 17px)",
+  "used": 17,
+  "expected": 17,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-width",
+  "value": "calc-size(min-content, size + 10px)",
+  "specified": "calc-size(min-content, size + 10px)",
+  "computed": "calc-size(min-content, size + 10px)",
+  "used": 50,
+  "expected": 50,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-width",
+  "value": "calc-size(calc-size(20px, size * 2), size - 3px)",
+  "specified": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "computed": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "used": 37,
+  "expected": 37,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-width",
+  "value": "calc-size(none, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-width",
+  "value": "calc-size(auto, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-width",
+  "value": "calc-size(content, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-width",
+  "value": "calc-size(calc-size(auto, size), size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-height",
+  "value": "calc-size(any, 17px)",
+  "specified": "calc-size(any, 17px)",
+  "computed": "calc-size(any, 17px)",
+  "used": 17,
+  "expected": 17,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-height",
+  "value": "calc-size(min-content, size + 10px)",
+  "specified": "calc-size(min-content, size + 10px)",
+  "computed": "calc-size(min-content, size + 10px)",
+  "used": 50,
+  "expected": 50,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-height",
+  "value": "calc-size(calc-size(20px, size * 2), size - 3px)",
+  "specified": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "computed": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "used": 37,
+  "expected": 37,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-height",
+  "value": "calc-size(none, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-height",
+  "value": "calc-size(auto, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-height",
+  "value": "calc-size(content, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-height",
+  "value": "calc-size(calc-size(auto, size), size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-inline-size",
+  "value": "calc-size(any, 17px)",
+  "specified": "calc-size(any, 17px)",
+  "computed": "calc-size(any, 17px)",
+  "used": 17,
+  "expected": 17,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-inline-size",
+  "value": "calc-size(min-content, size + 10px)",
+  "specified": "calc-size(min-content, size + 10px)",
+  "computed": "calc-size(min-content, size + 10px)",
+  "used": 50,
+  "expected": 50,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-inline-size",
+  "value": "calc-size(calc-size(20px, size * 2), size - 3px)",
+  "specified": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "computed": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "used": 37,
+  "expected": 37,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-inline-size",
+  "value": "calc-size(none, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-inline-size",
+  "value": "calc-size(auto, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-inline-size",
+  "value": "calc-size(content, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-inline-size",
+  "value": "calc-size(calc-size(auto, size), size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-block-size",
+  "value": "calc-size(any, 17px)",
+  "specified": "calc-size(any, 17px)",
+  "computed": "calc-size(any, 17px)",
+  "used": 17,
+  "expected": 17,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-block-size",
+  "value": "calc-size(min-content, size + 10px)",
+  "specified": "calc-size(min-content, size + 10px)",
+  "computed": "calc-size(min-content, size + 10px)",
+  "used": 50,
+  "expected": 50,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-block-size",
+  "value": "calc-size(calc-size(20px, size * 2), size - 3px)",
+  "specified": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "computed": "calc-size(calc-size(20px, 2 * size), size - 3px)",
+  "used": 37,
+  "expected": 37,
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-block-size",
+  "value": "calc-size(none, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-block-size",
+  "value": "calc-size(auto, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-block-size",
+  "value": "calc-size(content, size)",
+  "pass": true
+ },
+ {
+  "writingMode": "vertical-rl",
+  "prop": "max-block-size",
+  "value": "calc-size(calc-size(auto, size), size)",
+  "pass": true
+ }
+]

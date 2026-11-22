@@ -312,7 +312,6 @@ impl<LengthPercentage> Size<LengthPercentage> {
 /// A generic value for the `max-width` or `max-height` property.
 #[allow(missing_docs)]
 #[derive(
-    Animate,
     Clone,
     ComputeSquaredDistance,
     Debug,
@@ -348,6 +347,9 @@ pub enum GenericMaxSize<LengthPercent> {
     FitContentFunction(LengthPercent),
     AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
     AnchorContainingCalcFunction(LengthPercent),
+    #[animation(error)]
+    #[typed(skip)]
+    Calculation(#[compute(field_bound)] #[css(field_bound)] Box<GenericSize<LengthPercent>>),
 }
 
 impl<LP> SpecifiedValueInfo for GenericMaxSize<LP>
@@ -358,6 +360,7 @@ where
         LP::collect_completion_keywords(f);
         f(&[
             "none",
+            "calc-size",
             "fit-content",
             "max-content",
             "min-content",

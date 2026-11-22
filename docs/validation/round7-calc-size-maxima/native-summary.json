@@ -1,0 +1,37 @@
+{
+  "layout": {
+    "names": [
+      "computed_style::max_size_samples_keep_the_intrinsic_axis_and_policy"
+    ],
+    "passed": 1,
+    "exit": 0,
+    "sha256": "605906000871d52e7e230a3cc7fb1a6928ce252c7101b5322fe5ace56d3e3b1d"
+  },
+  "webapi": {
+    "names": [
+      "layout_text_js::calc_size_maximum_declarations"
+    ],
+    "passed": 1,
+    "exit": 0,
+    "sha256": "0abfcf8efd32d3871ec2eec9c5e8d2789abefd1e5f5cfa0dc6bfe7a2945c3a60"
+  },
+  "render": {
+    "names": [
+      "calc_size::a_flex_item_minimum_is_the_calculation_of_its_automatic_minimum",
+      "calc_size::a_calc_minimum_against_an_indefinite_height_takes_its_percentages_as_zero",
+      "calc_size::nested_percent_basis_uses_the_containing_axis",
+      "calc_size::numeric_minima_win_over_calculated_maxima",
+      "calc_size::calculated_stretch_excludes_margins_and_distinguishes_size_from_percent",
+      "calc_size::calculated_maxima_resolve_against_the_containing_axis",
+      "calc_size::nested_basis_keeps_negative_intermediates",
+      "calc_size::intrinsic_maxima_calculate_in_the_sizing_box",
+      "calc_size::only_percentages_in_the_calculation_become_zero_in_an_indefinite_axis",
+      "calc_size::width_and_height_are_the_calculation_of_their_basis",
+      "calc_size::intrinsic_maxima_bound_auto_height_but_do_not_enlarge_it",
+      "calc_size::a_shrink_to_fit_parent_takes_the_calculated_contributions"
+    ],
+    "passed": 12,
+    "exit": 0,
+    "sha256": "b3c98bbdf29a07ffc735963e1c64bdcc39a832a6e4d4a3fbcea66671282147e8"
+  }
+}

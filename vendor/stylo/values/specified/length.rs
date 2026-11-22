@@ -1862,6 +1862,13 @@ enum ParseAnchorFunctions {
     No,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum CalcSizeProperty {
+    PreferredOrMinimum,
+    FlexBasis,
+    Maximum,
+}
+
 impl Size {
     /// Parses, with quirks.
     pub fn parse_quirky(
@@ -1876,7 +1883,7 @@ impl Size {
             allow_quirks,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
-            false,
+            CalcSizeProperty::PreferredOrMinimum,
         )
     }
 
@@ -1891,7 +1898,7 @@ impl Size {
             AllowQuirks::No,
             true,
             ParseAnchorFunctions::No,
-            true,
+            CalcSizeProperty::FlexBasis,
         )
     }
 
@@ -1905,13 +1912,13 @@ impl Size {
         allow_quirks: AllowQuirks,
         allow_webkit_fill_available: bool,
         allow_anchor_functions: ParseAnchorFunctions,
-        allow_content_basis: bool,
+        property: CalcSizeProperty,
     ) -> Result<Self, ParseError> {
         parse_size_non_length!(Size, input, allow_webkit_fill_available,
                                "auto" => Auto);
         parse_fit_content_function!(Size, input, context, allow_quirks);
         // pyro: `calc-size(<intrinsic keyword>, <calculation>)`.
-        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input, 0, &mut 0, allow_content_basis)) {
+        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input, 0, &mut 0, property)) {
             return Ok(size);
         }
 
@@ -1955,7 +1962,7 @@ impl Size {
             allow_quirks,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
-            false,
+            CalcSizeProperty::PreferredOrMinimum,
         )
     }
 
@@ -1975,7 +1982,7 @@ impl Size {
             AllowQuirks::No,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
-            false,
+            CalcSizeProperty::PreferredOrMinimum,
         )
     }
 
@@ -1985,7 +1992,7 @@ impl Size {
         GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
     }
     /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
-    fn parse_calc_size(context: &ParserContext, input: &mut Parser, depth: usize, expanded: &mut usize, allow_content_basis: bool) -> Result<Self, ParseError> {
+    fn parse_calc_size(context: &ParserContext, input: &mut Parser, depth: usize, expanded: &mut usize, property: CalcSizeProperty) -> Result<Self, ParseError> {
         if depth >= 32 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
         input.expect_function_matching("calc-size")?;
         input.parse_nested_block(|input| {
@@ -1998,10 +2005,13 @@ impl Size {
                 "any" => 5u8,
                 "content" => 6u8,
             }));
-            if matches!(keyword, Ok(6)) && !allow_content_basis { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
+            if (matches!(keyword, Ok(6)) && property != CalcSizeProperty::FlexBasis) ||
+                (matches!(keyword, Ok(0)) && property == CalcSizeProperty::Maximum) {
+                return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+            }
             let basis = if keyword.is_err() {
                 Some(input.parse_until_before(cssparser::Delimiter::Comma, |input| {
-                    if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded, allow_content_basis)) { return Ok(nested); }
+                    if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded, property)) { return Ok(nested); }
                     let mut calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::All, false)?;
                     calc.0.node.visit_depth_first(|_| *expanded += 1);
                     Ok(Self::LengthPercentage(NonNegative(LengthPercentage::Calc(Box::new(calc)))))
@@ -2088,6 +2098,9 @@ impl MaxSize {
         parse_size_non_length!(MaxSize, input, allow_webkit_fill_available,
                                "none" => None);
         parse_fit_content_function!(MaxSize, input, context, allow_quirks);
+        if let Ok(size) = input.try_parse(|input| Size::parse_calc_size(context, input, 0, &mut 0, CalcSizeProperty::Maximum)) {
+            return Ok(Self::Calculation(Box::new(size)));
+        }
 
         match input
             .try_parse(|i| NonNegativeLengthPercentage::parse_quirky(context, i, allow_quirks))
