@@ -1852,8 +1852,10 @@
       // The start time between frames: the first frame plays from the
       // matching point of the buffer.
       const startAt = n.start * rate;
-      n.pos = n.offset * data.rate + (f0 + from - startAt) * step;
-      if (n.loop && n.offset * data.rate >= loopEnd) n.pos = loopStart;
+      let offset = min(n.offset * data.rate, len);
+      if (n.loop && step < 0) offset = max(offset, loopStart);
+      if (n.loop && step >= 0 && offset >= loopEnd) offset = loopStart;
+      n.pos = offset + (f0 + from - startAt) * step;
       n.played = max(0, ceil(startAt - 1e-9) - startAt) * abs(step);
     }
     const maxPlayed = n.duration * data.rate;
@@ -1863,10 +1865,10 @@
       if (n.loop) {
         const span = loopEnd - loopStart;
         if (span > 0) {
-          while (pos >= loopEnd) pos -= span;
-          while (pos < loopStart && step < 0) pos += span;
+          if (step >= 0 && pos >= loopEnd) pos = loopStart + (pos - loopEnd) % span;
+          if (step < 0 && pos < loopStart) pos = loopStart + ((pos - loopStart) % span + span) % span;
         }
-      } else if (pos >= len || pos < 0) {
+      } else if ((pos >= len && !(pos === len && step < 0)) || pos < 0) {
         break;
       }
       if (n.played >= maxPlayed) break;
@@ -1876,7 +1878,7 @@
         const src = data.channels[ch];
         const a = src[k] || 0;
         let next = k + 1;
-        if (n.loop && next >= loopEnd) next = floor(loopStart);
+        if (n.loop && pos < loopEnd && next >= loopEnd) next = floor(loopStart);
         const b = frac === 0 ? 0 : src[next] || 0;
         out[ch][i] = a + (b - a) * frac;
       }
