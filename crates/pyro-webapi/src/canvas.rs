@@ -1951,9 +1951,11 @@ impl ContextData {
             if v[2] == 0.0 && v[3] == 0.0 {
                 return Ok(s.undefined());
             } else if v[2] == 0.0 || v[3] == 0.0 {
-                // A line, with caps.
+                // pyro: a closed subpath of the two corners, as Chromium strokes it (WPT
+                // 2d.strokeRect.zero.4/5): joins at both ends, no caps.
                 b.move_to(v[0], v[1]);
                 b.line_to(v[0] + v[2], v[1] + v[3]);
+                b.path.close();
             } else {
                 b.rect(v[0], v[1], v[2], v[3]);
             }
