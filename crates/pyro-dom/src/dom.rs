@@ -177,6 +177,7 @@ impl Default for NameCache {
 }
 
 pub struct Dom {
+    pub(crate) blob_hyperlinks: Option<Box<crate::blob_hyperlinks::BlobHyperlinks>>,
     /// Process-unique id (caches keyed by DOM identity and `version`).
     uid: u64,
     slots: Vec<Slot>,
@@ -335,6 +336,7 @@ impl Dom {
     pub fn new() -> Self {
         static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Dom {
+            blob_hyperlinks: None,
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             slots: Vec::new(),
             walk: Vec::new(),
@@ -857,7 +859,9 @@ impl Dom {
 
     /// Parser allocation: no collection candidate (node is linked at once).
     pub(crate) fn alloc_raw(&mut self, kind: NodeKind, owner_doc: u32) -> u32 {
-        self.alloc(kind, owner_doc)
+        let i = self.alloc(kind, owner_doc);
+        self.capture_hyperlink_blob(i);
+        i
     }
     pub(crate) fn link_raw(&mut self, node: u32, parent: u32, before: u32) {
         if before != NIL && !self.live_ranges.is_empty() {
@@ -3305,6 +3309,7 @@ impl Dom {
                 el.set_attr_state(attrs);
                 el.control = control;
                 el.flags |= started;
+                self.capture_hyperlink_blob(id.idx);
                 self.resummarize(id.idx);
                 self.note_inline_handlers(id.idx);
                 id.idx
@@ -3633,16 +3638,21 @@ impl Dom {
                 self.svg_strings.remove(&(i, kind));
             }
         }
+        let track_href = self.blob_hyperlinks.is_some() && name.local == local_name!("href") && (plain || name.ns == ns!(xlink));
         let el = self.n_mut(i).element_mut().expect("element");
         let old_id = (plain && name.local == local_name!("id")).then(|| el.id_atom().cloned());
         let old_for = (plain && name.local == local_name!("for") && el.is_html() && el.name.local == local_name!("label"))
             .then(|| el.attr_local(&local_name!("for")).map(Box::<str>::from));
+        let old_href = if track_href { crate::blob_hyperlinks::hyperlink_href(el).map(Box::<str>::from) } else { None };
         let r = f(el);
         if plain && name.local == local_name!("disabled") && el.is_html() && el.name.local == local_name!("link") {
             el.link_explicitly_enabled = el.attr_local(&name.local).is_none();
         }
         debug_assert!(el.derived_in_step());
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
+        if track_href && old_href.as_deref() != crate::blob_hyperlinks::hyperlink_href(el) {
+            self.capture_hyperlink_blob(i);
+        }
         if plain && &*name.local == "points" && !self.svg_points.is_empty() {
             if let Some(lists) = self.svg_points.get(&i).and_then(std::rc::Weak::upgrade) {
                 lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
@@ -4549,6 +4559,7 @@ impl Dom {
     }
 
     fn free_slot(&mut self, i: u32, component_root: u32) {
+        self.forget_hyperlink_blob(i);
         let owner = self.n(i).owner_doc;
         if !self.svg_points.is_empty() { self.svg_points.remove(&i); }
         if !self.svg_numbers.is_empty() { self.svg_numbers.remove(&i); }

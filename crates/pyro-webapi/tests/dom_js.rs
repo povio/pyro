@@ -7889,3 +7889,21 @@ fn encoded_chunks_clone_internal_slots_and_reject_storage() {
         assert_eq!(exception.get_atom("name").unwrap().to_string().unwrap(), "DataCloneError");
     }
 }
+
+#[test]
+fn origin_values_use_native_records_and_preserve_opaque_identity() {
+    let e = env("<!doctype html><base href='https://example.org/a/'><a id='link' href='file'></a>");
+    assert_eq!(eval(&e.main, r#"
+        const tuple = Origin.from('https://example.org:443/a'), url = new URL('https://example.org/b');
+        let reads = 0;
+        Object.defineProperty(url, 'href', {get() { reads++; return 'https://other.test/'; }});
+        const link = document.getElementById('link');
+        const opaque = new Origin(), copy = Origin.from(opaque);
+        const invalid = { toString() { reads++; return 'https://example.org/'; } };
+        let rejected = false;
+        try { Origin.from(invalid); } catch (e) { rejected = e instanceof TypeError; }
+        [tuple.isSameOrigin(Origin.from(url)), tuple.isSameOrigin(Origin.from(link)),
+         copy !== opaque, copy.isSameOrigin(opaque), copy.isSameSite(opaque),
+         !copy.isSameOrigin(new Origin()), rejected, reads].join(',')
+    "#), "true,true,true,true,true,true,true,0");
+}

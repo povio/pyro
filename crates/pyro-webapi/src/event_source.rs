@@ -137,6 +137,33 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("cancel", cancel.value())?;
+    // HTML initializes the MessageEvent with the final response URL's
+    // origin. Build a native event rather than consulting the realm's
+    // author-replaceable MessageEvent constructor.
+    let message = s.function("message", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let target = s.unwrap::<crate::target::EventTarget>(a.get(0)).ok_or(JsError::ContextDestroyed)?.key;
+        let event = crate::event::EventCore::trusted(
+            &page, crate::event::EventInterface::MessageEvent, &a.get(1).to_string()?, false, false,
+        );
+        {
+            let mut fields = event.fields.borrow_mut();
+            fields.message_data = Some(Persistent::new(s, a.get(2)));
+            let origin = a.get(3).to_string()?;
+            if origin == "null" {
+                // This value came from the final response URL. An opaque URL
+                // yields a new opaque origin each time a message is created.
+                fields.origin = origin;
+                fields.message_origin = Some(Box::new(crate::origin::OriginValue::fresh()));
+            } else {
+                fields.set_sender_origin(origin);
+            }
+            fields.last_event_id = Some(a.get(4).to_string()?.into_boxed_str());
+        }
+        crate::target::fire(&page, target, &event);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("message", message.value())?;
     Ok(natives)
 }
 

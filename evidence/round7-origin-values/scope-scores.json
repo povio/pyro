@@ -1,0 +1,129 @@
+{
+  "base": {
+    "origin": {
+      "pages": 23,
+      "observedNames": 323,
+      "namedPasses": 0,
+      "strict": 0,
+      "pageOutcome": {
+        "complete": 19,
+        "error": 2,
+        "timeout": 2
+      },
+      "harnessOutcome": {
+        "OK": 19,
+        "Error": 2,
+        "Timeout": 2
+      },
+      "nonOK": [
+        [
+          "html/browsers/origin/api/origin-from.any.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: Can't find variable: Origin",
+          0
+        ],
+        [
+          "html/browsers/origin/api/origin-from.any.worker.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: Can't find variable: Origin",
+          0
+        ],
+        [
+          "html/browsers/origin/api/origin-from-window.window.html",
+          "timeout",
+          "Timeout",
+          null,
+          7
+        ],
+        [
+          "html/browsers/origin/api/origin-from-worker.window.html",
+          "timeout",
+          "Timeout",
+          null,
+          2
+        ]
+      ]
+    },
+    "guard": {
+      "pages": 31,
+      "observedNames": 1029,
+      "namedPasses": 1026,
+      "strict": 29,
+      "pageOutcome": {
+        "complete": 31
+      },
+      "harnessOutcome": {
+        "OK": 31
+      },
+      "nonOK": []
+    }
+  },
+  "candidate": {
+    "origin": {
+      "pages": 23,
+      "observedNames": 341,
+      "namedPasses": 316,
+      "strict": 22,
+      "pageOutcome": {
+        "complete": 23
+      },
+      "harnessOutcome": {
+        "OK": 23
+      },
+      "nonOK": [],
+      "delta": {
+        "gained": 316,
+        "matchedGain": 298,
+        "gainChromeFail": 2,
+        "gainChromePass": 308,
+        "newPass": 18,
+        "newName": 18,
+        "gainChromeNone": 6
+      }
+    },
+    "guard": {
+      "pages": 31,
+      "observedNames": 1029,
+      "namedPasses": 1026,
+      "strict": 29,
+      "pageOutcome": {
+        "complete": 31
+      },
+      "harnessOutcome": {
+        "OK": 31
+      },
+      "nonOK": [],
+      "delta": {}
+    }
+  },
+  "chrome158": {
+    "origin": {
+      "pages": 23,
+      "observedNames": 341,
+      "namedPasses": 314,
+      "strict": 20,
+      "pageOutcome": {
+        "complete": 23
+      },
+      "harnessOutcome": {
+        "OK": 23
+      },
+      "nonOK": []
+    },
+    "guard": {
+      "pages": 31,
+      "observedNames": 1029,
+      "namedPasses": 1010,
+      "strict": 28,
+      "pageOutcome": {
+        "complete": 31
+      },
+      "harnessOutcome": {
+        "OK": 31
+      },
+      "nonOK": []
+    }
+  }
+}

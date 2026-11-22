@@ -1,0 +1,29 @@
+{
+  "surface": "function",
+  "relative": true,
+  "changed": true,
+  "removed": "TypeError",
+  "svg": [
+    true,
+    true
+  ],
+  "urlRecord": [
+    true,
+    0
+  ],
+  "blob": {
+    "opaque": true,
+    "before": [
+      false,
+      false,
+      true
+    ],
+    "after": [
+      false,
+      false,
+      true,
+      true
+    ],
+    "reparsed": false
+  }
+}

@@ -12,7 +12,7 @@
 //   registration(json, updateFound): a registration's new state
 //   worker(json): a version no registration holds any more became redundant
 //   controller(json, fire): the new controller (controllerchange if fire)
-//   message(versionJson, data, ports, origin), messageError(versionJson, origin)
+//   message(versionJson, nativeMessageEvent)
 // `initial`: {controller, ready, clientId, url} (JSON strings or null).
 (function (native, initial) {
   'use strict';
@@ -23,7 +23,6 @@
   const PromiseC = Promise;
   const EventTargetC = EventTarget;
   const EventC = Event;
-  const MessageEventC = MessageEvent;
   const DOMExceptionC = DOMException;
   const TypeErrorC = TypeError;
   const addListener = EventTargetC.prototype.addEventListener;
@@ -254,7 +253,7 @@
     if (messagesEnabled) return;
     messagesEnabled = true;
     const list = queued.splice(0);
-    for (const event of list) dispatchEvent.call(container, event);
+    for (const event of list) native.deliverMessage(container, event);
   }
 
   class ServiceWorkerContainer extends EventTargetC {
@@ -331,7 +330,7 @@
   }
 
   const deliver = (event) => {
-    if (messagesEnabled) dispatchEvent.call(container, event);
+    if (messagesEnabled) native.deliverMessage(container, event);
     else queued.push(event);
   };
 
@@ -352,13 +351,7 @@
       controller = json === null ? null : workerOf(parse(json));
       if (fire) dispatchEvent.call(container, new EventC('controllerchange'));
     },
-    message(json, data, ports, origin) {
-      const event = new MessageEventC('message', { data, origin, ports: ports || [] });
-      defineProperty(event, 'source', { value: workerOf(parse(json)), configurable: true });
-      deliver(event);
-    },
-    messageError(json, origin) {
-      const event = new MessageEventC('messageerror', { origin });
+    message(json, event) {
       defineProperty(event, 'source', { value: workerOf(parse(json)), configurable: true });
       deliver(event);
     },

@@ -391,7 +391,7 @@ pub(crate) fn stop_thread(shared: &Shared) {
 
 /// Fires `message` or, if it cannot be rebuilt, `messageerror` at `target`.
 pub(crate) fn fire_message(s: &Scope<'_>, page: &Rc<PageDom>, target: TargetKey, message: &WireMessage) {
-    crate::message_channel::fire_wire_message(s, page, target, message, String::new());
+    crate::message_channel::fire_wire_message(s, page, target, message, None);
 }
 
 /// Runs on the page's thread, as a task of its loop.

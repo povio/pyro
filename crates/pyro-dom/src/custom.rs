@@ -367,7 +367,9 @@ impl Dom {
         if attrs.is_empty() {
             return;
         }
+        let track_href = self.blob_hyperlinks.is_some();
         let Some(e) = self.n_mut(i).element_mut() else { return };
+        let old_href = if track_href { crate::blob_hyperlinks::hyperlink_href(e).map(Box::<str>::from) } else { None };
         let mut all: Vec<crate::node::Attr> = e.attrs.to_vec();
         for (name, value) in attrs {
             if !all.iter().any(|a| a.name == name) {
@@ -375,6 +377,9 @@ impl Dom {
             }
         }
         e.set_attrs(all);
+        if track_href && old_href.as_deref() != crate::blob_hyperlinks::hyperlink_href(e) {
+            self.capture_hyperlink_blob(i);
+        }
         self.resummarize(i);
         self.note_inline_handlers(i);
     }

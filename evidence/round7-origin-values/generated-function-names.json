@@ -1,0 +1,92 @@
+[
+  {
+    "url": "html/browsers/origin/api/origin-from.any.html",
+    "position": 6,
+    "operand": "Object",
+    "lp": {
+      "name": "Origin.from(function Object() {\n    [native code]\n}) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    },
+    "signed": {
+      "name": "Origin.from(function Object() { [native code] }) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  {
+    "url": "html/browsers/origin/api/origin-from.any.html",
+    "position": 7,
+    "operand": "Origin",
+    "lp": {
+      "name": "Origin.from(function ProxyObject() {\n    [native code]\n}) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    },
+    "signed": {
+      "name": "Origin.from(function Origin() { [native code] }) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  {
+    "url": "html/browsers/origin/api/origin-from.any.html",
+    "position": 8,
+    "operand": "Origin.from",
+    "lp": {
+      "name": "Origin.from(function from() {\n    [native code]\n}) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    },
+    "signed": {
+      "name": "Origin.from(function from() { [native code] }) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  {
+    "url": "html/browsers/origin/api/origin-from.any.worker.html",
+    "position": 6,
+    "operand": "Object",
+    "lp": {
+      "name": "Origin.from(function Object() {\n    [native code]\n}) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    },
+    "signed": {
+      "name": "Origin.from(function Object() { [native code] }) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  {
+    "url": "html/browsers/origin/api/origin-from.any.worker.html",
+    "position": 7,
+    "operand": "Origin",
+    "lp": {
+      "name": "Origin.from(function ProxyObject() {\n    [native code]\n}) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    },
+    "signed": {
+      "name": "Origin.from(function Origin() { [native code] }) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  {
+    "url": "html/browsers/origin/api/origin-from.any.worker.html",
+    "position": 8,
+    "operand": "Origin.from",
+    "lp": {
+      "name": "Origin.from(function from() {\n    [native code]\n}) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    },
+    "signed": {
+      "name": "Origin.from(function from() { [native code] }) throws a TypeError.",
+      "status": "Pass",
+      "msg": ""
+    }
+  }
+]

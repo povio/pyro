@@ -164,6 +164,9 @@ pub struct EventFields {
     /// `ports`: the transferred MessagePorts' new ports, in the receiver's realm.
     pub message_ports: Option<Persistent>,
     pub origin: String,
+    /// The origin object supplied by message delivery. An author-provided
+    /// MessageEventInit.origin is only a string, even if it spells a valid URL.
+    pub(crate) message_origin: Option<Box<crate::origin::OriginValue>>,
     /// MessageEvent `lastEventId` (EventSource); None reads as "".
     pub last_event_id: Option<Box<str>>,
     pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
@@ -1970,6 +1973,24 @@ impl JsClass for TransitionEvent {
         def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
+    }
+}
+
+/// Extract the internal origin from either a MessageEvent or the service
+/// worker's ExtendableMessageEvent, whose native base is Event. Neither a
+/// prototype nor a public origin property can install this field.
+pub(crate) fn message_origin(s: &Scope<'_>, value: Value<'_>) -> Option<crate::origin::OriginValue> {
+    s.unwrap::<Event>(value)?.fields.borrow().message_origin.as_deref().cloned()
+}
+
+pub(crate) fn serialize_message_origin(key: &str) -> &str {
+    if key.starts_with("opaque:") || key.starts_with("opaque-document:") { "null" } else { key }
+}
+
+impl EventFields {
+    pub(crate) fn set_sender_origin(&mut self, key: String) {
+        self.origin = serialize_message_origin(&key).to_owned();
+        self.message_origin = crate::origin::OriginValue::from_key(key).map(Box::new);
     }
 }
 

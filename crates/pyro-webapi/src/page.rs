@@ -255,7 +255,7 @@ pub struct PageDom {
     /// `URL.createObjectURL` store: blob URL -> (bytes, type). Owned by the
     /// creating document; revocation, document replacement and disposal drop
     /// the entries (and their bytes).
-    pub(crate) blob_urls: RefCell<FxHashMap<String, (bytes::Bytes, String)>>,
+    pub(crate) blob_urls: RefCell<FxHashMap<String, crate::url::BlobUrlEntry>>,
     /// `document.referrer` and the `Referrer-Policy` header of the document's
     /// response, set by the embedder at commit (`crate::fetch`).
     pub(crate) referrer: crate::fetch::DocumentReferrer,
@@ -1145,7 +1145,7 @@ impl PageDom {
 
     /// Bytes and type registered for a live `URL.createObjectURL` URL.
     pub fn blob_url(&self, url: &str) -> Option<(bytes::Bytes, String)> {
-        self.blob_urls.borrow().get(url).cloned()
+        self.blob_urls.borrow().get(url).map(|entry| (entry.bytes.clone(), entry.mime.clone()))
     }
 
     /// Number of live object URLs registered by the current document.

@@ -1,0 +1,45 @@
+{
+  "base": {
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "jobs": 4,
+    "server": "wptserve",
+    "kind": "testharness",
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "wallMs": 10316,
+    "browserCpuS": 1.57,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "commit": "414fc748139c4c076f3c7d61c2c59cc46f58da7c",
+    "tree": "fe96416f7e81b73f18684e930d45fe814bcc055f",
+    "binarySHA256": "cf802080039b40071484fc8ae2620bb84e4378e43d23705f892897222ce60a9c",
+    "sizeBytes": 139163904
+  },
+  "candidate": {
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "jobs": 4,
+    "server": "wptserve",
+    "kind": "testharness",
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "wallMs": 668,
+    "browserCpuS": 1.63,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "commit": "490fa87a2be8cb93b074b1f9749a71ff5ce2e8e3",
+    "tree": "3f989bab3ed4cef098098f07973db20e07c5c924",
+    "binarySHA256": "918a4cbc8fecf819d5374c8c613182f5e9ad4756e93768686c7fc097aee9aac7",
+    "sizeBytes": 139245216
+  },
+  "jscKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+  "urlsSHA256": "b0cf3fc3513f8cd542cb45935cb172ce1930cdf65fbfba5bbf09c6027a73ba1b",
+  "profile": "wptiter, release-fast inheritance, LTO disabled, 16 codegen units, incremental, render, one Cargo job"
+}

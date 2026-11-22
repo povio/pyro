@@ -117,6 +117,9 @@ mod structured_clone;
 pub mod target;
 pub mod thread_state;
 pub mod traversal;
+mod origin;
+mod origin_globals;
+mod origin_urls;
 pub mod url;
 mod url_pattern;
 pub mod url_search_params;
@@ -196,6 +199,7 @@ pub fn register(engine: &pyro_js::Engine) {
     encoded_chunks::register(engine);
     validity::register(engine);
     window::register(engine);
+    engine.register::<origin::Origin>();
     mutation_observer::register(engine);
     intersection_observer::register(engine);
     crypto::register(engine);

@@ -1636,6 +1636,15 @@ impl<'s> Scope<'s> {
             .ok_or_else(|| JsError::Type("windowProxy made no object".into()))
     }
 
+    /// The accessible global behind a popup WindowProxy created by this
+    /// realm. Uses the same live target check as property access. An
+    /// ordinary object, an author-created proxy, a cross-origin popup or a
+    /// closed popup has no result. Does not invoke author property traps.
+    pub fn accessible_popup_window(&self, object: Object<'_>) -> JsResult<Option<Object<'s>>> {
+        let get = self.realm.cached_helper(self, "accessiblePopupWindow")?;
+        Ok(get.call(None, &[self.rehome_object(object).value()])?.as_object())
+    }
+
     /// Whether this JavaScriptCore runs a module script in HTML's two steps
     /// ([`Scope::load_module_graph`], [`Scope::link_and_evaluate_module`];
     /// patch 0037).
