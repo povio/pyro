@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 983,
-    "studio_in_scope": 318,
+    "studio_in_scope": 322,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -14,7 +14,7 @@
    "selector_union": 1561,
    "owner_estimate_reduction": 230,
    "of_which_tentative": 196,
-   "studio_css_reported_pages_not_deduped": 169,
+   "studio_css_reported_pages_not_deduped": 173,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 458,
@@ -23,8 +23,8 @@
     "referrer-policy": 114,
     "html/browsers": 97,
     "fetch/api": 74,
-    "html/editing": 52,
     "content-security-policy": 52,
+    "html/editing": 52,
     "fetch/fetch-later": 29,
     "html/webappapis": 26,
     "html/dom": 24,
@@ -36,22 +36,22 @@
     "html/infrastructure": 9,
     "workers": 9,
     "encoding": 7,
-    "fetch/range": 6,
     "fetch/data-urls": 6,
     "fetch/corb": 6,
+    "fetch/range": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "html/rendering": 3,
+    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "xhr": 2,
     "fetch/orb": 2,
-    "fetch/redirect-navigate": 1,
-    "fetch/security": 1,
+    "xhr": 2,
+    "quirks": 1,
     "IndexedDB": 1,
-    "fetch/redirects": 1,
     "svg/styling": 1,
-    "quirks": 1
+    "fetch/redirects": 1,
+    "fetch/security": 1,
+    "fetch/redirect-navigate": 1
    }
   },
   "in_progress": {
@@ -80,17 +80,17 @@
     "content-security-policy": 20,
     "html/dom": 16,
     "html/editing": 7,
-    "html/interaction": 5,
     "fetch/api": 5,
+    "html/interaction": 5,
     "html/obsolete": 5,
     "fetch/security": 4,
     "html/user-activation": 3,
-    "html/scripting": 1,
-    "fetch/content-type": 1,
     "fetch/http-cache": 1,
     "fetch/images": 1,
+    "html/select": 1,
+    "html/scripting": 1,
     "html/the-xhtml-syntax": 1,
-    "html/select": 1
+    "fetch/content-type": 1
    }
   },
   "queued": {
@@ -112,8 +112,8 @@
     "webidl": 19,
     "fetch/compression-dictionary": 8,
     "html/interaction": 5,
-    "svg/path": 4,
     "html/semantics": 4,
+    "svg/path": 4,
     "workers": 3,
     "dom/nodes": 1
    }
@@ -2646,9 +2646,16 @@
    "out_of_scope_pages": 0,
    "pages": 41,
    "tentative": 2
+  },
+  "SC-CQ-anchored-fallback": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
   }
  },
- "implemented_total_estimate": 1554,
+ "implemented_total_estimate": 1558,
  "milestones_reached": [
   250,
   500,
