@@ -2,8 +2,8 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 295,
-   "owner_reported_unlisted": 58,
+   "distinct_census_pages": 340,
+   "owner_reported_unlisted": 103,
    "selector_union": 243,
    "owner_estimate_reduction": 6,
    "of_which_tentative": 4,
@@ -12,23 +12,23 @@
     "html/canvas": 205,
     "html/syntax": 12,
     "html/semantics": 5,
-    "fetch/api": 4,
     "FileAPI": 4,
+    "fetch/api": 4,
     "fetch/data-urls": 3,
+    "xhr": 2,
     "mathml": 2,
     "encoding": 2,
-    "xhr": 2,
-    "dom/collections": 1,
     "quirks": 1,
-    "html/rendering": 1,
-    "svg/styling": 1
+    "dom/collections": 1,
+    "svg/styling": 1,
+    "html/rendering": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 618,
+   "distinct_census_pages": 573,
    "owner_reported_unlisted": 0,
    "selector_union": 618,
-   "owner_estimate_reduction": 0,
+   "owner_estimate_reduction": 45,
    "of_which_tentative": 196,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
@@ -45,24 +45,24 @@
     "shadow-dom": 7,
     "selection": 7,
     "navigation-api": 6,
+    "intersection-observer": 5,
     "html/editing": 5,
     "uievents": 5,
-    "intersection-observer": 5,
     "svg/types": 4,
+    "inert": 3,
+    "mathml": 3,
     "close-watcher": 3,
     "event-timing": 3,
-    "mathml": 3,
-    "inert": 3,
+    "svg/animations": 2,
     "soft-navigation-heuristics": 2,
     "fetch/fetch-later": 2,
-    "html/rendering": 2,
     "dom/nodes": 2,
+    "html/rendering": 2,
     "resource-timing": 2,
-    "svg/animations": 2,
     "document-picture-in-picture": 1,
     "pointerlock": 1,
-    "html/browsers": 1,
-    "editing": 1
+    "editing": 1,
+    "html/browsers": 1
    }
   },
   "queued": {
@@ -544,6 +544,11 @@
    "pages": 108,
    "tentative": 108
   },
+  "F02a": {
+   "state": "implemented-unbuilt",
+   "pages": null,
+   "tentative": null
+  },
   "F03": {
    "state": "claimed",
    "pages": 63,
@@ -665,7 +670,7 @@
    "tentative": null
   }
  },
- "implemented_total_estimate": 295,
+ "implemented_total_estimate": 340,
  "milestones_reached": [
   250
  ]
