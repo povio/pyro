@@ -2889,7 +2889,11 @@ fn dispatch_mouse_inner(
             }
         }
         MouseKind::Pressed => {
-            crate::popover::light_dismiss(page, target, m.x, m.y, true);
+            // A right press (the context menu) light-dismisses nothing, as in Chromium: a
+            // popover its `contextmenu` handler shows stays open.
+            if m.button != MouseButton::Right {
+                crate::popover::light_dismiss(page, target, m.x, m.y, true);
+            }
             if touch.is_none() {
                 let mut c = page.mouse_capture.get();
                 c.buttons_down = true;
@@ -2997,7 +3001,9 @@ fn dispatch_mouse_inner(
                 page.mouse_capture.set(c);
                 crate::pointer_capture::process_pending_capture(page, m);
             }
-            crate::popover::light_dismiss(page, target, m.x, m.y, false);
+            if m.button != MouseButton::Right {
+                crate::popover::light_dismiss(page, target, m.x, m.y, false);
+            }
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
             // (No mouseup, no mouseup default handling: nor a pick.)
