@@ -2415,12 +2415,32 @@
       st.disturbed = true;
     },
     // A byte stream over a native source: read() -> {value, done}, cancel().
+    // Once the body is open, one native read runs ahead of the reader: Fetch errors the
+    // stream when the network fails, whether or not a read is pending (`reader.closed`).
     fromBody(source, read, cancel) {
-      return byteBody((c) => then(apply(read, source, []), (r) => {
-        if (!rcCanClose(c)) return;
-        if (r.done) bcClose(c);
-        else bcEnqueue(c, r.value);
-      }), (reason) => then(apply(cancel, source, [reason]), noop));
+      let ahead;
+      return byteBody((c) => {
+        const p = ahead || apply(read, source, []);
+        ahead = undefined;
+        return then(p, (r) => {
+          if (!rcCanClose(c)) return;
+          if (r.done) {
+            bcClose(c);
+            return;
+          }
+          bcEnqueue(c, r.value);
+          const next = apply(read, source, []);
+          ahead = next;
+          then(next, noop, (e) => {
+            if (ahead !== next) return; // a pull took it and reports its failure
+            ahead = undefined;
+            rcError(c, e);
+          });
+        });
+      }, (reason) => {
+        ahead = undefined;
+        return then(apply(cancel, source, [reason]), noop);
+      });
     },
     // A byte stream of bytes already in memory (Blob.stream()).
     fromBytes: bytesBody,
