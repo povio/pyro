@@ -3,7 +3,7 @@
 //! A single origin lock makes lookup, mutation and file-lease acquisition atomic.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::ops::Bound::{Excluded, Unbounded};
+use std::ops::Bound::{Excluded, Included, Unbounded};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -131,13 +131,20 @@ impl Entry {
 
 struct Tree {
     entries: BTreeMap<Path, Entry>,
+    /// A move reserves both locators. A removal reserves the whole subtree.
+    reserved: BTreeSet<Path>,
     used: u64,
     staged: u64,
 }
 
 impl Default for Tree {
     fn default() -> Self {
-        Self { entries: BTreeMap::from([(Path::new(), Entry::new(Kind::Directory))]), used: 0, staged: 0 }
+        Self {
+            entries: BTreeMap::from([(Path::new(), Entry::new(Kind::Directory))]),
+            reserved: BTreeSet::new(),
+            used: 0,
+            staged: 0,
+        }
     }
 }
 
@@ -163,38 +170,39 @@ impl Tree {
         usize::try_from(new_len).map_err(|_| Error::Quota)
     }
 
-    fn remove(&mut self, path: Path, recursive: bool) -> Result<()> {
-        let entry = self.entries.get(&path).ok_or(Error::Missing)?;
-        let mut non_empty = false;
-        if let Data::Directory(children) = &entry.data {
-            non_empty = !children.is_empty();
+    fn check_reservation(&self, path: &[String]) -> Result<()> {
+        if self.reserved.is_empty() {
+            return Ok(());
         }
-        // Check every lock before removing any member of the subtree.
+        let ancestor = (0..path.len()).any(|len| self.reserved.contains(&path[..len]));
+        // A path sorts before all of its children. Only the next reservation
+        // can be the path itself or the first reservation inside its subtree.
+        let descendant = self
+            .reserved
+            .range::<[String], _>((Included(path), Unbounded))
+            .next()
+            .is_some_and(|entry| entry.starts_with(path));
+        if ancestor || descendant { Err(Error::Locked) } else { Ok(()) }
+    }
+
+    fn prepare_remove(&self, path: Path, kind: Option<Kind>, recursive: bool) -> Result<Plan> {
+        self.check_reservation(&path)?;
+        let entry = self
+            .entries
+            .get(&path)
+            .filter(|entry| kind.is_none_or(|kind| entry.kind() == kind))
+            .ok_or(Error::Missing)?;
         let mut deleted = Vec::new();
-        let mut freed = 0;
-        for (key, e) in self.entries.range(path.clone()..).take_while(|(key, _)| key.starts_with(&path)) {
-            if let Data::File(file) = &e.data {
-                if file.lock.is_some() {
-                    return Err(Error::Locked);
-                }
-                freed += file.bytes.len() as u64;
+        for (key, entry) in self.entries.range(path.clone()..).take_while(|(key, _)| key.starts_with(&path)) {
+            if matches!(&entry.data, Data::File(file) if file.lock.is_some()) {
+                return Err(Error::Locked);
             }
             deleted.push(key.clone());
         }
-        if !path.is_empty() && non_empty && !recursive {
+        if !path.is_empty() && !recursive && matches!(&entry.data, Data::Directory(children) if !children.is_empty()) {
             return Err(Error::InvalidModification);
         }
-        for key in deleted {
-            self.entries.remove(&key);
-        }
-        self.used -= freed;
-        if let Some((name, parent)) = path.split_last() {
-            self.dir_mut(parent)?.remove(name);
-        } else {
-            // Removing the bucket root clears the origin's private file system.
-            self.entries.insert(Path::new(), Entry::new(Kind::Directory));
-        }
-        Ok(())
+        Ok(Plan::Remove { path, deleted })
     }
 }
 
@@ -280,6 +288,7 @@ impl Handle {
                 return Err(Error::WrongKind);
             }
         } else if create {
+            tree.check_reservation(&path)?;
             tree.dir_mut(&path[..path.len() - 1])?.insert(name.to_owned());
             tree.entries.insert(path.clone(), Entry::new(kind));
         } else {
@@ -323,7 +332,7 @@ impl Handle {
         Ok(child.strip_prefix(parent.as_slice()).map(|rest| rest.to_vec()))
     }
 
-    pub(crate) fn remove_entry(&self, name: &str, recursive: bool) -> Result<()> {
+    pub(crate) fn reserve_remove_entry(&self, name: &str, recursive: bool) -> Result<Mutation> {
         validate_name(name)?;
         if self.kind != Kind::Directory {
             return Err(Error::WrongKind);
@@ -332,19 +341,18 @@ impl Handle {
         let mut path = lock(&self.path).clone();
         tree.dir_mut(&path)?;
         path.push(name.to_owned());
-        tree.remove(path, recursive)
+        let plan = tree.prepare_remove(path, None, recursive)?;
+        Ok(self.reserve(&mut tree, plan))
     }
 
-    pub(crate) fn remove(&self, recursive: bool) -> Result<()> {
+    pub(crate) fn reserve_remove(&self, recursive: bool) -> Result<Mutation> {
         let mut tree = lock(&self.tree);
         let path = lock(&self.path).clone();
-        if tree.entries.get(&path).is_none_or(|entry| entry.kind() != self.kind) {
-            return Err(Error::Missing);
-        }
-        tree.remove(path, recursive)
+        let plan = tree.prepare_remove(path, Some(self.kind), recursive)?;
+        Ok(self.reserve(&mut tree, plan))
     }
 
-    pub(crate) fn move_to(&self, directory: Option<&Self>, new_name: Option<&str>) -> Result<()> {
+    pub(crate) fn reserve_move(&self, directory: Option<&Self>, new_name: Option<&str>) -> Result<Mutation> {
         if let Some(name) = new_name {
             validate_name(name)?;
         }
@@ -355,32 +363,35 @@ impl Handle {
             return Err(Error::InvalidModification);
         }
         let mut tree = lock(&self.tree);
-        let mut source = lock(&self.path);
+        let source = lock(&self.path).clone();
+        tree.check_reservation(&source)?;
         if tree.file_mut(&source)?.lock.is_some() {
             return Err(Error::Locked);
         }
         let (old_name, old_parent) = source.split_last().ok_or(Error::InvalidModification)?;
-        let parent = directory.map_or_else(|| old_parent.to_vec(), |dir| lock(&dir.path).clone());
-        tree.dir_mut(&parent)?;
-        let name = new_name.unwrap_or(old_name).to_owned();
-        let mut target = parent.clone();
-        target.push(name.clone());
-        if *source == target {
-            return Ok(());
-        }
-        if let Some(other) = tree.entries.get(&target) {
-            match &other.data {
+        let mut target = directory.map_or_else(|| old_parent.to_vec(), |dir| lock(&dir.path).clone());
+        tree.dir_mut(&target)?;
+        target.push(new_name.unwrap_or(old_name).to_owned());
+        tree.check_reservation(&target)?;
+        if let Some(entry) = tree.entries.get(&target) {
+            match &entry.data {
                 Data::Directory(_) => return Err(Error::InvalidModification),
                 Data::File(file) if file.lock.is_some() => return Err(Error::Locked),
-                Data::File(file) => tree.used -= file.bytes.len() as u64,
+                Data::File(_) => {}
             }
         }
-        tree.dir_mut(old_parent)?.remove(old_name);
-        tree.dir_mut(&parent)?.insert(name);
-        let file = tree.entries.remove(&*source).ok_or(Error::Missing)?;
-        tree.entries.insert(target.clone(), file);
-        *source = target;
-        Ok(())
+        let plan = Plan::Move { source, target, locator: self.path.clone() };
+        Ok(self.reserve(&mut tree, plan))
+    }
+
+    fn reserve(&self, tree: &mut Tree, plan: Plan) -> Mutation {
+        // All checks and both exclusive reservations share one origin lock.
+        let (first, second) = plan.paths();
+        tree.reserved.insert(first.clone());
+        if let Some(path) = second {
+            tree.reserved.insert(path.clone());
+        }
+        Mutation { tree: self.tree.clone(), plan: Some(plan) }
     }
 
     pub(crate) fn snapshot(&self) -> Result<(Vec<u8>, i64)> {
@@ -407,6 +418,7 @@ impl Handle {
         }
         let mut tree = lock(&self.tree);
         let path = lock(&self.path).clone();
+        tree.check_reservation(&path)?;
         let file = tree.file_mut(&path)?;
         let size = if keep == Some(true) { file.bytes.len() } else { 0 };
         tree.check_growth(0, size as u64)?;
@@ -415,6 +427,79 @@ impl Handle {
         let pending = keep.map(|copy| if copy { file.bytes.clone() } else { Vec::new() });
         tree.staged += size as u64;
         Ok(Lease { tree: self.tree.clone(), path, mode, pending, cursor: 0, closed: false })
+    }
+}
+
+enum Plan {
+    Remove { path: Path, deleted: Vec<Path> },
+    Move { source: Path, target: Path, locator: Arc<Mutex<Path>> },
+}
+
+impl Plan {
+    fn paths(&self) -> (&Path, Option<&Path>) {
+        match self {
+            Self::Remove { path, .. } => (path, None),
+            Self::Move { source, target, .. } => (source, (source != target).then_some(target)),
+        }
+    }
+
+    fn release(&self, tree: &mut Tree) {
+        let (first, second) = self.paths();
+        tree.reserved.remove(first);
+        if let Some(path) = second {
+            tree.reserved.remove(path);
+        }
+    }
+}
+
+/// Keeps the selected source and destination unchanged until the queued storage
+/// task commits them together. Dropping the task releases its reservations.
+pub(crate) struct Mutation {
+    tree: Arc<Mutex<Tree>>,
+    plan: Option<Plan>,
+}
+
+impl Mutation {
+    pub(crate) fn commit(mut self) -> Result<()> {
+        let plan = self.plan.take().expect("mutation consumed exactly once");
+        let mut tree = lock(&self.tree);
+        plan.release(&mut tree);
+        match plan {
+            Plan::Remove { path, deleted } => {
+                if let Some((name, parent)) = path.split_last() {
+                    tree.dir_mut(parent)?.remove(name);
+                }
+                for key in deleted {
+                    if let Some(Entry { data: Data::File(file), .. }) = tree.entries.remove(&key) {
+                        tree.used -= file.bytes.len() as u64;
+                    }
+                }
+                if path.is_empty() {
+                    tree.entries.insert(Path::new(), Entry::new(Kind::Directory));
+                }
+            }
+            Plan::Move { source, target, locator } if source != target => {
+                let (old_name, old_parent) = source.split_last().expect("files have a parent");
+                let (new_name, new_parent) = target.split_last().expect("files have a parent");
+                tree.dir_mut(old_parent)?.remove(old_name);
+                tree.dir_mut(new_parent)?.insert(new_name.clone());
+                let file = tree.entries.remove(&source).expect("reserved source exists");
+                if let Some(Entry { data: Data::File(previous), .. }) = tree.entries.insert(target.clone(), file) {
+                    tree.used -= previous.bytes.len() as u64;
+                }
+                *lock(&locator) = target;
+            }
+            Plan::Move { .. } => {}
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Mutation {
+    fn drop(&mut self) {
+        if let Some(plan) = self.plan.take() {
+            plan.release(&mut lock(&self.tree));
+        }
     }
 }
 
@@ -596,12 +681,12 @@ mod tests {
         for name in ["", ".", "..", "dir/doc", "dir\\doc"] {
             assert!(matches!(dir.get(name, Kind::File, true), Err(Error::InvalidName)));
         }
-        file.remove(false).unwrap();
+        file.reserve_remove(false).unwrap().commit().unwrap();
         assert!(matches!(locator.snapshot(), Err(Error::Missing)));
         let replacement = dir.get("doc", Kind::File, true).unwrap();
         assert!(replacement.is_same_entry(&locator));
         assert_ne!(replacement.unique_id().unwrap(), old_id);
-        replacement.move_to(Some(&root), Some("moved")).unwrap();
+        replacement.reserve_move(Some(&root), Some("moved")).unwrap().commit().unwrap();
         assert_eq!(root.resolve(&replacement).unwrap().unwrap(), ["moved"]);
         assert!(matches!(locator.snapshot(), Err(Error::Missing)));
         assert_eq!(root.next(Some("dir")).unwrap().unwrap().0, "moved");
@@ -617,7 +702,7 @@ mod tests {
         first.write(b"abc", Some(2)).unwrap();
         second.write(b"later", None).unwrap();
         assert!(file.snapshot().unwrap().0.is_empty());
-        assert_eq!(root.remove(true), Err(Error::Locked));
+        assert!(matches!(root.reserve_remove(true), Err(Error::Locked)));
         assert!(matches!(file.sync(Mode::ReadOnly), Err(Error::Locked)));
         first.close().unwrap();
         assert_eq!(file.snapshot().unwrap().0, b"\0\0abc");
@@ -633,6 +718,72 @@ mod tests {
         file.writable(false, true).unwrap().close().unwrap();
         assert_eq!(storage.usage("origin"), 0);
         assert_eq!(copy, b"later");
+    }
+
+    #[test]
+    fn move_reserves_both_locators_until_atomic_commit() {
+        let root = Namespace::default().root("origin");
+        let from = root.get("before", Kind::File, true).unwrap();
+        let alias = root.get("before", Kind::File, false).unwrap();
+        let target = root.get("after", Kind::File, true).unwrap();
+        let independent = root.get("unrelated", Kind::File, true).unwrap();
+        let mut input = from.sync(Mode::ReadWrite).unwrap();
+        input.write(b"original", None).unwrap();
+        input.close().unwrap();
+
+        let mutation = from.reserve_move(None, Some("after")).unwrap();
+        assert_eq!(from.name(), "before");
+        assert!(alias.is_same_entry(&from));
+        assert_eq!(from.snapshot().unwrap().0, b"original");
+        assert_eq!(target.snapshot().unwrap().0, b"");
+        for blocked in [&from, &alias, &target] {
+            assert!(matches!(blocked.sync(Mode::ReadOnly), Err(Error::Locked)));
+            assert!(matches!(blocked.writable(false, false), Err(Error::Locked)));
+            assert!(matches!(blocked.reserve_remove(false), Err(Error::Locked)));
+        }
+        independent.writable(false, true).unwrap().close().unwrap();
+        assert!(matches!(root.reserve_remove(true), Err(Error::Locked)));
+
+        mutation.commit().unwrap();
+        assert_eq!(from.name(), "after");
+        assert!(from.is_same_entry(&target));
+        assert!(matches!(alias.snapshot(), Err(Error::Missing)));
+        assert_eq!(target.snapshot().unwrap().0, b"original");
+        target.writable(true, true).unwrap().close().unwrap();
+        from.sync(Mode::ReadWrite).unwrap().close().unwrap();
+    }
+
+    #[test]
+    fn cancellation_and_failed_acquisition_release_the_entire_reservation() {
+        let root = Namespace::default().root("origin");
+        let dir = root.get("tree", Kind::Directory, true).unwrap();
+        let first = dir.get("first", Kind::File, true).unwrap();
+        let last = dir.get("last", Kind::File, true).unwrap();
+
+        let held = last.sync(Mode::ReadOnly).unwrap();
+        assert!(matches!(first.reserve_move(None, Some("last")), Err(Error::Locked)));
+        assert!(matches!(root.reserve_remove_entry("tree", true), Err(Error::Locked)));
+        first.writable(false, true).unwrap().close().unwrap();
+        drop(held);
+
+        let staged = first.reserve_move(None, Some("new")).unwrap();
+        assert!(matches!(dir.get("new", Kind::File, true), Err(Error::Locked)));
+        assert!(matches!(dir.get("new", Kind::File, false), Err(Error::Missing)));
+        drop(staged);
+        assert_eq!(first.name(), "first");
+        let new = dir.get("new", Kind::File, true).unwrap();
+        let removal = root.reserve_remove_entry("tree", true).unwrap();
+        assert_eq!(dir.next(None).unwrap().unwrap().0, "first");
+        assert!(matches!(dir.get("another", Kind::File, true), Err(Error::Locked)));
+        assert!(matches!(first.sync(Mode::ReadWrite), Err(Error::Locked)));
+        assert!(matches!(last.writable(false, false), Err(Error::Locked)));
+        assert!(matches!(new.reserve_move(Some(&root), None), Err(Error::Locked)));
+        root.get("outside", Kind::File, true).unwrap().sync(Mode::ReadWrite).unwrap();
+        drop(removal);
+        first.sync(Mode::ReadWrite).unwrap().close().unwrap();
+        root.reserve_remove_entry("tree", true).unwrap().commit().unwrap();
+        assert!(matches!(new.snapshot(), Err(Error::Missing)));
+        assert_eq!(root.next(None).unwrap().unwrap().0, "outside");
     }
 
     #[test]

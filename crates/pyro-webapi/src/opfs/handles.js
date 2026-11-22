@@ -68,7 +68,7 @@
       const self = handle(this);
       const recursive = !!dictionary(options)?.recursive;
       await undefined;
-      native.remove(self, recursive);
+      return native.remove(self, recursive);
     }
     async move(destination, ...rest) {
       const self = handle(this);
@@ -85,7 +85,7 @@
         name = string(destination);
       }
       await undefined;
-      native.move(self, dir, name);
+      return native.move(self, dir, name);
     }
     async getUniqueId() {
       const self = handle(this);
@@ -181,7 +181,7 @@
       const key = string(name);
       const recursive = !!dictionary(options)?.recursive;
       await undefined;
-      native.removeEntry(dir, key, recursive);
+      return native.removeEntry(dir, key, recursive);
     }
     entries() { return iterate(handle(this, 'directory'), 'entries'); }
     keys() { return iterate(handle(this, 'directory'), 'keys'); }

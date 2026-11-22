@@ -15,7 +15,7 @@ use pyro_js::{
 use crate::file::{BlobData, File};
 use crate::page::PageDom;
 pub(crate) use store::Namespace;
-use store::{Error, Handle, Kind, Lease, Mode};
+use store::{Error, Handle, Kind, Lease, Mode, Mutation};
 
 const MODULE: &str = "lpOriginPrivateFileSystem";
 
@@ -81,6 +81,33 @@ fn offset(value: Value<'_>) -> JsResult<Option<u64>> {
     if value.is_null() { Ok(None) } else { unsigned(value).map(Some) }
 }
 
+/// A move or removal owns its reservation until the file system work commits.
+/// A discarded document/worker task drops the reservation without changing
+/// the tree. The promise settles only after the lock has been released.
+fn queue_mutation<'s>(s: &Scope<'s>, mutation: Mutation) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let owner = Rc::downgrade(&page);
+    let realm = s.realm().downgrade();
+    let deferred = s.deferred()?;
+    let promise = deferred.promise.get(s);
+    page.post_task(Box::new(move || {
+        let Some(realm) = realm.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        let result = if !realm.is_disposed() && owner.upgrade().is_some_and(|page| !page.is_disposed() && !page.is_detached()) {
+            mutation.commit().map_err(js_error)
+        } else {
+            drop(mutation);
+            Err(JsError::dom("AbortError", "The file system operation's context has closed."))
+        };
+        let settled = match result {
+            Ok(()) => deferred.resolve(&scope, scope.undefined()),
+            Err(error) => deferred.reject(&scope, error.to_value(&scope)),
+        };
+        if let Err(error) = settled { scope.report_exception(&error); }
+    }));
+    Ok(promise)
+}
+
 fn wrap_entry<'s>(s: &Scope<'s>, handle: Handle) -> JsResult<Value<'s>> {
     Ok(s.wrap::<Entry>(handle, None)?.value())
 }
@@ -134,18 +161,18 @@ fn natives<'s>(s: &Scope<'s>, page: &PageDom) -> JsResult<Object<'s>> {
         Ok(s.array(&path.iter(s).collect::<Vec<_>>())?.value())
     });
     operation!("remove", |s, _, a| {
-        entry(s, &a, 0)?.remove(a.get(1).to_bool()).map_err(js_error)?;
-        Ok(s.undefined())
+        let mutation = entry(s, &a, 0)?.reserve_remove(a.get(1).to_bool()).map_err(js_error)?;
+        queue_mutation(s, mutation)
     });
     operation!("removeEntry", |s, _, a| {
-        entry(s, &a, 0)?.remove_entry(&a.get(1).to_string()?, a.get(2).to_bool()).map_err(js_error)?;
-        Ok(s.undefined())
+        let mutation = entry(s, &a, 0)?.reserve_remove_entry(&a.get(1).to_string()?, a.get(2).to_bool()).map_err(js_error)?;
+        queue_mutation(s, mutation)
     });
     operation!("move", |s, _, a| {
         let to = if a.get(1).is_null() { None } else { Some(entry(s, &a, 1)?) };
         let name = if a.get(2).is_null() { None } else { Some(a.get(2).to_string()?) };
-        entry(s, &a, 0)?.move_to(to, name.as_deref()).map_err(js_error)?;
-        Ok(s.undefined())
+        let mutation = entry(s, &a, 0)?.reserve_move(to, name.as_deref()).map_err(js_error)?;
+        queue_mutation(s, mutation)
     });
     operation!("snapshot", |s, _, a| {
         let file = entry(s, &a, 0)?;
