@@ -971,6 +971,12 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
             return crate::popup::wrap_popup(s, page, &popup);
         }
     }
+    // HTML "the rules for choosing a navigable": a document with the sandboxed auxiliary
+    // navigation browsing context flag (a sandbox without `allow-popups`) gets no new window,
+    // and window.open returns null.
+    if !same_context && page.popups_sandboxed() {
+        return Ok(s.null());
+    }
     let (ticket, popup) = if same_context || no_opener {
         (None, None)
     } else {

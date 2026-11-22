@@ -103,6 +103,9 @@ pub struct PageDom {
     navigation_requests: Cell<u32>,
     document: Cell<NodeId>,
     scripting_disabled: Cell<bool>,
+    /// The sandboxed auxiliary navigation browsing context flag: a sandboxed frame without
+    /// `allow-popups` (or inside one) opens no new window. Set by the embedder.
+    popups_sandboxed: Cell<bool>,
     /// The document's origin is opaque although its URL's is not (a sandboxed
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
@@ -954,6 +957,7 @@ impl PageDom {
             navigation_requests: Cell::new(0),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
+            popups_sandboxed: Cell::new(false),
             opaque_origin: Cell::new(false),
             cookie_site_context: Cell::new(if cookie_partition_key.is_some() {
                 pyro_net::cookies::SiteContext::SameSite
@@ -1426,6 +1430,14 @@ impl PageDom {
     }
     pub fn scripting_disabled(&self) -> bool {
         self.scripting_disabled.get()
+    }
+    /// Browser-owned sandbox policy: the sandboxed auxiliary navigation browsing context flag
+    /// (no `allow-popups`): `window.open` creates no window.
+    pub fn set_popups_sandboxed(&self, sandboxed: bool) {
+        self.popups_sandboxed.set(sandboxed);
+    }
+    pub fn popups_sandboxed(&self) -> bool {
+        self.popups_sandboxed.get()
     }
     /// Browser-owned sandbox policy: the document's origin is opaque (its
     /// realm's origin is "null") whatever its URL. Set before the context
