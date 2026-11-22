@@ -659,20 +659,26 @@ impl Browser {
         let mut decodable = false;
         let mut raster = None;
         let mut reported = None;
-        let outcome = result.ok().filter(|r| (200..300).contains(&r.status) && !r.body.is_empty()).and_then(|r| {
+        // As Chromium, a response whose body is an image is shown and fires `load` whatever its
+        // status (a 404 page that is an image); otherwise only a 2xx `image/*` one loads.
+        let outcome = result.ok().filter(|r| !r.body.is_empty()).and_then(|r| {
+            let ok_status = (200..300).contains(&r.status);
             let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
             if let Some((w, h)) = pyro_dom::image::dimensions(body) {
                 decodable = true;
                 raster = Some(r);
                 return Some(Some((w as f64, h as f64)));
             }
-            if r.mime == "image/svg+xml" || body.trim_ascii_start().starts_with(b"<svg") {
+            if r.mime == "image/svg+xml" || (ok_status && body.trim_ascii_start().starts_with(b"<svg")) {
                 decodable = true;
                 reported = svg_reported_size(body, density);
                 let size = svg_size(body);
                 // pyro: its bytes too, for a canvas that draws it (pyro-canvas rasterizes SVG).
                 raster = Some(r);
                 return Some(size);
+            }
+            if !ok_status {
+                return None;
             }
             decodable = !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp");
             r.mime.starts_with("image/").then_some(None)
