@@ -1,0 +1,38 @@
+{
+  "base": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "wallMs": 13247,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "restarts": 0,
+    "watchdogKills": 0,
+    "browserCpuS": 5.07,
+    "commit": "4dc0af1540bd708abd39c5698d441d9864ca52a9",
+    "tree": "cdba0b7824dece5428c683b53eaafba060236aae",
+    "binarySHA256": "77258c40b45b16fd7322bc735f1152dab64dc2d0d817878a30ae2b8c7a0e0fdd"
+  },
+  "candidate": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "wallMs": 13204,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "restarts": 0,
+    "watchdogKills": 0,
+    "browserCpuS": 5.02,
+    "commit": "9b5eb610077e9b031b8688a9c1b1b82bb27d20b4",
+    "tree": "3d8704516719a5fd5f53194333a3ba0d8bab5693",
+    "binarySHA256": "9b05ef3b970759cd8a1de8f8313035f6e55de21af2aa7cd926ddd7b820bcc702"
+  },
+  "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+  "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "profile": "wptiter (release-fast; no LTO; 16 codegen units; incremental; render; one Cargo job)"
+}

@@ -1,0 +1,336 @@
+{
+  "base": {
+    "target": {
+      "n": 9,
+      "observed": 181,
+      "passes": 152,
+      "strict": 0,
+      "pages": {
+        "complete": 9
+      },
+      "harness": {
+        "OK": 9
+      },
+      "nonOK": []
+    },
+    "guard": {
+      "n": 89,
+      "observed": 1090,
+      "passes": 940,
+      "strict": 69,
+      "pages": {
+        "complete": 86,
+        "error": 3
+      },
+      "harness": {
+        "OK": 86,
+        "Error": 3
+      },
+      "nonOK": [
+        [
+          "storage/partitioned-estimate-usage-details-caches.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-service-workers.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-indexeddb.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ]
+      ]
+    },
+    "opfs": {
+      "n": 69,
+      "observed": 976,
+      "passes": 943,
+      "strict": 56,
+      "pages": {
+        "complete": 69
+      },
+      "harness": {
+        "OK": 69
+      },
+      "nonOK": []
+    },
+    "storage": {
+      "n": 29,
+      "observed": 295,
+      "passes": 149,
+      "strict": 13,
+      "pages": {
+        "complete": 26,
+        "error": 3
+      },
+      "harness": {
+        "OK": 26,
+        "Error": 3
+      },
+      "nonOK": [
+        [
+          "storage/partitioned-estimate-usage-details-caches.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-service-workers.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-indexeddb.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ]
+      ]
+    }
+  },
+  "candidate": {
+    "target": {
+      "n": 9,
+      "observed": 181,
+      "passes": 152,
+      "strict": 0,
+      "pages": {
+        "complete": 9
+      },
+      "harness": {
+        "OK": 9
+      },
+      "nonOK": []
+    },
+    "guard": {
+      "n": 89,
+      "observed": 1090,
+      "passes": 940,
+      "strict": 69,
+      "pages": {
+        "complete": 86,
+        "error": 3
+      },
+      "harness": {
+        "OK": 86,
+        "Error": 3
+      },
+      "nonOK": [
+        [
+          "storage/partitioned-estimate-usage-details-caches.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-indexeddb.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-service-workers.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ]
+      ]
+    },
+    "opfs": {
+      "n": 69,
+      "observed": 976,
+      "passes": 943,
+      "strict": 56,
+      "pages": {
+        "complete": 69
+      },
+      "harness": {
+        "OK": 69
+      },
+      "nonOK": []
+    },
+    "storage": {
+      "n": 29,
+      "observed": 295,
+      "passes": 149,
+      "strict": 13,
+      "pages": {
+        "complete": 26,
+        "error": 3
+      },
+      "harness": {
+        "OK": 26,
+        "Error": 3
+      },
+      "nonOK": [
+        [
+          "storage/partitioned-estimate-usage-details-caches.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-indexeddb.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-service-workers.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ]
+      ]
+    }
+  },
+  "chrome158": {
+    "target": {
+      "n": 9,
+      "observed": 181,
+      "passes": 181,
+      "strict": 9,
+      "pages": {
+        "complete": 9
+      },
+      "harness": {
+        "OK": 9
+      },
+      "nonOK": []
+    },
+    "guard": {
+      "n": 89,
+      "observed": 1090,
+      "passes": 932,
+      "strict": 77,
+      "pages": {
+        "complete": 84,
+        "timeout": 5
+      },
+      "harness": {
+        "OK": 84,
+        "Timeout": 5
+      },
+      "nonOK": [
+        [
+          "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          13
+        ],
+        [
+          "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+          "timeout",
+          "Timeout",
+          null,
+          90
+        ],
+        [
+          "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          24
+        ],
+        [
+          "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          24
+        ],
+        [
+          "fs/FileSystemWritableFileStream.https.any.html",
+          "timeout",
+          "Timeout",
+          null,
+          9
+        ]
+      ]
+    },
+    "opfs": {
+      "n": 69,
+      "observed": 976,
+      "passes": 818,
+      "strict": 57,
+      "pages": {
+        "complete": 64,
+        "timeout": 5
+      },
+      "harness": {
+        "OK": 64,
+        "Timeout": 5
+      },
+      "nonOK": [
+        [
+          "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          13
+        ],
+        [
+          "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+          "timeout",
+          "Timeout",
+          null,
+          90
+        ],
+        [
+          "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          24
+        ],
+        [
+          "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          24
+        ],
+        [
+          "fs/FileSystemWritableFileStream.https.any.html",
+          "timeout",
+          "Timeout",
+          null,
+          9
+        ]
+      ]
+    },
+    "storage": {
+      "n": 29,
+      "observed": 295,
+      "passes": 295,
+      "strict": 29,
+      "pages": {
+        "complete": 29
+      },
+      "harness": {
+        "OK": 29
+      },
+      "nonOK": []
+    }
+  }
+}

@@ -1,0 +1,263 @@
+[
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+    "isSameEntry with a directory handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+    "isSameEntry with a file handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+    "isSameEntry with a root directory handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+    "isSameEntry with a directory handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+    "isSameEntry with a file handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+    "isSameEntry with a root directory handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+    "isSameEntry with a directory handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+    "isSameEntry with a file handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+    "isSameEntry with a root directory handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+    "isSameEntry with a directory handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+    "isSameEntry with a file handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+    "isSameEntry with a root directory handle that was just cloned via postMessage",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemFileHandle-create-sync-access-handle.https.window.html",
+    "Attempt to create a sync access handle.",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "requires-handle-serialization"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.html",
+    "WriteParams: seek missing position param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.html",
+    "WriteParams: truncate missing size param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.html",
+    "WriteParams: write missing data param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.html",
+    "write() with an invalid blob to an empty file should reject",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "snapshot-after-deletion"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+    "WriteParams: seek missing position param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+    "WriteParams: truncate missing size param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+    "WriteParams: write missing data param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+    "write() with an invalid blob to an empty file should reject",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "snapshot-after-deletion"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+    "WriteParams: seek missing position param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+    "WriteParams: truncate missing size param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+    "WriteParams: write missing data param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+    "write() with an invalid blob to an empty file should reject",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "snapshot-after-deletion"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+    "WriteParams: seek missing position param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+    "WriteParams: truncate missing size param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+    "WriteParams: write missing data param",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "current-spec-TypeError"
+  ],
+  [
+    "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+    "write() with an invalid blob to an empty file should reject",
+    1,
+    "Fail",
+    "Fail",
+    "Pass",
+    "snapshot-after-deletion"
+  ]
+]

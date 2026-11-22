@@ -81,10 +81,10 @@ fn offset(value: Value<'_>) -> JsResult<Option<u64>> {
     if value.is_null() { Ok(None) } else { unsigned(value).map(Some) }
 }
 
-/// A move or removal owns its reservation until the file system work commits.
-/// A discarded document/worker task drops the reservation without changing
-/// the tree. The promise settles only after the lock has been released.
-fn queue_mutation<'s>(s: &Scope<'s>, mutation: Mutation) -> JsResult<Value<'s>> {
+/// Queue work on the document or worker event loop. It runs after the
+/// current microtask checkpoint. Dropping a discarded task also drops its
+/// work, releasing any file mutation reservation it owns.
+fn queue_storage_task<'s>(s: &Scope<'s>, work: impl FnOnce() -> JsResult<()> + 'static) -> JsResult<Value<'s>> {
     let page = crate::target::page_of(s)?;
     let owner = Rc::downgrade(&page);
     let realm = s.realm().downgrade();
@@ -94,9 +94,9 @@ fn queue_mutation<'s>(s: &Scope<'s>, mutation: Mutation) -> JsResult<Value<'s>> 
         let Some(realm) = realm.upgrade() else { return };
         let Ok(scope) = realm.scope() else { return };
         let result = if !realm.is_disposed() && owner.upgrade().is_some_and(|page| !page.is_disposed() && !page.is_detached()) {
-            mutation.commit().map_err(js_error)
+            work()
         } else {
-            drop(mutation);
+            drop(work);
             Err(JsError::dom("AbortError", "The file system operation's context has closed."))
         };
         let settled = match result {
@@ -106,6 +106,10 @@ fn queue_mutation<'s>(s: &Scope<'s>, mutation: Mutation) -> JsResult<Value<'s>> 
         if let Err(error) = settled { scope.report_exception(&error); }
     }));
     Ok(promise)
+}
+
+fn queue_mutation<'s>(s: &Scope<'s>, mutation: Mutation) -> JsResult<Value<'s>> {
+    queue_storage_task(s, move || mutation.commit().map_err(js_error))
 }
 
 fn wrap_entry<'s>(s: &Scope<'s>, handle: Handle) -> JsResult<Value<'s>> {
@@ -121,6 +125,7 @@ fn natives<'s>(s: &Scope<'s>, page: &PageDom) -> JsResult<Object<'s>> {
             native.set_atom($name, s.function($name, $f)?.value())?
         };
     }
+    operation!("storageTask", |s, _, _| queue_storage_task(s, || Ok(())));
     operation!("root", |s, _, _| {
         let page = crate::target::page_of(s)?;
         let origin = crate::storage::storage_origin(s, &page)?;
