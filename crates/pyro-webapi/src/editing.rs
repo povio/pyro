@@ -1589,7 +1589,8 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     let mut caret = caret;
     let display = page.layout().computed_style_value(dom, block, "display");
     let inline_box = display == "inline" || display.starts_with("inline-");
-    if block == host {
+    let anonymous = block == host;
+    if anonymous {
         if inline_box || constrained {
             return if crate::edit_commands::newlines_significant_in(page, dom, caret.0) {
                 preserved_break_at(page, dom, host, caret)
@@ -1707,7 +1708,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     // Reconstruct the inline ancestor chain on the right side of the split.
     // The original nodes and their IDs stay in the first paragraph.
     let mut container = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
-    let rich_paragraph = matches!(tag.as_str(), "p" | "div" | "li") && !inline_box;
+    let rich_paragraph = !anonymous && !inline_box && matches!(tag.as_str(), "p" | "div" | "li");
     let padding_break = if rich_paragraph && is_text(dom, n) && off == len(dom, n) {
         next_in_block(dom, block, n).filter(|&br| local(dom, br) == "br"
             && next_in_block(dom, block, br).is_none() && editing_host(dom, br) == Some(host))
