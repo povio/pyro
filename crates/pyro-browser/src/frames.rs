@@ -242,6 +242,9 @@ pub(crate) struct FrameHost {
     /// inherit the creator's origin) take as theirs (HTML: a new top-level browsing context's
     /// initial document's environment comes from its creator's), not one computed as top-level.
     pub(crate) creator_secure: Cell<Option<bool>>,
+    /// For such a popup, its creator document's CSP when it was made, which its local-scheme
+    /// documents inherit (`Browser::local_scheme_csp`).
+    pub(crate) creator_csp: RefCell<Option<pyro_webapi::csp::InheritedCsp>>,
     /// The other pages sharing this page's DOM store: the popups it opened, and its opener's group
     /// (a popup takes its opener's store, see `prebuild_popup`). Their realms are siblings of this
     /// page's for node wrappers (`sibling_realms`).
@@ -377,6 +380,7 @@ impl FrameHost {
             opener: RefCell::new(Some(Rc::downgrade(self))),
             popup: RefCell::new(None),
             creator_secure: Cell::new(None),
+            creator_csp: RefCell::new(None),
             dom_peers: RefCell::new(Vec::new()),
             quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
@@ -395,6 +399,13 @@ impl FrameHost {
         host.dom_peers.borrow_mut().push(Rc::downgrade(self));
         let key: FrameKey = id.into();
         let dom = bindings::create(&host, key, "about:blank", &frame.loader_id)?;
+        // CSP: its initial about:blank document, and the local-scheme documents it loads later
+        // (`window.open` of a `blob:` or `javascript:` URL), have its creator's policies.
+        if let Some(creator) = self.page_dom(opener) {
+            let inherited = pyro_webapi::csp::InheritedCsp::of(&creator);
+            inherited.apply(&dom);
+            *host.creator_csp.borrow_mut() = Some(inherited);
+        }
         // Nothing loads into it: it is complete as made (as in browsers).
         dom.set_ready_state(dom.document(), "complete");
         nav.commit_document("about:blank", HistoryHandling::Replace, Some((host.dom.clone(), dom.document())));
@@ -458,6 +469,7 @@ impl FrameHost {
             opener: RefCell::new(None),
             popup: RefCell::new(None),
             creator_secure: Cell::new(None),
+            creator_csp: RefCell::new(None),
             dom_peers: RefCell::new(Vec::new()),
             quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
@@ -865,6 +877,9 @@ impl FrameHost {
             let dom = bindings::create(self, key, "about:blank", &lid)?;
             if let Some(creator) = &ancestor.page_dom {
                 dom.inherit_initial_referrer(creator);
+                // CSP: the initial about:blank document has its parent's policies (a page that
+                // bypasses CSP has none to give).
+                pyro_webapi::csp::InheritedCsp::of(creator).apply(&dom);
             }
             // The initial empty Document is already complete, including during
             // the interval before a non-blank src commits.
@@ -2457,6 +2472,9 @@ impl Browser {
     pub(crate) fn begin_javascript_result(&mut self, key: FrameKey, html: String) -> Result<LoaderId, JsError> {
         let host = self.page(key.page).map(|p| p.frames.clone()).ok_or(JsError::ContextDestroyed)?;
         let frame = host.frame(key).ok_or(JsError::ContextDestroyed)?;
+        // CSP: the result has the policies of the document it replaces (HTML "evaluate a
+        // javascript: URL": that document's policy container), taken as its commit begins.
+        self.csp_inherit_next = frame.page_dom.as_ref().map(|dom| (key, pyro_webapi::csp::InheritedCsp::of(dom)));
         let loader = LoaderId(format!("{:032X}", self.next()));
         let opts = NavigateOpts {
             post: None,
@@ -2476,7 +2494,7 @@ impl Browser {
                 cdp_request_id: None,
             },
         );
-        self.begin_document(
+        let begun = self.begin_document(
             key,
             &opts,
             loader.clone(),
@@ -2502,7 +2520,10 @@ impl Browser {
                 opaque: false,
             },
             HistoryHandling::Replace,
-        )?;
+        );
+        // (Taken by that commit, unless it failed first.)
+        self.csp_inherit_next = None;
+        begun?;
         Ok(loader)
     }
 

@@ -822,6 +822,9 @@ pub struct Browser {
     /// Completions of in-flight fetches, keyed by completion id.
     pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
     ready_responses: loader::ReadyResponses,
+    /// The CSP the next document committed in this frame inherits instead of what its URL would
+    /// give (a `javascript:` result: the document it replaces), taken by that commit.
+    csp_inherit_next: Option<(FrameKey, pyro_webapi::csp::InheritedCsp)>,
 }
 
 impl LoopState for Browser {
@@ -1028,6 +1031,7 @@ impl BrowserThread {
             local_storage_seed: Default::default(),
             completions: std::collections::HashMap::new(),
             ready_responses: Default::default(),
+            csp_inherit_next: None,
         };
         // The VM's deferred work (WebAssembly.compile/instantiate settling, finished on a
         // compilation thread) runs in a task of this loop: JavaScriptCore would run it from a WTF
