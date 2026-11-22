@@ -239,7 +239,7 @@ fn json_document_keeps_utf8_text_across_chunks_and_charset_hints() {
     parser.end();
     let dom = dom.borrow();
     let data = dom.document_data(doc).unwrap();
-    assert_eq!(data.content_type, "application/problem+json");
+    assert_eq!(data.content_type.as_ref(), "application/problem+json");
     assert_eq!(data.charset, "UTF-8");
     assert_eq!(dom.text_content(dom.body(doc).unwrap().unwrap()).unwrap().as_deref(), Some(text));
 }
