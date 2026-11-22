@@ -109,6 +109,9 @@ pub struct PageDom {
     /// The sandboxed `document.domain` browsing context flag (any sandbox): setting
     /// `document.domain` throws. Set by the embedder.
     document_domain_sandboxed: Cell<bool>,
+    /// The sandboxed forms browsing context flag (no `allow-forms`): forms submit nothing.
+    /// Set by the embedder.
+    forms_sandboxed: Cell<bool>,
     /// The document's origin is opaque although its URL's is not (a sandboxed
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
@@ -961,6 +964,7 @@ impl PageDom {
             scripting_disabled: Cell::new(false),
             popups_sandboxed: Cell::new(false),
             document_domain_sandboxed: Cell::new(false),
+            forms_sandboxed: Cell::new(false),
             opaque_origin: Cell::new(false),
             csp_precursor_origin: RefCell::new(None),
             cookie_site_context: Cell::new(if cookie_partition_key.is_some() {
@@ -1448,6 +1452,13 @@ impl PageDom {
     }
     pub fn document_domain_sandboxed(&self) -> bool {
         self.document_domain_sandboxed.get()
+    }
+    /// Browser-owned sandbox policy: the sandboxed forms browsing context flag.
+    pub fn set_forms_sandboxed(&self, sandboxed: bool) {
+        self.forms_sandboxed.set(sandboxed);
+    }
+    pub fn forms_sandboxed(&self) -> bool {
+        self.forms_sandboxed.get()
     }
     /// Browser-owned sandbox policy: the document's origin is opaque (its
     /// realm's origin is "null") whatever its URL. Set before the context

@@ -1076,6 +1076,11 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
     if !page.dom.borrow().is_connected(form).unwrap_or(false) {
         return;
     }
+    // HTML "submit" step 3: a document with the sandboxed forms browsing context flag (a sandbox
+    // without `allow-forms`) submits nothing, and fires no `submit` event.
+    if page.forms_sandboxed() {
+        return;
+    }
     if !page.begin_submit(form) {
         return;
     }

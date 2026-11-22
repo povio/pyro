@@ -795,6 +795,7 @@ impl FrameHost {
         sandbox.automatic_features_blocked |= ancestor.sandbox.automatic_features_blocked;
         sandbox.popups_blocked |= ancestor.sandbox.popups_blocked;
         sandbox.document_domain_blocked |= ancestor.sandbox.document_domain_blocked;
+        sandbox.forms_blocked |= ancestor.sandbox.forms_blocked;
         // Blink's Page::kMaxNumberOfFrames: a page holds at most 1000 subframes.
         if self.children.borrow().len() >= 1000 {
             return Err(JsError::Range("child frame limit reached".into()));
@@ -1174,6 +1175,8 @@ pub(crate) struct Sandbox {
     /// The sandboxed `document.domain` browsing context flag (any sandbox, even with
     /// `allow-same-origin`): setting `document.domain` throws.
     pub document_domain_blocked: bool,
+    /// The sandboxed forms browsing context flag (no `allow-forms`): no form submission.
+    pub forms_blocked: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
@@ -1192,6 +1195,7 @@ impl Sandbox {
             top_navigation_blocked: !top && !top_by_activation,
             top_navigation_needs_activation: !top && top_by_activation,
             document_domain_blocked: true,
+            forms_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-forms")),
         }
     }
 

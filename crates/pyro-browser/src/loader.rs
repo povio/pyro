@@ -1950,6 +1950,10 @@ impl Browser {
                     sandbox.top_navigation_blocked |= flags.top_navigation_blocked;
                     sandbox.top_navigation_needs_activation |= flags.top_navigation_needs_activation;
                     sandbox.document_domain_blocked |= flags.document_domain_blocked;
+                    sandbox.forms_blocked |= flags.forms_blocked;
+                }
+                if flags.forms_blocked {
+                    page_dom.set_forms_sandboxed(true);
                 }
                 if flags.scripts_disabled {
                     page_dom.set_scripting_disabled(true);
