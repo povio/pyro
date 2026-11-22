@@ -80,6 +80,8 @@ pub enum ResourceKind {
     Audio,
     /// A `<video>` element's media resource.
     Video,
+    /// An HTML text track resource.
+    Track,
     /// A hyperlink download (`<a download>`).
     Download,
     /// An `<object>` element's data (destination "object").
@@ -375,6 +377,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Font => pyro_net::Destination::Font,
             ResourceKind::Audio => pyro_net::Destination::Audio,
             ResourceKind::Video => pyro_net::Destination::Video,
+            ResourceKind::Track => pyro_net::Destination::Track,
             ResourceKind::Download | ResourceKind::Object => pyro_net::Destination::Other,
         };
         // Resource Timing: the document that gets this fetch's entry.
@@ -398,6 +401,8 @@ impl ResourceLoader for NetLoader {
         }
         if request.kind == ResourceKind::ModuleScript || request.crossorigin.is_some() {
             req.mode = pyro_net::RequestMode::Cors;
+        } else if request.kind == ResourceKind::Track {
+            req.mode = pyro_net::RequestMode::SameOrigin;
         }
         req.credentials = request.effective_credentials();
         if req.url.scheme() == "blob" {

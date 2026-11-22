@@ -251,6 +251,7 @@ pub fn fetch_dest(destination: Destination) -> &'static str {
         Destination::Font => "font",
         Destination::Audio => "audio",
         Destination::Video => "video",
+        Destination::Track => "track",
         Destination::WebSocket => "websocket",
         Destination::Xhr | Destination::Fetch | Destination::EventSource | Destination::Beacon | Destination::Other => {
             "empty"

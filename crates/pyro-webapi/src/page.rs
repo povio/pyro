@@ -727,6 +727,17 @@ pub trait PageHooks {
         self.post_task(Box::new(move || done(Err("no media loader".into()))));
         None
     }
+    /// Fetch a text track with its media parent's CORS setting. The same
+    /// cancellation and document-liveness contract as fetch_media applies.
+    fn fetch_text_track(
+        &self,
+        _url: String,
+        _crossorigin: Option<String>,
+        done: Box<dyn FnOnce(Result<MediaResponse, String>)>,
+    ) -> Option<MediaFetchHandle> {
+        self.post_task(Box::new(move || done(Err("no text track loader".into()))));
+        None
+    }
     /// A media playback timer: runs `task` after `delay` unless cleared
     /// with the returned id. It does not keep the event loop busy.
     fn set_media_timer(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) -> Option<u64> {

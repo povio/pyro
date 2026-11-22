@@ -20,6 +20,11 @@ pub enum MediaChange {
     Src,
     /// The element was inserted into a parent (by the parser too).
     Inserted,
+    /// A direct track child was inserted or removed. The event's node is
+    /// the media parent at the time of the mutation.
+    TrackChildrenChanged(NodeId),
+    /// A track's own source or metadata changed.
+    TrackChanged,
     /// A `<source>` element was inserted as a child of the media element.
     SourceInserted(NodeId),
     /// A `<source>` child is about to be removed; `previous` is its
@@ -37,7 +42,7 @@ impl MediaChange {
     /// reference to (released with it).
     pub fn held(self) -> impl Iterator<Item = NodeId> {
         let (a, b) = match self {
-            MediaChange::SourceInserted(source) => (Some(source), None),
+            MediaChange::SourceInserted(source) | MediaChange::TrackChildrenChanged(source) => (Some(source), None),
             MediaChange::SourceRemoved { source, previous } => (Some(source), previous),
             _ => (None, None),
         };
@@ -68,6 +73,20 @@ impl Dom {
         self.n(idx).element().is_some_and(|e| e.name.ns == ns!(html) && e.name.local == local_name!("source"))
     }
 
+    fn is_track_idx(&self, idx: u32) -> bool {
+        self.n(idx).element().is_some_and(|e| e.name.ns == ns!(html) && e.name.local == local_name!("track"))
+    }
+
+    fn queue_track_children(&mut self, media: u32) {
+        let mut child = self.n(media).first_child;
+        while child != NIL {
+            if self.is_track_idx(child) {
+                self.media_event(media, MediaChange::TrackChildrenChanged(self.id_of(child)));
+            }
+            child = self.n(child).next;
+        }
+    }
+
     fn media_event(&mut self, idx: u32, change: MediaChange) {
         let document = self.id_of(self.n(idx).owner_doc);
         if !self.is_watched_document(document) {
@@ -84,7 +103,18 @@ impl Dom {
 
     /// After the attribute `local` of `idx` was set, changed or removed.
     pub(crate) fn media_after_attr(&mut self, idx: u32, local: &str) {
-        if !self.media_seen || local != "src" || !self.is_media_idx(idx) {
+        if !self.media_seen {
+            return;
+        }
+        if matches!(local, "src" | "default" | "kind" | "srclang" | "label") && self.is_track_idx(idx) {
+            self.media_event(idx, MediaChange::TrackChanged);
+            return;
+        }
+        if local == "crossorigin" && self.is_media_idx(idx) {
+            self.queue_track_children(idx);
+            return;
+        }
+        if local != "src" || !self.is_media_idx(idx) {
             return;
         }
         // Removing `src` does not invoke the load algorithm.
@@ -112,6 +142,9 @@ impl Dom {
             return;
         }
         let parent = self.n(node).parent;
+        if parent != NIL && self.is_track_idx(node) && self.is_media_idx(parent) {
+            self.media_event(parent, MediaChange::TrackChildrenChanged(self.id_of(node)));
+        }
         if parent != NIL && self.is_source_idx(node) && self.is_media_idx(parent) {
             let source = self.id_of(node);
             self.media_event(parent, MediaChange::SourceInserted(source));
@@ -124,6 +157,7 @@ impl Dom {
         while i != NIL {
             if self.is_media_idx(i) {
                 self.media_event(i, MediaChange::Inserted);
+                self.queue_track_children(i);
             }
             i = self.next_shadow_including(i, node);
         }
@@ -146,6 +180,9 @@ impl Dom {
             return;
         }
         let parent = self.n(node).parent;
+        if parent != NIL && self.is_track_idx(node) && self.is_media_idx(parent) {
+            self.media_event(parent, MediaChange::TrackChildrenChanged(self.id_of(node)));
+        }
         if parent != NIL && self.is_source_idx(node) && self.is_media_idx(parent) {
             let prev = self.n(node).prev;
             let change = MediaChange::SourceRemoved {

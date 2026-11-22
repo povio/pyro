@@ -32,6 +32,7 @@ pub enum Destination {
     Audio,
     /// A `<video>` element's resource.
     Video,
+    Track,
     Font,
     Xhr,
     Fetch,
@@ -52,6 +53,7 @@ impl Destination {
             Destination::Style => "Stylesheet",
             Destination::Image => "Image",
             Destination::Audio | Destination::Video => "Media",
+            Destination::Track => "TextTrack",
             Destination::Font => "Font",
             Destination::Xhr => "XHR",
             Destination::Fetch => "Fetch",

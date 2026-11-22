@@ -29,6 +29,10 @@
 //!
 //! TimeRanges, MediaError and TextTrackList are made in JS (media.js) on a
 //! realm's first use.
+#[path = "track_load.rs"]
+mod track_load;
+pub(crate) use track_load::{check_track_resource, track_ready_state};
+
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -286,6 +290,7 @@ fn add_range(ranges: &mut Vec<(f64, f64)>, start: f64, end: f64) {
 #[derive(Default)]
 pub(crate) struct MediaElements {
     elements: RefCell<FxHashMap<NodeId, MediaState>>,
+    track_loads: track_load::Loads,
     /// Entry count at which those of collected elements are dropped.
     sweep_at: Cell<usize>,
     /// Elements whose delaying-the-load-event flag is set.
@@ -457,6 +462,7 @@ fn source_removed(page: &PageDom, node: NodeId, source: NodeId, previous: Option
 /// Releases everything the page's media elements hold: timers, fetches,
 /// DOM references. Called by `PageDom::dispose` while hooks still exist.
 pub(crate) fn dispose(page: &PageDom) {
+    page.media.track_loads.clear();
     let states = std::mem::take(&mut *page.media.elements.borrow_mut());
     page.media.delaying_load.set(0);
     let hooks = page.hooks();
@@ -483,6 +489,16 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
         return;
     }
     match event.change {
+        MediaChange::TrackChildrenChanged(track) => {
+            track_load::sync_parent(page, node);
+            check_track_resource(page, track);
+        }
+        MediaChange::TrackChanged => {
+            if let Some(parent) = track_load::media_parent(page, node) {
+                track_load::sync_parent(page, parent);
+            }
+            check_track_resource(page, node);
+        }
         MediaChange::Src => load(page, node),
         MediaChange::Inserted => {
             let (empty, has_object) = peek(page, node, |st| (st.network == NETWORK_EMPTY, st.src_object.is_some()));

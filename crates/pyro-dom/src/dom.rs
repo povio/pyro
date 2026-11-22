@@ -1622,7 +1622,7 @@ impl Dom {
         let is_template = name.ns == ns!(html) && name.local == local_name!("template");
         self.base_seen |= name.local == local_name!("base");
         match name.local {
-            local_name!("audio") | local_name!("video") => self.media_seen = true,
+            local_name!("audio") | local_name!("video") | local_name!("track") => self.media_seen = true,
             local_name!("canvas") => self.canvas_seen = true,
             local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
             _ => {}
