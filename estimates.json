@@ -41,47 +41,39 @@
     "fetch/range": 6,
     "fetch/data-urls": 6,
     "fetch/stale-while-revalidate": 5,
-    "html/obsolete": 4,
     "FileAPI": 4,
+    "html/obsolete": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "xhr": 2,
     "html/user-activation": 2,
+    "xhr": 2,
     "fetch/orb": 2,
-    "fetch/content-type": 1,
-    "html/select": 1,
-    "fetch/redirect-navigate": 1,
-    "quirks": 1,
     "svg/styling": 1,
-    "fetch/redirects": 1,
     "fetch/security": 1,
-    "IndexedDB": 1
+    "quirks": 1,
+    "fetch/content-type": 1,
+    "fetch/redirects": 1,
+    "IndexedDB": 1,
+    "html/select": 1,
+    "fetch/redirect-navigate": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 7,
+    "macbook_in_scope": 0,
     "studio_in_scope": 22,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 6,
+    "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 5,
+   "distinct_census_pages": 0,
    "owner_reported_unlisted": 0,
-   "selector_union": 290,
-   "owner_estimate_reduction": 285,
-   "of_which_tentative": 156,
+   "selector_union": 0,
+   "owner_estimate_reduction": 0,
+   "of_which_tentative": 0,
    "studio_css_reported_pages_not_deduped": 22,
    "studio_css_listed_distinct": 0,
-   "by_dir": {
-    "html/canvas": 112,
-    "html/browsers": 61,
-    "html/semantics": 50,
-    "html/syntax": 30,
-    "html/webappapis": 27,
-    "fetch/api": 5,
-    "html/dom": 5
-   }
+   "by_dir": {}
   },
   "queued": {
    "scope": {
@@ -766,7 +758,7 @@
    "tentative": 0
   },
   "P13": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
@@ -997,14 +989,14 @@
    "tentative": 0
   },
   "F07": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 40,
    "out_of_scope_pages": 0,
    "pages": 40,
    "tentative": 1
   },
   "F08": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 31,
    "out_of_scope_pages": 0,
    "pages": 31,
@@ -1074,7 +1066,7 @@
    "tentative": 0
   },
   "F10": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 34,
    "out_of_scope_pages": 0,
    "pages": 34,
@@ -1634,7 +1626,7 @@
    "tentative": 0
   },
   "R-HTML-9": {
-   "state": "active",
+   "state": "deferred",
    "in_scope_pages": 112,
    "out_of_scope_pages": 0,
    "pages": 112,
@@ -1816,7 +1808,7 @@
    "tentative": 0
   },
   "R-HTML-11": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 42,
    "out_of_scope_pages": 0,
    "pages": 42,
@@ -2859,7 +2851,7 @@
    "tentative": 1
   },
   "BUCKET-popovers": {
-   "state": "active",
+   "state": "deferred",
    "in_scope_pages": 12,
    "out_of_scope_pages": 0,
    "pages": 12,
@@ -2943,7 +2935,7 @@
    "tentative": 0
   },
   "BUCKET-nav-documents": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 27,
    "out_of_scope_pages": 0,
    "pages": 27,
@@ -2964,7 +2956,7 @@
    "tentative": 0
   },
   "BUCKET-nav-documents-b": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
@@ -3027,7 +3019,7 @@
    "tentative": 0
   },
   "BUCKET-scripting-events-2": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 13,
    "out_of_scope_pages": 0,
    "pages": 13,
@@ -3041,7 +3033,7 @@
    "tentative": 1
   },
   "BUCKET-scripting-events-dmi": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 14,
    "out_of_scope_pages": 0,
    "pages": 14,
@@ -3055,7 +3047,7 @@
    "tentative": 0
   },
   "BUCKET-window-origin": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 29,
    "out_of_scope_pages": 0,
    "pages": 29,
