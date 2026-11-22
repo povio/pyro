@@ -372,6 +372,7 @@ impl ResourceLoader for NetLoader {
         request: FetchRequest,
         done: FetchDone,
     ) -> Option<ResourceCancellation> {
+        let (request, done) = csp_precheck(browser, request, done)?;
         let id = browser.register_completion(done);
         let handle = browser.loop_handle();
         let url = match url::Url::parse(&request.url) {
@@ -755,6 +756,101 @@ fn service_worker_route(
 /// The document whose timeline gets the Resource Timing entry of `request`:
 /// the requesting frame's current document, or for an iframe's navigation
 /// the document of the frame's parent.
+/// The CSP destination of a browser-loader request (`None`: a top-level navigation or a
+/// download, which no fetch directive governs).
+pub(crate) fn csp_dest(request: &FetchRequest) -> Option<pyro_net::csp::RequestDest> {
+    use pyro_net::csp::RequestDest;
+    Some(match request.kind {
+        ResourceKind::Script => RequestDest::Script,
+        ResourceKind::ModuleScript => request.module.map_or(RequestDest::Script, pyro_webapi::csp::module_dest),
+        ResourceKind::Stylesheet => RequestDest::Style,
+        ResourceKind::Iframe => RequestDest::Frame,
+        ResourceKind::Image => RequestDest::Image,
+        ResourceKind::Font => RequestDest::Font,
+        ResourceKind::Audio | ResourceKind::Video | ResourceKind::Track => RequestDest::Media,
+        ResourceKind::Object => RequestDest::Object,
+        // `<link rel=preload as=fetch>`: the empty destination, connect-src.
+        ResourceKind::Fetch => RequestDest::Empty,
+        ResourceKind::Document | ResourceKind::Download => return None,
+    })
+}
+
+impl Browser {
+    /// CSP for `request` made by the element `el` (a `<link>`'s style sheet or preload): the
+    /// pre-request check with `el`'s nonce (style sheets and script preloads match
+    /// nonce-sources; a link is never parser-inserted for `'strict-dynamic'`), violations at
+    /// the document. On `Ok` the request carries the guard (so the loader does not check it
+    /// again as unattributed) and `done` reports what the guard's redirect and response checks
+    /// found; on `Err` (blocked) `done` gets the network error in a later task.
+    pub(crate) fn element_csp_check(
+        &mut self,
+        page: FrameKey,
+        request: &mut FetchRequest,
+        el: NodeId,
+        done: FetchDone,
+    ) -> Option<FetchDone> {
+        let Some(dest) = csp_dest(request) else { return Some(done) };
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return Some(done) };
+        let Ok(url) = url::Url::parse(&request.url) else { return Some(done) };
+        let mut check = pyro_net::csp::CspRequest::new(url, dest);
+        check.initiator = pyro_webapi::csp::element_initiator(&bindings, el, false);
+        match pyro_webapi::csp::check_request(&bindings, check, None) {
+            Ok(None) => Some(done),
+            Ok(Some(guard)) => {
+                request.csp = Some(guard.clone());
+                Some(Box::new(move |b: &mut Browser, result| {
+                    pyro_webapi::csp::report_guard(&bindings, Some(&guard), None);
+                    done(b, result)
+                }))
+            }
+            Err(_) => {
+                let error = format!("{} {}", pyro_net::csp::BLOCKED_BY_CSP, request.url);
+                self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+                None
+            }
+        }
+    }
+}
+
+/// CSP for a request its initiator did not check (`request.csp` unset): the requesting
+/// document's pre-request check (`img-src`, `style-src-elem`, `font-src`, `media-src`,
+/// `frame-src` against the parent, `object-src`), its violations at the document, and a guard
+/// for the redirects whose findings are reported when the fetch completes. The engine's script
+/// requests are checked by their initiators (`script_csp_check`), and speculation skips what a
+/// policy governs; a script request that still arrives unchecked is checked unattributed and
+/// silently (its element, if any, reports for itself), and blocked when a policy blocks it.
+/// `None` when blocked: `done` then gets a network error in a later task.
+fn csp_precheck(browser: &mut Browser, mut request: FetchRequest, done: FetchDone) -> Option<(FetchRequest, FetchDone)> {
+    if request.csp.is_some() {
+        return Some((request, done));
+    }
+    let Some(dest) = csp_dest(&request) else { return Some((request, done)) };
+    let Some(document) = requesting_document(browser, &request) else { return Some((request, done)) };
+    let Some(list) = pyro_webapi::csp::policy_list(&document) else { return Some((request, done)) };
+    let Ok(url) = url::Url::parse(&request.url) else { return Some((request, done)) };
+    let silent = matches!(request.kind, ResourceKind::Script | ResourceKind::ModuleScript);
+    let check = pyro_net::csp::CspRequest::new(url, dest);
+    let outcome = list.pre_request(&check);
+    if !silent {
+        pyro_webapi::csp::report(&document, outcome.violations, None);
+    }
+    if outcome.blocked {
+        let error = format!("{} {}", pyro_net::csp::BLOCKED_BY_CSP, request.url);
+        browser.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+        return None;
+    }
+    if silent {
+        return Some((request, done));
+    }
+    let guard = pyro_net::csp::RequestCsp::new(list, check);
+    request.csp = Some(guard.clone());
+    let done: FetchDone = Box::new(move |b, result| {
+        pyro_webapi::csp::report_guard(&document, Some(&guard), None);
+        done(b, result)
+    });
+    Some((request, done))
+}
+
 fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<pyro_webapi::PageDom>> {
     let frames = &browser.page(request.page)?.frames;
     let key = frames.key_of(request.frame_id.as_deref()?)?;
@@ -1006,8 +1102,10 @@ pub(crate) struct DocumentLoad {
     blocked: bool,
     /// A parser-blocking script waiting for blocking stylesheets, with the
     /// child text content an inline one had at its end tag (HTML takes the
-    /// source text there; later changes to the element do not count).
-    stylesheet_blocked_script: Option<(Rc<ResourceNode>, Option<String>)>,
+    /// source text there; later changes to the element do not count), and
+    /// its cryptographic nonce then (CSP's inline check is part of "prepare
+    /// the script element", at the end tag).
+    stylesheet_blocked_script: Option<(Rc<ResourceNode>, Option<String>, Option<String>)>,
     /// The frame's `PageNav::stop_count` when this load began: a different
     /// count means `document.open()` aborted it (HTML "abort" stops "the end",
     /// so no deferred script of it runs and it fires no DOMContentLoaded).
@@ -2031,11 +2129,16 @@ impl Browser {
                 .is_some_and(|p| p.dom.borrow().node_document(node).ok() != Some(p.document()))
         };
         if blocks && !moved_away() && self.stylesheets_block_scripts(page) {
+            // The nonce CSP checks an inline script with is the one it has now.
+            let end_tag_nonce =
+                self.doc(page).and_then(|p| p.main_frame.page_dom.clone()).map(|b| pyro_webapi::csp::element_nonce(&b, node));
             let mut load = self.load_mut(page).expect("load");
             if load.dom.borrow_mut().add_ref(node).is_ok() {
                 let source =
                     load.dom.borrow().script_info(node).ok().filter(|s| s.src.is_none()).map(|s| s.inline_text);
-                load.stylesheet_blocked_script = Some((Rc::new(ResourceNode { dom: load.dom.clone(), node }), source));
+                let nonce = end_tag_nonce.filter(|_| source.is_some());
+                load.stylesheet_blocked_script =
+                    Some((Rc::new(ResourceNode { dom: load.dom.clone(), node }), source, nonce));
                 load.blocked = true;
                 drop(load);
                 // The script's fetch, and the requests after it, overlap the
@@ -2052,12 +2155,13 @@ impl Browser {
 
     /// "Prepare the script element" for a parser-inserted script.
     fn prepare_script(&mut self, page: FrameKey, node: NodeId) {
-        self.prepare_script_with(page, node, None);
+        self.prepare_script_with(page, node, None, None);
     }
 
-    /// [`Browser::prepare_script`] for a script whose inline source text was
-    /// taken at its end tag (`source`), before blocking stylesheets held it.
-    fn prepare_script_with(&mut self, page: FrameKey, node: NodeId, source: Option<String>) {
+    /// [`Browser::prepare_script`] for a script whose inline source text and
+    /// cryptographic nonce were taken at its end tag (`source`, `nonce`),
+    /// before blocking stylesheets held it.
+    fn prepare_script_with(&mut self, page: FrameKey, node: NodeId, source: Option<String>, nonce: Option<String>) {
         let Some(load) = self.doc(page).and_then(|p| p.filter_map(|p| p.load.as_ref())) else { return };
         let dom = load.dom.clone();
         let base = load.url.clone();
@@ -2155,13 +2259,18 @@ impl Browser {
             }
             None => None,
         };
+        // CSP: an inline script runs only if `script-src-elem` allows it (its nonce, a hash of
+        // its text, 'unsafe-inline'); a blocked one is skipped, with no event.
+        if src_url.is_none() && !self.inline_script_allowed(page, &info, nonce.as_deref()) {
+            return;
+        }
         if src_url.is_some() {
             // A parser-blocking script is implicitly render-blocking.
             self.block_rendering_on_script(page, node, ty == ScriptType::Classic && !info.async_ && !info.defer);
         }
         match (ty, src_url) {
             (ScriptType::Classic, None) => {
-                self.note_inline_script_nonce(page, node);
+                self.note_inline_script_nonce(page, node, nonce.as_deref());
                 self.execute_at_insertion_point(page, &info.inline_text, &base, &element)
             }
             (ScriptType::Classic, Some(url)) if info.async_ => {
@@ -2296,10 +2405,11 @@ impl Browser {
 
     /// An inline script of `page` runs (a classic one with no `src`, or an inline module): its
     /// element's nonce, read from it now, becomes the document's inline nonce
-    /// ([`crate::preload::InlineNonce`]) for the `import()`s that name the document.
-    pub(crate) fn note_inline_script_nonce(&mut self, page: FrameKey, node: NodeId) {
+    /// ([`crate::preload::InlineNonce`]) for the `import()`s that name the document. `taken`:
+    /// its nonce taken at its end tag, else read now.
+    pub(crate) fn note_inline_script_nonce(&mut self, page: FrameKey, node: NodeId, taken: Option<&str>) {
         let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return };
-        let nonce = pyro_webapi::csp::element_nonce(&bindings, node);
+        let nonce = taken.map_or_else(|| pyro_webapi::csp::element_nonce(&bindings, node), str::to_owned);
         if let Some(mut doc) = self.doc_mut(page) {
             doc.preloads.note_inline_nonce(&nonce);
         }
@@ -2495,6 +2605,17 @@ impl Browser {
         if let Some(cancel) = cancel {
             cancel.disarm();
         }
+    }
+
+    /// CSP for an inline `<script>` of `page` (`script-src-elem`: its nonce, a hash of its
+    /// text, 'unsafe-inline'): whether it may run. Violations at the element.
+    /// `nonce`: the element's nonce taken earlier (at its end tag, [`Browser::prepare_script_with`]);
+    /// `None`: read from the element now.
+    fn inline_script_allowed(&self, page: FrameKey, info: &pyro_dom::script::ScriptInfo, nonce: Option<&str>) -> bool {
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return true };
+        let kind = pyro_webapi::csp::InlineKind::Script;
+        let nonce = nonce.map_or_else(|| pyro_webapi::csp::element_nonce(&bindings, info.node), str::to_owned);
+        pyro_webapi::csp::inline_allowed(&bindings, kind, &nonce, &info.inline_text, Some(info.node))
     }
 
     fn fetch_deferred(
@@ -2794,6 +2915,9 @@ impl Browser {
                 }
             }
         };
+        if src_url.is_none() && !self.inline_script_allowed(page, &info, None) {
+            return;
+        }
         match (ty, src_url) {
             // Spec: runs immediately, at insertion; here once the inserting
             // script (or task) returns. While the parser is parsing (not
@@ -2801,7 +2925,7 @@ impl Browser {
             // it ran, so `document.write` has that insertion point; otherwise
             // there is none.
             (ScriptType::Classic, None) => {
-                self.note_inline_script_nonce(page, node);
+                self.note_inline_script_nonce(page, node, None);
                 let parsing = self.load_mut(page).is_some_and(|l| l.parser.is_some() && !l.blocked);
                 if parsing {
                     self.execute_at_insertion_point(page, &info.inline_text, &base, &element);
@@ -3123,9 +3247,9 @@ impl Browser {
         self.drain_dom_resources(page);
         if !self.stylesheets_block_scripts(page) {
             let pending = self.load_mut(page).and_then(|mut l| l.stylesheet_blocked_script.take());
-            if let Some((element, source)) = pending {
+            if let Some((element, source, nonce)) = pending {
                 self.load_mut(page).expect("load").blocked = false;
-                self.prepare_script_with(page, element.node, source);
+                self.prepare_script_with(page, element.node, source, nonce);
                 self.continue_parsing(page);
             }
             self.run_deferred(page);
@@ -3263,6 +3387,11 @@ impl Browser {
             None => None,
         };
         let Some(url) = url else { self.script_loaded(page, &element, false); ready(empty()); return };
+        // CSP: an inline module runs only if `script-src-elem` allows it; skipped, with no event.
+        if !external && !self.inline_script_allowed(page, &info, None) {
+            ready(empty());
+            return;
+        }
         let source = url.clone();
         let on_fetched = move |browser: &mut Browser, result: Result<String, String>| {
             let scheduler = browser.scheduler();
@@ -3419,7 +3548,7 @@ impl Browser {
         // An inline module's `import()` names the document: its nonce is the document's
         // inline nonce too.
         if let Some(e) = element.as_ref().filter(|_| !external) {
-            self.note_inline_script_nonce(page, e.node);
+            self.note_inline_script_nonce(page, e.node, None);
         }
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };

@@ -341,6 +341,15 @@ impl PageHooks for Hooks {
             }
         }
         let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
+        // CSP: a `javascript:` URL is checked against the policies of the document that made
+        // the request (the link's, the form's, `window.open`'s caller's), snapshotted now.
+        let initiator = request
+            .url
+            .get(..11)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:"))
+            .then(|| self.frames.upgrade().and_then(|host| host.page_dom(page)))
+            .flatten()
+            .map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
         // HTML "navigate": a GET of the document's own URL with a fragment is
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
@@ -429,6 +438,8 @@ impl PageHooks for Hooks {
             let mut popup_script = None;
             if opens_context && request.method == "GET" {
                 if let Some(source) = javascript_url_source(&request.url) {
+                    // A blocked script does not run; the popup still opens, on about:blank.
+                    let allowed = initiator.as_ref().is_none_or(|i| i.allows_javascript_url(&request.url));
                     let realm = request.popup.as_ref().and_then(|ticket| {
                         let prebuilt = ticket.take_prebuilt()?;
                         let realm = prebuilt.downcast_ref::<crate::frames::PrebuiltPopup>().and_then(|p| {
@@ -444,7 +455,9 @@ impl PageHooks for Hooks {
                     // own: HTML "navigate" ignores a javascript: URL whose
                     // initiator is not same origin-domain with it, so the
                     // window opens on about:blank and the script never runs.
-                    popup_script = realm.map(|realm| (realm, source));
+                    // One the initiator's CSP blocks runs nowhere either: the
+                    // popup opens on about:blank.
+                    popup_script = realm.filter(|_| allowed).map(|realm| (realm, source));
                     request.url = "about:blank".into();
                 }
             }
@@ -454,6 +467,10 @@ impl PageHooks for Hooks {
                 // Only for a target same origin(-domain) with the initiator: a cross-origin
                 // iframe's `_top`/`_parent` or named target runs no script in that document.
                 if named.is_some_and(|t| !b.page(page.page).is_some_and(|p| p.frames.same_origin(page, t))) {
+                    return;
+                }
+                // CSP `script-src-elem` of the initiator: blocked, nothing runs.
+                if initiator.as_ref().is_some_and(|i| !i.allows_javascript_url(&request.url)) {
                     return;
                 }
                 let target = named.unwrap_or(page);
@@ -1161,6 +1178,22 @@ pub(crate) fn create(
     bindings.set_responsive_frames_source(Some(crate::responsive_frames::source(host, page)));
     bindings.set_nested_frame(page.child.is_some());
     bindings.set_opaque_origin(frame.sandbox.opaque);
+    // CSP `'self'` in a sandboxed document: its precursor origin, the one it would have without
+    // the sandbox (Chrome): its URL's for a fetched document, else (about:blank, about:srcdoc)
+    // its parent's own `'self'`.
+    let precursor = frame.sandbox.opaque.then(|| {
+        let own = pyro_net::Url::parse(url)
+            .ok()
+            .map(|url| url.origin())
+            .filter(|origin| origin.is_tuple())
+            .map(|origin| origin.ascii_serialization());
+        own.or_else(|| {
+            page.child
+                .and_then(|_| host.page_dom(host.parent_key(page)))
+                .and_then(|parent| pyro_webapi::csp::self_origin(&parent))
+        })
+    });
+    bindings.set_csp_precursor_origin(precursor.flatten());
     let own_site = pyro_net::Url::parse(&frame.origin).ok().and_then(|url| pyro_net::cookies::partition_key(&url));
     let (top_level_site, same_site) = if page.child.is_some() {
         let parent = host.page_dom(host.parent_key(page)).ok_or(JsError::ContextDestroyed)?;

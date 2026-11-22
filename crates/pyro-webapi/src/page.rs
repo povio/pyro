@@ -113,6 +113,9 @@ pub struct PageDom {
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
     opaque_origin: Cell<bool>,
+    /// The origin a sandboxed (opaque-origin) document would have without the sandbox (its
+    /// "precursor origin"): what CSP's `'self'` matches in it, as Chrome.
+    csp_precursor_origin: RefCell<Option<String>>,
     /// Schemeful site of this environment's top-level document at creation.
     cookie_partition_key: RefCell<Option<String>>,
     cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
@@ -959,6 +962,7 @@ impl PageDom {
             popups_sandboxed: Cell::new(false),
             document_domain_sandboxed: Cell::new(false),
             opaque_origin: Cell::new(false),
+            csp_precursor_origin: RefCell::new(None),
             cookie_site_context: Cell::new(if cookie_partition_key.is_some() {
                 pyro_net::cookies::SiteContext::SameSite
             } else {
@@ -1450,6 +1454,14 @@ impl PageDom {
     /// services, which may already make the document a service worker client.
     pub fn set_opaque_origin(&self, opaque: bool) {
         self.opaque_origin.set(opaque);
+    }
+    /// A sandboxed document's precursor origin (serialized; `None`: none known): CSP's `'self'`
+    /// matches it while the document's own origin is opaque.
+    pub fn set_csp_precursor_origin(&self, origin: Option<String>) {
+        *self.csp_precursor_origin.borrow_mut() = origin;
+    }
+    pub(crate) fn csp_precursor_origin(&self) -> Option<String> {
+        self.csp_precursor_origin.borrow().clone()
     }
     pub fn set_cookie_context(&self, key: Option<String>, site: pyro_net::cookies::SiteContext) {
         *self.cookie_partition_key.borrow_mut() = key;
@@ -3140,7 +3152,7 @@ impl PageDom {
     pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
         self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
     }
-    /// `el`'s [[CryptographicNonce]] slot, as the `nonce` IDL attribute reads it: what the IDL
+    /// `el`'s \[\[CryptographicNonce\]\] slot, as the `nonce` IDL attribute reads it: what the IDL
     /// attribute set (while the content attribute is what it was then), else the nonce that
     /// nonce hiding kept when it emptied the attribute, else the attribute (empty: none).
     pub(crate) fn cryptographic_nonce(&self, el: NodeId) -> String {
