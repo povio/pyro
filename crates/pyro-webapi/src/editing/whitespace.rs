@@ -119,11 +119,14 @@ pub(super) fn consume_padding_lf(page: &PageDom, dom: &mut Dom, host: NodeId, (n
             Next::Boundary | Next::Break => true,
             Next::Text(previous) | Next::PreservedText(previous) => {
                 dom.char_data(previous).is_ok_and(|data| data.ends_with('\n'))
-                    && crate::edit_commands::newlines_significant_in(page, dom, previous)
             }
             Next::Content => false,
         });
-    if empty_line && editing::plaintext_at(dom, node)
+    if !empty_line || !editing::plaintext_at(dom, node) { return; }
+    // An inline editing host keeps the final separator as inline content.
+    let block = editing::block_of(dom, node, host);
+    let display = page.layout().computed_style_value(dom, block, "display");
+    if display != "inline" && display != "contents"
         && crate::edit_commands::newlines_significant_in(page, dom, node)
         && matches!(adjacent(page, dom, host, node, true), Next::Boundary)
     {
