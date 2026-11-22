@@ -2923,3 +2923,11 @@ Test `block_end_trims_self_collapsing_boxes_nested_at_the_bottom` (pyro-render).
   (`appearance: base-select`): the select an `inline-flex` box with a 1px `currentColor` border and 24px minimum
   sizes, its first child button `display: contents`, options `flex`. Stylo applies the block to a select of base
   appearance and its subtree (vendor/stylo README.pyro.md). WPT html `customizable-select/base-appearance-inheritance`.
+
+- `layout/construct.rs` `is_open_base_select`, `layout/mod.rs` `lay_out_select_picker`, `mutator.rs`
+  `rebuild_select_for_open_state`: a drop-down select of base appearance (`appearance: base-select`)
+  whose picker is open (`:open` from pyro-dom's state tokens) builds boxes for its options, groups and
+  separators as a list box does, and lays them out below its own (leaf) box, stacked, as wide as the
+  widest and at least the select; the select's scrollable overflow takes them in, so they are painted
+  and hit with it. The select's boxes are built again when the state flips. A closed one is unchanged.
+  WPT html `customizable-select/select-mouse-behavior` and the other picker pages.

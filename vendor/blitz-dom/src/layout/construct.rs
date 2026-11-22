@@ -780,6 +780,20 @@ fn place_inside_marker(doc: &mut BaseDocument, item: NodeId, out: &mut LayoutChi
     }
 }
 
+/// pyro: whether `node` is a drop-down select of base appearance (`appearance: base-select`,
+/// a customizable select) whose picker is open (`:open`, from pyro-dom's state tokens): its
+/// options, groups and separators have boxes, laid out below the select.
+pub(crate) fn is_open_base_select(node: &crate::node::Node) -> bool {
+    node.element_data().is_some_and(|el| {
+        el.name.local == local_name!("select")
+            && el.element_state.contains(style_dom::ElementState::OPEN)
+            && el.attr(local_name!("multiple")).is_none()
+            && el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_none_or(|s| s <= 1)
+    }) && node
+        .primary_styles()
+        .is_some_and(|s| *s.get_box().get_appearance() == style::computed_values::appearance::T::BaseSelect)
+}
+
 fn collect_layout_children_with_wrap(
     doc: &mut BaseDocument,
     container_node_id: NodeId,
@@ -873,7 +887,7 @@ fn collect_layout_children_with_wrap(
         el.name.local == local_name!("select")
             && (el.attr(local_name!("multiple")).is_some()
                 || el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1))
-    });
+    }) || is_open_base_select(&doc.nodes[container_node_id]);
     if listbox_select {
         doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
             if id != container_node_id {
@@ -917,7 +931,9 @@ fn collect_layout_children_with_wrap(
                     .attr(local_name!("size"))
                     .and_then(|s| s.trim().parse::<u32>().ok())
                     .is_some_and(|s| s > 1);
-            if !listbox {
+            // pyro: an open customizable select's picker shows its options as a list box does
+            // (laid out below the select: `BaseDocument::lay_out_select_picker`).
+            if !listbox && !is_open_base_select(&doc.nodes[container_node_id]) {
                 doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
                     doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
                 });

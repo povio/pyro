@@ -1409,6 +1409,8 @@ impl LayoutPassState<'_> {
                 // `system-ui`: 1px there. Without this it had no box at all
                 // (its options are hidden).
                 if let Some((false, chars)) = select_label_chars {
+                    // pyro: an open customizable select's picker (`construct::is_open_base_select`).
+                    let open_picker = construct::is_open_base_select(node);
                     let font_size = font_size.unwrap_or(13.333);
                     let style = node.layout_style();
                     let line_height = select_line.map(|line| line.line_height / scale);
@@ -1462,6 +1464,10 @@ impl LayoutPassState<'_> {
                         let offset = ((content_height - line.line_height / scale) / 2.0).floor().max(0.0);
                         let baseline = padding.top + border.top + offset + line.baseline / scale;
                         output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
+                    }
+                    if open_picker {
+                        drop(style);
+                        self.lay_out_select_picker(dom_node_id(node_id), inputs, &mut output);
                     }
                     return ChildLayout::Done(output);
                 }
@@ -2176,6 +2182,103 @@ impl LayoutPassState<'_> {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: lays out the open picker of a customizable select (`construct::is_open_base_select`),
+    /// whose own box is the leaf `output`: its options, groups and separators (its layout
+    /// children) stacked below its border box, each as wide as the widest of them and at least
+    /// the select, as Chromium's `::picker(select)` popover anchored under its select. The
+    /// select's scrollable overflow takes them in, so that they are hit and painted with it.
+    #[inline(never)]
+    fn lay_out_select_picker(
+        &mut self,
+        select: blitz_traits::NodeId,
+        inputs: taffy::tree::LayoutInput,
+        output: &mut taffy::LayoutOutput,
+    ) {
+        let children: Vec<blitz_traits::NodeId> =
+            self.nodes[select].layout_children.borrow().as_ref().map(|c| c.to_vec()).unwrap_or_default();
+        if children.is_empty() {
+            return;
+        }
+        let horizontal = |node: &Node| {
+            let margin = node.layout_style().margin().resolve_or_zero(None, resolve_calc_value);
+            margin.left + margin.right
+        };
+        let mut width = output.size.width;
+        for &child in &children {
+            if self.nodes[child].primary_styles().is_none() {
+                continue;
+            }
+            let margins = horizontal(&self.nodes[child]);
+            let measure = taffy::tree::LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Horizontal,
+                known_dimensions: taffy::Size::NONE,
+                known_dimensions_are_definite: taffy::Size { width: true, height: true },
+                parent_size: taffy::Size::NONE,
+                available_space: taffy::Size {
+                    width: taffy::AvailableSpace::MaxContent,
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            width = width.max(self.compute_child_layout(taffy_node_id(child), measure).size.width + margins);
+        }
+        let mut y = output.size.height;
+        for (order, &child) in children.iter().enumerate() {
+            if self.nodes[child].primary_styles().is_none() {
+                continue;
+            }
+            let margin = self.nodes[child].layout_style().margin().resolve_or_zero(Some(width), resolve_calc_value);
+            let inner = (width - margin.left - margin.right).max(0.0);
+            let child_inputs = taffy::tree::LayoutInput {
+                run_mode: inputs.run_mode,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Both,
+                known_dimensions: taffy::Size { width: Some(inner), height: None },
+                known_dimensions_are_definite: taffy::Size { width: true, height: true },
+                parent_size: taffy::Size { width: Some(width), height: None },
+                available_space: taffy::Size {
+                    width: taffy::AvailableSpace::Definite(inner),
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            let out = self.compute_child_layout(taffy_node_id(child), child_inputs);
+            if inputs.run_mode == RunMode::PerformLayout {
+                let (border, padding) = {
+                    let style = self.nodes[child].layout_style();
+                    (
+                        style.border().resolve_or_zero(Some(width), resolve_calc_value),
+                        style.padding().resolve_or_zero(Some(width), resolve_calc_value),
+                    )
+                };
+                let layout = taffy::Layout {
+                    order: order as u32,
+                    location: taffy::Point { x: margin.left, y: y + margin.top },
+                    size: out.size,
+                    scrollable_overflow_rect: out.scrollable_overflow_rect,
+                    scrollbar_size: taffy::Size::ZERO,
+                    border,
+                    padding,
+                    margin,
+                };
+                self.set_unrounded_layout(taffy_node_id(child), &layout);
+            }
+            y += margin.top + out.size.height + margin.bottom;
+        }
+        let rect = output.scrollable_overflow_rect.rect();
+        output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
+            taffy::Rect {
+                left: rect.left.min(0.0),
+                top: rect.top.min(0.0),
+                right: rect.right.max(width),
+                bottom: rect.bottom.max(y),
+            },
+            taffy::Point { x: false, y: false },
+        );
+    }
+
     /// pyro: the containing block of the absolutely positioned box `box_id` when it is a
     /// positioned row or row group of the table `table_id` (the nearest positioned ancestor of the
     /// box below the table): the part's box (rows span every column; a row group spans its rows),

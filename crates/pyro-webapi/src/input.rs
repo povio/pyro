@@ -1560,6 +1560,48 @@ fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
     true
 }
 
+/// A trusted left-button release (`mouseup` not canceled) on an option of a customizable select's
+/// open picker, or inside one: as Chromium, the option is picked (the only selected option, by the
+/// user) unless it is disabled, `input` and `change` fire when the selection changed, and the
+/// picker closes with the select focused.
+fn select_picker_option_release(page: &Rc<PageDom>, target: NodeId) {
+    let (select, index) = {
+        let dom = page.dom.borrow();
+        let mut cur = Some(target);
+        let mut option = None;
+        while let Some(n) = cur {
+            match local(&dom, n).as_deref() {
+                Some("option") => {
+                    option = Some(n);
+                    break;
+                }
+                Some("select") => return,
+                _ => {}
+            }
+            cur = dom.parent(n).ok().flatten();
+        }
+        let Some(option) = option else { return };
+        let Some(select) = dom.option_nearest_select(option).ok().flatten() else { return };
+        if !dom.is_select_picker_open(select) || dom.is_disabled(option).unwrap_or(true) {
+            return;
+        }
+        let Some(index) = dom.select_options(select).ok().and_then(|o| o.iter().position(|&x| x == option)) else {
+            return;
+        };
+        (select, index)
+    };
+    let changed = {
+        let mut dom = page.dom.borrow_mut();
+        let before = dom.selected_index(select).ok();
+        let _ = dom.set_selected_index(select, index as i32);
+        dom.selected_index(select).ok() != before
+    };
+    crate::popover::hide_select_picker(page, select, true);
+    if changed {
+        fire_control_change(page, select);
+    }
+}
+
 /// A trusted left-button `mousedown` (not canceled) on an option of a list box (a select with
 /// `multiple` or a display size above 1), or inside one: as Chromium, the option becomes the only
 /// selected option (selectedness set by the user, so dirty) unless it is disabled or the select
@@ -2860,8 +2902,14 @@ fn dispatch_mouse_inner(
             crate::popover::light_dismiss(page, target, m.x, m.y, false);
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
-            if !page.compat_mouse_suppressed.replace(false) {
-                fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo);
+            let mouseup_ok = if !page.compat_mouse_suppressed.replace(false) {
+                fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo)
+            } else {
+                true
+            };
+            // A release on an option of a customizable select's open picker picks it.
+            if mouseup_ok && m.button == MouseButton::Left && !page.is_disposed() {
+                select_picker_option_release(page, target);
             }
             let pressed = page.take_press_target();
             let pressed_pseudo = page.pressed_pseudo.take();

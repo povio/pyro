@@ -377,6 +377,25 @@ impl DocumentMutator<'_> {
         }
     }
 
+    /// pyro: a customizable select's picker (`appearance: base-select`) lays its options out
+    /// while it is open (`:open`, from pyro-dom's state tokens): the select's boxes are built
+    /// again when that state flips.
+    fn rebuild_select_for_open_state(&mut self, node_id: NodeId, name: &QualName, value: Option<&str>) {
+        if !is_lp_state(name) {
+            return;
+        }
+        let node = &mut self.doc.nodes[node_id];
+        let Some(el) = node.element_data() else { return };
+        if el.name.local != local_name!("select") {
+            return;
+        }
+        let open = crate::has_invalidation::pyro_state_bits(value).contains(ElementState::OPEN);
+        if el.element_state.contains(ElementState::OPEN) != open {
+            node.insert_damage(ALL_DAMAGE);
+            node.mark_ancestors_dirty();
+        }
+    }
+
     /// pyro: a text input lays its `placeholder` out with its box: the box is
     /// built again when the attribute changes.
     fn rebuild_text_input_for_attribute(&mut self, node_id: NodeId, name: &QualName) {
@@ -420,6 +439,7 @@ impl DocumentMutator<'_> {
         // `:has()` search visited it.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
+        self.rebuild_select_for_open_state(node_id, &name, Some(value));
         self.rebuild_text_input_for_attribute(node_id, &name);
         let shadow_marker = self.state_write && crate::shadow::is_shadow_marker(&name);
         // pyro: `quotes: auto` follows the language (`layout::counters`).
@@ -680,6 +700,7 @@ impl DocumentMutator<'_> {
         // pyro: as in `set_attribute`.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
+        self.rebuild_select_for_open_state(node_id, &name, None);
         self.rebuild_text_input_for_attribute(node_id, &name);
         let shadow_marker = self.state_write && crate::shadow::is_shadow_marker(&name);
         // pyro: `quotes: auto` follows the language (`layout::counters`).
