@@ -78,6 +78,44 @@
     return options;
   }
 
+  const U8 = Uint8Array, isView = ArrayBuffer.isView;
+  const keys = Object.keys, own = Object.hasOwn;
+
+  function descriptionBytes(source) {
+    return isView(source) ? new U8(source.buffer, source.byteOffset, source.byteLength) : new U8(source);
+  }
+
+  function sameDictionary(a, b) {
+    const names = keys(a);
+    if (names.length !== keys(b).length) return false;
+    for (const name of names) {
+      if (!own(b, name)) return false;
+      if (name === 'description') {
+        const x = descriptionBytes(a[name]), y = descriptionBytes(b[name]);
+        if (x.length !== y.length) return false;
+        for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+      } else if (name === 'colorSpace') {
+        if (!sameDictionary(a[name], b[name])) return false;
+      } else if (a[name] !== b[name]) return false;
+    }
+    return true;
+  }
+
+  function outputMetadata(s, metadata) {
+    if (!own(metadata, 'decoderConfig')) return metadata;
+    const config = metadata.decoderConfig;
+    if (s.lastDecoderConfig && sameDictionary(s.lastDecoderConfig, config)) {
+      delete metadata.decoderConfig;
+    } else {
+      // Retain a private copy before author code can change or transfer it.
+      const snapshot = { ...config };
+      if (own(config, 'colorSpace')) snapshot.colorSpace = { ...config.colorSpace };
+      if (own(config, 'description')) snapshot.description = new U8(descriptionBytes(config.description));
+      s.lastDecoderConfig = snapshot;
+    }
+    return metadata;
+  }
+
   function state(receiver) {
     const s = slots.get(receiver);
     if (!s) throw new TypeError('Illegal invocation');
@@ -100,6 +138,7 @@
 
   function clear(s, reason, closed) {
     s.epoch++;
+    s.lastDecoderConfig = null;
     s.state = closed ? 'closed' : 'unconfigured';
     s.busy = false;
     for (let op = s.first; op; op = op.next) {
@@ -163,7 +202,7 @@
       native.postTask(() => {
         if (s.epoch !== epoch) return;
         for (const packet of packets) {
-          callback(s.output, [packet.chunk, packet.metadata]);
+          callback(s.output, [packet.chunk, outputMetadata(s, packet.metadata)]);
           if (s.epoch !== epoch) return;
         }
         if (op.kind === 'flush') { s.flushes.delete(op); op.resolve(); }
@@ -180,7 +219,7 @@
       if (typeof error !== 'function') throw new TypeError('Expected an error callback.');
       const output = d.output;
       if (typeof output !== 'function') throw new TypeError('Expected an output callback.');
-      slots.set(this, { encoder: this, state: 'unconfigured', epoch: 0, count: 0,
+      slots.set(this, { encoder: this, state: 'unconfigured', lastDecoderConfig: null, epoch: 0, count: 0,
         first: null, last: null, handle: null, busy: false, dequeueScheduled: false,
         flushes: new Set(), handler: null, listener: null, error, output });
     }

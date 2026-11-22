@@ -9,7 +9,7 @@ class Frame {
 }
 const config = {codec: 'vp8', width: 320, height: 180};
 
-function fixture() {
+function fixture(makeDecoderConfig) {
   const realm = vm.createContext({EventTarget, DOMException});
   const factory = vm.runInContext(readFileSync(resolve(__dirname, '../../src/video_encoder.js'), 'utf8'), realm);
   const tasks = [], captures = [];
@@ -31,7 +31,8 @@ function fixture() {
       return (op, frame, options) => {
         if (op === 'encode') pending.push({
           chunk: {timestamp: frame.timestamp, duration: frame.duration, type: options.keyFrame ? 'key' : 'delta'},
-          metadata: {width: config.width, quantizer: options.vp9?.quantizer}
+          metadata: makeDecoderConfig ? {decoderConfig: makeDecoderConfig(config), svc: {temporalLayerId: 0}} :
+            {width: config.width, quantizer: options.vp9?.quantizer}
         });
         return op === 'flush' ? pending.splice(0) : [];
       };
@@ -96,4 +97,44 @@ test('dictionary members convert in IDL order, retaining codec extensions and kn
   assert.equal(result.config.hevc.format, 'hevc');
   assert.equal(Object.hasOwn(result.config, 'ignored'), false);
   await assert.rejects(VideoEncoder.isConfigSupported({...config, width: 2 ** 32}), {name: 'TypeError'});
+});
+
+test('decoder metadata follows delivered configuration across configure and resets', async () => {
+  let profile = 2, fullRange = true, rotation = 0;
+  const {VideoEncoder, drain} = fixture(config => ({
+    codec: config.codec, codedWidth: config.width, rotation, colorSpace: {fullRange},
+    description: new Uint8Array([1, profile]).buffer
+  }));
+  const deliveries = [];
+  const encoder = new VideoEncoder({
+    output(chunk, metadata) {
+      deliveries.push(Object.hasOwn(metadata, 'decoderConfig'));
+      assert.equal(metadata.svc.temporalLayerId, 0);
+      if (metadata.decoderConfig) {
+        metadata.decoderConfig.colorSpace.fullRange = null;
+        new Uint8Array(metadata.decoderConfig.description)[1] = 0;
+        metadata.decoderConfig.rotation = -1;
+      }
+    }, error: assert.fail
+  });
+  async function deliver(width = 320) {
+    encoder.configure({...config, width});
+    encoder.encode(new Frame(5));
+    const done = encoder.flush();
+    drain();
+    await done;
+  }
+  await deliver();
+  await deliver();
+  profile++;
+  await deliver();
+  fullRange = false;
+  await deliver();
+  rotation = 90;
+  await deliver();
+  await deliver(160);
+  await deliver(160);
+  encoder.reset();
+  await deliver(160);
+  assert.deepEqual(deliveries, [true, false, true, true, true, true, false, true]);
 });
