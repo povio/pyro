@@ -9,10 +9,92 @@ embedder has made the interface prototype objects, keeping the global proxy: the
 prototype directly, and its proxy, retargeted to the same global, takes it into its structure
 (resetPrototype would make a new proxy, which code already holding globalThis would not see).
 
+The named properties object (patch 0004) now has WebIDL's internal methods besides [[GetOwnProperty]]:
+[[DefineOwnProperty]], [[Delete]] and [[PreventExtensions]] fail (it stays extensible), and so does an
+ordinary [[Set]] that would define a property on it, unless a setter further up the chain takes it
+(`__proto__`). Script reaches the object under Window.prototype with Object.getPrototypeOf, where the
+embedder's Proxy stand-in used to answer for it.
+
 diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
 --- a/Source/JavaScriptCore/API/JSFork.cpp
 +++ b/Source/JavaScriptCore/API/JSFork.cpp
-@@ -873,3 +873,26 @@ void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedProper
+@@ -20,6 +20,7 @@
+ #include "OperationResult.h"
+ #include "Snippet.h"
+ #include "SnippetParams.h"
++#include "TypeError.h"
+ #include "TopExceptionScope.h"
+ #include <wtf/HashMap.h>
+ #include <wtf/Lock.h>
+@@ -764,7 +765,7 @@ namespace {
+ class JSNamedPropertiesObject final : public JSNonFinalObject {
+ public:
+     using Base = JSNonFinalObject;
+-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | IsImmutablePrototypeExoticObject;
++    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | IsImmutablePrototypeExoticObject | OverridesPut;
+ 
+     template<typename CellType, SubspaceAccess>
+     static GCClient::IsoSubspace* subspaceFor(VM& vm)
+@@ -829,6 +830,58 @@ public:
+         return getOwnPropertySlot(object, globalObject, Identifier::from(vm, index), slot);
+     }
+ 
++    // Pyro patch 0041: WebIDL's named properties object refuses [[DefineOwnProperty]], [[Delete]] and
++    // [[PreventExtensions]] (it stays extensible), so an ordinary [[Set]] with it as the receiver fails
++    // too, unless a setter further up the chain takes the assignment (`__proto__`). As the window's
++    // prototype that object was its own; under Window.prototype (JSGlobalContextSetNamedPropertiesChain)
++    // script reaches it with Object.getPrototypeOf.
++    static bool defineOwnProperty(JSObject*, JSGlobalObject* globalObject, PropertyName, const PropertyDescriptor&, bool shouldThrow)
++    {
++        VM& vm = getVM(globalObject);
++        auto scope = DECLARE_THROW_SCOPE(vm);
++        return typeError(globalObject, scope, shouldThrow, "Cannot define a property on a named properties object"_s);
++    }
++
++    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&)
++    {
++        return false;
++    }
++
++    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned)
++    {
++        return false;
++    }
++
++    static bool preventExtensions(JSObject*, JSGlobalObject*)
++    {
++        return false;
++    }
++
++    static bool put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
++    {
++        VM& vm = getVM(globalObject);
++        auto scope = DECLARE_THROW_SCOPE(vm);
++        auto* object = uncheckedDowncast<JSObject>(cell);
++        if (slot.thisValue() != cell)
++            RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
++        // A setter on the chain runs with this object as `this`; anything else would define a property here.
++        if (JSObject* prototype = object->getPrototypeDirect().getObject()) {
++            PropertySlot found(prototype, PropertySlot::InternalMethodType::Get);
++            bool has = prototype->getPropertySlot(globalObject, propertyName, found);
++            RETURN_IF_EXCEPTION(scope, false);
++            if (has && (found.isAccessor() || found.isCustom()))
++                RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
++        }
++        return typeError(globalObject, scope, slot.isStrictMode(), "Cannot set a property on a named properties object"_s);
++    }
++
++    static bool putByIndex(JSCell*, JSGlobalObject* globalObject, unsigned, JSValue, bool shouldThrow)
++    {
++        VM& vm = getVM(globalObject);
++        auto scope = DECLARE_THROW_SCOPE(vm);
++        return typeError(globalObject, scope, shouldThrow, "Cannot set a property on a named properties object"_s);
++    }
++
+     static inline JSNamedPropertyFilter s_filter { nullptr };
+     static inline JSObjectGetPropertyCallback s_getter { nullptr };
+ 
+@@ -873,3 +926,26 @@ void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedProper
      JSNamedPropertiesObject::s_getter = getter;
      globalObject->resetPrototype(vm, JSNamedPropertiesObject::create(vm, globalObject));
  }
