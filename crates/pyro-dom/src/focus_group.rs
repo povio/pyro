@@ -78,6 +78,12 @@ pub fn parse_focusgroup(value: &str) -> Option<Focusgroup> {
         }
     }
     let behavior = behavior?;
+    // A grid focusgroup moves by table rows and columns, which is not
+    // implemented: until it is, `grid` makes no focusgroup at all rather
+    // than a linear one (Chrome's grid never navigates as a flat list).
+    if behavior == FocusgroupBehavior::Grid {
+        return None;
+    }
     use FocusgroupBehavior::*;
     // Behaviour defaults: (inline, block, wrap).
     let (di, db, dw) = match behavior {
@@ -154,7 +160,9 @@ impl Dom {
     /// first (or `el` opts out itself).
     pub fn focusgroup_owner_of(&self, el: NodeId) -> Option<(NodeId, FocusgroupFlags)> {
         let i = self.check(el).ok()?;
-        if self.focusgroup_idx(i) == Some(Focusgroup::OptOut) {
+        // An opted-out element, or a top-layer one (a showing popover, a
+        // modal dialog), is no item of any ancestor focusgroup.
+        if self.focusgroup_idx(i) == Some(Focusgroup::OptOut) || self.focusgroup_top_layer(i) {
             return None;
         }
         let mut a = self.focusgroup_flat_parent(i);
@@ -223,12 +231,6 @@ impl Dom {
         layout: Option<&crate::layout::Layout>,
     ) -> Option<NodeId> {
         let (owner, flags) = self.focusgroup_owner_of(current)?;
-        // A grid focusgroup moves by table rows and columns, which this
-        // does not implement; it never navigates linearly (on a non-table
-        // element it is not a focusgroup of either kind in Chrome either).
-        if flags.behavior == FocusgroupBehavior::Grid {
-            return None;
-        }
         let mut items = self.focusgroup_items_in_order(owner, area, layout);
         if !items.contains(&current) {
             // `current` is focused, so it is an item even when `area` says
@@ -310,6 +312,7 @@ mod tests {
         assert_eq!(owner("toolbar inline block"), Some((true, true, false)));
         assert_eq!(parse_focusgroup(""), None);
         assert_eq!(parse_focusgroup("wrap block"), None);
+        assert_eq!(parse_focusgroup("grid"), None);
         assert_eq!(parse_focusgroup("toolbar wrap none block"), Some(Focusgroup::OptOut));
     }
 }
