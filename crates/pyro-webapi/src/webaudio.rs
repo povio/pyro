@@ -48,6 +48,7 @@ where
         "AudioScheduledSourceNode",
         "AudioBufferSourceNode",
         "OscillatorNode",
+        "PeriodicWave",
         "ConstantSourceNode",
         "GainNode",
         "WaveShaperNode",
