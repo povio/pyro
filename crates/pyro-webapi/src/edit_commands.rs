@@ -1521,27 +1521,43 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
 /// Remove an explicitly authored paragraph weight while keeping its original
 /// value and priority on the unselected text. More complex paragraphs can
 /// retain the block declaration and override just the selected inline run.
-fn distribute_block_weight(page: &PageDom, dom: &mut Dom, block: NodeId, first: Point, last: Point) -> Option<()> {
+fn distribute_block_weight(page: &PageDom, dom: &mut Dom, block: NodeId, container: NodeId, first: Point, last: Point) -> Option<()> {
     use pyro_dom::stylo::declarations::DeclarationBlock;
     let mut style = DeclarationBlock::parse(dom.get_attribute(block, "style").ok()??);
     let weight = style.value("font-weight");
     if !weight.eq_ignore_ascii_case("bold") && !numeric_bold_weight(&weight) { return None; }
     let important = style.important("font-weight");
-    let children: Vec<_> = dom.children(block).ok()?.collect();
+    // A chain of ordinary inline elements can carry the paragraph's weight
+    // to its text. Leave those elements in place and preserve the weight on
+    // either side inside the same innermost element.
+    let mut inline = container;
+    while inline != block {
+        let parent = dom.parent_element(inline).ok()??;
+        if dom.child_count(parent).ok()? != 1
+            || !matches!(editing::local(dom, inline).as_str(), "i" | "em" | "u" | "s" | "span")
+            || page.layout().computed_style_value(dom, inline, "display") != "inline"
+            || !DeclarationBlock::parse(dom.get_attribute(inline, "style").ok()?.unwrap_or("")).value("font-weight").is_empty()
+            || dom.has_attribute(inline, "class").ok()?
+        {
+            return None;
+        }
+        inline = parent;
+    }
+    let children: Vec<_> = dom.children(container).ok()?.collect();
     if !children.iter().all(|&n| editing::is_text(dom, n)) { return None; }
     style.remove("font-weight");
     if style.is_empty() { dom.remove_attribute(block, "style").ok()?; }
     else { dom.set_attribute(block, "style", &style.css_text()).ok()?; }
     let doc = dom.node_document(block).ok()?;
     let css = dom.document_data(doc).ok()?.style_with_css;
-    let parent_weight = page.layout().computed_style_value(dom, block, "font-weight");
+    let parent_weight = page.layout().computed_style_value(dom, container, "font-weight");
     for child in children {
         let before = crate::range::compare_boundary_points_dom(dom, (child, editing::len(dom, child)), first) <= 0;
         let after = crate::range::compare_boundary_points_dom(dom, last, (child, 0)) <= 0;
         if !before && !after { continue; }
         // The trailing run can use the legacy bold tag when it reproduces
         // the authored weight. Numeric weights such as 600 or 900 need CSS.
-        let legacy = after && !css && !important && matches!(weight.as_str(), "bold" | "700")
+        let legacy = (after || container != block) && !css && !important && matches!(weight.as_str(), "bold" | "700")
             && parent_weight == "400";
         let span = dom.create_element(doc, if legacy { "b" } else { "span" }).ok()?;
         if !legacy {
@@ -1549,7 +1565,7 @@ fn distribute_block_weight(page: &PageDom, dom: &mut Dom, block: NodeId, first: 
             retained.set("font-weight", &weight, important)?;
             dom.set_attribute(span, "style", &retained.css_text()).ok()?;
         }
-        dom.insert_before(block, span, Some(child)).ok()?;
+        dom.insert_before(container, span, Some(child)).ok()?;
         dom.append_child(span, child).ok()?;
     }
     Some(())
@@ -1565,8 +1581,9 @@ fn clear_remaining_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeI
         return Some(());
     }
 
-    if parent != host && editing::is_block(dom, parent) {
-        distribute_block_weight(page, dom, parent, first, last);
+    let block = editing::block_of(dom, text, host);
+    if block != host {
+        distribute_block_weight(page, dom, block, parent, first, last);
         if !numeric_bold_weight(&layout.computed_style_value(dom, parent, "font-weight")) {
             return Some(());
         }
