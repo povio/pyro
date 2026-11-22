@@ -91,7 +91,29 @@ pub fn is_safelisted_header(name: &str, value: &HeaderValue) -> bool {
     }
 }
 
-/// Headers that make a request non-simple, lowercased and sorted.
+/// CORS-safelisted request-header check, `Range` included: a simple range
+/// (`bytes=N-` or `bytes=N-M`, no whitespace). [`is_safelisted_header`]
+/// leaves it out, as the no-cors guards (which call it) must.
+pub fn is_cors_safelisted_header(name: &str, value: &HeaderValue) -> bool {
+    is_safelisted_header(name, value)
+        || (name == "range"
+            && crate::range::parse_single_range_with(value.as_bytes(), false).is_some_and(|(start, _)| start.is_some()))
+}
+
+/// Fetch "CORS-unsafe request-header names" of `headers`: those that need a
+/// preflight, lowercased and sorted.
+pub fn cors_unsafe_header_names(headers: &HeaderMap) -> Vec<String> {
+    let mut names: Vec<String> = headers
+        .iter()
+        .filter(|(n, v)| !is_cors_safelisted_header(n.as_str(), v))
+        .map(|(n, _)| n.as_str().to_owned())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Headers that a no-cors request may not carry, lowercased and sorted.
 pub fn unsafe_header_names(headers: &HeaderMap) -> Vec<String> {
     let mut names: Vec<String> = headers
         .iter()
@@ -116,7 +138,7 @@ pub fn is_cors_request(req: &Request, _origin_url: Option<&Url>) -> bool {
 
 pub fn needs_preflight(req: &Request) -> bool {
     let simple_method = matches!(req.method, Method::GET | Method::HEAD | Method::POST);
-    !simple_method || !unsafe_header_names(&req.headers).is_empty()
+    !simple_method || !cors_unsafe_header_names(&req.headers).is_empty()
 }
 
 pub fn preflight_request_headers(req: &Request, origin: &str) -> HeaderMap {
@@ -127,7 +149,7 @@ pub fn preflight_request_headers(req: &Request, origin: &str) -> HeaderMap {
     if let Ok(v) = HeaderValue::from_str(req.method.as_str()) {
         h.insert(header::ACCESS_CONTROL_REQUEST_METHOD, v);
     }
-    let names = unsafe_header_names(&req.headers);
+    let names = cors_unsafe_header_names(&req.headers);
     if !names.is_empty() {
         if let Ok(v) = HeaderValue::from_str(&names.join(",")) {
             h.insert(header::ACCESS_CONTROL_REQUEST_HEADERS, v);
@@ -218,7 +240,7 @@ fn validate_preflight(status: u16, resp: &HeaderMap, req: &Request, origin: &str
     {
         return Err(format!("Method {m} is not allowed by Access-Control-Allow-Methods in preflight response"));
     }
-    for h in unsafe_header_names(&req.headers) {
+    for h in cors_unsafe_header_names(&req.headers) {
         // Authorization is never covered by the wildcard.
         let wild = any_header && h != "authorization";
         if !wild && !headers.contains(&h) {
@@ -267,7 +289,7 @@ impl PreflightCache {
             || e.any_method
             || e.methods.iter().any(|x| x == m);
         method_ok
-            && unsafe_header_names(&req.headers)
+            && cors_unsafe_header_names(&req.headers)
                 .iter()
                 .all(|h| (e.any_header && h != "authorization") || e.headers.contains(h))
     }

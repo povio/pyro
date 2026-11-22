@@ -517,7 +517,9 @@ impl Shared {
                 }
             }
         }
-        h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, br, zstd"));
+        // Fetch: a ranged request asks for the bytes as stored.
+        let encodings = if req.headers.contains_key(header::RANGE) { "identity" } else { "gzip, deflate, br, zstd" };
+        h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static(encodings));
         if let Some(origin) = &req.origin {
             if cors_cross || !matches!(req.method, Method::GET | Method::HEAD) {
                 if let Ok(v) = HeaderValue::from_str(origin) {
