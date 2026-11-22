@@ -3,15 +3,15 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 341,
+    "macbook_in_scope": 346,
     "studio_in_scope": 29,
     "other_dirs_out_of_scope": 16,
-    "macbook_worker_variants_if_enabled": 118,
+    "macbook_worker_variants_if_enabled": 123,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 486,
+   "distinct_census_pages": 496,
    "owner_reported_unlisted": 22,
-   "selector_union": 515,
+   "selector_union": 525,
    "owner_estimate_reduction": 51,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
@@ -23,15 +23,16 @@
     "fetch/api": 24,
     "scheduler": 19,
     "html/syntax": 12,
+    "fetch/cross-origin-resource-policy": 10,
     "fetch/content-encoding": 9,
     "encoding": 7,
     "FileAPI": 4,
     "fetch/data-urls": 3,
     "IndexedDB": 3,
     "xhr": 2,
-    "svg/styling": 1,
+    "html/rendering": 1,
     "quirks": 1,
-    "html/rendering": 1
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -85,19 +86,19 @@
     "html/webappapis": 19,
     "html/dom": 13,
     "workers": 12,
-    "html/interaction": 5,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
+    "html/interaction": 5,
     "svg/path": 4,
-    "IndexedDB": 3,
     "html/infrastructure": 3,
-    "fetch/data-urls": 3,
+    "IndexedDB": 3,
     "fetch/http-cache": 3,
+    "fetch/data-urls": 3,
     "fetch/nosniff": 2,
     "encoding": 2,
-    "dom/nodes": 1,
+    "fetch/api": 1,
     "fetch/corb": 1,
-    "fetch/api": 1
+    "dom/nodes": 1
    }
   }
  },
@@ -1153,7 +1154,7 @@
    "tentative": 0
   },
   "R-FETCH-13": {
-   "state": "decision-pending (coordinator)",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 10,
    "out_of_scope_pages": 0,
    "pages": 10,
@@ -1258,12 +1259,12 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 515,
+ "implemented_total_estimate": 525,
  "milestones_reached": [
   250,
   500
  ],
- "macbook_in_scope_implemented": 341,
+ "macbook_in_scope_implemented": 346,
  "macbook_in_scope_milestones": [
   100,
   200,
