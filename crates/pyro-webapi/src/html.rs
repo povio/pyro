@@ -1746,7 +1746,20 @@ impl JsClass for HtmlElement {
         );
         def.accessor(
             "spellcheck",
-            |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute(n.id, "spellcheck").js()? != Some("false"))),
+            |s, n| {
+                // HTML "checking enabled": the nearest inclusive ancestor whose `spellcheck` is a
+                // keyword (ASCII case-insensitive: "" or "true", "false") decides; else true.
+                let dom = n.page().dom.borrow();
+                let mut cur = Some(n.id);
+                while let Some(c) = cur {
+                    match dom.get_attribute(c, "spellcheck").ok().flatten() {
+                        Some(v) if v.is_empty() || v.eq_ignore_ascii_case("true") => return Ok(s.boolean(true)),
+                        Some(v) if v.eq_ignore_ascii_case("false") => return Ok(s.boolean(false)),
+                        _ => cur = dom.parent_element(c).js()?,
+                    }
+                }
+                Ok(s.boolean(true))
+            },
             |_s, n, v| {
                 n.page()
                     .dom
@@ -1766,7 +1779,9 @@ impl JsClass for HtmlElement {
             "contentEditable",
             |s, n| {
                 let dom = n.page().dom.borrow();
-                Ok(s.string(match dom.get_attribute(n.id, "contenteditable").js()? {
+                // The keywords are ASCII case-insensitive ("TRUE" is "true").
+                let value = dom.get_attribute(n.id, "contenteditable").js()?.map(str::to_ascii_lowercase);
+                Ok(s.string(match value.as_deref() {
                     Some("" | "true") => "true",
                     Some("false") => "false",
                     Some("plaintext-only") => "plaintext-only",
@@ -1795,7 +1810,7 @@ impl JsClass for HtmlElement {
             let dom = n.page().dom.borrow();
             let mut cur = Some(n.id);
             while let Some(c) = cur {
-                match dom.get_attribute(c, "contenteditable").ok().flatten() {
+                match dom.get_attribute(c, "contenteditable").ok().flatten().map(str::to_ascii_lowercase).as_deref() {
                     Some("" | "true" | "plaintext-only") => return Ok(s.boolean(true)),
                     Some("false") => return Ok(s.boolean(false)),
                     _ => cur = dom.parent_element(c).js()?,
