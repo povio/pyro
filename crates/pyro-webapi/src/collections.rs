@@ -778,10 +778,31 @@ fn kind_slot(kind: &CollectionKind) -> Option<u64> {
 
 /// Live collection over `root` (cached wrapper per element for fixed kinds).
 pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: CollectionKind) -> JsResult<Object<'s>> {
-    let key = kind_slot(&kind).map(|k| coll_identity(page, k, root));
+    // A named-property collection (`document.foo`, `window.foo` with several elements) is the
+    // same object on each access while script holds it: its key folds in a hash of the name,
+    // and a found wrapper is checked to be for this name (a collision gets an uncached one).
+    let named = match &kind {
+        CollectionKind::DocumentNamed(n) => Some((30, n)),
+        CollectionKind::WindowNamed(n) => Some((31, n)),
+        _ => None,
+    };
+    let mut key = match named {
+        Some((slot, name)) => {
+            let base = coll_identity(page, slot, root);
+            let hash =
+                name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+            Some(IdentityKey(base.0, base.1 ^ hash))
+        }
+        None => kind_slot(&kind).map(|k| coll_identity(page, k, root)),
+    };
     if let Some(k) = key {
         if let Some(o) = s.lookup_identity(k) {
-            return Ok(o);
+            if named.is_none()
+                || s.unwrap::<HtmlCollection>(o.value()).is_some_and(|d| d.kind == kind && d.root.id == root)
+            {
+                return Ok(o);
+            }
+            key = None;
         }
     }
     let page = page_rc(s)?;
