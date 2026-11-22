@@ -73,3 +73,21 @@ test('cross-realm region assignment accepts a genuine foreign region and rejects
   childCue.pauseOnExit = true;
   assert.equal(other.cueTiming(childCue)[3], true);
 });
+
+test('all cue and region Web IDL accessors have their attribute names and descriptors', () => {
+  for (const iface of [api.TextTrackCue, api.VTTCue, api.VTTRegion]) {
+    for (const [name, d] of Object.entries(Object.getOwnPropertyDescriptors(iface.prototype))) {
+      if (!d.get) continue;
+      assert.equal(d.enumerable, true);
+      assert.equal(d.configurable, true);
+      assert.equal(d.get.name, 'get ' + name);
+      assert.equal(d.get.length, 0);
+      if (name === 'track') assert.equal(d.set, undefined);
+      else {
+        assert.equal(d.set.name, 'set ' + name);
+        assert.equal(d.set.length, 1);
+        assert.equal(Object.hasOwn(d.set, 'prototype'), false);
+      }
+    }
+  }
+});

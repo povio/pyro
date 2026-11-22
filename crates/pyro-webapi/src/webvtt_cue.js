@@ -34,14 +34,19 @@
     if (!s) throw new TypeError('Illegal invocation');
     return s;
   }
+  function defineAttribute(proto, name, property) {
+    define(property.get, 'name', { value: 'get ' + name, configurable: true });
+    if (property.set) define(property.set, 'name', { value: 'set ' + name, configurable: true });
+    define(proto, name, { enumerable: true, configurable: true, ...property });
+  }
   function attribute(proto, map, name, convert) {
-    const property = { enumerable: true, configurable: true, get() { return state(map, this)[name]; } };
-    if (convert) property.set = function (v) { state(map, this)[name] = convert(v); };
-    define(proto, name, property);
+    const property = { get() { return state(map, this)[name]; } };
+    if (convert) property.set = { set(v) { state(map, this)[name] = convert(v); } }.set;
+    defineAttribute(proto, name, property);
   }
   function enumAttribute(proto, map, name, choices) {
-    define(proto, name, {
-      enumerable: true, configurable: true, get() { return state(map, this)[name]; },
+    defineAttribute(proto, name, {
+      get() { return state(map, this)[name]; },
       set(value) {
         const s = state(map, this), v = string(value);
         // A Web IDL attribute setter ignores an unrecognized enumeration value.
@@ -138,8 +143,8 @@
   attribute(base, cues, 'pauseOnExit', Boolean);
   for (const type of ['enter', 'exit']) {
     const name = 'on' + type, listener = name + 'Listener';
-    define(base, name, {
-      enumerable: true, configurable: true, get() { return state(cues, this)[name]; },
+    defineAttribute(base, name, {
+      get() { return state(cues, this)[name]; },
       set(value) {
         const s = state(cues, this);
         s[name] = typeof value === 'function' ? value : null;
