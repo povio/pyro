@@ -12,7 +12,7 @@
 // it only runs its clock and ends its sources on time.
 (natives => {
   'use strict';
-  const { decode, activated, timer, clearTimer: clearClock } = natives;
+  const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext } = natives;
   const apply = Reflect.apply;
   const ET = EventTarget;
   const dispatch = ET.prototype.dispatchEvent;
@@ -2070,6 +2070,12 @@
     get renderQuantumSize() { return ctxOf(this).quantum; }
     get currentTime() { return ctxOf(this).time(); }
     get destination() { return ctxOf(this).destination; }
+    // Its own AudioWorklet (paint_worklet.js, audio_worklet.rs), made on first use.
+    get audioWorklet() {
+      const c = ctxOf(this);
+      if (c.audioWorklet === undefined) c.audioWorklet = makeAudioWorklet(c.rate);
+      return c.audioWorklet;
+    }
     get listener() { return contextListener(this); }
     get state() { return ctxOf(this).state; }
     createBuffer(numberOfChannels, length, sampleRate) {
@@ -2148,6 +2154,7 @@
   }
   handler(BaseAudioContext, 'statechange');
   webidl(BaseAudioContext, 'BaseAudioContext');
+  if (!secureContext) delete BaseAudioContext.prototype.audioWorklet;
   function setState(c, state) {
     if (c.state === state) return;
     c.state = state;
