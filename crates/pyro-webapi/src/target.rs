@@ -835,12 +835,11 @@ fn dispatch_at(
         }
         None => page.dom.borrow().event_path(target, &event.state.borrow()),
     };
-    // Command source retargeting stops a composed command at the shadow
-    // boundary where distinct source and target would both become the host.
-    // The original target still receives the command, even if it is itself
-    // the source's host. Keep the source separate from Event.relatedTarget.
-    if event.iface == crate::event::EventInterface::CommandEvent {
-        if let Some(source) = event.fields.borrow().submitter.filter(|&source| source != target) {
+    // Stop before a shadow host that would expose the same target and
+    // source. The original target always receives the event. Keep source
+    // separate from Event.relatedTarget.
+    if matches!(event.iface, crate::event::EventInterface::CommandEvent | crate::event::EventInterface::ToggleEvent) {
+        if let Some(source) = event.fields.borrow().submitter {
             let dom = page.dom.borrow();
             if let Some(end) = path.iter().enumerate().skip(1).find_map(|(i, &(observer, adjusted))| {
                 (observer == adjusted && dom.retarget_live(source, observer) == observer).then_some(i)

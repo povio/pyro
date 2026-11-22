@@ -177,20 +177,32 @@ fn command_and_toggle_source_follow_the_observing_listener() {
             "(() => {
                 const root = host.attachShadow({mode:'closed'});
                 const button = root.appendChild(document.createElement('button'));
-                const seen = [];
+                const target = root.appendChild(document.createElement('span'));
+                const peer = document.body.appendChild(document.createElement('div'));
+                let index = 0;
                 for (const Interface of [CommandEvent, ToggleEvent]) {
-                    const type = Interface.name;
-                    seen.push(!new Interface(type, {source:button}).composed);
-                    const ev = new Interface(type, {source:button, bubbles:true, composed:true});
-                    seen.push(ev.source === host);
-                    for (const capture of [true, false]) {
-                        root.addEventListener(type, e => seen.push(e.source === button), capture);
-                        host.addEventListener(type, e => seen.push(e.source === host), capture);
+                    for (const source of [target, button, host, null, peer]) {
+                        const type = 'case' + index++;
+                        const crosses = source === null || source === peer;
+                        const ev = new Interface(type, {source, bubbles:true, composed:true});
+                        const outside = source === button || source === target ? host : source;
+                        if (new Interface(type, {source}).composed || ev.source !== outside) return false;
+                        const seen = [];
+                        for (const capture of [true, false]) {
+                            host.addEventListener(type, e => seen.push(e.source === outside), capture);
+                            root.addEventListener(type, e => seen.push(e.source === source), capture);
+                            target.addEventListener(type, e => {
+                                const path = e.composedPath();
+                                seen.push(e.source === source && path.includes(host) === crosses &&
+                                    path[0] === target && path[1] === root);
+                            }, capture);
+                        }
+                        target.dispatchEvent(ev);
+                        if (seen.length !== (crosses ? 6 : 4) || !seen.every(Boolean) || ev.source !== outside)
+                            return false;
                     }
-                    button.dispatchEvent(ev);
-                    seen.push(ev.source === host);
                 }
-                return seen.length === 14 && seen.every(Boolean);
+                return true;
             })()"
         ),
         "true"
