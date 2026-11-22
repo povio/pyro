@@ -53681,7 +53681,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          format!(
              "matrix3d({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
              c(m.m11),
-@@ -342,6 +345,98 @@
+@@ -342,6 +345,102 @@
      /// `transform-origin`, `grid-template-rows`/`columns`) resolve to *used* values, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
      pub fn resolved_style_value(&self, node_id: NodeId, property_name: &str) -> String {
@@ -53706,6 +53706,10 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +            (Size::CalcSizeAny(_) | Size::CalcSizePercentage(_), Size::CalcSizeAny(value) | Size::CalcSizePercentage(value)) => value,
 +            (Size::CalcSizeAny(_), Size::CalcSizeAuto(value)) => {
 +                basis = self.auto_basis_in_block_flow(node_id, width, percent);
++                value
++            }
++            (Size::CalcSizeAny(_), Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value)) if !width => {
++                basis = self.auto_basis_in_block_flow(node_id, false, percent);
 +                value
 +            }
 +            (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
@@ -53780,7 +53784,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          let Some(node) = self.get_node(node_id) else {
              return String::new();
          };
-@@ -364,6 +459,7 @@
+@@ -364,6 +463,7 @@
              },
          };
  
@@ -53788,7 +53792,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          let display = styles.clone_display();
          // Non-atomic inline elements are laid out as style spans within their
          // inline root's text layout rather than as boxes of their own, so their
-@@ -398,6 +494,36 @@
+@@ -398,6 +498,36 @@
          let format_used_px = |px: f32| format_px(px / zoom);
  
          // Layout-dependent "used value" special cases
@@ -53825,7 +53829,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          match property_name {
              // Shorthands of longhands that resolve to used values
              "margin" | "margin-block" | "margin-inline" | "padding" | "padding-block"
-@@ -466,7 +592,7 @@
+@@ -466,7 +596,7 @@
              "width" | "height" if has_layout_box => {
                  // Used value: the layout size interpreted according to `box-sizing`
                  // (border-box size for `border-box`, content-box size for `content-box`)
@@ -53834,7 +53838,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
                  let border_box = styles.get_position().box_sizing == BoxSizing::BorderBox;
                  let size = if property_name == "width" {
                      if border_box {
-@@ -682,14 +808,21 @@
+@@ -682,14 +812,21 @@
                      let reference_box = euclid::Rect::new(
                          euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
                          euclid::Size2D::new(

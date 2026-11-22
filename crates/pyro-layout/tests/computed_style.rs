@@ -485,6 +485,21 @@ fn sampled_auto_basis_is_not_the_live_any_endpoint() {
 }
 
 #[test]
+fn sampled_intrinsic_block_height_uses_fixed_child_not_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="height:calc-size(any,50px);box-sizing:border-box;padding:5px"><div style="height:90px"></div></div></div><div id=min style="height:calc-size(min-content,size * 0.25 + 37.5px)"></div><div id=max style="height:calc-size(max-content,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let used = || page.layout.computed_style_value(&dom, live, "height");
+    for selector in ["#min", "#max"] {
+        let sample = style.stylo_style(&dom, page.find(selector)).unwrap();
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample, used).unwrap(), "62.5px");
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
 fn percentage_endpoint_interpolates_with_intrinsic_size() {
     use ::style::values::animated::{Animate, Procedure};
     use ::style::values::computed::{length::CSSPixelLength, Size};
