@@ -8,6 +8,7 @@
 
 mod bindings;
 pub mod clock;
+mod csp_embedded;
 mod focus;
 mod frames;
 mod images;
@@ -153,6 +154,7 @@ fn subresource_request_with(
 ) -> FetchRequest {
     FetchRequest {
         csp: None,
+        required_csp: None,
         parser_priority: false,
         credentials: None,
         post: None,
@@ -595,6 +597,20 @@ pub struct DocumentState {
     pub(crate) preloads: preload::Preloads,
     pub(crate) refresh: refresh::Refresh,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
+    /// CSP Embedded Enforcement: the policy the current document's navigation required (the
+    /// snapshot its frame's navigation took, whether the document was fetched, made locally
+    /// (about:blank, about:srcdoc) or is the error document of a blocked response), which bounds
+    /// what its own child frames may require (`csp_embedded::requirement`).
+    pub(crate) required_csp: Option<String>,
+    /// The required policy of the navigation about to commit, which `commit_document` takes as
+    /// it starts (so a commit that fails cannot leave it for a later one) and gives the committed
+    /// document as `required_csp`. A commit that set none (a top-level document's) leaves none.
+    pub(crate) committing_required_csp: Option<String>,
+    /// The required policy the document about to commit accepted (a local scheme,
+    /// `Allow-CSP-From`) and enforces besides its own, which `begin_document` takes as it starts
+    /// and appends to the document's CSP list before its parser runs
+    /// (`csp_embedded::enforce_on_document`).
+    pub(crate) enforce_required_csp: Option<String>,
 }
 
 impl DocumentState {
@@ -1628,6 +1644,9 @@ impl Browser {
                 refresh: Default::default(),
                 _owner_pin: None,
                 in_order_scripts: Default::default(),
+                required_csp: None,
+                committing_required_csp: None,
+                enforce_required_csp: None,
             },
             session_storage,
             popup: None,
@@ -2114,7 +2133,15 @@ impl Browser {
             self.navigation_failed(page, &opts, loader_id, error);
             return Err(JsError::Unsupported(&"navigation to non-blank URLs"));
         }
+        // CSP Embedded Enforcement: an about:blank document accepts its frame's required policy (a
+        // local scheme): it enforces it and keeps it for its own frames.
+        let requirement = csp_embedded::requirement(self, page, &opts.url);
+        let required_csp = requirement.map(|r| r.policy);
+        self.prepare_required_csp(page, required_csp.clone(), None);
         self.commit_document(page, &opts, loader_id.clone(), "null", history, None)?;
+        if let Some(policy) = &required_csp {
+            csp_embedded::enforce_on_document(self, page, policy);
+        }
         self.finish_blank_document(page);
         Ok(loader_id)
     }
@@ -2186,6 +2213,9 @@ impl Browser {
         history: HistoryHandling,
         unreachable: Option<NavigationError>,
     ) -> Result<(), JsError> {
+        // CSP Embedded Enforcement: the requirement of this commit, taken before anything can fail
+        // or run script (a navigation `unload` starts sets its own).
+        let required_csp = self.doc_mut(page).and_then(|mut p| p.committing_required_csp.take());
         // `pageswap` at the document being replaced, then it (and its frames) unloads.
         self.fire_page_swap(page, &opts.url, history, origin);
         self.unload_documents(page);
@@ -2292,6 +2322,7 @@ impl Browser {
             p.images = Default::default();
             p.preloads = Default::default();
             p.refresh = Default::default();
+            p.required_csp = required_csp;
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             // What the commit replaces: nothing (a new frame's first
             // document) or the initial about:blank one as it was made; that

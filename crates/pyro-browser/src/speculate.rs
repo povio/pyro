@@ -196,6 +196,7 @@ impl Requester {
         };
         FetchRequest {
             csp: None,
+            required_csp: None,
             parser_priority: false,
             credentials: None,
             post: None,

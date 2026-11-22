@@ -254,6 +254,7 @@ impl Browser {
         let frame = self.doc(page).expect("page").main_frame.clone();
         let mut request = FetchRequest {
             csp: None,
+            required_csp: None,
             parser_priority: blocker.is_some(),
             credentials: None,
             post: None,
@@ -618,6 +619,7 @@ impl Browser {
 
         let request = FetchRequest {
             csp: None,
+            required_csp: None,
             parser_priority: self.stylesheets_block_scripts(page),
             credentials: None,
             post: None,

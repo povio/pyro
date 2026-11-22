@@ -868,6 +868,9 @@ impl FrameHost {
                 preloads: Default::default(),
                 refresh: Default::default(),
                 _owner_pin: Some(loader::ResourceNode { dom: self.dom.clone(), node }),
+                required_csp: None,
+                committing_required_csp: None,
+                enforce_required_csp: None,
                 in_order_scripts: Default::default(),
             },
         );
@@ -2437,32 +2440,35 @@ impl Browser {
                 cdp_request_id: None,
             },
         );
-        self.begin_document(
-            key,
-            &opts,
-            loader.clone(),
-            Resource {
-                url: opts.url.clone(),
-                status: 200,
-                mime: "text/html".into(),
-                charset: None,
-                body: html.into_bytes().into(),
-                immutable_local: false,
-                content_disposition: None,
-                header_csp: None,
-                refresh: None,
-                content_language: None,
-                last_modified: None,
-                reporting_endpoints: None,
-                referrer_policy: crate::loader::parent_referrer_policy(self, key),
-                origin_agent_cluster: false,
-                sent_referrer: None,
-                timing: None,
-                partial: None,
-                nosniff: false, opaque: false,
-            },
-            history,
-        )?;
+        // CSP Embedded Enforcement: a srcdoc document accepts its frame's required policy (a local
+        // scheme), enforces it and keeps it for its own frames, as a fetched document does.
+        let requirement = crate::csp_embedded::requirement(self, key, &opts.url);
+        let resource = Resource {
+            url: opts.url.clone(),
+            status: 200,
+            mime: "text/html".into(),
+            charset: None,
+            body: html.into_bytes().into(),
+            immutable_local: false,
+            content_disposition: None,
+            header_csp: None,
+            allow_csp_from: None,
+            refresh: None,
+            content_language: None,
+            last_modified: None,
+            reporting_endpoints: None,
+            referrer_policy: crate::loader::parent_referrer_policy(self, key),
+            origin_agent_cluster: false,
+            sent_referrer: None,
+            timing: None,
+            partial: None,
+            nosniff: false,
+            opaque: false,
+        };
+        let (resource, enforce) =
+            crate::csp_embedded::judge(self, key, requirement.as_ref(), resource).map_err(JsError::type_error)?;
+        self.prepare_required_csp(key, requirement.map(|r| r.policy), enforce);
+        self.begin_document(key, &opts, loader.clone(), resource, history)?;
         Ok(loader)
     }
 
@@ -2494,6 +2500,11 @@ impl Browser {
                 cdp_request_id: None,
             },
         );
+        // CSP Embedded Enforcement: the string's document replaces the frame's current one in
+        // place and keeps the requirement that document had (it enforces nothing more: the
+        // document it replaces already enforced it, and its policies are what the result has).
+        let required_csp = self.doc(key).and_then(|d| d.required_csp.clone());
+        self.prepare_required_csp(key, required_csp, None);
         let begun = self.begin_document(
             key,
             &opts,
@@ -2507,6 +2518,7 @@ impl Browser {
                 immutable_local: false,
                 content_disposition: None,
                 header_csp: None,
+                allow_csp_from: None,
                 refresh: None,
                 content_language: None,
                 last_modified: None,
