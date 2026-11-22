@@ -1776,7 +1776,17 @@ impl Browser {
             bindings.set_parser_position(Some(node));
             bindings.update_render_blocking();
         }
-        if blocks && self.stylesheets_block_scripts(page) {
+        // A blocked script is prepared once the stylesheets load, where the spec
+        // prepares at the end tag and only waits to execute. A script in
+        // another document now (its element was moved away) is prepared at
+        // once, which returns: waiting would prepare it wherever it is later,
+        // back in this document if it was moved back.
+        let moved_away = || {
+            self.doc(page)
+                .and_then(|p| p.main_frame.page_dom.clone())
+                .is_some_and(|p| p.dom.borrow().node_document(node).ok() != Some(p.document()))
+        };
+        if blocks && !moved_away() && self.stylesheets_block_scripts(page) {
             let mut load = self.load_mut(page).expect("load");
             if load.dom.borrow_mut().add_ref(node).is_ok() {
                 load.stylesheet_blocked_script = Some(Rc::new(ResourceNode { dom: load.dom.clone(), node }));
@@ -1810,6 +1820,8 @@ impl Browser {
         if self.doc(page).is_some_and(|d| d.main_frame.sandbox.scripts_disabled) {
             return;
         }
+        // The script's parser document: the document this load parses.
+        let parser_document = self.doc(page).and_then(|p| p.main_frame.document);
         let info = {
             let mut d = dom.borrow_mut();
             let Ok(info) = d.script_info(node) else { return };
@@ -1829,6 +1841,14 @@ impl Browser {
                 return;
             }
             let _ = d.mark_script_started(node);
+            // Prepare step 15: a script moved into another document before it
+            // was prepared (the parser kept inserting into the moved element)
+            // does not run there, nor after it is moved back. It stays
+            // "already started", so it fires no events either. (A script moved
+            // after this point is `execute_classic`'s check.)
+            if parser_document.is_some_and(|parser| d.node_document(node).ok() != Some(parser)) {
+                return;
+            }
             info
         };
         if info.kind == ScriptKind::ImportMap {
