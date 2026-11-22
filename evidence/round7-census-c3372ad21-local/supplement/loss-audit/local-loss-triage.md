@@ -2,7 +2,7 @@
 
 All 74 occurrences across 32 URLs were reconstructed from the immutable final named ledger, independently checked against the published loss stream, then joined to current, previous LP and signed Chrome raw receipts. The JSON retains the full original names, occurrence, exact statuses, diagnostics, three receipt checksums and per-engine page/harness states. No affected page was replayed.
 
-Current LP reported 66 named failures on complete/OK pages, two named timeouts and six missing exact names. One timeout occurred on a timeout/Timeout page; the other occurred on an error/Error page. All six missing names occurred on complete/OK pages. There were no runner-stall placeholders among these 74. Signed Chrome passed 52, failed 12 and had no matching name for 10.
+Current LP reported 66 named failures on complete/OK pages, two named timeouts and six missing exact names. One timeout occurred on a timeout/Timeout page; the other occurred on an error/Error cloned ImageBitmap page. Both previous and current LP reported the same page-level image-decode rejection there, although this particular name previously passed. The named-frame timeout previously completed and passed. There is no positive transport-failure diagnostic for either case. All six missing names occurred on complete/OK pages. There were no runner-stall placeholders among these 74. Signed Chrome passed 52, failed 12 and had no matching name for 10.
 
 | Diagnostic group | Occurrences | URLs | Recorded behavior |
 |---|---:|---:|---|
