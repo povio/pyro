@@ -1573,6 +1573,40 @@ fn join_plain_links(dom: &mut Dom, left: NodeId, right: NodeId, href: &str) {
     let _ = dom.remove_node(left);
 }
 
+/// Choose the unit that should share an italic wrapper with adjacent
+/// selected text. A semantic element keeps its meaning; I and EM already
+/// express the formatting that the new wrapper supplies.
+fn mixed_italic_unit(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, wrapper: Option<NodeId>, next: Option<NodeId>) -> Option<NodeId> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let parent = dom.parent_element(text).ok()??;
+    let name = editing::local(dom, parent);
+    if parent == host || !dom.element(parent).ok()?.is_html()
+        || !matches!(name.as_str(), "address" | "cite" | "dfn" | "var" | "em" | "i") { return Some(text); }
+    let whole = dom.child_count(parent).ok()? == 1;
+    if whole {
+        if let Some(style) = dom.get_attribute(parent, "style").ok()? {
+            let mut declarations = DeclarationBlock::parse(style);
+            if declarations.value("font-style") == "normal" && declarations.remove("font-style") {
+                dom.set_attribute(parent, "style", &declarations.css_text()).ok()?;
+            }
+        }
+    }
+    let layout = page.layout();
+    if !FontToggle::Italic.active(&layout.computed_style_value(dom, parent, "font-style")) { return Some(text); }
+    if !whole || layout.computed_style_value(dom, parent, "display") != "inline" { return None; }
+    let follows_wrapper = wrapper.is_some() && dom.prev_sibling(parent).ok()? == wrapper;
+    if !follows_wrapper && !(next.is_some() && dom.next_sibling(parent).ok()? == next) { return None; }
+    if matches!(name.as_str(), "em" | "i") {
+        let mut points = [(text, 0), (text, editing::len(dom, text))];
+        if dom.attributes(parent).ok()?.is_empty() {
+            indentation::unwrap(dom, parent, &mut points)?;
+            return Some(text);
+        }
+        return indentation::rename(dom, parent, "span", &mut points);
+    }
+    Some(parent)
+}
+
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
@@ -1613,19 +1647,24 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 let link = ancestor_named(&dom, *texts.first()?, host, &["a"])?;
                 dom.contains(link, *texts.last()?).ok()?.then_some(link)
             });
-            for &t in &texts {
+            for (index, &t) in texts.iter().enumerate() {
                 if let Some(value) = href.filter(|_| !collapsed) {
                     if let Some(link) = relink_text(&mut dom, host, t, value, single_link) {
                         last_wrapper = Some(link);
                         continue;
                     }
                 }
+                let mixed_italic = tag == "i" && texts.len() > 1;
+                let unit = if mixed_italic {
+                    let Some(unit) = mixed_italic_unit(page, &mut dom, host, t, last_wrapper, texts.get(index + 1).copied()) else { continue };
+                    unit
+                } else { t };
                 let prepared = if tag == "b" { prepare_numeric_bold(page, &mut dom, host, t, use_css) } else { None };
                 let carried = prepared.unwrap_or_else(|| carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some()));
-                if carried {
+                if carried && !mixed_italic {
                     continue;
                 }
-                let Ok(Some(parent)) = dom.parent(t) else {
+                let Ok(Some(parent)) = dom.parent(unit) else {
                     continue;
                 };
                 if let Some(w) = last_wrapper.filter(|&w| dom.parent(w).ok().flatten() == Some(parent)) {
@@ -1634,7 +1673,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                     let mut next = dom.next_sibling(w).ok().flatten();
                     let mut islands = Vec::new();
                     while let Some(el) = next {
-                        if el == t || !dom.get_attribute(el, "contenteditable").ok().flatten()
+                        if el == unit || !dom.get_attribute(el, "contenteditable").ok().flatten()
                             .is_some_and(|mode| mode.eq_ignore_ascii_case("plaintext-only"))
                         {
                             break;
@@ -1642,11 +1681,11 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                         islands.push(el);
                         next = dom.next_sibling(el).ok().flatten();
                     }
-                    if next == Some(t) {
+                    if next == Some(unit) {
                         for island in islands {
                             let _ = dom.append_child(w, island);
                         }
-                        let _ = dom.append_child(w, t);
+                        let _ = dom.append_child(w, unit);
                         continue;
                     }
                 }
@@ -1661,8 +1700,8 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                     let _ = dom.set_attribute(w, "href", href);
                 }
                 wrapped_svg |= dom.element(parent).is_ok_and(|el| el.namespace() == &markup5ever::ns!(svg));
-                let _ = dom.insert_before(parent, w, Some(t));
-                let _ = dom.append_child(w, t);
+                let _ = dom.insert_before(parent, w, Some(unit));
+                let _ = dom.append_child(w, unit);
                 if tag == "b" && !use_css { resolve_relative_bold(page, &mut dom, parent, w); }
                 last_wrapper = Some(w);
             }
