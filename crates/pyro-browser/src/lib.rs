@@ -2019,6 +2019,27 @@ impl Browser {
         opts: NavigateOpts,
         history: HistoryHandling,
     ) -> Result<LoaderId, JsError> {
+        // A new window asked to load a javascript: URL (a noopener link to a new window, or a
+        // client navigating a fresh page): its initial about:blank document runs the script in a
+        // task, and a string result replaces it (HTML "navigate to a javascript: URL"). Any other
+        // javascript: navigation is run by its initiator (`bindings`, `nav`).
+        if let Some(source) = bindings::javascript_url_source(&opts.url) {
+            if let Some(loader) =
+                self.doc(page).filter(|d| d.nav.is_initial_blank()).map(|d| d.main_frame.loader_id.clone())
+            {
+                self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
+                    let realm = b.doc(page).and_then(|d| d.main_frame.main_realm().cloned());
+                    let result = realm
+                        .as_ref()
+                        .and_then(|realm| realm.scope().ok())
+                        .and_then(|scope| crate::frames::javascript_url_result(&scope, &source));
+                    if let Some(html) = result {
+                        let _ = b.begin_javascript_result(page, html);
+                    }
+                });
+                return Ok(loader);
+            }
+        }
         // HTML "navigate": the document being left is asked first
         // (`beforeunload` at its Window). The navigation goes on whatever its
         // listeners answer (`pyro_webapi::lifecycle::before_unload`).

@@ -431,23 +431,27 @@ impl PageHooks for Hooks {
                 if let Some(source) = javascript_url_source(&request.url) {
                     let realm = request.popup.as_ref().and_then(|ticket| {
                         let prebuilt = ticket.take_prebuilt()?;
-                        let realm = prebuilt
-                            .downcast_ref::<crate::frames::PrebuiltPopup>()
-                            .and_then(|p| {
-                                let root = p.host.root.borrow();
-                                let realm = root.main_realm().cloned();
-                                realm
-                            });
+                        let realm = prebuilt.downcast_ref::<crate::frames::PrebuiltPopup>().and_then(|p| {
+                            let root = p.host.root.borrow();
+                            let realm = root.main_realm().cloned();
+                            realm
+                        });
                         ticket.set_prebuilt(prebuilt);
                         realm
                     });
-                    popup_script = realm.map(|realm| (realm, source));
-                    request.url = "about:blank".into();
+                    // Without a popup made ahead (a noopener link), the new
+                    // page is asked for the javascript: URL itself, which
+                    // its initial about:blank document runs
+                    // (`Browser::navigate_frame_with_handling`).
+                    if let Some(realm) = realm {
+                        popup_script = Some((realm, source));
+                        request.url = "about:blank".into();
+                    }
                 }
             }
             // HTML "navigate to a javascript: URL": the script runs in the
             // target document; a string result replaces that document.
-            if let Some(source) = javascript_url_source(&request.url) {
+            if let Some(source) = javascript_url_source(&request.url).filter(|_| !opens_context) {
                 // Only for a target same origin(-domain) with the initiator: a cross-origin
                 // iframe's `_top`/`_parent` or named target runs no script in that document.
                 if named.is_some_and(|t| !b.page(page.page).is_some_and(|p| p.frames.same_origin(page, t))) {
