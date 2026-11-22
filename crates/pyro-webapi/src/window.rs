@@ -465,6 +465,7 @@ impl JsClass for Navigator {
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
         def.getter("locks", |s, p| crate::web_locks::locks(s, p));
         def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));
+        def.getter("userActivation", |s, p| crate::user_activation::user_activation(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
@@ -885,6 +886,7 @@ fn bar_prop<'s>(s: &Scope<'s>, page: &Rc<PageDom>, slot: u64) -> JsResult<Value<
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<BarProp>();
     engine.register::<Navigator>();
+    engine.register::<crate::user_activation::UserActivation>();
     engine.register::<Screen>();
     engine.register::<VisualViewport>();
     engine.register::<ScreenOrientation>();

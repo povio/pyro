@@ -30,6 +30,7 @@ mod module_scripts_js;
 mod move_before_js;
 mod observable_js;
 mod popover_dialog_js;
+mod show_picker_js;
 mod storage_js;
 mod support;
 mod svg_animated_enumeration_js;

@@ -2546,7 +2546,7 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     });
     def.method("stepUp", 0, |s, n, a| step(s, n, a, true));
     def.method("stepDown", 0, |s, n, a| step(s, n, a, false));
-    def.method("showPicker", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("showPicker", 0, |s, n, _a| crate::show_picker::input(s, n));
 });
 
 /// `stepUp(n)` / `stepDown(n)`.
@@ -2678,7 +2678,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
         }
         Ok(s.undefined())
     });
-    def.method("showPicker", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("showPicker", 0, |s, n, _a| crate::show_picker::select(s, n));
 });
 
 simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
