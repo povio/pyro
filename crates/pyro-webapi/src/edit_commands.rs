@@ -2530,6 +2530,85 @@ fn listify_table_selection(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &st
     Some((points[0], points[1]))
 }
 
+/// Keep a directional DIV as the list's containing block. Its direction
+/// supplies the paragraph base direction and the list-marker placement.
+fn listify_directional_blocks(
+    page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point,
+) -> Option<(Point, Point)> {
+    let first = editing::deep_forward(dom, start);
+    let last = if start == end { first } else { editing::deep_backward(dom, end) };
+    let first_block = editing::block_of(dom, first.0, host);
+    let last_block = editing::block_of(dom, last.0, host);
+    if first_block == host || !local_html(dom, first_block, "div") || !local_html(dom, last_block, "div") { return None; }
+    let parent = dom.parent_element(first_block).ok()??;
+    if dom.parent_element(last_block).ok()? != Some(parent) { return None; }
+    let mut blocks = Vec::new();
+    let mut current = first_block;
+    let mut directional = false;
+    loop {
+        if local_html(dom, current, "div") && editing::editing_host(dom, current) == Some(host) {
+            directional |= dom.get_attribute(current, "dir").ok()?.is_some()
+                || page.layout().computed_style_value(dom, current, "direction") == "rtl";
+            blocks.push(current);
+        } else if editing::editing_host(dom, current) == Some(host)
+            && !dom.char_data(current).is_ok_and(|data| data.chars().all(|c| c.is_ascii_whitespace())) {
+            return None;
+        }
+        if current == last_block { break; }
+        current = dom.next_sibling(current).ok()??;
+    }
+    if !directional { return None; }
+    let doc = dom.node_document(first_block).ok()?;
+    let list = dom.create_element(doc, tag).ok()?;
+    let mut points = [first, last];
+    for block in blocks {
+        let item = dom.create_element(doc, "li").ok()?;
+        while let Some(child) = dom.first_child(block).ok()? {
+            if editing::is_text(dom, child) {
+                let copy = dom.clone_node(child, false, None).ok()?;
+                dom.append_child(item, copy).ok()?;
+                for point in &mut points { if point.0 == child { point.0 = copy; } }
+                dom.remove_node(child).ok()?;
+            } else {
+                dom.append_child(item, child).ok()?;
+            }
+        }
+        if dom.child_count(item).ok()? == 0 { editing::placeholder_if_empty(dom, item); }
+        dom.append_child(list, item).ok()?;
+        if block != first_block { dom.remove_node(block).ok()?; }
+    }
+    dom.append_child(first_block, list).ok()?;
+    Some((points[0], points[1]))
+}
+
+/// A list occupying a directional paragraph unwraps into lines of that
+/// same paragraph. Keep the container's authored attributes on toggle-off.
+fn unlist_directional_block(
+    page: &PageDom, dom: &mut Dom, host: NodeId, list: NodeId, start: Point, end: Point,
+) -> Option<(Point, Point)> {
+    let parent = dom.parent_element(list).ok()??;
+    if parent == host || !local_html(dom, parent, "div") || dom.child_count(parent).ok()? != 1
+        || (dom.get_attribute(parent, "dir").ok()?.is_none()
+            && page.layout().computed_style_value(dom, parent, "direction") != "rtl") { return None; }
+    let first = editing::deep_forward(dom, start);
+    let last = if start == end { first } else { editing::deep_backward(dom, end) };
+    let items: Vec<_> = dom.children(list).ok()?.collect();
+    if !items.iter().all(|&n| local_html(dom, n, "li") && editing::editing_host(dom, n) == Some(host))
+        || !dom.contains(*items.first()?, first.0).ok()? || !dom.contains(*items.last()?, last.0).ok()? { return None; }
+    let doc = dom.node_document(list).ok()?;
+    for (index, item) in items.into_iter().enumerate() {
+        if index != 0 {
+            let br = dom.create_element(doc, "br").ok()?;
+            dom.insert_before(parent, br, Some(list)).ok()?;
+        }
+        while let Some(child) = dom.first_child(item).ok()? {
+            dom.insert_before(parent, child, Some(list)).ok()?;
+        }
+    }
+    dom.remove_node(list).ok()?;
+    Some((first, last))
+}
+
 /// insertOrderedList / insertUnorderedList: the selected blocks become
 /// items of a new list; inside such a list already, its items become `div`
 /// lines again.
@@ -2556,6 +2635,11 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
             }
             let in_list = ancestor_named(&dom, start.0, host, &[tag]);
             if let Some(list) = in_list {
+                if let Some((a, b)) = unlist_directional_block(page, &mut dom, host, list, start, end) {
+                    drop(dom);
+                    editing::set_selection(page, a, b);
+                    return;
+                }
                 let Ok(Some(parent)) = dom.parent(list) else { return };
                 let items: Vec<NodeId> = dom.children(list).map(|c| c.collect()).unwrap_or_default();
                 for item in items {
@@ -2568,6 +2652,11 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
                 }
                 let _ = dom.remove_child(parent, list);
             } else {
+                if let Some((a, b)) = listify_directional_blocks(page, &mut dom, host, tag, start, end) {
+                    drop(dom);
+                    editing::set_selection(page, a, b);
+                    return;
+                }
                 let blocks = selected_blocks(&dom, host, start, end);
                 let Ok(list) = dom.create_element(doc, tag) else { return };
                 let first = blocks[0];
