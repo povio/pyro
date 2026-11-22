@@ -282,6 +282,19 @@
 
   const exports = {
     TrustedHTML, TrustedScript, TrustedScriptURL, TrustedHTMLParserOptions, TrustedTypePolicy, TrustedTypePolicyFactory, SecurityPolicyViolationEvent,
+    // A violation of another directive (csp.rs, already in its own task): fired at `target` (a
+    // connected element), else the document, else the global (a worker).
+    dispatchViolation(target, init) {
+      const doc = typeof global.document === 'object' && global.document !== null ? global.document : null;
+      const at = target ?? doc ?? global;
+      const full = {
+        bubbles: true, composed: true,
+        documentURI: doc === null ? String_(global.location?.href ?? '') : String_(doc.URL ?? ''),
+        referrer: doc === null ? '' : String_(doc.referrer ?? ''),
+      };
+      for (const key of Object.keys(init)) full[key] = init[key];
+      at.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', full));
+    },
     defaultParserOptions(runScripts, sink, hasSanitizer) {
       const callback = defaultParserCallback;
       if (callback === undefined) return undefined;

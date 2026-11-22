@@ -3140,6 +3140,22 @@ impl PageDom {
     pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
         self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
     }
+    /// `el`'s [[CryptographicNonce]] slot, as the `nonce` IDL attribute reads it: what the IDL
+    /// attribute set (while the content attribute is what it was then), else the nonce that
+    /// nonce hiding kept when it emptied the attribute, else the attribute (empty: none).
+    pub(crate) fn cryptographic_nonce(&self, el: NodeId) -> String {
+        let dom = self.dom.borrow();
+        let attr = dom.get_attribute(el, "nonce").ok().flatten();
+        if let Some(nonce) = self.nonce(el, attr) {
+            return nonce;
+        }
+        if attr == Some("") {
+            if let Some(hidden) = dom.hidden_nonce(el) {
+                return self.nonce(el, Some(hidden)).unwrap_or_else(|| hidden.to_owned());
+            }
+        }
+        attr.unwrap_or("").to_owned()
+    }
 
     /// The style engine applies `sheets` (constructed sheets' ids and
     /// texts) where `scope` adopts them.

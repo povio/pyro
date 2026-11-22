@@ -11,12 +11,14 @@ use crate::dom::Dom;
 use crate::error::DomResult;
 use crate::node::NodeId;
 
-/// A Content Security Policy of a document (as delivered: its serialization), and whether it is
-/// report-only (`Content-Security-Policy-Report-Only`).
+/// A Content Security Policy of a document (as delivered: its serialization), whether it is
+/// report-only (`Content-Security-Policy-Report-Only`), and whether a `<meta http-equiv>`
+/// delivered it (else a header).
 #[derive(Clone, Debug)]
 pub struct CspPolicy {
     pub text: Box<str>,
     pub report_only: bool,
+    pub meta: bool,
 }
 
 #[derive(Default)]
@@ -29,6 +31,11 @@ pub(crate) struct NonceState {
     /// `require-trusted-types-for`), with whether each is report-only. No other directive of
     /// them is enforced.
     trusted_types: FxHashMap<NodeId, Vec<CspPolicy>>,
+    /// Every policy of a document (headers, then `<meta>` in insertion order): its CSP list,
+    /// which the fetch, inline and eval checks read (`pyro_net::csp`).
+    policies: FxHashMap<NodeId, Vec<CspPolicy>>,
+    /// Documents of a page that bypasses CSP (`Page.setBypassCSP`): a `<meta>` adds nothing.
+    bypassed: FxHashSet<NodeId>,
 }
 
 impl Dom {
@@ -43,20 +50,67 @@ impl Dom {
         Ok(())
     }
 
-    /// Records `doc`'s header-delivered policies that have Trusted Types directives: `enforce`,
-    /// the `Content-Security-Policy` header values joined by `,`, and `report_only`, the
-    /// `Content-Security-Policy-Report-Only` ones.
+    /// Records `doc`'s header-delivered policies: `enforce`, the `Content-Security-Policy`
+    /// header values joined by `,`, and `report_only`, the `Content-Security-Policy-Report-Only`
+    /// ones. All of them become the document's CSP list ([`Dom::csp_policies`]); those with
+    /// Trusted Types directives are also [`Dom::trusted_types_policies`].
     pub fn set_trusted_types_policies(&mut self, doc: NodeId, enforce: &str, report_only: &str) -> DomResult<()> {
         self.check(doc)?;
         self.nonces.trusted_types.remove(&doc);
-        self.add_csp_policies(doc, enforce, false);
-        self.add_csp_policies(doc, report_only, true);
+        self.nonces.policies.remove(&doc);
+        self.add_csp_policies(doc, enforce, false, false);
+        self.add_csp_policies(doc, report_only, true, false);
         Ok(())
     }
 
-    /// Adds the policies in `csp` that have a Trusted Types directive to `doc`'s (a header, or a
+    /// Makes `doc` ignore its policies (`Page.setBypassCSP`): the ones recorded go, and a
+    /// `<meta>` that joins its head later adds none.
+    pub fn set_csp_bypassed(&mut self, doc: NodeId, bypassed: bool) -> DomResult<()> {
+        self.check(doc)?;
+        if bypassed {
+            self.nonces.bypassed.insert(doc);
+            self.nonces.policies.remove(&doc);
+            self.nonces.trusted_types.remove(&doc);
+        } else {
+            self.nonces.bypassed.remove(&doc);
+        }
+        Ok(())
+    }
+
+    /// Gives `doc` the policies of the document it inherits from (a `data:` or `blob:`
+    /// worker's owner), each with its delivery and disposition, replacing what it had.
+    pub fn inherit_csp_policies(&mut self, doc: NodeId, policies: &[CspPolicy]) -> DomResult<()> {
+        self.check(doc)?;
+        self.nonces.trusted_types.remove(&doc);
+        self.nonces.policies.remove(&doc);
+        for policy in policies {
+            self.add_csp_policies(doc, &policy.text, policy.report_only, policy.meta);
+        }
+        Ok(())
+    }
+
+    /// `doc`'s CSP list as delivered: header policies, then `<meta>` ones in the order they
+    /// joined the head.
+    pub fn csp_policies(&self, doc: NodeId) -> &[CspPolicy] {
+        self.nonces.policies.get(&doc).map_or(&[], |v| v.as_slice())
+    }
+
+    /// Adds the policies in `csp` (a comma-separated list) to `doc`'s CSP list, and those with a
+    /// Trusted Types directive to its Trusted Types policies (a header, or with `meta` a
     /// `<meta http-equiv="Content-Security-Policy">` that joined the head).
-    pub(crate) fn add_csp_policies(&mut self, doc: NodeId, csp: &str, report_only: bool) {
+    pub(crate) fn add_csp_policies(&mut self, doc: NodeId, csp: &str, report_only: bool, meta: bool) {
+        if self.nonces.bypassed.contains(&doc) {
+            return;
+        }
+        let all: Vec<CspPolicy> = csp
+            .split(',')
+            .map(str::trim)
+            .filter(|policy| !policy.is_empty())
+            .map(|policy| CspPolicy { text: policy.into(), report_only, meta })
+            .collect();
+        if !all.is_empty() {
+            self.nonces.policies.entry(doc).or_default().extend(all);
+        }
         let policies: Vec<CspPolicy> = csp
             .split(',')
             .map(str::trim)
@@ -66,7 +120,7 @@ impl Dom {
                     name.eq_ignore_ascii_case("trusted-types") || name.eq_ignore_ascii_case("require-trusted-types-for")
                 })
             })
-            .map(|policy| CspPolicy { text: policy.into(), report_only })
+            .map(|policy| CspPolicy { text: policy.into(), report_only, meta })
             .collect();
         if !policies.is_empty() {
             self.nonces.trusted_types.entry(doc).or_default().extend(policies);

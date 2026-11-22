@@ -1,8 +1,9 @@
 //! Trusted Types: `trustedTypes` (`TrustedTypePolicyFactory`), `TrustedTypePolicy` and the
 //! `TrustedHTML` / `TrustedScript` / `TrustedScriptURL` values, made in JS (trusted_types.js) on a
 //! realm's first use, on windows and workers. The document's CSP (headers, report-only headers
-//! and `<meta>`; only the Trusted Types directives are acted on, no other directive is
-//! enforced): `trusted-types` limits policy names, `require-trusted-types-for 'script'` makes
+//! and `<meta>`; here the Trusted Types directives, the fetch directives are `crate::csp`'s,
+//! which fires its violations through this module's `dispatchViolation`): `trusted-types` limits
+//! policy names, `require-trusted-types-for 'script'` makes
 //! the HTML and script sinks take Trusted Types values ([`compliant_string`]); a violation fires
 //! `securitypolicyviolation` (SecurityPolicyViolationEvent) at the document, and blocks only
 //! under an enforced policy.

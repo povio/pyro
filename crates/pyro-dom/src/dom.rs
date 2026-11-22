@@ -1172,13 +1172,13 @@ impl Dom {
         }
         let Some(e) = n.element() else { return };
         // HTML "Content security policy state" of a `<meta http-equiv>` child of the head: its
-        // policy joins the document's (only its Trusted Types directives are kept).
+        // policy joins the document's CSP list.
         if e.attr_local(&local_name!("http-equiv")).is_some_and(|v| v.eq_ignore_ascii_case("content-security-policy")) {
             let doc = n.owner_doc;
             let in_head = self.doc_data(doc).head != NIL && n.parent == self.doc_data(doc).head;
             if let (true, Some(content)) = (in_head, e.attr_local(&local_name!("content")).map(str::to_owned)) {
                 let doc = self.id_of(doc);
-                self.add_csp_policies(doc, &content, false);
+                self.add_csp_policies(doc, &content, false, true);
             }
             return;
         }
