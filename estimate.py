@@ -36,6 +36,7 @@ SEL={
  'P14':[r'^svg/animations/'],
  'E01':[r'^encoding/textdecoder-arguments\.any\.(worker\.)?html$'],
  'OWN-body-textstream':[r'^fetch/api/body/textstream'],
+ 'OWN-xhr-send-usp':[r'^xhr/send-usp\.any\.(worker\.)?html$'],
  'P15':[r'^intersection-observer/v2/'],
  'F01':[r'^(referrer-policy|content-security-policy)/gen/.*/sharedworker-(module|import|import-data)\.',r'^workers/modules/shared-worker'],
  'F02':[r'^html/interaction/focus/focusgroup/'],
