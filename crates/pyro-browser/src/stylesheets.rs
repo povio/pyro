@@ -253,6 +253,7 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            csp: None,
             parser_priority: blocker.is_some(),
             credentials: None,
             post: None,
@@ -614,6 +615,7 @@ impl Browser {
         let referrer = referrer.to_owned();
 
         let request = FetchRequest {
+            csp: None,
             parser_priority: self.stylesheets_block_scripts(page),
             credentials: None,
             post: None,

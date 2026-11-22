@@ -155,6 +155,10 @@ pub struct Request {
     /// The body came from a `ReadableStream` (Fetch: its body's source is null), so it cannot
     /// be sent again: a redirect other than 303 and a credentialed 401 are network errors.
     pub body_from_stream: bool,
+    /// The initiating context's Content Security Policy for this request: the client checks
+    /// every redirect target against it before following it, and fails the request with
+    /// [`crate::csp::BLOCKED_BY_CSP`] when an enforced policy blocks the hop. `None`: no policy.
+    pub csp: Option<std::sync::Arc<crate::csp::RequestCsp>>,
 }
 
 /// A `Blob` served for a `blob:` URL: its bytes and its `type`.
@@ -214,6 +218,7 @@ impl Request {
             skip_interception: false,
             blob: None,
             body_from_stream: false,
+            csp: None,
         }
     }
 }

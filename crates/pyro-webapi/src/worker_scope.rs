@@ -116,6 +116,9 @@ pub(crate) struct WorkerStart {
     /// A shared worker: its global is a `SharedWorkerGlobalScope`, and
     /// documents connect to it (`WorkerLoop::connect`).
     pub(crate) shared_worker: bool,
+    /// The owner document's CSP: its script's redirects and its module graph's static imports
+    /// are checked against it ([`crate::worker::csp_check`]).
+    pub(crate) csp: crate::worker::WorkerCsp,
 }
 
 impl WorkerStart {
@@ -162,6 +165,7 @@ impl WorkerStart {
             early: Vec::new(),
             service: None,
             shared_worker: false,
+            csp: Default::default(),
         })
     }
 
@@ -212,6 +216,7 @@ impl WorkerStart {
             early: Vec::new(),
             service: Some(service),
             shared_worker: false,
+            csp: Default::default(),
         })
     }
 }
@@ -335,7 +340,44 @@ pub struct WorkerLoop {
     /// connections that arrive wait in `held`, as the worker's port message
     /// queue is enabled once its script ran (HTML "run a worker").
     starting: Rc<Cell<bool>>,
+    /// Which of the realm's module requests are its top-level graph's static imports.
+    graph: Rc<GraphPhase>,
     held: Vec<Held>,
+}
+
+/// Which module requests of a worker's realm belong to its top-level module graph, fetched
+/// with the owner as the fetch client (HTML "fetch a module worker script graph": the owner's
+/// CSP decides, for the worker's destination), and which are `import()` of the running script
+/// (the worker's own fetches, under its own CSP).
+#[derive(Default)]
+pub(crate) struct GraphPhase {
+    /// The engine's first step (`load_module_graph`) runs: the graph is being fetched and none
+    /// of the worker's script has run, so every request is a static import.
+    loading: Cell<bool>,
+    /// The engine fetches and evaluates the graph in one step (`eval_module`): until it settles
+    /// a request may be a static import or an `import()` of the evaluating top level, and the
+    /// engine does not say which, so both policies are checked.
+    mixed: Cell<bool>,
+}
+
+/// What a worker's module request is, as far as [`GraphPhase`] can tell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GraphRequest {
+    Static,
+    Mixed,
+    Dynamic,
+}
+
+impl GraphPhase {
+    fn request(&self) -> GraphRequest {
+        if self.loading.get() {
+            GraphRequest::Static
+        } else if self.mixed.get() {
+            GraphRequest::Mixed
+        } else {
+            GraphRequest::Dynamic
+        }
+    }
 }
 
 /// What a worker that is still starting was sent.
@@ -613,6 +655,12 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
     let document = dom.borrow_mut().create_document(pyro_dom::DocumentKind::Html, start.url.as_str());
     dom.borrow_mut().set_document_active(document, true).map_err(|e| JsError::Type(format!("{e:?}").into()))?;
+    // CSP: a `data:` or `blob:` script's worker has its owner's policies, each with its
+    // delivery (header or `<meta>`) and disposition; a fetched script's are its response's,
+    // recorded by `fetch_script`.
+    if matches!(start.url.scheme(), "data" | "blob") && !start.csp.inherited.is_empty() {
+        let _ = dom.borrow_mut().inherit_csp_policies(document, &start.csp.inherited);
+    }
     let page = PageDom::new(dom, document);
     // Dedicated workers, including data/blob workers and nested workers, use
     // their creator's cluster. Shared and service workers own a distinct cluster.
@@ -679,6 +727,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     }
     // True while a module worker's top-level graph loads and evaluates.
     let starting = Rc::new(Cell::new(false));
+    let graph = Rc::new(GraphPhase::default());
     // Static imports of a module worker and `import()` in any worker: the
     // worker's own fetches, like `importScripts`.
     realm.set_module_fetcher(Some(Rc::new(WorkerModuleFetcher {
@@ -691,6 +740,10 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         sched: event_loop.scheduler(),
         in_flight: Rc::default(),
         service_graph: start.service.is_some().then(|| starting.clone()),
+        csp: start.csp.clone(),
+        graph: graph.clone(),
+        id: start.id,
+        poster: start.poster.clone(),
     })));
     {
         let s = realm.scope()?;
@@ -728,6 +781,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         poster: start.poster.clone(),
         in_error: false,
         starting,
+        graph,
         held: Vec::new(),
     };
     if script.is_none() && start.service.is_none() && !start.shared.closing.load(Ordering::Acquire) {
@@ -757,7 +811,7 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
         // A revoked or unknown object URL.
         (None, "blob") => return None,
         _ => {
-            let (bytes, mime) = fetch_script(
+            let fetched = fetch_script(
                 page,
                 &start.net,
                 &start.shared,
@@ -768,8 +822,14 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
                 script_credentials(start),
                 true,
                 Some(main),
-            )
-            .ok()?;
+                start.csp.guard.clone(),
+            );
+            // A redirect (or a final response URL) the owner's CSP blocked or reported is
+            // reported at the owner.
+            if let Some(guard) = &start.csp.guard {
+                post_violations(start.id, &start.poster, guard.take_violations());
+            }
+            let (bytes, mime) = fetched.ok()?;
             // A module worker's script is a module script: strict MIME
             // checking (HTML "fetch a single module script").
             if start.module && crate::module_script::mime_error(pyro_js::ModuleType::JavaScript, &mime, "").is_some() {
@@ -811,19 +871,28 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
     // the error (`error` at the Worker).
     // Until it settles, what the worker is sent waits (`WorkerLoop::held`).
     state.starting.set(true);
+    // One engine step fetches and evaluates the graph: its requests are static imports or
+    // `import()`s of the top level, which the engine does not tell apart (`GraphPhase::mixed`).
+    state.graph.mixed.set(true);
     let (started, failed) = (state.starting.clone(), state.starting.clone());
+    let (graph_done, graph_failed) = (state.graph.clone(), state.graph.clone());
     let evaluated = s.eval_module(&script.0, &script.1).and_then(|promise| {
         s.then(
             promise,
-            move |_, _| started.set(false),
+            move |_, _| {
+                started.set(false);
+                graph_done.mixed.set(false);
+            },
             move |s, error| {
                 failed.set(false);
+                graph_failed.mixed.set(false);
                 s.report_exception(&JsError::thrown(pyro_js::Persistent::new(s, error)))
             },
         )
     });
     if let Err(e) = evaluated {
         state.starting.set(false);
+        state.graph.mixed.set(false);
         s.report_exception(&e);
         return false;
     }
@@ -842,40 +911,52 @@ fn start_module_graph(state: &WorkerLoop, script: &(String, String)) -> bool {
     let Ok(s) = state.realm.scope() else { return false };
     let id = state.id;
     state.starting.set(true);
+    // The first step fetches the graph and runs nothing: every request until it settles is a
+    // static import (`GraphPhase::loading`); after it, one is an `import()`.
+    state.graph.loading.set(true);
     let loaded = match s.load_module_graph(&script.0, &script.1) {
         Ok(Some(loaded)) => loaded,
         Ok(None) | Err(_) => {
+            state.graph.loading.set(false);
             load_failed(&state.poster, id);
             return false;
         }
     };
     let (url, starting) = (script.1.clone(), state.starting.clone());
     let (link_poster, fetch_poster) = (state.poster.clone(), state.poster.clone());
+    let (graph_loaded, graph_failed) = (state.graph.clone(), state.graph.clone());
     let watched = s.then(
         loaded,
-        move |s, _| match s.link_and_evaluate_module(&url) {
-            Ok(promise) => {
-                let (settled, failed) = (starting.clone(), starting.clone());
-                let reported = s.then(
-                    promise,
-                    move |_, _| settled.set(false),
-                    move |s, error| {
-                        failed.set(false);
-                        s.report_exception(&JsError::thrown(Persistent::new(s, error)))
-                    },
-                );
-                if let Err(e) = reported {
-                    starting.set(false);
-                    s.report_exception(&e);
+        move |s, _| {
+            graph_loaded.loading.set(false);
+            match s.link_and_evaluate_module(&url) {
+                Ok(promise) => {
+                    let (settled, failed) = (starting.clone(), starting.clone());
+                    let reported = s.then(
+                        promise,
+                        move |_, _| settled.set(false),
+                        move |s, error| {
+                            failed.set(false);
+                            s.report_exception(&JsError::thrown(Persistent::new(s, error)))
+                        },
+                    );
+                    if let Err(e) = reported {
+                        starting.set(false);
+                        s.report_exception(&e);
+                    }
                 }
+                // A link error (or a parse error JSC reports at link time).
+                Err(_) => load_failed(&link_poster, id),
             }
-            // A link error (or a parse error JSC reports at link time).
-            Err(_) => load_failed(&link_poster, id),
         },
         // A fetch failed, a module's MIME type was refused, or it did not parse.
-        move |_, _| load_failed(&fetch_poster, id),
+        move |_, _| {
+            graph_failed.loading.set(false);
+            load_failed(&fetch_poster, id)
+        },
     );
     if watched.is_err() {
+        state.graph.loading.set(false);
         load_failed(&state.poster, id);
         return false;
     }
@@ -908,6 +989,62 @@ struct WorkerModuleFetcher {
     /// evaluating (never set for a classic one): any other module request is
     /// an `import()`.
     service_graph: Option<Rc<Cell<bool>>>,
+    /// The owner's CSP, which the top-level graph's static imports answer to ([`GraphPhase`]);
+    /// an `import()` answers to the worker's own.
+    csp: crate::worker::WorkerCsp,
+    graph: Rc<GraphPhase>,
+    id: u64,
+    poster: RemotePoster,
+}
+
+/// Violations of the owner's CSP found on the worker's thread go to the owner's document.
+fn post_violations(id: u64, poster: &RemotePoster, violations: Vec<pyro_net::csp::Violation>) {
+    if !violations.is_empty() {
+        poster(Box::new(move || deliver_up(id, Up::Violations(violations))));
+    }
+}
+
+/// The CSP check of a module a worker fetches (`dest`: its module type's destination), by
+/// what the request is ([`GraphRequest`]):
+/// - a static import of the top-level graph: the owner's policies, for the worker's own
+///   destination (`worker-src`), violations to the owner;
+/// - an `import()`: the worker's own policies, for `dest`, violations at its global;
+/// - either (the engine does one step): both, blocked when either blocks; the redirect guard
+///   is the owner's.
+///
+/// No nonce is carried: a worker's module requests have no initiating element.
+fn module_csp(
+    page: &Rc<PageDom>,
+    csp: &crate::worker::WorkerCsp,
+    request: GraphRequest,
+    id: u64,
+    poster: &RemotePoster,
+    url: &pyro_net::Url,
+    dest: pyro_net::csp::RequestDest,
+) -> Result<Option<Arc<pyro_net::csp::RequestCsp>>, crate::csp::Blocked> {
+    use pyro_net::csp::{CspRequest, RequestCsp, RequestDest};
+    let own = || crate::csp::check_request(page, CspRequest::new(url.clone(), dest), None);
+    if request == GraphRequest::Dynamic {
+        return own();
+    }
+    let owner = match &csp.owner {
+        Some(list) => {
+            let worker_dest = if dest == RequestDest::Script { csp.dest } else { dest };
+            let check = CspRequest::new(url.clone(), worker_dest);
+            let outcome = list.pre_request(&check);
+            post_violations(id, poster, outcome.violations);
+            if outcome.blocked {
+                return Err(crate::csp::Blocked);
+            }
+            Some(RequestCsp::new(list.clone(), check))
+        }
+        None => None,
+    };
+    if request == GraphRequest::Mixed {
+        let own = own()?;
+        return Ok(owner.or(own));
+    }
+    Ok(owner)
 }
 
 impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
@@ -950,6 +1087,9 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
             self.in_flight.clone(),
             self.credentials,
         );
+        // What the request is is read now, as the engine makes it.
+        let graph_request = self.graph.request();
+        let (csp, id, poster) = (self.csp.clone(), self.id, self.poster.clone());
         let request = RefCell::new(Some(request));
         self.sched.post(TaskSource::Networking, move |_| {
             // Every request of the fetch, taken out before any completes: one
@@ -972,30 +1112,50 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                 Some(e) => Err(e),
                 None => {
                     let source = match (page.upgrade(), pyro_net::Url::parse(&url)) {
-                        (Some(page), Ok(parsed)) => match blob.clone().or_else(|| page.blob_url(&url)) {
-                            Some((bytes, mime)) => Ok((bytes, pyro_net::parse_content_type(&mime).0)),
-                            None => {
-                                // A JSON module is fetched with destination "json"
-                                // (CSS modules were rejected above).
-                                let destination = match ty {
-                                    pyro_js::ModuleType::Json => Destination::Json,
-                                    pyro_js::ModuleType::Text => Destination::Text,
-                                    _ => Destination::Script,
-                                };
-                                fetch_script(
-                                    &page,
-                                    &net,
-                                    &shared,
-                                    &origin,
-                                    parsed,
-                                    destination,
-                                    RequestMode::Cors,
-                                    credentials,
-                                    false,
-                                    None,
-                                )
+                        (Some(page), Ok(parsed)) => {
+                            // CSP, once per fetch (the requests that joined it share the outcome).
+                            let dest = crate::csp::module_dest(ty);
+                            match module_csp(&page, &csp, graph_request, id, &poster, &parsed, dest) {
+                                Err(_) => Err(crate::csp::BLOCKED_BY_CSP.to_owned()),
+                                Ok(guard) => {
+                                    let fetched = match blob.clone().or_else(|| page.blob_url(&url)) {
+                                        Some((bytes, mime)) => Ok((bytes, pyro_net::parse_content_type(&mime).0)),
+                                        None => {
+                                            // A JSON module is fetched with destination "json"
+                                            // (CSS modules were rejected above).
+                                            let destination = match ty {
+                                                pyro_js::ModuleType::Json => Destination::Json,
+                                                pyro_js::ModuleType::Text => Destination::Text,
+                                                _ => Destination::Script,
+                                            };
+                                            fetch_script(
+                                                &page,
+                                                &net,
+                                                &shared,
+                                                &origin,
+                                                parsed,
+                                                destination,
+                                                RequestMode::Cors,
+                                                credentials,
+                                                false,
+                                                None,
+                                                guard.clone(),
+                                            )
+                                        }
+                                    };
+                                    // The guard's findings go where its policy is: the owner's
+                                    // for a graph request, else the worker's own.
+                                    if let Some(guard) = &guard {
+                                        if graph_request == GraphRequest::Dynamic || csp.owner.is_none() {
+                                            crate::csp::report_guard(&page, Some(guard), None);
+                                        } else {
+                                            post_violations(id, &poster, guard.take_violations());
+                                        }
+                                    }
+                                    fetched
+                                }
                             }
-                        },
+                        }
                         _ => Err("invalid URL".to_owned()),
                     };
                     match source {
@@ -1040,8 +1200,9 @@ fn tear_down(event_loop: EventLoop<WorkerLoop>, state: WorkerLoop) {
 /// Fetches a script, blocking this worker's thread until it ends or the worker
 /// is told to stop, with its MIME type essence. `main_request`: a main
 /// script's referrer, and where its response URL goes. The `main` script's
-/// `Referrer-Policy` header becomes the worker's policy; an imported
-/// script's does not.
+/// `Referrer-Policy` header becomes the worker's policy, and its CSP headers
+/// the worker's CSP list; an imported script's do not. `csp`: the request's
+/// CSP guard, checked at each redirect and against the final response URL.
 #[allow(clippy::too_many_arguments)]
 fn fetch_script(
     page: &Rc<PageDom>,
@@ -1054,10 +1215,12 @@ fn fetch_script(
     credentials: Credentials,
     main: bool,
     main_request: Option<&MainRequest>,
+    csp: Option<Arc<pyro_net::csp::RequestCsp>>,
 ) -> Result<(Bytes, String), String> {
     let mut request = Request::get(url, destination);
     request.mode = mode;
     request.credentials = credentials;
+    request.csp = csp;
     if let Some((referrer, policy)) = main_request.and_then(|m| m.referrer.clone()) {
         request.referrer = Some(referrer);
         request.referrer_policy = policy;
@@ -1105,6 +1268,15 @@ fn fetch_script(
                     page.set_referrer_policy_header(pyro_net::ReferrerPolicy::from_header(
                         head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                     ));
+                    // The worker's own CSP list is its script's response's (CSP3 §4.2.2).
+                    let joined = |name: &str| {
+                        head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(",")
+                    };
+                    let (enforce, report_only) =
+                        (joined("content-security-policy"), joined("content-security-policy-report-only"));
+                    if !enforce.is_empty() || !report_only.is_empty() {
+                        let _ = page.dom.borrow_mut().set_trusted_types_policies(page.document(), &enforce, &report_only);
+                    }
                 }
             }
             Ok(ResponseEvent::Data(bytes)) => body.extend_from_slice(&bytes),
@@ -1326,18 +1498,38 @@ impl JsClass for WorkerGlobalScope {
             let mut scripts = Vec::with_capacity(urls.len());
             for url in urls {
                 let name = url.to_string();
-                let bytes =
-                    match page.blob_url(&name) {
-                        Some((bytes, _)) => bytes,
-                        None => fetch_script(page, &net, &g.shared, &origin, url, Destination::Script, RequestMode::NoCors, Credentials::SameOrigin, false, None).map(|(b, _)| b).map_err(
-                            |e| {
-                                JsError::dom(
-                            "NetworkError",
-                            format!("Failed to execute 'importScripts': The script at '{name}' failed to load: {e}."),
-                        )
-                            },
-                        )?,
-                    };
+                // CSP: the worker's own policies, `script-src-elem` (violations at the global).
+                let request = pyro_net::csp::CspRequest::new(url.clone(), pyro_net::csp::RequestDest::Script);
+                let guard = crate::csp::check_request(page, request, None).map_err(|_| {
+                    JsError::dom(
+                        "NetworkError",
+                        format!("Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '{name}' failed to load."),
+                    )
+                })?;
+                let fetched = match page.blob_url(&name) {
+                    Some((bytes, _)) => Ok(bytes),
+                    None => fetch_script(
+                        page,
+                        &net,
+                        &g.shared,
+                        &origin,
+                        url,
+                        Destination::Script,
+                        RequestMode::NoCors,
+                        Credentials::SameOrigin,
+                        false,
+                        None,
+                        guard.clone(),
+                    )
+                    .map(|(b, _)| b),
+                };
+                crate::csp::report_guard(page, guard.as_ref(), None);
+                let bytes = fetched.map_err(|e| {
+                    JsError::dom(
+                        "NetworkError",
+                        format!("Failed to execute 'importScripts': The script at '{name}' failed to load: {e}."),
+                    )
+                })?;
                 scripts.push((script_text(&bytes), name));
             }
             for (text, name) in scripts {

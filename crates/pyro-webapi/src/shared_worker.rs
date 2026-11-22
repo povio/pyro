@@ -22,6 +22,10 @@
 //! gets `error` instead of a connection (HTML "run a worker" matching, step
 //! "worker global scope is not null").
 //!
+//! CSP: the constructing document's `worker-src` is checked at construction
+//! (a blocked script fails to load, as a network error), and again for the
+//! script's redirects and its module graph's static imports.
+//!
 //! Gaps: uncaught errors inside the worker are reported to its console only,
 //! as in browsers; no inspector target is announced for it.
 use std::cell::RefCell;
@@ -187,6 +191,13 @@ pub(crate) fn deliver_up(id: u64, up: Up) {
     match up {
         Up::LoadFailed => worker.fail_to_load(),
         Up::Closed => worker.finish(),
+        // The owner's CSP, violated on the worker's thread: reported at a connected document.
+        Up::Violations(violations) => {
+            let page = worker.clients.borrow().iter().find_map(|c| c.page.upgrade().filter(|p| !p.is_disposed()));
+            if let Some(page) = page {
+                crate::csp::report(&page, violations, None);
+            }
+        }
         // Nothing posts to the document side directly; errors stay in the worker.
         Up::Message(_) | Up::Error { .. } => {}
     }
@@ -302,6 +313,8 @@ impl JsClass for SharedWorker {
                 ));
             };
             crate::worker::check_script_url(&page, s, &input, &url)?;
+            // CSP `worker-src`: a blocked script fails to load, as a network error (below).
+            let csp = crate::worker::csp_check(&page, &url, pyro_net::csp::RequestDest::SharedWorker);
             crate::structured_clone::prepare_wire(s)?;
             // The two ends: `port` here, the other moves to the worker.
             let channel = s
@@ -319,6 +332,12 @@ impl JsClass for SharedWorker {
             let object = s.wrap_new::<SharedWorker>(SharedWorkerData(target), nt, Some(identity))?;
             s.set_hidden(object, PORT, port1)?;
             pin_target(s, &page, client_key, object);
+            let Ok(csp) = csp else {
+                // Blocked: `error` at this object in a later task; no worker is started or
+                // connected to.
+                reject_client_later(Client { page: Rc::downgrade(&page), key: client_key, realm: s.realm().downgrade() });
+                return Ok(object);
+            };
             let origin = s.realm().origin().unwrap_or_else(|| url.origin().ascii_serialization());
             // A live worker retains its context's network client. A different
             // profile or top-level site must not reuse that worker's cookie jar.
@@ -352,6 +371,7 @@ impl JsClass for SharedWorker {
                         start.shared_worker = true;
                         start.module = module;
                         start.credentials = credentials;
+                        start.csp = csp;
                         start
                     });
                     // A template process (`serve --fork`) starts no thread.

@@ -139,6 +139,8 @@ struct Job {
     /// arrived and matched (SRI), then delivered.
     integrity: Option<crate::integrity::Integrity>,
     held_head: RefCell<Option<ResponseHead>>,
+    /// The request's CSP guard: what its redirect checks found is reported as it progresses.
+    csp: Option<Arc<pyro_net::csp::RequestCsp>>,
 }
 
 /// Fetch's keepalive quota: the body bytes of a document's keepalive
@@ -888,7 +890,21 @@ pub(crate) fn send_pings(
 }
 
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
-    let function = s.function("fetch", |s, _this, args| {
+    let function = s.function("fetch", |s, _this, args| fetch(s, args, None))?;
+    s.global().set_atom("fetch", function.value())
+}
+
+/// `fetch(input, init)` of page script (`internal`: `None`), or the same request made by the
+/// engine's own script for another destination (`internal`: a worklet's module, a FontFace
+/// source), which CSP checks as that destination: such a caller gets a native function that
+/// calls this (`internal_fetch`); page script never can.
+pub(crate) fn fetch<'s>(
+    s: &Scope<'s>,
+    args: pyro_js::Args<'s>,
+    internal: Option<pyro_net::csp::RequestDest>,
+) -> JsResult<Value<'s>> {
+    let csp_dest = internal;
+    {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
         // streams.js `fetchBuffered` calls back with a boolean third argument and a body it
@@ -919,6 +935,13 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
             // Init conversion can execute script, including embedder teardown.
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
+            }
+            // CSP: a request the engine makes through `fetch` for another destination (a
+            // worklet's module: `script-src-elem`) is checked as one; blocked, a network error.
+            if let Some(dest) = csp_dest {
+                let check = pyro_net::csp::CspRequest::new(request.url.clone(), dest);
+                request.csp = crate::csp::check_request(&page, check, None)
+                    .map_err(|_| JsError::Type("Failed to fetch".into()))?;
             }
             if let Some(signal) = &signal {
                 let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
@@ -993,6 +1016,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     body,
                     integrity: extras.integrity,
                     held_head: RefCell::new(None),
+                    csp: request.csp.clone(),
                 });
                 if job.integrity.is_some() {
                     // Nothing is delivered before the whole body is checked.
@@ -1020,8 +1044,13 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
             }
         }
         Ok(promise)
-    })?;
-    s.global().set_atom("fetch", function.value())
+    }
+}
+
+/// A native `fetch` for the engine's own script that makes requests for `dest` (a worklet's
+/// module graph, a FontFace source): what its natives expose instead of the global `fetch`.
+pub(crate) fn internal_fetch<'s>(s: &Scope<'s>, dest: pyro_net::csp::RequestDest) -> JsResult<pyro_js::Object<'s>> {
+    s.function("fetch", move |s, _this, args| fetch(s, args, Some(dest)))
 }
 
 fn receive(
@@ -1142,6 +1171,7 @@ fn pump(page_id: u64, id: RequestId) {
     }
     *job.body.visible_terminal.borrow_mut() = terminal.clone();
     page.network_delivery(id, frontier);
+    crate::csp::report_guard(&page, job.csp.as_ref(), None);
     if page.is_disposed() || job.body.disposed.get() || job.body.aborted.get() {
         return;
     }

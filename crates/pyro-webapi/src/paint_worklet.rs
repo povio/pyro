@@ -108,6 +108,10 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         await_graph(s, &page, &url)
     })?;
     native.set_atom("awaitGraph", await_graph_fn.value())?;
+    // fetch(url, init) -> fetch() of the worklet's module: a "paintworklet" request (CSP's
+    // script-src-elem, not connect-src).
+    let module_fetch = crate::fetch::internal_fetch(s, pyro_net::csp::RequestDest::PaintWorklet)?;
+    native.set_atom("fetch", module_fetch.value())?;
     Ok(native)
 }
 

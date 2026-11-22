@@ -43,6 +43,9 @@ pub struct ScriptInfo {
     /// The `charset` content attribute of an HTML script (a classic script's
     /// fallback encoding when its response names none).
     pub charset: Option<String>,
+    /// The element (the target of its CSP violations; its cryptographic nonce is read from
+    /// it by the bindings, which hold the slot).
+    pub node: NodeId,
 }
 
 const JS_MIME: &[&str] = &[
@@ -627,6 +630,7 @@ impl Dom {
             integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
             referrerpolicy: e.attr_local(&markup5ever::LocalName::from("referrerpolicy")).map(str::to_owned),
             charset: if svg { None } else { e.attr_local(&local_name!("charset")).map(str::to_owned) },
+            node: script,
         })
     }
 
