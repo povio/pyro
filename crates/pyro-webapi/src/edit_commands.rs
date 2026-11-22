@@ -3440,9 +3440,12 @@ impl PlaceholderCaret {
 }
 
 enum Saved {
+    /// Invalid foreColor is an undoable selection-only command. Its inverse
+    /// uses the same endpoints because the command makes no DOM mutation.
+    UnchangedForeground { anchor: Point, focus: Point },
     Control { value: String, selection: ControlSelection, opposite: Option<ControlSelection> },
     /// Saved anchor and focus offsets, in selection direction.
-    Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection>, list_paragraphs: Vec<ListParagraph>, placeholder: Option<PlaceholderCaret>, live_selection: Option<(Point, Point)> },
+    Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection>, list_paragraphs: Vec<ListParagraph>, placeholder: Option<PlaceholderCaret> },
 }
 
 struct Step {
@@ -3458,6 +3461,7 @@ const UNDO_BYTES: usize = 16 << 20;
 impl Saved {
     fn bytes(&self) -> usize {
         match self {
+            Saved::UnchangedForeground { .. } => 2 * size_of::<Point>(),
             Saved::Control { value, .. } => value.len(),
             Saved::Host { html, table_selection, list_paragraphs, placeholder, .. } => html.len()
                 + table_selection.as_ref().map_or(0, |s| s.path.len() * size_of::<u32>())
@@ -3488,10 +3492,6 @@ impl UndoHistory {
 }
 
 fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
-    save_snapshot(page, target, false)
-}
-
-fn save_snapshot(page: &PageDom, target: NodeId, unchanged_foreground: bool) -> Option<Saved> {
     let dom = page.dom.borrow();
     if editing::is_text_entry_control(&dom, target) {
         return Some(Saved::Control {
@@ -3524,8 +3524,7 @@ fn save_snapshot(page: &PageDom, target: NodeId, unchanged_foreground: bool) -> 
             (flat.pos_of(&dom, anchor), flat.pos_of(&dom, focus))
         })
     });
-    let live_selection = if unchanged_foreground && selection.is_some() { editing::selection(page) } else { None };
-    Some(Saved::Host { html, selection, table_selection, list_paragraphs, placeholder, live_selection })
+    Some(Saved::Host { html, selection, table_selection, list_paragraphs, placeholder })
 }
 
 fn caret(page: &PageDom, target: NodeId, control: bool) -> Option<Caret> {
@@ -3583,15 +3582,13 @@ pub(crate) fn note_control_edited(page: &PageDom, el: NodeId) {
     }
 }
 
-/// An invalid foreground color on a range is undoable even though it leaves
-/// the DOM intact. Keep ordinary snapshots as fallback after external edits.
 fn record_unchanged_foreground(page: &PageDom, host: NodeId) {
-    let Some(saved) = save_snapshot(page, host, true) else { return };
+    let Some((anchor, focus)) = editing::selection(page) else { return };
     let mut history = page.undo.borrow_mut();
     if !history.replaying {
         history.typing = None;
         history.pending_typing = false;
-        history.push(Step { target: host, saved });
+        history.push(Step { target: host, saved: Saved::UnchangedForeground { anchor, focus } });
     }
 }
 
@@ -3607,6 +3604,15 @@ pub(crate) fn note_host_edited(page: &PageDom, host: NodeId) {
 
 fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
     match saved {
+        Saved::UnchangedForeground { anchor, focus } => {
+            let dom = page.dom.borrow();
+            let valid = |(node, offset)| dom.contains(target, node).unwrap_or(false)
+                && editing::editing_host(&dom, node) == Some(target) && offset <= editing::len(&dom, node);
+            if valid(anchor) && valid(focus) {
+                drop(dom);
+                editing::set_selection(page, anchor, focus);
+            }
+        }
         Saved::Control { value, selection, .. } => {
             {
                 let mut dom = page.dom.borrow_mut();
@@ -3618,17 +3624,7 @@ fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
             }
             editing::queue_control_selectionchange(page, target);
         }
-        Saved::Host { html, selection, table_selection, list_paragraphs, placeholder, live_selection } => {
-            if let Some((anchor, focus)) = live_selection {
-                let dom = page.dom.borrow();
-                let valid = |(node, offset)| editing::editing_host(&dom, node) == Some(target)
-                    && dom.contains(target, node).unwrap_or(false) && offset <= editing::len(&dom, node);
-                if valid(anchor) && valid(focus) && dom.inner_html(target).ok().as_deref() == Some(html.as_str()) {
-                    drop(dom);
-                    editing::set_selection(page, anchor, focus);
-                    return;
-                }
-            }
+        Saved::Host { html, selection, table_selection, list_paragraphs, placeholder } => {
             let ok = pyro_dom::parse::set_inner_html(&mut page.dom.borrow_mut(), target, &html).is_ok();
             if !ok {
                 return;
@@ -3678,8 +3674,7 @@ fn undo(page: &Rc<PageDom>, backward: bool, source: EditSource) -> bool {
     }
     let input_type = if backward { "historyUndo" } else { "historyRedo" };
     let doc = page.document();
-    let unchanged_foreground = matches!(&step.saved, Saved::Host { live_selection: Some(_), .. });
-    let beforeinput = source == EditSource::User || matches!(&step.saved, Saved::Host { live_selection: None, .. });
+    let beforeinput = source == EditSource::User || matches!(&step.saved, Saved::Host { .. });
     if beforeinput && !editing::input_event(page, step.target, "beforeinput", input_type, None, true)
         || page.document() != doc
         || !editing::connected(page, step.target)
@@ -3692,7 +3687,10 @@ fn undo(page: &Rc<PageDom>, backward: bool, source: EditSource) -> bool {
         }
         return true;
     }
-    let mut current = save_snapshot(page, step.target, unchanged_foreground);
+    let mut current = match &step.saved {
+        Saved::UnchangedForeground { anchor, focus } => Some(Saved::UnchangedForeground { anchor: *anchor, focus: *focus }),
+        _ => save(page, step.target),
+    };
     if let (Saved::Control { selection, opposite: Some(other), .. },
         Some(Saved::Control { selection: inverse, opposite, .. })) = (&step.saved, &mut current)
     {
