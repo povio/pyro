@@ -1,0 +1,16 @@
+{
+  "range": "<div><?start name=\"p\"?>old<?end ?> tail</div><template for=\"p\"><b>new</b></template>",
+  "setHTMLUnsafe": "<div><?start name=\"p\"?>old<?end ?> tail</div><template for=\"p\"><b>new</b></template>",
+  "appendHTMLUnsafe": "<div><?start name=\"p\"?>old<?end ?> tail</div><template for=\"p\"><b>new</b></template>",
+  "prependHTMLUnsafe": "<div><?start name=\"p\"?>old<?end ?> tail</div><template for=\"p\"><b>new</b></template>",
+  "innerHTML": "<div><b>new</b> tail</div>",
+  "parse": "<div><b>new</b> tail</div>",
+  "outer": [
+    "",
+    "TEMPLATE"
+  ],
+  "xml": [
+    2,
+    "template"
+  ]
+}
