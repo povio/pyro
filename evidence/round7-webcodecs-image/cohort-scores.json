@@ -1,0 +1,167 @@
+{
+  "target": {
+    "urls": 7,
+    "unionOccurrences": 654,
+    "parent": {
+      "pass": 205,
+      "missing": 294,
+      "strict": 0,
+      "pages": {
+        "complete": 7
+      }
+    },
+    "candidate": {
+      "pass": 491,
+      "missing": 0,
+      "strict": 3,
+      "pages": {
+        "complete": 7
+      }
+    },
+    "signed": {
+      "pass": 654,
+      "missing": 0,
+      "strict": 7,
+      "pages": {
+        "complete": 7
+      }
+    },
+    "recoveredObserved": 90,
+    "newlyReportedPass": 196,
+    "newlyReportedOther": 98,
+    "losses": 0,
+    "signedOnly": 163
+  },
+  "guards": {
+    "urls": 7,
+    "unionOccurrences": 113,
+    "parent": {
+      "pass": 103,
+      "missing": 0,
+      "strict": 6,
+      "pages": {
+        "complete": 7
+      }
+    },
+    "candidate": {
+      "pass": 103,
+      "missing": 0,
+      "strict": 6,
+      "pages": {
+        "complete": 7
+      }
+    },
+    "signed": {
+      "pass": 103,
+      "missing": 0,
+      "strict": 6,
+      "pages": {
+        "complete": 7
+      }
+    },
+    "recoveredObserved": 0,
+    "newlyReportedPass": 0,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 0
+  },
+  "IDL": {
+    "urls": 2,
+    "unionOccurrences": 630,
+    "parent": {
+      "pass": 205,
+      "missing": 294,
+      "strict": 0,
+      "pages": {
+        "complete": 2
+      }
+    },
+    "candidate": {
+      "pass": 471,
+      "missing": 0,
+      "strict": 0,
+      "pages": {
+        "complete": 2
+      }
+    },
+    "signed": {
+      "pass": 630,
+      "missing": 0,
+      "strict": 2,
+      "pages": {
+        "complete": 2
+      }
+    },
+    "recoveredObserved": 70,
+    "newlyReportedPass": 196,
+    "newlyReportedOther": 98,
+    "losses": 0,
+    "signedOnly": 159
+  },
+  "imageBehaviors": {
+    "urls": 5,
+    "unionOccurrences": 24,
+    "parent": {
+      "pass": 0,
+      "missing": 0,
+      "strict": 0,
+      "pages": {
+        "complete": 5
+      }
+    },
+    "candidate": {
+      "pass": 20,
+      "missing": 0,
+      "strict": 3,
+      "pages": {
+        "complete": 5
+      }
+    },
+    "signed": {
+      "pass": 24,
+      "missing": 0,
+      "strict": 5,
+      "pages": {
+        "complete": 5
+      }
+    },
+    "recoveredObserved": 20,
+    "newlyReportedPass": 0,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 4
+  },
+  "unique": {
+    "urls": 14,
+    "unionOccurrences": 767,
+    "parent": {
+      "pass": 308,
+      "missing": 294,
+      "strict": 6,
+      "pages": {
+        "complete": 14
+      }
+    },
+    "candidate": {
+      "pass": 594,
+      "missing": 0,
+      "strict": 9,
+      "pages": {
+        "complete": 14
+      }
+    },
+    "signed": {
+      "pass": 757,
+      "missing": 0,
+      "strict": 13,
+      "pages": {
+        "complete": 14
+      }
+    },
+    "recoveredObserved": 90,
+    "newlyReportedPass": 196,
+    "newlyReportedOther": 98,
+    "losses": 0,
+    "signedOnly": 163
+  }
+}

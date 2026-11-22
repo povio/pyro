@@ -1,0 +1,6 @@
+{
+  "withheldMixedURLs": ["webcodecs/image-decoder.https.any.html", "webcodecs/image-decoder.https.any.worker.html"],
+  "reason": "The generic pages include a crash-regression scenario. Held as entire URLs without replay or narrowing.",
+  "previouslyExcludedWorkloads": "All previous census exclusions, specifically named native-fault regressions and both terminated supplemental WebCodecs audio probes remain held.",
+  "uncovered": "The seven image targets and seven guards are a bounded subset of the pinned non-CSS inventory. Optional codecs and source types beyond the shipped decoder support are reported separately."
+}
