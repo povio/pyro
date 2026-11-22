@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+cache="$HOME/Library/Caches/lightningpanda"
+out="$cache/round7-editing/mixed-script-runs"
+export NODE_PATH="$HOME/Povio/lightningpanda/bench/node_modules"
+case "$1" in
+base) bin="$cache/round7-editing/mixed-script-runs/base";;
+head) bin="$cache/round7-editing/mixed-script-runs/pyro";;
+chrome) bin="$cache/round6-reference-158/census/launch-158";;
+esac
+exec bun bench/wpt/run.mjs --wpt "$cache/wptci/wpt-full" --dirs editing,input-events,uievents/textInput --server wptserve --testdriver --tests "$out/urls.json" --jobs 1 --bin "$1=$bin" --out "$out/$1.json"
