@@ -805,6 +805,13 @@ impl PageHooks for Hooks {
         let (Some(from), Some(from_key)) = (window.frame_host(), window.frame_key()) else { return Ok(None) };
         host.foreign_child(scope, self.page, key, (&from, from_key))
     }
+    fn opener_window<'s>(&self, scope: &pyro_js::Scope<'s>) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        match self.frames.upgrade() {
+            Some(host) if host.matches(self.page, &self.loader) => host.opener_window(scope, self.page),
+            _ => Ok(scope.null()),
+        }
+    }
+
     fn frame_window<'s>(&self, scope: &pyro_js::Scope<'s>, node: pyro_dom::NodeId) -> Option<pyro_js::Value<'s>> {
         let host = self.frames.upgrade()?;
         if !host.matches(self.page, &self.loader) {

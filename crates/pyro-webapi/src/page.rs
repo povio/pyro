@@ -879,6 +879,11 @@ pub trait PageHooks {
     fn frame_document(&self, _iframe: NodeId) -> Option<NodeId> {
         None
     }
+    /// This document's `window.opener` as the window running in `scope` sees it (null without
+    /// one): the `source` of a message its opener posts through `window.open`'s result.
+    fn opener_window<'s>(&self, scope: &pyro_js::Scope<'s>) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        Ok(scope.null())
+    }
     /// WindowProxy of the child browsing context in `scope`'s realm.
     fn frame_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _iframe: NodeId) -> Option<pyro_js::Value<'s>> {
         None

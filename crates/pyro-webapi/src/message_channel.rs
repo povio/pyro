@@ -657,6 +657,19 @@ pub(crate) fn fire_wire_message(
     message: &crate::structured_clone::WireMessage,
     origin: Option<String>,
 ) {
+    fire_wire_message_from(s, page, target, message, origin, None);
+}
+
+/// [`fire_wire_message`] with the `source` window the event reports, resolved in the realm
+/// reading `event.source` (`None`: null).
+pub(crate) fn fire_wire_message_from(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    target: TargetKey,
+    message: &crate::structured_clone::WireMessage,
+    origin: Option<String>,
+    source: Option<crate::event::MessageSource>,
+) {
     let (ty, payload) = match crate::structured_clone::decode_with_ports(s, message) {
         Ok(payload) => ("message", Some(payload)),
         Err(JsError::Terminated) => return,
@@ -672,6 +685,7 @@ pub(crate) fn fire_wire_message(
         if let Some(origin) = origin {
             f.set_sender_origin(origin);
         }
+        f.message_source_window = source;
     }
     fire(page, target, &ev);
 }

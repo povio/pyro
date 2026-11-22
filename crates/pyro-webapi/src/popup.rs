@@ -346,7 +346,15 @@ pub(crate) fn deliver_message(page: &Rc<PageDom>, message: crate::structured_clo
         }
         let (Some(window), Some(realm)) = (page.window_target(), page.main_world_realm()) else { return };
         let Ok(scope) = realm.scope() else { return };
-        crate::message_channel::fire_wire_message(&scope, &page, window, &message, Some(origin));
+        // HTML "window post message steps": `source` is the poster's WindowProxy as the popup sees
+        // it, i.e. the popup's `window.opener` (null once the opener is gone or was cleared).
+        let popup = Rc::downgrade(&page);
+        let source: crate::event::MessageSource =
+            Rc::new(move |s: &Scope<'_>| match popup.upgrade().and_then(|p| p.hooks()) {
+                Some(hooks) => hooks.opener_window(s),
+                None => Ok(s.null()),
+            });
+        crate::message_channel::fire_wire_message_from(&scope, &page, window, &message, Some(origin), Some(source));
     }));
 }
 
