@@ -4,7 +4,7 @@ Documentation only. **Do not build until the user authorizes it** (standing ZERO
 
 - Batch branch: `origin/integration/round7-batch-1000` at `9317be985` (when this file was generated).
 - Ledger: `origin/ledger/round7-fix-queue` (`ledger.jsonl`, `estimates.json`).
-- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1209**; Studio **504**; MacBook worker variants (separate column) 220.
+- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1215**; Studio **504**; MacBook worker variants (separate column) 220.
 - Every figure is an estimate from source reading. Tentative pages are counted only where the owner gave a figure or the coordinator ruled.
 
 ## 1. JSC archive
@@ -143,6 +143,12 @@ Build the JSC archive through patch **0041**:
 - d4fee3806: modal dialog with author position static/relative now computes absolute, display:contents → block (top-layer UA rule now effective) — check dialog-heavy e2e/screenshots. e275a4bb2: execCommand throws in XML documents (Chromium).
 - a6706c23b grid-to-CSS scale: fixed by d6178adf9 + 7bb67f14e (drawElementImage transform stored without bitmap/CSS scale; updateElementGeometry stays unscaled per WPT) — probe a width=300/CSS 600 canvas on build day.
 - 8f92c1072: window.stop() now aborts the document (no load/pageshow after a page's own stop) — CDP/Playwright clients waiting for load after window.stop() get none (Chrome); check e2e.
+- 12d84f4cf: byte parser may wait up to 64 KB for the meta-charset decision — check first-paint/DOMContentLoaded timing on slow pages; verify charset/with-inheritance + xhr.
+- 28b24967f: Location navigations run beforeunload listeners synchronously inside assign()/href setter (Chrome) — check Playwright goto/click-navigation with beforeunload dialogs.
+- 5526cff79: number inputs drop a typed +/- unless valid at that position — check Playwright type/fill/press on type=number (negatives, exponents).
+- f86a2669b: click on an editable (contenteditable) link no longer navigates, incl. element.click() — check e2e.
+- f27581dc4: textarea hard wrap inserts LF in the value; submitted bodies still CRLF — check form-submit e2e.
+- 1c9e5ceee: label.focus() forwards unless the label is itself focusable (refines f354df9fd).
 
 Additional watchlist notes:
 - 2026-11-22 coordinator: history navigation rate limit risk removed (cc806a11f adds an off switch used by the Playwright drop-in); R-HTML-25 now 7 (recorded on the row).
