@@ -1,0 +1,7 @@
+const fs=require('node:fs'),{spawn}=require('node:child_process');
+const chrome=spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless','--disable-background-networking','--no-first-run','--remote-debugging-pipe','--user-data-dir='+__dirname+'/profile','about:blank'],{stdio:['ignore','ignore','ignore','pipe','pipe']});
+let buffer='',next=0;const pending=new Map();
+chrome.stdio[4].on('data',data=>{buffer+=data;let end;while((end=buffer.indexOf('\0'))>=0){const msg=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);if(pending.has(msg.id)){pending.get(msg.id)(msg);pending.delete(msg.id);}}});
+const call=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++next;pending.set(id,msg=>msg.error?reject(Error(JSON.stringify(msg.error))):resolve(msg.result));chrome.stdio[3].write(JSON.stringify({id,method,params,sessionId})+'\0');});
+const watchdog=setTimeout(()=>chrome.kill('SIGKILL'),30000);
+(async()=>{try{const {targetId}=await call('Target.createTarget',{url:'about:blank'});const {sessionId}=await call('Target.attachToTarget',{targetId,flatten:true});const result=await call('Runtime.evaluate',{expression:fs.readFileSync(__dirname+'/probe.js','utf8')+'\nprobe()',returnByValue:true,awaitPromise:true},sessionId);if(result.exceptionDetails)throw Error(JSON.stringify(result.exceptionDetails)); console.log(JSON.stringify(result.result.value,null,2));}finally{clearTimeout(watchdog);chrome.kill();}})();

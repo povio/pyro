@@ -7,16 +7,18 @@ const { chromium } = createRequire(new URL('../../bench/package.json', import.me
 const [executablePath, wptRoot, modulePath, batch] = process.argv.slice(2);
 const periodic = batch === 'periodic';
 const hold = batch === 'hold';
-const directory = '/webaudio/the-audio-api/' + (hold ? 'the-audioparam-interface/' : periodic ? '' : 'the-audiobuffersourcenode-interface/');
-const pages = hold ? ['audioparam-cancel-and-hold.html', 'cancel-scheduled-values.html'] : periodic ? ['the-periodicwave-interface/periodicWave.html', 'the-oscillatornode-interface/ctor-oscillator.html'] : ['sub-sample-scheduling.html', 'audiobuffersource-duration-loop.html', 'audiobuffersource-duration-loop-playbackrate.html'];
+const realtime = batch === 'realtime-quantum';
+const directory = '/webaudio/the-audio-api/' + (realtime ? 'the-audiocontext-interface/' : hold ? 'the-audioparam-interface/' : periodic ? '' : 'the-audiobuffersourcenode-interface/');
+const pages = realtime ? ['audiocontext-rendersizehint.html'] : hold ? ['audioparam-cancel-and-hold.html', 'cancel-scheduled-values.html'] : periodic ? ['the-periodicwave-interface/periodicWave.html', 'the-oscillatornode-interface/ctor-oscillator.html'] : ['sub-sample-scheduling.html', 'audiobuffersource-duration-loop.html', 'audiobuffersource-duration-loop-playbackrate.html'];
 const allowed = new Set([...pages.map(name => directory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
 if (hold) allowed.add('/webaudio/resources/audio-param.js');
+if (realtime) allowed.add('/webaudio/resources/rendersizehint-testing.js');
 try {
   const page = await browser.newPage();
   if (modulePath) {
     const source = await readFile(modulePath, 'utf8');
-    await page.addInitScript(`{ const audio = (${source})({activated: () => false}); ${periodic ? 'delete globalThis.PeriodicWave;' : ''} Object.assign(globalThis, audio); globalThis.installedAudio = audio; }`);
+    await page.addInitScript(`{ const audio = (${source})({activated: () => ${realtime}, timer: (delay, fn) => setTimeout(fn, delay), clearTimer: clearTimeout}); ${periodic ? 'delete globalThis.PeriodicWave;' : ''} Object.assign(globalThis, audio); globalThis.installedAudio = audio; }`);
   }
   await page.route('**/*', async route => {
     const path = new URL(route.request().url()).pathname;
@@ -30,9 +32,29 @@ try {
     await page.goto('https://wpt.test' + directory + name);
     if (modulePath) assert.ok(await page.evaluate(() => globalThis.installedAudio?.OfflineAudioContext === OfflineAudioContext && globalThis.installedAudio?.AudioBufferSourceNode === AudioBufferSourceNode), 'Web Audio module installation failed');
     if (modulePath && periodic) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.OscillatorNode === OscillatorNode && installedAudio.PeriodicWave === globalThis.PeriodicWave));
+    if (modulePath && realtime) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext));
     await page.waitForFunction(() => globalThis.results);
     outcomes[name] = await page.evaluate(() => globalThis.results);
   }
+  if (realtime) outcomes['source-clock'] = await page.evaluate(async () => {
+    const tests = [];
+    for (const quantum of [13, 500, 4096]) {
+      const context = new AudioContext({sampleRate: 48000, renderSizeHint: quantum});
+      try {
+        await context.resume();
+        const source = context.createOscillator();
+        source.connect(context.destination);
+        const ended = new Promise(resolve => { source.onended = () => resolve(true); });
+        const stop = context.currentTime + 0.05;
+        source.start();
+        source.stop(stop);
+        const delivered = await Promise.race([ended, new Promise(resolve => setTimeout(() => resolve(false), 2000))]);
+        const frame = Math.round(context.currentTime * context.sampleRate);
+        tests.push([`scheduled oscillator end and ${quantum}-frame clock`, delivered && context.renderQuantumSize === quantum && frame % quantum === 0 && frame + quantum >= Math.floor(stop * context.sampleRate) ? 0 : 1]);
+      } finally { await context.close(); }
+    }
+    return {status: 0, tests};
+  });
   if (hold) outcomes['hold-pcm'] = await page.evaluate(async () => {
     const tests = [];
     for (const event of ['set', 'target', 'ramp', 'none', 'curveEnd']) {
