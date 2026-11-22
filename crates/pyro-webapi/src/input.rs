@@ -137,6 +137,24 @@ fn can_focus(page: &PageDom, el: NodeId) -> bool {
         && !page.layout().style().is_inert(&dom, el)
 }
 
+thread_local! {
+    /// The `focusVisible` member of the `focus(options)` being run, if given.
+    static FOCUS_VISIBLE_OPTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// `element.focus(options)`: [`focus_element_with_options`] with the `focusVisible` member, which
+/// when given decides whether the focused element matches `:focus-visible`.
+pub(crate) fn focus_element_from_script(
+    page: &Rc<PageDom>,
+    el: NodeId,
+    prevent_scroll: bool,
+    focus_visible: Option<bool>,
+) {
+    let previous = FOCUS_VISIBLE_OPTION.with(|f| f.replace(focus_visible));
+    focus_element_with_options(page, el, prevent_scroll);
+    FOCUS_VISIBLE_OPTION.with(|f| f.set(previous));
+}
+
 /// HTML focusing steps, coordinated with the browsing-context owner.
 pub fn focus_element(page: &Rc<PageDom>, el: NodeId) {
     focus_element_with_options(page, el, false);
@@ -205,7 +223,10 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
         // shows its ring; after a pointer press only an element that takes
         // typed text does.
         let mut dom = page.dom.borrow_mut();
-        let visible = !page.pointer_modality.get() || takes_typed_text(&dom, el);
+        // `focus({focusVisible})` decides it when given.
+        let visible = FOCUS_VISIBLE_OPTION
+            .with(std::cell::Cell::get)
+            .unwrap_or_else(|| !page.pointer_modality.get() || takes_typed_text(&dom, el));
         let _ = dom.set_focus_visible(doc, visible);
         let _ = dom.set_focused(doc, Some(el));
         // The focusgroup's memory follows focus onto its items.

@@ -5615,14 +5615,12 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 // Option getters can call back into JS; convert before focus/DOM borrows.
 fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let value = a.get(0);
-    let prevent_scroll = if value.is_null() || value.is_undefined() {
-        false
+    let (prevent_scroll, focus_visible) = if value.is_null() || value.is_undefined() {
+        (false, None)
     } else {
-        value
-            .as_object()
-            .ok_or_else(|| JsError::Type("Focus options must be an object".into()))?
-            .get_atom("preventScroll")?
-            .to_bool()
+        let options = value.as_object().ok_or_else(|| JsError::Type("Focus options must be an object".into()))?;
+        let focus_visible = options.get_atom("focusVisible")?;
+        (options.get_atom("preventScroll")?.to_bool(), (!focus_visible.is_undefined()).then(|| focus_visible.to_bool()))
     };
     // Chrome's `HTMLLabelElement::focus`: a label that is not focusable itself (no `tabindex`)
     // passes focus to its labeled control, an inert label too (WPT the-dialog-element/
@@ -5636,7 +5634,7 @@ fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value
             n.id
         }
     };
-    crate::input::focus_element_with_options(n.page(), target, prevent_scroll);
+    crate::input::focus_element_from_script(n.page(), target, prevent_scroll, focus_visible);
     Ok(s.undefined())
 }
 
