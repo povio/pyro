@@ -939,9 +939,12 @@ fn dialog_focusing_steps(page: &Rc<PageDom>, dialog: NodeId) {
             return;
         }
     }
+    // HTML "focus delegate" for a dialog: the first sequentially focusable descendant, or the
+    // focus delegate of a `delegatesFocus` shadow host met first (any focusable area in its
+    // shadow trees, autofocus first; WPT the-dialog-element/dialog-focus-shadow-double-nested).
     let first = {
         let list = descendants(&page.dom.borrow(), dialog);
-        list.into_iter().find(|&d| {
+        list.into_iter().find_map(|d| {
             let tabbable = page
                 .dom
                 .borrow()
@@ -950,7 +953,16 @@ fn dialog_focusing_steps(page: &Rc<PageDom>, dialog: NodeId) {
                 .flatten()
                 .and_then(|t| t.trim().parse::<i32>().ok())
                 .is_none_or(|t| t >= 0);
-            tabbable && focusable_rendered(page, d)
+            if tabbable && focusable_rendered(page, d) {
+                return Some(d);
+            }
+            let layout = page.layout();
+            let dom = page.dom.borrow();
+            if !dom.is_delegates_focus_host(d) {
+                return None;
+            }
+            let delegate = dom.focus_delegate(d, &|n| crate::input::is_focusable_area(&layout, &dom, n));
+            delegate
         })
     };
     match first {
