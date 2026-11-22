@@ -131,22 +131,42 @@ impl Dom {
     }
 
     /// Only direct text children supply a clean textarea's default value.
+    /// Tracked when the textarea has value ranges or a selection script set.
     pub(crate) fn tracked_textarea_value(&self, parent: u32) -> Option<(NodeId, String)> {
-        if !self.value_ranges.contains_key(&parent) || self.html_local(parent) != Some(&local_name!("textarea")) {
+        if self.html_local(parent) != Some(&local_name!("textarea")) {
             return None;
         }
         let el = self.n(parent).element()?;
-        if el.control.as_ref().is_some_and(|control| control.value.is_some()) {
+        let control = el.control.as_ref();
+        if control.is_some_and(|control| control.value.is_some())
+            || !(self.value_ranges.contains_key(&parent) || control.is_some_and(|c| c.selection_set))
+        {
             return None;
         }
         let id = self.id_of(parent);
         Some((id, self.value(id).ok()?))
     }
 
+    /// A clean textarea's value changed with its children: its value ranges
+    /// are replaced, and its selection is clamped to the new value, so a
+    /// removal that empties it leaves the selection at 0 (as Chrome).
     pub(crate) fn update_tracked_textarea(&mut self, old: Option<(NodeId, String)>) {
-        if let Some((id, old)) = old {
-            if self.value(id).is_ok_and(|value| value != old) {
-                self.replace_all_value_ranges(id.idx);
+        let Some((id, old)) = old else { return };
+        let Ok(value) = self.value(id) else { return };
+        if value == old {
+            return;
+        }
+        if self.value_ranges.contains_key(&id.idx) {
+            self.replace_all_value_ranges(id.idx);
+        }
+        let len = utf16_len(&value);
+        if let Ok(c) = self.control_state_mut(id) {
+            if c.selection_set {
+                let clamped = (c.selection.0.min(len), c.selection.1.min(len));
+                if clamped != c.selection {
+                    c.selection = clamped;
+                    c.selection_direction = None;
+                }
             }
         }
     }
@@ -195,13 +215,25 @@ impl Dom {
     pub fn reset_control(&mut self, id: NodeId) -> DomResult<()> {
         let i = self.check(id)?;
         if self.control_state(id)?.is_none() { return Ok(()) }
-        let before = self.value_ranges.contains_key(&i).then(|| self.value(id)).transpose()?;
+        // A text input whose value the reset changes has its cursor moved to
+        // the end of the new value (HTML "set the value" steps, as Chrome).
+        let text_input = self.is_input(i) && self.input_type_idx(i).is_textual();
+        let before = (text_input || self.value_ranges.contains_key(&i)).then(|| self.value(id)).transpose()?;
         let state = self.control_state_mut(id)?;
         let validity = state.custom_validity.take();
         *state = Default::default();
         state.custom_validity = validity;
         if let Some(before) = before {
-            if self.value(id)? != before { self.replace_all_value_ranges(i); }
+            let after = self.value(id)?;
+            if after != before {
+                if self.value_ranges.contains_key(&i) { self.replace_all_value_ranges(i); }
+                if text_input {
+                    let end = utf16_len(&after);
+                    let c = self.control_state_mut(id)?;
+                    c.selection = (end, end);
+                    c.selection_set = true;
+                }
+            }
         }
         Ok(())
     }
@@ -652,6 +684,22 @@ impl Dom {
         if new == before.ty {
             return;
         }
+        let selectable = |t: InputType| t.is_textual() && t != InputType::Email;
+        let (previously_selectable, now_selectable) = (selectable(before.ty), selectable(new));
+        self.input_type_changed_value(i, before, new);
+        // Step 9: a control that becomes selectable has its cursor at the
+        // beginning of the text, direction "none".
+        if !previously_selectable && now_selectable {
+            let id = self.id_of(i);
+            if let Ok(c) = self.control_state_mut(id) {
+                c.selection = (0, 0);
+                c.selection_set = true;
+                c.selection_direction = None;
+            }
+        }
+    }
+
+    fn input_type_changed_value(&mut self, i: u32, before: InputTypeBefore, new: InputType) {
         let (old_mode, new_mode) = (before.ty.value_mode(), new.value_mode());
         if old_mode == ValueMode::Value && matches!(new_mode, ValueMode::Default | ValueMode::DefaultOn) {
             if !before.value.is_empty() {
