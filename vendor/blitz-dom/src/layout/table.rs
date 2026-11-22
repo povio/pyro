@@ -2157,7 +2157,7 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     };
     style.grid_template_rows = row_tracks(&rows, gutter);
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
-    style.collapsed_rows = rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
+    style.collapsed_rows = collapsed_rows(doc, &rows);
     style.collapsed_columns = collapsed_columns(doc, &columns);
     // pyro: a `<col>`'s width has the halves of the collapsed borders beside its column in it (CSS 2.1
     // § 17.6.2, as Chromium): in uniform gutters, which hold the borders whole, the track is that much
@@ -3087,7 +3087,7 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
     };
     ctx.style.grid_template_rows = row_tracks(&ctx.rows, gutter);
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
-    ctx.style.collapsed_rows = ctx.rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
+    ctx.style.collapsed_rows = collapsed_rows(doc, &ctx.rows);
     ctx.style.collapsed_columns = collapsed_columns(doc, &ctx.columns);
     if boxes_changed {
         let (before, after) = (doc.nodes[table].before(), doc.nodes[table].after());
@@ -3183,6 +3183,15 @@ fn collapsed_columns(doc: &BaseDocument, columns: &[TableColumn]) -> Vec<u16> {
         })
         .map(|(i, _)| i as u16)
         .collect()
+}
+
+fn collapsed_rows(doc: &BaseDocument, rows: &[TableRow]) -> Vec<u16> {
+    rows.iter().enumerate().filter_map(|(index, row)| {
+        let group_collapsed = row.group.and_then(|group| doc.nodes[group].primary_styles()).is_some_and(|style| {
+            style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
+        });
+        (row.collapsed || group_collapsed).then_some(index as u16)
+    }).collect()
 }
 
 fn push_columns(

@@ -52,8 +52,34 @@ pub enum DocumentKind {
     Xml,
 }
 
+/// Registry associated with an element, shadow root, or document. Default
+/// identifies the node document's global registry, including after adoption.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum RegistryAssociation {
+    Default,
+    Null,
+    Scoped(u64),
+}
+
+impl RegistryAssociation {
+    pub(crate) fn effective_global(self) -> Self {
+        if self == Self::Default { Self::Default } else { Self::Null }
+    }
+}
+
+/// Definition used to construct a custom element. Unlike the node's registry
+/// association this remains fixed when its owner document changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CustomDefinitionOwner {
+    pub page: u64,
+    pub realm: u64,
+    pub registry: RegistryAssociation,
+}
+
 #[derive(Debug)]
 pub struct DocumentData {
+    pub(crate) has_global_registry: bool,
+    pub(crate) preferred_sheet_name: Option<Box<str>>,
     pub raster_budget: pyro_raster::PageRasters,
     pub kind: DocumentKind,
     pub quirks: QuirksMode,
@@ -304,6 +330,7 @@ pub mod shadow_flags {
     /// A user-agent shadow root (an SVG `<use>` instance): not rendered (the
     /// renderer resolves `<use>` itself) and not reachable from script.
     pub const USER_AGENT: u8 = 64;
+    pub const KEEP_REGISTRY_NULL: u8 = 128;
 }
 
 /// Mutable form-control state that is not reflected in attributes.
@@ -341,13 +368,26 @@ pub struct ControlState {
 /// selector engines compare (one `u64` per comparison).
 pub type Atom = style::Atom;
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct InlineStyleBacking {
+    pub semantic: Option<String>,
+    pub typed: Option<crate::stylo::declarations::TypedStyleValues>,
+}
+
 #[derive(Debug)]
 pub struct ElementData {
+    /// HTML tree builder learns the intended parent after allocating a token.
+    pub(crate) parser_needs_registry: bool,
+    pub(crate) link_explicitly_enabled: bool,
     pub name: QualName,
     /// Read freely; written only through the methods that keep `id` and
     /// `classes` in step (`set_attrs`, `push_attr`, `remove_attr`,
     /// `replace_attr_value`, `rename_attr`).
     pub attrs: Vec<Attr>,
+    /// Internal CSS input only when CSSOM serialization discarded a parsed numeric sign.
+    pub(crate) semantic_style: Option<std::sync::Arc<InlineStyleBacking>>,
+    /// CSSOM already checked whether the current style text needs a separate parser input.
+    pub(crate) checked_style_backing: bool,
     /// The `id` attribute (no namespace) as an atom, parsed when written.
     id: Option<Atom>,
     /// The `class` attribute (no namespace) split on ASCII whitespace,
@@ -394,8 +434,12 @@ pub mod element_flags {
 impl ElementData {
     pub fn new(name: QualName) -> Self {
         ElementData {
+            parser_needs_registry: false,
+            link_explicitly_enabled: false,
             name,
             attrs: Vec::new(),
+            semantic_style: None,
+            checked_style_backing: false,
             id: None,
             classes: Box::default(),
             template_contents: NIL,
@@ -406,6 +450,14 @@ impl ElementData {
             is_value: None,
         }
     }
+    /// DOM defines both uncustomized elements and successfully upgraded elements.
+    /// Only HTML elements are eligible for the undefined custom element state.
+    pub(crate) fn is_defined(&self) -> bool {
+        self.flags & element_flags::CUSTOM_DEFINED != 0
+            || !self.is_html()
+            || (self.is_value.is_none() && !crate::dom::is_valid_custom_element_name(&self.name.local))
+    }
+
     /// Whether a custom element definition named `name` may be this element's: an autonomous one
     /// of its local name, or a customized built-in one of its is value.
     pub fn may_be_defined_as(&self, name: &LocalName) -> bool {
@@ -423,6 +475,16 @@ impl ElementData {
     pub fn is_html(&self) -> bool {
         self.name.ns == markup5ever::ns!(html)
     }
+    /// Override for the style parser. DOM attribute access and selector matching use `attrs`.
+    pub fn semantic_inline_style(&self) -> Option<&str> { self.semantic_style.as_ref().and_then(|s| s.semantic.as_deref()) }
+    /// Specified representations assigned as Typed OM objects rather than parsed CSS strings.
+    pub fn typed_style_values(&self) -> Option<&crate::stylo::declarations::TypedStyleValues> {
+        self.semantic_style.as_ref()?.typed.as_ref()
+    }
+    pub fn checked_inline_style_backing(&self) -> Option<bool> {
+        self.checked_style_backing.then(|| self.semantic_inline_style().is_some())
+    }
+
     /// The attribute in no namespace named `local` (a dynamic name; see
     /// [`ElementData::attr_local`] for a constant one).
     pub fn attr(&self, local: &str) -> Option<&str> {
@@ -488,6 +550,13 @@ impl ElementData {
     }
     /// Replaces every attribute (element creation, cloning).
     pub(crate) fn set_attrs(&mut self, attrs: Vec<Attr>) {
+        if self.checked_style_backing {
+            let next = attrs.iter().find(|a| a.name.local == local_name!("style") && a.name.ns == markup5ever::ns!());
+            if self.attr_local(&local_name!("style")) != next.map(|a| &*a.value) {
+                self.semantic_style = None;
+                self.checked_style_backing = false;
+            }
+        }
         self.attrs = attrs;
         self.refresh(&local_name!("id"));
         self.refresh(&local_name!("class"));
@@ -495,10 +564,12 @@ impl ElementData {
     /// The attributes with their parsed atoms, for [`ElementData::set_attr_state`]
     /// (cloning: nothing is parsed again).
     pub(crate) fn attr_state(&self) -> AttrState {
-        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone())
+        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone(), self.semantic_style.clone(), self.checked_style_backing)
     }
     pub(crate) fn set_attr_state(&mut self, state: AttrState) {
-        let AttrState(attrs, id, classes) = state;
+        let AttrState(attrs, id, classes, semantic_style, checked_style_backing) = state;
+        self.checked_style_backing = checked_style_backing;
+        self.semantic_style = semantic_style;
         self.attrs = attrs;
         self.id = id;
         self.classes = classes;
@@ -553,7 +624,7 @@ impl ElementData {
 }
 
 /// An element's attributes with their parsed id and classes.
-pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>);
+pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>, Option<std::sync::Arc<InlineStyleBacking>>, bool);
 
 /// Whether an attribute of this name feeds `ElementData::id` or `classes`.
 #[inline]

@@ -1,0 +1,2 @@
+#!/bin/sh
+exec '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless --autoplay-policy=no-user-gesture-required --disable-background-networking --no-first-run --disable-default-apps --user-data-dir=/tmp/r7-audio-eval/chrome-profile --remote-debugging-port="$5" about:blank

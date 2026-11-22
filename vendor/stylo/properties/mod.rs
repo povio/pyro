@@ -853,11 +853,16 @@ fn parse_non_custom_property_declaration_value_into(
     }
     saw_arbitrary_substitution_functions =
         saw_arbitrary_substitution_functions || input.seen_arbitrary_substitution_functions();
-    if !saw_arbitrary_substitution_functions || invalid {
+    if invalid {
         return Err(err);
+    }
+    if !saw_arbitrary_substitution_functions {
+        let css = input.slice_from(start_pos);
+        if !css.contains("--") && !css.contains('\\') { return Err(err); }
     }
     input.reset(start);
     let value = custom_properties::VariableValue::parse(context, input)?;
+    if !value.has_references() { return Err(err); }
     parsed_custom(declarations, value);
     Ok(())
 }

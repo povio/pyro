@@ -11,7 +11,18 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
         let value = args.get(0);
         if args.len() > 1 {
             return match args.get(1).to_number()? as u32 {
-                0 => Ok(crate::file::clone_host(s, value)?.unwrap_or_else(|| s.undefined())),
+                0 => {
+                    if let Some(chunk) = crate::encoded_chunks::parts(s, value) {
+                        if args.get(2).to_bool() {
+                            return Err(JsError::dom("DataCloneError", "Encoded chunks cannot be serialized for storage."));
+                        }
+                        if let Some(marker) = args.get(3).as_object() {
+                            marker.set_index(0, s.boolean(true))?;
+                        }
+                        return crate::encoded_chunks::wrap(s, &chunk);
+                    }
+                    Ok(crate::file::clone_host(s, value)?.unwrap_or_else(|| s.undefined()))
+                }
                 1 => Ok(crate::message_channel::prepare_transfer(s, value)?.unwrap_or_else(|| s.undefined())),
                 // A platform object the script does not know (CryptoKey,
                 // ImageBitmap), or undefined; asked only for a value it would
@@ -28,6 +39,8 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
                 }
                 // A transferable ImageBitmap or OffscreenCanvas: its copy
                 // here (the original is detached by mode 9), else undefined.
+                10 => geometry_parts(s, value),
+                11 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "geometryFromParts", &[value, args.get(2)]),
                 8 => match canvas_object(s, value, true)? {
                     Some(object) => crate::canvas::make_canvas_object(s, &object),
                     None => Ok(s.undefined()),
@@ -135,6 +148,17 @@ fn with_stream_realm<'s, T>(
     }
 }
 
+/// Read geometry slots in the source realm and construct copies in the receiving realm.
+fn geometry_parts<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>) -> JsResult<pyro_js::Value<'s>> {
+    let Some(realm) = value.as_object().and_then(|object| s.object_realm(object)) else { return Ok(s.undefined()) };
+    let scope = realm.scope()?;
+    let page = crate::target::page_of(&scope)?;
+    let Some(module) = crate::canvas::MODULE.existing(&scope, &page)? else { return Ok(s.undefined()) };
+    let describe = module.get_atom("geometryParts")?.as_object().ok_or(JsError::ContextDestroyed)?;
+    let result = describe.call(None, &[scope.rehome(value)])?;
+    Ok(Persistent::new(&scope, result).get(s))
+}
+
 /// The ImageBitmap or OffscreenCanvas `value` as a [`crate::canvas::CanvasObject`]:
 /// of `s`'s realm, or of the poster's during [`clone_into`]'s second pass.
 fn canvas_object(
@@ -196,6 +220,26 @@ fn complete_stream_transfer<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>, info: 
     done.ok_or_else(|| JsError::dom("DataCloneError", "Value is not transferable"))
 }
 
+/// Local messages normally keep the receiver-realm clone. A graph containing
+/// cluster-bound data stays serialized until delivery, since a MessagePort
+/// (and its queue) can move to a different realm before it is started.
+pub(crate) enum MessagePayload {
+    Local(Persistent, Option<Persistent>),
+    Serialized(WireMessage),
+}
+
+impl MessagePayload {
+    pub(crate) fn read(self, receiver: &Scope<'_>) -> JsResult<(Persistent, Option<Persistent>)> {
+        match self {
+            Self::Local(value, ports) => Ok((value, ports)),
+            Self::Serialized(message) => {
+                let (value, ports) = decode_with_ports(receiver, &message)?;
+                Ok((Persistent::new(receiver, value), ports.map(|p| Persistent::new(receiver, p.value()))))
+            }
+        }
+    }
+}
+
 /// [`clone_with_ports`] of a message posted from `s`'s realm into `rs`'s
 /// (a window or MessagePort of another realm). Whatever the clone throws at
 /// the poster (a getter's exception, a transfer-list TypeError, a
@@ -211,10 +255,11 @@ pub(crate) fn clone_into<'s, 'r>(
     rs: &Scope<'r>,
     value: pyro_js::Value<'s>,
     options: pyro_js::Value<'s>,
-) -> JsResult<(pyro_js::Value<'r>, pyro_js::Object<'r>)> {
-    if s.realm_id() == rs.realm_id() {
-        return clone_with_ports(rs, rs.rehome(value), rs.rehome(options));
-    }
+) -> JsResult<MessagePayload> {
+    let local = |value, ports: pyro_js::Object<'r>| {
+        let has_ports = ports.get_atom("length")?.to_number()? > 0.;
+        Ok(MessagePayload::Local(Persistent::new(rs, value), has_ports.then(|| Persistent::new(rs, ports.value()))))
+    };
     let second = |value: pyro_js::Value<'r>, options: pyro_js::Value<'r>| {
         clone_with_ports(rs, value, options).map_err(|error| match error {
             JsError::Terminated | JsError::ContextDestroyed => error,
@@ -231,10 +276,18 @@ pub(crate) fn clone_into<'s, 'r>(
     let Ok(clone) = realm_clone(s) else {
         // No clone function in the poster's realm (an internal one): clone
         // straight into the receiver, still without leaking its errors.
-        return from_source(rs.rehome(value), rs.rehome(options));
+        let (copy, ports) = from_source(rs.rehome(value), rs.rehome(options))?;
+        return local(copy, ports);
     };
     let (ports, streams, canvases) = (s.array(&[])?, s.array(&[])?, s.array(&[])?);
-    let copy = clone.call(None, &[value, options, ports.value(), s.undefined(), streams.value(), canvases.value()])?;
+    let cluster_bound = s.array(&[s.boolean(false)])?;
+    let copy = clone.call(None, &[
+        value, options, ports.value(), s.undefined(), streams.value(), canvases.value(), s.boolean(false), cluster_bound.value(),
+    ])?;
+    let must_serialize = cluster_bound.get_index(0)?.to_bool();
+    if !must_serialize && s.realm_id() == rs.realm_id() {
+        return local(rs.rehome(copy), rs.rehome_object(ports));
+    }
     // The second pass transfers what the first one made: ports, streams,
     // then ImageBitmaps and OffscreenCanvases.
     let port_count = ports.get_atom("length")?.to_number()? as u32;
@@ -247,13 +300,17 @@ pub(crate) fn clone_into<'s, 'r>(
         for i in 0..canvas_count {
             ports.set_index(port_count + stream_count + i, canvases.get_index(i)?)?;
         }
-        let o = rs.object();
-        o.set_atom("transfer", rs.rehome(ports.value()))?;
+        let o = s.object();
+        o.set_atom("transfer", ports.value())?;
         o.value()
     } else {
-        rs.undefined()
+        s.undefined()
     };
-    from_source(rs.rehome(copy), options)
+    if must_serialize {
+        return encode_message(s, copy, options).map(MessagePayload::Serialized);
+    }
+    let (copy, ports) = from_source(rs.rehome(copy), rs.rehome(options))?;
+    local(copy, ports)
 }
 
 /// `postMessage(message, transfer)` / `postMessage(message, options)` as the
@@ -287,6 +344,8 @@ pub struct WireMessage {
     /// The ImageBitmaps (pixels shared, not copied) and transferred
     /// OffscreenCanvases it holds.
     canvases: Vec<crate::canvas::CanvasObject>,
+    /// Serialized WebCodecs chunks retain immutable byte storage.
+    chunks: Vec<crate::encoded_chunks::EncodedChunk>,
 }
 
 impl WireMessage {
@@ -299,6 +358,7 @@ impl WireMessage {
             ports: Vec::new(),
             listed_ports: 0,
             canvases: Vec::new(),
+            chunks: Vec::new(),
         }
     }
     #[cfg(test)]
@@ -310,7 +370,8 @@ impl WireMessage {
         self.text.len()
             + self.buffers.iter().map(Vec::len).sum::<usize>()
             + self.blobs.iter().map(bytes::Bytes::len).sum::<usize>()
-            + 64 * (1 + self.ports.len() + self.canvases.len())
+            + self.chunks.iter().map(crate::encoded_chunks::EncodedChunk::byte_length).sum::<usize>()
+            + 64 * (1 + self.ports.len() + self.canvases.len() + self.chunks.len())
     }
     /// The pipe sides it carries.
     pub(crate) fn transit_ends(&self) -> &[crate::port_link::TransitEnd] {
@@ -333,6 +394,8 @@ thread_local! {
     static WIRE_BLOBS: std::cell::RefCell<Vec<bytes::Bytes>> = const { std::cell::RefCell::new(Vec::new()) };
     /// As `WIRE_BLOBS`, for ImageBitmaps and OffscreenCanvases.
     static WIRE_CANVASES: std::cell::RefCell<Vec<crate::canvas::CanvasObject>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    static WIRE_CHUNKS: std::cell::RefCell<Vec<crate::encoded_chunks::EncodedChunk>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -409,6 +472,30 @@ fn wire_host<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>) -> JsResult<pyro_js::V
             let object = object.ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
             crate::canvas::make_canvas_object(s, &object)
         }
+        11 => {
+            let Some(chunk) = crate::encoded_chunks::parts(s, value) else { return Ok(s.undefined()) };
+            let index = WIRE_CHUNKS.with_borrow_mut(|chunks| {
+                let index = chunks.len();
+                chunks.push(chunk);
+                index
+            });
+            Ok(s.number(index as f64))
+        }
+        12 => {
+            let index = value.to_number()? as usize;
+            let chunk = WIRE_CHUNKS.with_borrow(|chunks| chunks.get(index).cloned())
+                .ok_or_else(|| JsError::dom("DataCloneError", "Malformed encoded chunk"))?;
+            crate::encoded_chunks::wrap(s, &chunk)
+        }
+        15 => geometry_parts(s, value),
+        16 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "geometryFromParts", &[value, args.get(2)]),
+        13 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "imageInfo", &[value]),
+        14 => {
+            let tree = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed ImageData"))?;
+            crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "imageDataOf", &[
+                args.get(2), tree.get_index(1)?, tree.get_index(2)?, tree.get_index(3)?,
+            ])
+        }
         _ => {
             let parts = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
             crate::streams::transfer_in(s, parts.get_index(0)?, parts.get_index(1)?)
@@ -453,13 +540,29 @@ pub(crate) fn prepare_wire(s: &Scope<'_>) -> JsResult<()> {
 /// StructuredSerialize for another VM. `options` is `postMessage`'s second
 /// argument (a transfer list or `{transfer}`); listed ArrayBuffers are detached.
 pub fn encode_message<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>, options: pyro_js::Value<'s>) -> JsResult<WireMessage> {
+    encode(s, value, options, false)
+}
+
+/// StructuredSerializeForStorage for persistent state such as history entries.
+pub fn encode_for_storage<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>) -> JsResult<WireMessage> {
+    encode(s, value, s.undefined(), true)
+}
+
+fn encode<'s>(
+    s: &Scope<'s>,
+    value: pyro_js::Value<'s>,
+    options: pyro_js::Value<'s>,
+    for_storage: bool,
+) -> JsResult<WireMessage> {
     let page = crate::target::page_of(s)?;
     let clone = page.structured_clones.borrow().get(&s.realm_id()).map(|p| p.get(s));
     let clone = clone.ok_or_else(|| JsError::dom("NotSupportedError", "structured clone is unavailable"))?;
     let (encode, _) = wire_functions(s)?;
     let saved = WIRE_BLOBS.with(|b| b.take());
     let saved_canvases = WIRE_CANVASES.with(|c| c.take());
-    let pair = encode.call(None, &[clone, value, options]);
+    let saved_chunks = WIRE_CHUNKS.with(|c| c.take());
+    let pair = encode.call(None, &[clone, value, options, s.boolean(for_storage)]);
+    let chunks = WIRE_CHUNKS.with(|c| c.replace(saved_chunks));
     let blobs = WIRE_BLOBS.with(|b| b.replace(saved));
     let canvases = WIRE_CANVASES.with(|c| c.replace(saved_canvases));
     let pair = pair?;
@@ -492,7 +595,7 @@ pub fn encode_message<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>, options: pyr
         ports.push(crate::message_channel::export_port(s, port)?);
     }
     let listed_ports = (pair.get_index(3)?.to_number()? as usize).min(ports.len());
-    Ok(WireMessage { text, buffers, blobs, ports, listed_ports, canvases })
+    Ok(WireMessage { text, buffers, blobs, ports, listed_ports, canvases, chunks })
 }
 
 /// StructuredDeserialize into `s`'s realm.
@@ -508,6 +611,13 @@ pub(crate) fn decode_with_ports<'s>(
     s: &Scope<'s>,
     message: &WireMessage,
 ) -> JsResult<(pyro_js::Value<'s>, Option<pyro_js::Object<'s>>)> {
+    // Reject an incompatible recipient before claiming any transferred ports.
+    if !message.chunks.is_empty() {
+        let page = crate::target::page_of(s)?;
+        if !crate::encoded_chunks::exposed_in(s) || message.chunks.iter().any(|chunk| !chunk.readable_in(&page)) {
+            return Err(JsError::dom("DataCloneError", "Encoded chunks are not available to the receiving agent cluster"));
+        }
+    }
     let (_, decode) = wire_functions(s)?;
     let list = s.array(&[])?;
     for (i, bytes) in message.buffers.iter().enumerate() {
@@ -516,7 +626,9 @@ pub(crate) fn decode_with_ports<'s>(
     let run = |ports: pyro_js::Value<'s>| {
         let saved = WIRE_BLOBS.with(|b| b.replace(message.blobs.clone()));
         let saved_canvases = WIRE_CANVASES.with(|c| c.replace(message.canvases.clone()));
+        let saved_chunks = WIRE_CHUNKS.with(|c| c.replace(message.chunks.clone()));
         let result = decode.call(None, &[s.string(&message.text), list.value(), ports]);
+        WIRE_CHUNKS.with(|c| *c.borrow_mut() = saved_chunks);
         WIRE_BLOBS.with(|b| *b.borrow_mut() = saved);
         WIRE_CANVASES.with(|c| *c.borrow_mut() = saved_canvases);
         result

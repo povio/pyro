@@ -913,6 +913,15 @@ spec = "https://drafts.csswg.org/css-display/#propdef-display"
 servo_restyle_damage = "rebuild_box"
 affects = "layout"
 
+[dynamic-range-limit]
+type = "color::DynamicRangeLimit"
+initial = "computed::color::DynamicRangeLimit::no_limit()"
+struct = "inherited_box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-color-hdr/#the-dynamic-range-limit-property"
+affects = "paint"
+servo_restyle_damage = "repaint"
+
 [fill]
 type = "SVGPaint"
 initial = "crate::values::computed::SVGPaint::BLACK"
@@ -1641,6 +1650,23 @@ flags = "CAN_ANIMATE_ON_COMPOSITOR"
 spec = "https://drafts.csswg.org/css-color/#transparency"
 servo_restyle_damage = "repaint"
 affects = "paint"
+
+[reading-flow]
+type = "ReadingFlow"
+engine = "servo"
+initial = "computed::ReadingFlow::Normal"
+struct = "position"
+animation_type = "none"
+spec = "https://drafts.csswg.org/css-display-4/#propdef-reading-flow"
+affects = ""
+
+[reading-order]
+type = "Integer"
+engine = "servo"
+initial = "0"
+struct = "position"
+spec = "https://drafts.csswg.org/css-display-4/#propdef-reading-order"
+affects = ""
 
 [order]
 type = "Integer"
@@ -4135,6 +4161,15 @@ gecko_pref = "layout.css.osx-font-smoothing.enabled"
 has_effect_on_gecko_scrollbars = false
 type = "FontSmoothing"
 initial = "computed::FontSmoothing::Auto"
+
+[speak]
+struct = "inherited_box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-speech-1/#speaking-props-speak"
+animation_type = "discrete"
+affects = ""
+type = "Speak"
+initial = "computed::Speak::Auto"
 
 [visibility]
 struct = "inherited_box"

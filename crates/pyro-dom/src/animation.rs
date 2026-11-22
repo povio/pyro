@@ -9,6 +9,9 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+/// Offset, declared timing, composition and property values (name, computed, underlying).
+pub type CssKeyframeStep = (f64, Option<String>, Option<String>, Vec<(String, String, String)>);
+
 /// How a keyframe's value combines with the value underneath it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Composite {

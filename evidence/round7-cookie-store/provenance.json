@@ -1,0 +1,55 @@
+{
+  "base": {
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "jobs": 4,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "restarts": 0,
+    "watchdogKills": 0,
+    "wallMs": 158448,
+    "browserCpuS": 10.04,
+    "commit": "4ebaf69178ea80f6b59bb9cd8b9a03995ef13fb4",
+    "tree": "fee3ca3f0ecdf6ca9d5031c21fc46841679bb608",
+    "binarySHA256": "b9bdef7cbe921ade8b0bcd9f22edad19950b960b7d47365c91ad688581dd420d"
+  },
+  "candidate": {
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "jobs": 4,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "restarts": 0,
+    "watchdogKills": 0,
+    "wallMs": 149269,
+    "browserCpuS": 11.9,
+    "commit": "f6c5b4c4c19f711ad144aa0c63bff270e8e6314d",
+    "tree": "0dc04c9551cad72b5ec2288e166bea32aaec4bf9",
+    "binarySHA256": "8f9f5e446270ceadb353f157d2580fa92989c4b46a04605423df5623e65f00a6"
+  },
+  "precursor": {
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "jobs": 4,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "restarts": 0,
+    "watchdogKills": 0,
+    "wallMs": 148207,
+    "browserCpuS": 9.89,
+    "commit": "328abad566d0d2f24698fab0f8a513cf29820980",
+    "tree": "bf6a6d9488cfbd5c917ef41bfc043045d64f06ea",
+    "binarySHA256": "5f5fc678c71f576052c5d2a7f323a5f43fc57e40fcf3437fbaaf31577f7732be"
+  },
+  "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "wptManifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+  "urlsSHA256": "81961522819cf6f7006880fe5e46b3fa97716d42113e283bb30634040b1f5d06",
+  "profile": "wptiter, inherits release-fast, LTO false, codegen units 16, incremental, render, one Cargo job"
+}

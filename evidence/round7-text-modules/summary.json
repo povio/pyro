@@ -1,0 +1,63 @@
+{
+  "scores": {
+    "baseFull": 21,
+    "candidateFull": 34,
+    "chrome158Full": 38,
+    "baseNamed": 413,
+    "candidateNamed": 720,
+    "chrome158Named": 724,
+    "lost": 0,
+    "new": 7,
+    "missing": 0,
+    "chromeOnly": 4,
+    "lpOnly": 0,
+    "gained": 307
+  },
+  "gainsByPage": {
+    "html/semantics/scripting-1/the-script-element/text-module/charset-2.html": 1,
+    "html/semantics/scripting-1/the-script-element/text-module/charset-bom.any.html": 3,
+    "html/semantics/scripting-1/the-script-element/text-module/charset-bom.any.sharedworker.html": 3,
+    "html/semantics/scripting-1/the-script-element/text-module/charset-bom.any.worker.html": 3,
+    "html/semantics/scripting-1/the-script-element/text-module/charset.html": 5,
+    "html/semantics/scripting-1/the-script-element/text-module/http-accept-header.sub.html": 2,
+    "html/semantics/scripting-1/the-script-element/text-module/ignore-content-type.any.html": 86,
+    "html/semantics/scripting-1/the-script-element/text-module/ignore-content-type.any.sharedworker.html": 86,
+    "html/semantics/scripting-1/the-script-element/text-module/ignore-content-type.any.worker.html": 86,
+    "html/semantics/scripting-1/the-script-element/text-module/ignore-extension.any.html": 4,
+    "html/semantics/scripting-1/the-script-element/text-module/ignore-extension.any.sharedworker.html": 4,
+    "html/semantics/scripting-1/the-script-element/text-module/ignore-extension.any.worker.html": 4,
+    "html/semantics/scripting-1/the-script-element/text-module/load-error-events.html": 4,
+    "html/semantics/scripting-1/the-script-element/text-module/module.html": 1,
+    "html/semantics/scripting-1/the-script-element/text-module/repeated-imports.any.html": 5,
+    "html/semantics/scripting-1/the-script-element/text-module/repeated-imports.any.sharedworker.html": 5,
+    "html/semantics/scripting-1/the-script-element/text-module/repeated-imports.any.worker.html": 5
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 39,
+        "error": 1,
+        "timeout": 1
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "74ffb4af63396d6d0ecc6e6db4c8c6495e4b978f312b2e83f10c1dbdd333415d"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 41
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "2b5957ba47ca0dad3625756f06a743272dc0df5bd6c2464e7e7064ded61ce6f5"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 41
+      },
+      "restarts": null,
+      "watchdogKills": null,
+      "receiptSHA256": "db6d8759d27baa8f0a1664095006612f308e30c70cea02a12f65dcd9cf559ab8"
+    }
+  }
+}

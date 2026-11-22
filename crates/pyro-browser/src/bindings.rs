@@ -318,7 +318,7 @@ impl PageHooks for Hooks {
         self.sched.post(TaskSource::Navigation, move |b| {
             // Only a popup is script-closable (Chrome: "Scripts may close
             // only the windows that were opened by them").
-            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.popup.is_some()) {
+            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.script_closable) {
                 return;
             }
             let Some(frame_id) =
@@ -628,6 +628,7 @@ impl Browser {
             session: state.session_storage.clone(),
             net: self.context_net(state.context).cloned(),
             viewport: state.viewport.clone(),
+            window_chrome: state.frames.settings.borrow().window_chrome,
             user_agent: state.user_agent_override.clone(),
             extra_headers: state.extra_http_headers.clone(),
             cache_disabled: state.cache_disabled,
@@ -791,7 +792,7 @@ impl Hooks {
                 })
                 && host.frame(page).is_some_and(|f| !f.sandbox.popups_blocked);
             if new_context {
-                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned()) {
+                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned(), request.window_features) {
                     Ok(prebuilt) => {
                         if let Some(dom) = &prebuilt.frame.page_dom {
                             ticket.attach_page(dom);
@@ -802,12 +803,13 @@ impl Hooks {
                 }
             }
         }
+        let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
         let frames = self.frames.clone();
         match proceed {
             None => {
                 let Some(stops) = before_navigation(&frames, page, &loader, &mut request) else { return };
                 self.sched.post(TaskSource::Navigation, move |b| {
-                    run_navigation(b, page, loader, stops, started, request, false)
+                    run_navigation(b, page, loader, stops, started, request, false, user_gesture)
                 });
             }
             Some(proceed) => self.sched.post(TaskSource::Navigation, move |b| {
@@ -815,7 +817,7 @@ impl Hooks {
                     return;
                 }
                 let Some(stops) = before_navigation(&frames, page, &loader, &mut request) else { return };
-                run_navigation(b, page, loader, stops, started, request, true);
+                run_navigation(b, page, loader, stops, started, request, true, user_gesture);
             }),
         }
     }
@@ -844,7 +846,7 @@ fn before_navigation(
         let key = if own_frame {
             Some(page)
         } else {
-            request.target.as_deref().and_then(|t| host.named_frame(page, t))
+            request.target.as_deref().filter(|_| !request.window_features.noopener).and_then(|t| host.named_frame(page, t))
         };
         cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
         key.and_then(|key| host.nav(key))
@@ -896,6 +898,7 @@ fn run_navigation(
     started: Option<u64>,
     request: NavigationRequest,
     planned: bool,
+    user_gesture: bool,
 ) {
     if !b.doc(page).is_some_and(|p| {
         p.main_frame.loader_id == loader
@@ -904,7 +907,7 @@ fn run_navigation(
     }) {
         return;
     }
-    let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
+    let named = request.target.as_deref().filter(|_| !request.window_features.noopener).and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
     // HTML "navigate to a javascript: URL": the script runs in the
     // target document, which stays (replacing it with a string result
     // is not supported).
@@ -934,6 +937,11 @@ fn run_navigation(
                     url: request.url,
                     opener: request.opener,
                     ticket: request.popup,
+                    window_features: request.window_features,
+                    window_name: request.target.unwrap_or_default(),
+                    user_gesture,
+                    referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
+                    referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
                 },
             );
         }
@@ -1107,6 +1115,8 @@ pub(crate) fn create(
         bodies: host.layout_bodies.clone(),
         asked_fonts: Default::default(),
     }));
+    let (is_popup, left, top) = settings.window_chrome;
+    bindings.set_window_chrome(is_popup, left, top);
     bindings.set_storage_namespaces(settings.local, settings.session);
     let mut viewport = settings.viewport;
     // Only the main frame lays out as a phone; frames take their iframe's box.
@@ -1117,8 +1127,20 @@ pub(crate) fn create(
     }
     bindings.set_nested_frame(page.child.is_some());
     bindings.set_opaque_origin(frame.sandbox.opaque);
+    let own_site = pyro_net::Url::parse(&frame.origin).ok().and_then(|url| pyro_net::cookies::partition_key(&url));
+    let (top_level_site, same_site) = if page.child.is_some() {
+        let parent = host.page_dom(host.parent_key(page)).ok_or(JsError::ContextDestroyed)?;
+        let top = parent.cookie_partition_key();
+        let same = own_site.is_some() && own_site == top && parent.cookie_site_context() == pyro_net::cookies::SiteContext::SameSite;
+        (top, same)
+    } else {
+        let same = own_site.is_some();
+        (own_site, same)
+    };
+    bindings.set_cookie_context(top_level_site, if same_site { pyro_net::cookies::SiteContext::SameSite } else { pyro_net::cookies::SiteContext::CrossSite });
     // The origin's identity, which an opaque origin needs (`PageDom::origin_key`).
     bindings.set_opaque_origin_token(frame.opaque_origin);
+    bindings.set_window_agent_cluster(host.cluster_group.get(), crate::frames::frame_origin_key(&frame));
     // Permissions Policy for `fullscreen`, inherited through the container when the document is made.
     if page.child.is_some() {
         bindings.set_fullscreen_allowed(fullscreen_allowed_in(host, page, url, frame.sandbox.opaque));

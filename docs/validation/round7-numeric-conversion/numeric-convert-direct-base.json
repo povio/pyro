@@ -1,0 +1,23 @@
+{
+  "version": "124.0.6367.29",
+  "results": {
+    "reciprocal": 0.25,
+    "product": {
+      "error": "TypeError"
+    },
+    "clamp": {
+      "error": "TypeError"
+    },
+    "simple": 3,
+    "mixed": 88,
+    "incompatible": {
+      "error": "TypeError"
+    },
+    "authored": [
+      "calc(1in + 1px)",
+      "calc(1in + 1px)",
+      2,
+      97
+    ]
+  }
+}

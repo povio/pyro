@@ -1,0 +1,270 @@
+[
+  [
+    "svg/animations/svgnumberlist-animation-invalid-value-1.html",
+    "Test SVGNumberList animation with invalid values: String value in from list attribute."
+  ],
+  [
+    "svg/animations/svgnumberlist-animation-2.html",
+    "Test 'by' animation of SVGNumberList on 'rotate' attribute of text."
+  ],
+  [
+    "svg/animations/svgnumberlist-animation-invalid-value-3.html",
+    "Test SVGNumberList animation with invalid values: String value in from list attribute."
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface object length"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface object name"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface: attribute animVal"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface: attribute baseVal"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface: existence and properties of interface object"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface: existence and properties of interface prototype object"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface: existence and properties of interface prototype object's \"constructor\" property"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface: existence and properties of interface prototype object's @@unscopables property"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface: objects.text.rotate must inherit property \"animVal\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList interface: objects.text.rotate must inherit property \"baseVal\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGAnimatedNumberList must be primary interface of objects.text.rotate"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface object length"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface object name"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: attribute length"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: attribute numberOfItems"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: calling appendItem(SVGNumber) on objects.text.rotate.baseVal with too few arguments must throw TypeError"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: calling getItem(unsigned long) on objects.text.rotate.baseVal with too few arguments must throw TypeError"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: calling initialize(SVGNumber) on objects.text.rotate.baseVal with too few arguments must throw TypeError"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: calling insertItemBefore(SVGNumber, unsigned long) on objects.text.rotate.baseVal with too few arguments must throw TypeError"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: calling removeItem(unsigned long) on objects.text.rotate.baseVal with too few arguments must throw TypeError"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: calling replaceItem(SVGNumber, unsigned long) on objects.text.rotate.baseVal with too few arguments must throw TypeError"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: existence and properties of interface object"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: existence and properties of interface prototype object"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: existence and properties of interface prototype object's \"constructor\" property"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: existence and properties of interface prototype object's @@unscopables property"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"appendItem(SVGNumber)\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"clear()\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"getItem(unsigned long)\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"initialize(SVGNumber)\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"insertItemBefore(SVGNumber, unsigned long)\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"length\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"numberOfItems\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"removeItem(unsigned long)\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: objects.text.rotate.baseVal must inherit property \"replaceItem(SVGNumber, unsigned long)\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: operation appendItem(SVGNumber)"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: operation clear()"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: operation getItem(unsigned long)"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: operation initialize(SVGNumber)"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: operation insertItemBefore(SVGNumber, unsigned long)"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: operation removeItem(unsigned long)"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList interface: operation replaceItem(SVGNumber, unsigned long)"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGNumberList must be primary interface of objects.text.rotate.baseVal"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGTextPositioningElement interface: attribute rotate"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGTextPositioningElement interface: objects.text must inherit property \"rotate\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "SVGTextPositioningElement interface: objects.tspan must inherit property \"rotate\" with the proper type"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "Stringification of objects.text.rotate"
+  ],
+  [
+    "svg/idlharness.window.html",
+    "Stringification of objects.text.rotate.baseVal"
+  ],
+  [
+    "svg/types/scripted/SVGList-reflected-attribute-synchronize.html",
+    "SVGNumberList (rotate on text): a shrink detaches the truncated item, which keeps its value"
+  ],
+  [
+    "svg/types/scripted/SVGList-reflected-attribute-synchronize.html",
+    "SVGNumberList (rotate on text): an empty string empties the list and detaches every item"
+  ],
+  [
+    "svg/types/scripted/SVGList-reflected-attribute-synchronize.html",
+    "SVGNumberList (rotate on text): the list interface object survives the change"
+  ],
+  [
+    "svg/types/scripted/SVGList-reflected-attribute-synchronize.html",
+    "SVGNumberList (rotate on text): the truncated item stops reaching the element and stops being read only"
+  ],
+  [
+    "svg/animations/svgnumberlist-animation-1.html",
+    "Test SVGNumberList animation on 'rotate' attribute of text."
+  ],
+  [
+    "svg/types/scripted/SVGList-getItem-identity.html",
+    "SVGNumberList (text rotate): different indices return different objects"
+  ],
+  [
+    "svg/types/scripted/SVGList-getItem-identity.html",
+    "SVGNumberList (text rotate): two getItem calls for one index report the same value"
+  ],
+  [
+    "svg/types/scripted/SVGList-animVal-reflects-base-value.html",
+    "SVGNumberList (rotate on text): animVal items are read only"
+  ],
+  [
+    "svg/types/scripted/SVGList-animVal-reflects-base-value.html",
+    "SVGNumberList (rotate on text): animVal read before an attribute change reports the new item count"
+  ],
+  [
+    "svg/types/scripted/SVGList-animVal-reflects-base-value.html",
+    "SVGNumberList (rotate on text): animVal read before an attribute change reports the new value"
+  ],
+  [
+    "svg/types/scripted/SVGList-animVal-reflects-base-value.html",
+    "SVGNumberList (rotate on text): animVal reports the new item count after a baseVal DOM change"
+  ],
+  [
+    "svg/types/scripted/SVGList-animVal-reflects-base-value.html",
+    "SVGNumberList (rotate on text): the animVal list object survives an attribute change"
+  ],
+  [
+    "svg/animations/svgnumberlist-animation-invalid-value-2.html",
+    "Test SVGNumberList animation with invalid values: String value in from list attribute."
+  ],
+  [
+    "svg/types/SameObject-identity.html",
+    "SVGAnimatedNumberList.baseVal: text.rotate.baseVal"
+  ],
+  [
+    "svg/types/scripted/SVGList-identity-across-attribute-change.html",
+    "SVGNumberList (text rotate): a freshly read item reports the new value after the attribute changes"
+  ],
+  [
+    "svg/types/scripted/SVGAnimatedNumberList.html",
+    "SVGAnimatedNumberList interface - utilizing the rotate property of SVGTextElement"
+  ],
+  [
+    "svg/types/scripted/SVGList-parse-invalid-clears-items.html",
+    "SVGNumberList clears items when attribute value is invalid"
+  ]
+]

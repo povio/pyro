@@ -1,0 +1,582 @@
+{
+  "pages": 43,
+  "names": 3142,
+  "old": 2930,
+  "new": 3033,
+  "gained": [
+    [
+      "css/css-typed-om/the-stylepropertymap/computed/get-shorthand.html",
+      "Getting a shorthand property from initial computed style returns a base CSSStyleValue",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/computed/getAll-shorthand.html",
+      "StylePropertyMap.getAll() with a shorthand property from initial computed style returns a list containing a base CSSStyleValue",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/computed/iterable.tentative.html",
+      "StylePropertyMap iterates properties in correct order",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/declared/append.tentative.html",
+      "Calling StylePropertyMap.append with a CSS-wide keyword CSSKeywordValue throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/declared/append.tentative.html",
+      "Calling StylePropertyMap.append with a CSS-wide keyword string throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/declared/append.tentative.html",
+      "Calling StylePropertyMap.append with a valid value and a CSS-wide keyword throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/declared/declared.tentative.html",
+      "Declared StylePropertyMap only contains properties in the style rule",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+      "StylePropertyMap iterates properties in correct order",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+      "StylePropertyMap iterator returns CSS properties with the correct CSSStyleValue",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/declared/set.tentative.html",
+      "Setting a property with a CSSStyleValue whose associated property does not match throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+      "Calling StylePropertyMap.append with a CSS-wide keyword CSSKeywordValue throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+      "Calling StylePropertyMap.append with a CSS-wide keyword string throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+      "Calling StylePropertyMap.append with a valid value and a CSS-wide keyword throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html",
+      "StylePropertyMap iterates properties in inline style order",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html",
+      "StylePropertyMap iterator returns CSS properties with the correct CSSStyleValue",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/inline/set.tentative.html",
+      "Setting a property with a CSSStyleValue whose associated property does not match throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+      "Can set 'background-size' to a length: -3.14em",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+      "Can set 'background-size' to a length: 0px",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+      "Can set 'background-size' to a length: 3.14cm",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+      "Can set 'background-size' to a length: calc(0px + 0em)",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+      "Can set 'background-size' to a percent: -3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+      "Can set 'background-size' to a percent: 0%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+      "Can set 'background-size' to a percent: 3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+      "Can set 'background-size' to a percent: calc(0% + 0%)",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-radius.html",
+      "'border-radius' does not support '30px'",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-bottom-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-bottom-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-bottom-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-left-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-left-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-left-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-right-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-right-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-right-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-top-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-top-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+      "Can set 'border-top-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+      "Can set 'column-count' to a number: -3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+      "Can set 'column-count' to a number: 3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+      "Can set 'column-count' to a number: calc(2 + 3)",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'dashed' keyword: dashed",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'dotted' keyword: dotted",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'double' keyword: double",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'groove' keyword: groove",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'hidden' keyword: hidden",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'inset' keyword: inset",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'none' keyword: none",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'outset' keyword: outset",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'ridge' keyword: ridge",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+      "Can set 'column-rule-style' to the 'solid' keyword: solid",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+      "Can set 'column-rule-width' to a length: -3.14em",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+      "Can set 'column-rule-width' to a length: 0px",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+      "Can set 'column-rule-width' to a length: 3.14cm",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+      "Can set 'column-rule-width' to a length: calc(0px + 0em)",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+      "Can set 'column-rule-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+      "Can set 'column-rule-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+      "Can set 'column-rule-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+      "Can set 'fill-opacity' to a percent: -3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+      "Can set 'fill-opacity' to a percent: 0%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+      "Can set 'fill-opacity' to a percent: 3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+      "Can set 'flood-opacity' to a percent: -3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+      "Can set 'flood-opacity' to a percent: 0%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+      "Can set 'flood-opacity' to a percent: 3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+      "Can set 'line-height' to a number: -3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+      "Can set 'line-height' to a number: 0",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+      "Can set 'line-height' to a number: 3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+      "Can set 'line-height' to a number: calc(2 + 3)",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-block-end-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-block-end-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-block-end-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-block-start-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-block-start-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-block-start-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-inline-end-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-inline-end-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-inline-end-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-inline-start-width' to the 'medium' keyword: medium",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-inline-start-width' to the 'thick' keyword: thick",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/logical.html",
+      "Can set 'border-inline-start-width' to the 'thin' keyword: thin",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "'margin' does not support '1px'",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+      "Can set 'opacity' to a percent: -3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+      "Can set 'opacity' to a percent: 0%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+      "Can set 'opacity' to a percent: 3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/order.html",
+      "Can set 'order' to a number: -3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/order.html",
+      "Can set 'order' to a number: 3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+      "Can set 'orphans' to a number: -3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+      "Can set 'orphans' to a number: 3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+      "Can set 'orphans' to a number: calc(2 + 3)",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+      "Can set 'stop-opacity' to a percent: -3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+      "Can set 'stop-opacity' to a percent: 0%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+      "Can set 'stop-opacity' to a percent: 3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+      "Can set 'stroke-opacity' to a percent: -3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+      "Can set 'stroke-opacity' to a percent: 0%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+      "Can set 'stroke-opacity' to a percent: 3.14%",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+      "'transition-property' does not support 'all'",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+      "'transition-property' does not support 'width'",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+      "'transition-property' does not support 'width, height'",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/transition.html",
+      "'transition' does not support 'none'",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+      "Can set 'widows' to a number: -3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+      "Can set 'widows' to a number: 3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+      "Can set 'widows' to a number: calc(2 + 3)",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/z-index.html",
+      "Can set 'z-index' to a number: -3.14",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/z-index.html",
+      "Can set 'z-index' to a number: 3.14",
+      1
+    ]
+  ],
+  "lost": [],
+  "parentPassingPages": [],
+  "candidatePassingPages": [
+    "css/css-typed-om/the-stylepropertymap/computed/get-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/computed/getAll-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/declared/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+    "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+    "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/order.html",
+    "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+    "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+    "css/css-typed-om/the-stylepropertymap/properties/z-index.html"
+  ],
+  "gainedPages": [
+    "css/css-typed-om/the-stylepropertymap/computed/get-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/computed/getAll-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/declared/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+    "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+    "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/order.html",
+    "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+    "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+    "css/css-typed-om/the-stylepropertymap/properties/z-index.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "wallMs": [
+    1069,
+    1015
+  ]
+}

@@ -731,7 +731,12 @@ impl Mirror {
             while let Some(k) = stack.pop() {
                 if let Some(e) = nodes.remove(&k) {
                     set_key(keys, e.id, None);
-                    stack.extend(e.children);
+                    // A detached parent's last child list can still name
+                    // subtrees moved earlier in this delta. Their new parent
+                    // now owns their forward and reverse key mappings.
+                    stack.extend(e.children.into_iter().filter(|child| {
+                        nodes.get(child).is_some_and(|entry| entry.parent == Some(k))
+                    }));
                 }
             }
         }

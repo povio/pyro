@@ -25,6 +25,8 @@ pub enum Destination {
     Style,
     /// A JSON module script (`import ... with { type: "json" }`).
     Json,
+    /// A text module script (`import ... with { type: "text" }`).
+    Text,
     Image,
     /// An `<audio>` element's resource.
     Audio,
@@ -46,7 +48,7 @@ impl Destination {
         match self {
             Destination::Document | Destination::Iframe => "Document",
             // A JSON module script is still a script resource.
-            Destination::Script | Destination::Json => "Script",
+            Destination::Script | Destination::Json | Destination::Text => "Script",
             Destination::Style => "Stylesheet",
             Destination::Image => "Image",
             Destination::Audio | Destination::Video => "Media",
@@ -118,6 +120,12 @@ pub struct Request {
     /// Serialized origin of the requesting document ("null" for opaque);
     /// None for browser-initiated navigations.
     pub origin: Option<String>,
+    /// Trusted outermost document's schemeful site, used for CHIPS on
+    /// subresource/iframe requests. Unknown contexts cannot select a partition.
+    pub top_level_site: Option<String>,
+    /// The initiator is nested below a cross-site ancestor, independently
+    /// of its own origin's equality with the outermost site's key.
+    pub cross_site_ancestor: bool,
     /// Resource Timing: the serialized origin of the document that gets this
     /// fetch's entry, for the TAO check, when it is not `origin` (an iframe's
     /// navigation: its parent's). None: `origin`.
@@ -188,6 +196,8 @@ impl Request {
             credentials: Credentials::SameOrigin,
             redirect: RedirectMode::Follow,
             origin: None,
+            top_level_site: None,
+            cross_site_ancestor: false,
             timing_origin: None,
             referrer: None,
             referrer_policy: Default::default(),

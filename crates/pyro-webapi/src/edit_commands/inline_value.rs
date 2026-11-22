@@ -115,6 +115,48 @@ impl Format {
 pub(crate) struct TypingValues {
     range: (Point, Point),
     values: Vec<Format>,
+    decoration: Option<super::decoration::Lines>,
+    toggles: Vec<(&'static str, bool)>,
+}
+
+fn pending_at(slot: &mut Option<TypingValues>, range: (Point, Point)) -> &mut TypingValues {
+    if slot.as_ref().is_none_or(|v| v.range != range) {
+        *slot = Some(TypingValues { range, values: Vec::new(), decoration: None, toggles: Vec::new() });
+    }
+    slot.as_mut().unwrap()
+}
+
+pub(super) fn toggle_state(page: &PageDom, range: (Point, Point), tag: &str) -> Option<bool> {
+    let slot = page.typing_values.borrow();
+    slot.as_ref().filter(|v| v.range == range)?.toggles.iter().find(|(t, _)| *t == tag).map(|(_, on)| *on)
+}
+
+pub(super) fn decoration_state(page: &PageDom, range: (Point, Point), tag: &str) -> Option<bool> {
+    let slot = page.typing_values.borrow();
+    let pending = slot.as_ref().filter(|p| p.range == range)?.decoration?;
+    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), range.0.0);
+    Some(pending.reported(authored).has(tag))
+}
+
+pub(super) fn toggle_decoration(page: &PageDom, range: (Point, Point), tag: &str) {
+    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), range.0.0);
+    let mut slot = page.typing_values.borrow_mut();
+    let pending = pending_at(&mut slot, range);
+    let mut lines = pending.decoration.map_or(authored, |d| d.reported(authored));
+    lines.toggle(tag);
+    pending.decoration = Some(lines);
+}
+
+pub(super) fn set_toggle(page: &PageDom, range: (Point, Point), tag: &'static str, enabled: bool) {
+    let mut slot = page.typing_values.borrow_mut();
+    let pending = pending_at(&mut slot, range);
+    if matches!(tag, "sub" | "sup") {
+        pending.toggles.retain(|(t, _)| !matches!(*t, "sub" | "sup"));
+        pending.toggles.push((if tag == "sub" { "sup" } else { "sub" }, false));
+    } else {
+        pending.toggles.retain(|(t, _)| *t != tag);
+    }
+    pending.toggles.push((tag, enabled));
 }
 
 /// Structural commands keep the formatting values attached to the selection
@@ -124,6 +166,16 @@ pub(super) fn reselect(page: &Rc<PageDom>, original: (Point, Point), points: [Po
     editing::retarget_selection(page, points[0], points[1]);
     if let (Some(mut pending), Some(range)) = (pending, editing::selection_range(page)) {
         pending.range = range;
+        page.typing_values.replace(Some(pending));
+    }
+}
+
+/// A paragraph or soft break continues typing at the new caret.
+pub(crate) fn set_break_caret(page: &Rc<PageDom>, original: (Point, Point), caret: Point) {
+    let pending = page.typing_values.take().filter(|v| v.range == original);
+    editing::set_selection(page, caret, caret);
+    if let Some(mut pending) = pending {
+        pending.range = (caret, caret);
         page.typing_values.replace(Some(pending));
     }
 }
@@ -172,7 +224,7 @@ fn formattable_nodes(page: &PageDom, dom: &Dom, scope: NodeId, start: Point, end
         };
         if crate::range::compare_boundary_points_dom(dom, finish, start) > 0
             && crate::range::compare_boundary_points_dom(dom, begin, end) < 0
-            && editing::is_editable(dom, node)
+            && super::rich_node(dom, node)
             && super::alignment::visible(page, dom, node)
         {
             nodes.push(node);
@@ -321,16 +373,67 @@ fn wrap(dom: &mut Dom, node: NodeId, fmt: &Format) -> Option<NodeId> {
     Some(el)
 }
 
+/// Replace a selected portion of a single-purpose FONT or SPAN. Keep
+/// the original value on either side of the range, and leave carriers
+/// with unrelated attributes or declarations intact.
+fn format_selected(page: &PageDom, dom: &mut Dom, host: NodeId, node: NodeId, range: (Point, Point), fmt: &Format) -> Option<()> {
+    let parent = dom.parent_element(node).ok()??;
+    if parent != host && dom.element(parent).ok()?.is_html() {
+        let tag = editing::local(dom, parent);
+        let attrs = dom.attributes(parent).ok()?;
+        let carrier = match attrs {
+            [attr] if attr.name.ns.is_empty() && tag == "font" => {
+                fmt.kind.html_attr() == Some(&*attr.name.local)
+            }
+            [attr] if tag == "span" && attr.name.local == markup5ever::local_name!("style") => {
+                matches!(crate::css::parse_declarations(&attr.value).as_slice(), [decl] if decl.name == fmt.kind.property())
+            }
+            _ => false,
+        };
+        if carrier {
+            let outer = dom.parent_element(parent).ok()??;
+            let inherited = if fmt.kind == Kind::Size {
+                // A coincident pixel size is not an inherited HTML size.
+                // Stylo retains keyword provenance through the cascade.
+                page.layout().style().stylo_style(dom, outer).is_some_and(|style| {
+                    let info = style.get_font().font_size.keyword_info;
+                    let size = info.kw.html_size().checked_sub(1).and_then(|i| SIZES.get(i as usize));
+                    info.factor == 1.0 && info.offset.px() == 0.0 && size == Some(&fmt.css.as_str())
+                })
+            } else {
+                equivalent(fmt, &effective(page, dom, fmt.kind, outer))
+            };
+            if fmt.kind == Kind::Background && !inherited {
+                // Across paint boundaries each existing background remains
+                // in place. Within one run the selected paint can be replaced.
+                let in_run = |point: Point| point.0 == parent || dom.parent(point.0).ok().flatten() == Some(parent);
+                if !in_run(range.0) || !in_run(range.1) {
+                    return wrap(dom, node, fmt).map(|_| ());
+                }
+            }
+            let mut edges = [(node, 0), (node, editing::len(dom, node))];
+            let middle = super::alignment::split_edge(dom, outer, node, false, &mut edges)?;
+            super::alignment::split_edge(dom, outer, node, true, &mut edges)?;
+            let doc = dom.node_document(node).ok()?;
+            let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
+            if !inherited && tag == if legacy.is_some() { "font" } else { "span" } {
+                apply_to(dom, middle, fmt, legacy);
+                return Some(());
+            }
+            super::indentation::unwrap(dom, middle, &mut edges)?;
+            if inherited { return Some(()); }
+        }
+    }
+    wrap(dom, node, fmt).map(|_| ())
+}
+
 pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -> bool {
     let Some(fmt) = Format::parse(kind, value) else { return false };
     let Some((start, end)) = editing::selection_range(page) else { return false };
     let mut nodes = formattable_nodes(page, &page.dom.borrow(), host, start, end);
     if nodes.is_empty() {
         let mut slot = page.typing_values.borrow_mut();
-        if slot.as_ref().is_none_or(|v| v.range != (start, end)) {
-            *slot = Some(TypingValues { range: (start, end), values: Vec::new() });
-        }
-        let pending = slot.as_mut().unwrap();
+        let pending = pending_at(&mut slot, (start, end));
         pending.values.retain(|v| v.kind != kind);
         pending.values.push(fmt);
         return true;
@@ -363,7 +466,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
             if kind == Kind::Background && pyro_dom::color_well::is_fully_transparent(&fmt.css) {
                 changed |= clear_highlight(page, &mut dom, n);
             } else {
-                changed |= wrap(&mut dom, n, &fmt).is_some();
+                changed |= format_selected(page, &mut dom, host, n, (start, end), &fmt).is_some();
             }
         }
     }
@@ -404,6 +507,76 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     true
 }
 
+/// Locate the element providing the caret's superscript or subscript.
+fn script_carrier(page: &PageDom, dom: &Dom, node: NodeId, host: NodeId) -> Option<(NodeId, &'static str)> {
+    let layout = page.layout();
+    let mut cur = dom.parent_element(node).ok().flatten();
+    while let Some(el) = cur {
+        let value = layout.computed_style_value(dom, el, "vertical-align");
+        match value.as_str() {
+            "sub" => return Some((el, "sub")),
+            "super" => return Some((el, "sup")),
+            _ => {}
+        }
+        if el == host { break; }
+        cur = dom.parent_element(el).ok().flatten();
+    }
+    None
+}
+
+/// A typing override affects the insertion style on the immediate text
+/// container. A script higher in the inline tree remains observable there
+/// until typing actually splits the carrier.
+pub(super) fn caret_script_state(page: &PageDom, point: Point, tag: &str) -> Option<bool> {
+    let dom = page.dom.borrow();
+    if !editing::is_text(&dom, point.0) { return None; }
+    let host = editing::editing_host(&dom, point.0)?;
+    let container = dom.parent_element(point.0).ok()??;
+    let carrier = script_carrier(page, &dom, point.0, host);
+    let own = carrier.is_some_and(|(_, script)| script == tag);
+    Some(match toggle_state(page, (point, point), tag) {
+        Some(enabled) => enabled || carrier.is_some_and(|(node, script)| node != container && script == tag),
+        None => own,
+    })
+}
+
+/// Split just the script-bearing inline at the inserted text. Preserve
+/// unrelated CSS and attributes on that portion when removing the script.
+fn clear_script(page: &PageDom, dom: &mut Dom, typed: NodeId, host: NodeId) -> Option<bool> {
+    let Some((carrier, _)) = script_carrier(page, dom, typed, host) else { return Some(true) };
+    let tag = editing::local(dom, carrier);
+    let authored = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
+    // Typing can remove a semantic tag or an inline declaration. A class
+    // rule continues to style the inserted text (including the other side
+    // of a split), unless another script is explicitly applied inside it.
+    if !matches!(tag.as_str(), "sub" | "sup") && authored.value("vertical-align").is_empty() {
+        return Some(true);
+    }
+    if carrier == host || !matches!(tag.as_str(), "sub" | "sup" | "span") {
+        return Some(false);
+    }
+    let parent = dom.parent_element(carrier).ok()??;
+    let mut edges = [(typed, 0), (typed, editing::len(dom, typed))];
+    let middle = super::alignment::split_edge(dom, parent, typed, false, &mut edges)?;
+    super::alignment::split_edge(dom, parent, typed, true, &mut edges)?;
+    let mut declarations = DeclarationBlock::parse(dom.get_attribute(middle, "style").ok()?.unwrap_or(""));
+    if declarations.remove("vertical-align") {
+        if declarations.is_empty() {
+            dom.remove_attribute(middle, "style").ok()?;
+        } else {
+            dom.set_attribute(middle, "style", &declarations.css_text()).ok()?;
+        }
+    }
+    if dom.attributes(middle).ok()?.is_empty() {
+        super::indentation::unwrap(dom, middle, &mut edges)?;
+    } else {
+        if editing::local(dom, middle) != "span" {
+            super::indentation::rename(dom, middle, "span", &mut edges)?;
+        }
+    }
+    Some(true)
+}
+
 /// Isolate only the newly inserted UTF-16 text and carry the pending values
 /// to it. Later typing inherits its inline style from that wrapper.
 pub(crate) fn format_typed(
@@ -416,7 +589,22 @@ pub(crate) fn format_typed(
     let mut slot = page.typing_values.borrow_mut();
     let pending = slot.as_mut().filter(|v| v.range == range)?;
     pending.values.retain(|fmt| !equivalent(fmt, &effective(page, dom, fmt.kind, end.0)));
-    if pending.values.is_empty() {
+    let host = editing::editing_host(dom, end.0)?;
+    let parent = dom.parent_element(end.0).ok()??;
+    let layout = page.layout();
+    pending.toggles.retain(|&(tag, enabled)| {
+        let active = if matches!(tag, "sub" | "sup") {
+            script_carrier(page, dom, end.0, host).is_some_and(|(_, active)| active == tag)
+        } else if tag == "b" {
+            super::numeric_bold_weight(&layout.computed_style_value(dom, parent, "font-weight"))
+        } else {
+            let style = layout.computed_style_value(dom, parent, "font-style");
+            style.starts_with("italic") || style.starts_with("oblique")
+        };
+        enabled != active
+    });
+    let decoration = pending.decoration.filter(|&lines| lines != super::decoration::Lines::at(page, dom, end.0));
+    if pending.values.is_empty() && pending.toggles.is_empty() && decoration.is_none() {
         *slot = None;
         return Some(end);
     }
@@ -434,6 +622,38 @@ pub(crate) fn format_typed(
         } else {
             wrap(dom, typed, fmt)?;
         }
+    }
+    if let Some(lines) = decoration { super::decoration::apply(page, dom, host, typed, lines)?; }
+    for &(tag, enabled) in &pending.toggles {
+        let (property, value) = match tag {
+            "sub" => ("vertical-align", "sub"),
+            "sup" => ("vertical-align", "super"),
+            _ => super::inline_css(tag)?,
+        };
+        let carriers: &[&str] = if tag == "b" { &["b", "strong"] } else { &["i", "em"] };
+        if !enabled && matches!(tag, "sub" | "sup") {
+            if clear_script(page, dom, typed, host)? { continue; }
+        } else if !enabled {
+            while let Some(ancestor) = super::ancestor_format(dom, typed, host, carriers, true) {
+                super::hoist(dom, typed, ancestor);
+                if dom.contains(ancestor, typed).unwrap_or(false) {
+                    break;
+                }
+            }
+            let font = if tag == "b" { super::FontToggle::Bold } else { super::FontToggle::Italic };
+            super::clear_remaining_font(page, dom, font, host, typed, (typed, 0), (typed, units))?;
+            continue;
+        }
+        let doc = dom.node_document(typed).ok()?;
+        let css = !enabled || dom.document_data(doc).ok()?.style_with_css;
+        let wrapper = dom.create_element(doc, if css { "span" } else { tag }).ok()?;
+        if css {
+            let value = if enabled { value } else if property == "vertical-align" { "baseline" } else { "normal" };
+            dom.set_attribute(wrapper, "style", &format!("{property}: {value};")).ok()?;
+        }
+        let parent = dom.parent_element(typed).ok()??;
+        dom.insert_before(parent, wrapper, Some(typed)).ok()?;
+        dom.append_child(wrapper, typed).ok()?;
     }
     *slot = None;
     Some((typed, units))

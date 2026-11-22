@@ -1,0 +1,8 @@
+test editing_js::deletion_at_text_edge_preserves_locked_blocks ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 671 filtered out; finished in 0.07s
+test editing_js::undo_and_redo_restore_text_controls_and_hosts ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 671 filtered out; finished in 0.07s
+test dom_js::contenteditable_typing_deleting_and_caret_keys_match_chromium ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 671 filtered out; finished in 0.13s
+test editing_js::nested_paragraph_join_preserves_the_destination_and_undo ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 671 filtered out; finished in 0.10s

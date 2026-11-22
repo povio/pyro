@@ -703,12 +703,17 @@ pub(crate) struct CallbackTls {
     /// realm whose script is running, which the embedder reads as the
     /// incumbent realm (`window.postMessage`'s source). See [`entry_realm`].
     pub entry: Cell<sys::JSContextRef>,
+    creation_turn_observed: Cell<bool>,
+    creation_turn: Cell<u64>,
 }
 
 thread_local! {
     static CURRENT: RefCell<Weak<EngineInner>> = const { RefCell::new(Weak::new()) };
     static CALLBACK: CallbackTls =
-        const { CallbackTls { depth: Cell::new(0), terminating: Cell::new(false), entry: Cell::new(std::ptr::null()) } };
+        const { CallbackTls {
+            depth: Cell::new(0), terminating: Cell::new(false), entry: Cell::new(std::ptr::null()),
+            creation_turn_observed: Cell::new(false), creation_turn: Cell::new(1),
+        } };
     /// Asked at each watchdog poll while JavaScript runs on this thread;
     /// returning true terminates it (see [`Engine::set_interrupt_check`]).
     static INTERRUPT_CHECK: RefCell<Option<Rc<dyn Fn() -> bool>>> = const { RefCell::new(None) };
@@ -728,8 +733,22 @@ impl EntryGuard {
 impl Drop for EntryGuard {
     #[inline]
     fn drop(&mut self) {
-        callback_tls().entry.set(self.0);
+        let tls = callback_tls();
+        tls.entry.set(self.0);
+        if self.0.is_null() && tls.creation_turn_observed.replace(false) {
+            tls.creation_turn.set(tls.creation_turn.get().wrapping_add(1));
+        }
     }
+}
+
+/// Identifies the current outer script invocation, including its JSC microtask checkpoint.
+pub fn script_entry_turn() -> Option<u64> {
+    let tls = callback_tls();
+    if tls.entry.get().is_null() {
+        return None;
+    }
+    tls.creation_turn_observed.set(true);
+    Some(tls.creation_turn.get())
 }
 
 /// The realm of the innermost script evaluation or native-to-JavaScript call
@@ -1777,6 +1796,15 @@ pub fn configure_process() {
                 std::env::set_var(name, value);
                 PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).push(name);
             }
+        }
+        // The pinned typed loader identifies text imports separately from
+        // JavaScript. Enable JSC's import-attribute parser for that type.
+        // The untyped system loader cannot make this distinction.
+        if unsafe { sys::modules::pyro_jsc_typed_modules_available() } == 1
+            && std::env::var_os("JSC_useImportText").is_none()
+        {
+            std::env::set_var("JSC_useImportText", "true");
+            PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).push("JSC_useImportText");
         }
         // Freed pages leave the resident set (patched JSC): macOS keeps
         // `madvise`d pages resident until it needs them, so a process that

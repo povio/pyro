@@ -1,0 +1,114 @@
+{
+  "pages": 43,
+  "names": 3142,
+  "old": 3045,
+  "new": 3053,
+  "gained": [
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+      "Can set 'speak' to CSS-wide keywords: inherit",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+      "Can set 'speak' to CSS-wide keywords: initial",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+      "Can set 'speak' to CSS-wide keywords: revert",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+      "Can set 'speak' to CSS-wide keywords: unset",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+      "Can set 'speak' to the 'always' keyword: always",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+      "Can set 'speak' to the 'auto' keyword: auto",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+      "Can set 'speak' to the 'never' keyword: never",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+      "Can set 'speak' to var() references:  var(--A)",
+      1
+    ]
+  ],
+  "lost": [],
+  "parentPassingPages": [
+    "css/css-typed-om/the-stylepropertymap/computed/get-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/computed/getAll-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/declared/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+    "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/grid-start-end.html",
+    "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+    "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+    "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/order.html",
+    "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+    "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+    "css/css-typed-om/the-stylepropertymap/properties/z-index.html"
+  ],
+  "candidatePassingPages": [
+    "css/css-typed-om/the-stylepropertymap/computed/get-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/computed/getAll-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/declared/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+    "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/grid-start-end.html",
+    "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+    "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+    "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/order.html",
+    "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+    "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+    "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+    "css/css-typed-om/the-stylepropertymap/properties/z-index.html"
+  ],
+  "gainedPages": [
+    "css/css-typed-om/the-stylepropertymap/properties/speak.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "wallMs": [
+    1452,
+    1668
+  ]
+}

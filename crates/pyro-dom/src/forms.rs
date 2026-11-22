@@ -8,6 +8,13 @@ use crate::dom::{utf16_len, utf16_range, Dom};
 use crate::error::{DomError, DomErrorKind, DomResult};
 use crate::node::{NodeId, NodeKind, NIL};
 
+/// Selection offsets and direction used by text-control editing history.
+#[derive(Clone, Copy)]
+pub struct ControlSelection {
+    pub range: (u32, u32),
+    pub direction: Option<bool>,
+}
+
 /// HTML "rules for parsing integers". Saturates: callers range-check against
 /// values far inside `i64`.
 pub fn parse_html_int(input: &str) -> Option<i64> {
@@ -436,6 +443,11 @@ impl Dom {
     }
     pub fn is_disabled(&self, id: NodeId) -> DomResult<bool> {
         Ok(self.is_disabled_idx(self.check(id)?))
+    }
+
+    /// Whether a text edit at this control is permitted by its current state.
+    pub fn is_mutable_text(&self, id: NodeId) -> DomResult<bool> {
+        Ok(self.is_mutable_text_idx(self.check(id)?))
     }
 
     /// Editable text control (input text-like or textarea), not readonly/disabled.
@@ -1031,17 +1043,31 @@ impl Dom {
         self.value(self.id_of(i))
     }
 
+    fn selection_for_length(&self, id: NodeId, len: u32) -> DomResult<ControlSelection> {
+        let control = self.element(id)?.control.as_ref();
+        let range = control.filter(|c| c.selection_set)
+            .map_or((0, 0), |c| (c.selection.0.min(len), c.selection.1.min(len)));
+        let direction = control.and_then(|c| c.selection_direction)
+            .filter(|(_, of)| *of == range)
+            .map(|(backward, _)| backward);
+        Ok(ControlSelection { range, direction })
+    }
+
+    /// Read both the bounds and direction against the current editable value.
+    pub fn selection_snapshot(&self, id: NodeId) -> DomResult<ControlSelection> {
+        let len = utf16_len(&self.edit_text(self.check(id)?)?);
+        self.selection_for_length(id, len)
+    }
+
+    /// Editing has just updated the value and bounds together. Copy them
+    /// directly for the inverse history step, without rereading the value.
+    pub fn selection_after_edit(&self, id: NodeId) -> DomResult<ControlSelection> {
+        self.selection_for_length(id, u32::MAX)
+    }
+
     /// `selectionStart/End` of a text control.
     pub fn selection(&self, id: NodeId) -> DomResult<(u32, u32)> {
-        let i = self.check(id)?;
-        let len = utf16_len(&self.edit_text(i)?);
-        let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
-        Ok(match &e.control {
-            Some(c) if c.selection_set => (c.selection.0.min(len), c.selection.1.min(len)),
-            // A fresh control has its cursor at the start of its value (as in Chromium and
-            // Gecko; a value set by script moves it to the end: HTML § 4.10.5.4 "value" mode).
-            _ => (0, 0),
-        })
+        Ok(self.selection_snapshot(id)?.range)
     }
 
     pub fn reset_control_state(&mut self, id: NodeId) -> DomResult<()> {
@@ -1082,14 +1108,7 @@ impl Dom {
     /// `selectionDirection`: `Some(true)` backward, `Some(false)` forward,
     /// `None` for "none" (no direction was given for the current selection).
     pub fn selection_direction(&self, id: NodeId) -> DomResult<Option<bool>> {
-        let selection = self.selection(id)?;
-        let i = self.check(id)?;
-        let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
-        Ok(e.control
-            .as_ref()
-            .and_then(|c| c.selection_direction)
-            .filter(|(_, of)| *of == selection)
-            .map(|(backward, _)| backward))
+        Ok(self.selection_snapshot(id)?.direction)
     }
     /// Gives the current selection a direction (`None`: "none"). A later
     /// selection change resets it.
@@ -1101,15 +1120,30 @@ impl Dom {
         Ok(())
     }
 
+    /// Use a computed deletion span without changing the direction of the
+    /// user's original selection before replacing it.
+    pub fn replace_text_in_range(&mut self, id: NodeId, range: (u32, u32), text: &str) -> DomResult<bool> {
+        self.replace_control_text(id, Some(range), text)
+    }
+
     /// Replaces the current selection with `text` (typing, Input.insertText,
     /// or deletion with empty text). Returns true if the value changed.
     pub fn insert_text(&mut self, id: NodeId, text: &str) -> DomResult<bool> {
+        self.replace_control_text(id, None, text)
+    }
+
+    fn replace_control_text(&mut self, id: NodeId, range: Option<(u32, u32)>, text: &str) -> DomResult<bool> {
         let i = self.check(id)?;
         if !self.is_mutable_text_idx(i) || !matches!(self.html_local(i).map(|l| &**l), Some("input" | "textarea")) {
             return Ok(false);
         }
         let mut value = self.edit_text(i)?;
-        let (s, e) = self.selection(id)?;
+        let value_len = utf16_len(&value);
+        let original = self.selection_for_length(id, value_len)?;
+        let (s, e) = range.map_or(original.range, |(start, end)| {
+            let end = end.min(value_len);
+            (start.min(end), end)
+        });
         let is_input = self.html_local(i) == Some(&local_name!("input"));
         let mut text = if is_input { strip_newlines(text).into_owned() } else { text.to_owned() };
         if s == e && text.is_empty() {
@@ -1126,7 +1160,7 @@ impl Dom {
             .filter(|_| limited && !text.is_empty())
             .and_then(|m| m.trim().parse::<u32>().ok())
         {
-            let room = max.saturating_sub(utf16_len(&value).saturating_sub(e - s));
+            let room = max.saturating_sub(value_len.saturating_sub(e - s));
             if utf16_len(&text) > room {
                 let mut units = 0;
                 let cut = text
@@ -1150,6 +1184,7 @@ impl Dom {
         c.dirty_value = true;
         c.user_edited = true;
         c.selection = (caret, caret);
+        c.selection_direction = original.direction.map(|_| (false, c.selection));
         c.selection_set = true;
         Ok(true)
     }
@@ -1209,7 +1244,7 @@ impl Dom {
             // Snap to the start of the code point ending at the caret.
             let (a, _) = utf16_range(&v, s - 1, 0)?;
             let start = utf16_len(&v[..a]);
-            self.set_selection_range(id, start, s)?;
+            return self.replace_text_in_range(id, (start, s), "");
         }
         self.insert_text(id, "")
     }
@@ -1224,7 +1259,7 @@ impl Dom {
             }
             let (a, _) = utf16_range(&v, s, 0)?;
             let ch = v[a..].chars().next().map_or(1, |c| c.len_utf16() as u32);
-            self.set_selection_range(id, s, s + ch)?;
+            return self.replace_text_in_range(id, (s, s + ch), "");
         }
         self.insert_text(id, "")
     }

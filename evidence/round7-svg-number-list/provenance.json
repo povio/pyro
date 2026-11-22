@@ -1,0 +1,77 @@
+{
+  "base": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "discovered": 51,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "loopLagMs": {
+      "p50": 1,
+      "p99": 9,
+      "max": 9,
+      "samples": 9
+    },
+    "wallMs": 998,
+    "browserCpuS": 1.3,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "binarySHA256": "0e31cda385f1875c5375731d5fcbbedd9496f7e5f305881c6917c77e0f805a91",
+    "bytes": 138265776,
+    "commit": "97864f1fa7cb71e9d1049637dedd6cbd31fbc92f",
+    "tree": "888a815298a09cb331c3a3ee359f5f0e1428071f"
+  },
+  "candidate": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "discovered": 51,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "loopLagMs": {
+      "p50": 0,
+      "p99": 2,
+      "max": 2,
+      "samples": 7
+    },
+    "wallMs": 758,
+    "browserCpuS": 1.18,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "binarySHA256": "12723bd3f300b3bc3abe32b1dc837298e08e861a4fb28c971f6158bbffced834",
+    "bytes": 138358432,
+    "commit": "f5d9413db9dea6c129103cdb2192f17a1bd0247e",
+    "tree": "8f884a07e41f1a07afb500bdb8b12766ae0dab49"
+  },
+  "precursor": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "discovered": 51,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "loopLagMs": {
+      "p50": 0,
+      "p99": 2,
+      "max": 2,
+      "samples": 7
+    },
+    "wallMs": 760,
+    "browserCpuS": 1.15,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "binarySHA256": "d5fa5ebf6cc98a438bf425460281992062e2ec982b5380ee9888f5e627a65c13",
+    "commit": "65d7a64bca128dcc03fef205bcf5eff3cf9d8d87",
+    "tree": "6e77baab94e87d7ddd2ed7f0234193052c02d573"
+  },
+  "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "profile": "wptiter (release-fast; no LTO; 16 codegen units; incremental; render; 1 Cargo job)",
+  "urlsSHA256": "1d5e6bab4eec172249723036c69d5c5dd16aaaad1b247068dbf0432418e5efd8"
+}

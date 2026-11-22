@@ -16,9 +16,7 @@
 //! are dispatched natively, so microtasks run after every listener while the
 //! transaction is still active, as in browsers.
 //!
-//! Limits (explicit): Blob/File values are not cloneable (DataCloneError);
-//! transactions are deactivated in the task after the one that created them,
-//! not after that task's microtask checkpoint.
+//! New ordinary transactions remain active through the creating script's microtask checkpoint.
 use crate::page::{PageDom, RemotePoster};
 use crate::structured_clone::{decode_message, encode_message, WireMessage};
 use crate::util::arg_string;
@@ -153,8 +151,10 @@ impl Namespace {
         let server = self.lock();
         let Some(dbs) = server.origins.get(origin) else { return Vec::new() };
         dbs.iter()
-            .filter(|(_, db)| db.version > 0)
-            .map(|(name, db)| DatabaseInfo { name: name.clone(), version: db.version })
+            .filter_map(|(name, db)| {
+                let version = db.upgrade.as_ref().map_or(db.version, |upgrade| upgrade.old_version);
+                (version > 0).then(|| DatabaseInfo { name: name.clone(), version })
+            })
             .collect()
     }
 
@@ -747,7 +747,7 @@ where
     );
 }
 
-fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'s>> {
+fn interface_objects<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     let factory = window_factory(s, page)?.as_object().ok_or_else(unavailable)?;
     let data = s.unwrap::<IdbFactory>(factory.value()).ok_or_else(unavailable)?;
     // Opaque origins still get the interfaces (feature detection), through a
@@ -757,7 +757,19 @@ fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'
         Err(JsError::ContextDestroyed) => return Err(JsError::ContextDestroyed),
         Err(_) => opaque_module(s, factory)?,
     };
-    let value = module.get_atom("globals")?.as_object().ok_or_else(unavailable)?.get(name)?;
+    module.get_atom("globals")?.as_object().ok_or_else(unavailable)
+}
+
+pub(crate) fn install_worker_globals(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+    let interfaces = interface_objects(s, page)?;
+    for name in interfaces.keys() {
+        replace(s, page, &name, interfaces.get(&name)?)?;
+    }
+    Ok(())
+}
+
+fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'s>> {
+    let value = interface_objects(s, page)?.get(name)?;
     replace(s, page, name, value)?;
     Ok(value)
 }
@@ -766,6 +778,10 @@ fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'
 /// EventTarget lets a borrowed same-origin accessor reach the owner's state.
 fn binding_natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
+    natives.set_atom("storeOperations", s.agent_value("IndexedDB.storeOperations", "new WeakMap()")?)?;
+    natives.set_atom("indexOperations", s.agent_value("IndexedDB.indexOperations", "new WeakMap()")?)?;
+    let array_key = s.function("isArrayKeyObject", |s, _, args| Ok(s.boolean(args.get(0).is_array())))?;
+    natives.set_atom("isArrayKeyObject", array_key.value())?;
     let state = s.function("handlerState", |s, _, args| {
         const KEY: &str = "lpIDBEventHandlers";
         let Some(object) = args.get(0).as_object() else { return Ok(s.undefined()) };
@@ -897,6 +913,9 @@ fn natives<'s>(
 ) -> JsResult<Object<'s>> {
     let ctx = Rc::new(Ctx { namespace, origin, handle, page: Rc::downgrade(page) });
     let natives = binding_natives(s)?;
+    add(s, &natives, &ctx, "scriptTurn", |s, _, _| {
+        Ok(pyro_js::script_entry_turn().map_or(s.undefined(), |turn| s.number(turn as f64)))
+    })?;
     // One task of idb.js's queue.
     add(s, &natives, &ctx, "post", |s, ctx, _a| {
         if let Some(page) = ctx.page.upgrade() {
@@ -906,7 +925,17 @@ fn natives<'s>(
         Ok(s.undefined())
     })?;
     add(s, &natives, &ctx, "nextId", |s, _ctx, _a| Ok(s.number(next_id() as f64)))?;
-    add(s, &natives, &ctx, "clone", |s, _ctx, a| crate::structured_clone::clone_value(s, a.get(0), s.undefined()))?;
+    add(s, &natives, &ctx, "blobKeyPath", |s, _ctx, a| {
+        let Some(blob) = s.unwrap::<crate::file::Blob>(a.get(0)) else { return Ok(s.undefined()) };
+        Ok(match a.get(1).to_string()?.as_str() {
+            "size" => s.number(blob.bytes.len() as f64),
+            "type" => s.string(&blob.mime),
+            "name" => blob.file.as_ref().map_or_else(|| s.undefined(), |(name, _)| s.string(name)),
+            "lastModified" => blob.file.as_ref().map_or_else(|| s.undefined(), |(_, time)| s.number(*time)),
+            _ => s.undefined(),
+        })
+    })?;
+    add(s, &natives, &ctx, "clone", |s, _ctx, a| crate::structured_clone::clone_for_storage(s, a.get(0)))?;
     // DOM "get the parent" of a request (its transaction) or transaction (its connection).
     add(s, &natives, &ctx, "setParent", |s, ctx, a| {
         let child = s.unwrap::<crate::target::EventTarget>(a.get(0)).map(|t| t.key);
@@ -1237,21 +1266,19 @@ fn natives<'s>(
         })?;
         Ok(s.boolean(ok))
     })?;
-    // The key generator's next key and step, or -1 when exhausted.
+    // Read the candidate key; only a successful write advances the generator.
     add(s, &natives, &ctx, "nextKey", |s, ctx, a| {
-        let (name, store, tx) = (a.get(0).to_string()?, a.get(1).to_string()?, a.get(2).to_number()? as u64);
+        let (name, store) = (a.get(0).to_string()?, a.get(1).to_string()?);
         let key = ctx.db(&name, |db| {
             let current = db.store(&store)?.current;
             if current > MAX_GENERATED {
                 return Ok(-1.0);
             }
-            db.log(tx, || Undo::Generator { store: store.clone(), old: current });
-            db.store(&store)?.current = after(current);
             Ok(current)
         })?;
         Ok(s.number(key))
     })?;
-    // "Possibly update the key generator" for an explicit number key.
+    // "Possibly update the key generator" after storing a numeric key.
     add(s, &natives, &ctx, "bumpKey", |s, ctx, a| {
         let (name, store, tx) = (a.get(0).to_string()?, a.get(1).to_string()?, a.get(2).to_number()? as u64);
         let key = a.get(3).to_number()?;

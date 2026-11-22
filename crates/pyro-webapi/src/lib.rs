@@ -21,6 +21,8 @@ mod animation_events;
 mod animation_frame;
 mod animations;
 mod cache_storage;
+mod cookie_store;
+mod opfs;
 pub mod canvas;
 mod canvas_path;
 mod clipboard;
@@ -36,6 +38,8 @@ pub mod dom_parser;
 mod edit_commands;
 pub mod editing;
 mod editing_globals;
+mod encoded_chunks;
+mod video_decoder;
 pub mod encoding;
 pub mod event;
 mod event_source;
@@ -43,6 +47,7 @@ pub mod fetch;
 pub mod file;
 pub mod file_reader;
 pub mod font_loading;
+mod pseudo_element;
 pub mod typed_om;
 pub mod trusted_types;
 pub mod form_data;
@@ -120,6 +125,7 @@ pub mod validity;
 pub(crate) mod webaudio;
 pub mod websocket;
 pub mod window;
+pub mod window_features;
 pub mod window_message;
 pub mod worker;
 pub(crate) mod shared_worker;
@@ -138,7 +144,7 @@ pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
-pub use page::{AvailableImage, FrameContainer,
+pub use page::{AgentClusterGroup, AvailableImage, FrameContainer,
     BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
     IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
     RemotePoster,
@@ -147,7 +153,10 @@ pub use popup::{popup_window_proxy, PopupCommand, PopupState, PopupTicket};
 pub use render_blocking::RenderBlocker;
 pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
-pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
+pub use structured_clone::{
+    decode_message as deserialize_message, encode_for_storage as serialize_for_storage, encode_message as serialize_message,
+    WireMessage,
+};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use worker::{
@@ -184,6 +193,7 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<file_reader::FileReader>();
     data_transfer::register(engine);
     encoding::register(engine);
+    encoded_chunks::register(engine);
     validity::register(engine);
     window::register(engine);
     mutation_observer::register(engine);
@@ -195,6 +205,7 @@ pub fn register(engine: &pyro_js::Engine) {
     xpath::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
+    opfs::register(engine);
     engine.register::<cache_storage::CacheHandle>();
     engine.register::<cache_storage::StoredBody>();
     engine.register::<headers::Headers>();
@@ -301,6 +312,8 @@ pub fn rebind_window(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     page.dom.borrow_mut().set_named_item_hook(Some(Rc::new(move |name: &str| names.announce(name))));
     install_listener_connected_hook(&page);
     realm.set_embedder(page.clone());
+    cookie_store::bind_environment(scope, &page)?;
+    cookie_store::events::install_window(scope, &page);
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     mutation_observer::bind(scope, &page)
 }
@@ -366,6 +379,8 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     install_listener_connected_hook(&page);
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
+    cookie_store::bind_environment(scope, &page)?;
+    cookie_store::events::install_window(scope, &page);
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     realm.set_rejection_hooks(event::REJECTION_HOOKS);
@@ -375,6 +390,7 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;
     encoding::install(scope, helpers.get_atom("encoding")?)?;
     headers::install(scope, helpers.get_atom("headers")?)?;
+    scope.after_populate::<css::CssFontFeatureValuesMap>(helpers.get_atom("fontFeatureMap")?.as_object().expect("font feature map hook"))?;
     url_search_params::install(scope, helpers.get_atom("urlSearchParams")?)?;
     form_data::install(scope, helpers.get_atom("formData")?)?;
     fetch::install(scope)?;
@@ -384,6 +400,9 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
         scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
     {
         page.define_properties.borrow_mut().insert(scope.realm_id(), pyro_js::Persistent::new(scope, define));
+    }
+    if secure_context::secure(scope, &page) {
+        cookie_store::exposure::install(scope, false)?;
     }
     if page.max_touch_points() > 0 {
         handlers::define_touch_handlers(scope)?;

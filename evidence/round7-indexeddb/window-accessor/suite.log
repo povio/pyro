@@ -1,0 +1,3 @@
+Previous HEAD position was 00b7ab0bf Merge commit '1d0a43b93' into integration/round7-local
+HEAD is now at bdbb41a00 Install Window indexedDB as a global-only readonly attribute
+828 {'parent': 827, 'candidate': 828, 'repeat': 828, 'chrome': 828} [{'url': 'IndexedDB/idlharness.any.html', 'name': 'Window interface: attribute indexedDB', 'occurrence': 1, 'parent': 'Fail', 'candidate': 'Pass', 'repeat': 'Pass', 'chrome': 'Pass'}] 0 0

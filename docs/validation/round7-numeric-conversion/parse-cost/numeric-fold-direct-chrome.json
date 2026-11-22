@@ -1,0 +1,108 @@
+{
+  "version": "158.0.8127.37",
+  "results": {
+    "authoredIdentity": [
+      true,
+      true,
+      true,
+      105,
+      1,
+      9
+    ],
+    "parsedPair": [
+      "CSSMathSum",
+      "calc(98px)",
+      [
+        [
+          "CSSUnitValue",
+          "98px"
+        ]
+      ]
+    ],
+    "parsedRelative": [
+      "CSSMathSum",
+      "calc(2em)",
+      [
+        [
+          "CSSUnitValue",
+          "2em"
+        ]
+      ]
+    ],
+    "parsedMixedTime": [
+      "CSSMathSum",
+      "calc(0.75s)",
+      [
+        [
+          "CSSUnitValue",
+          "0.75s"
+        ]
+      ]
+    ],
+    "parsedThree": [
+      "CSSMathSum",
+      "calc(97px)",
+      [
+        [
+          "CSSUnitValue",
+          "97px"
+        ]
+      ]
+    ],
+    "unresolvedPair": [
+      "CSSMathSum",
+      "calc(2em + 3px)",
+      [
+        [
+          "CSSUnitValue",
+          "2em"
+        ],
+        [
+          "CSSUnitValue",
+          "3px"
+        ]
+      ]
+    ],
+    "unresolvedThree": [
+      "CSSMathSum",
+      "calc(2em + 99px)",
+      [
+        [
+          "CSSUnitValue",
+          "2em"
+        ],
+        [
+          "CSSUnitValue",
+          "99px"
+        ]
+      ]
+    ],
+    "independentParse": [
+      9,
+      3,
+      false
+    ],
+    "mutableSum": [
+      97,
+      193,
+      189,
+      2
+    ],
+    "nestedSum": 7,
+    "relativeSum": 5,
+    "reciprocal": 0.25,
+    "product": 4000.000000000001,
+    "clamp": 9,
+    "simple": 3,
+    "mixed": 88,
+    "incompatible": {
+      "error": "TypeError"
+    },
+    "authored": [
+      "calc(1in + 1px)",
+      "calc(1in + 1px)",
+      2,
+      97
+    ]
+  }
+}

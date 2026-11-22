@@ -1,0 +1,9 @@
+{
+  "url": "editing/run/bold.html?3001-last",
+  "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"abc<b>[d<span contenteditable=\\\"false\\\"><span contenteditable><b>e</b></span></span>f]</b>ghi\" compare innerHTML",
+  "occurrence": 1,
+  "parent": "Pass",
+  "first": "Fail",
+  "accepted": "Pass",
+  "signedChrome158": "Fail"
+}

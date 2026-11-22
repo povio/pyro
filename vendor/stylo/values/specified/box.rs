@@ -2653,6 +2653,30 @@ pub enum ImageOrientation {
     None,
 }
 
+/// CSS Display 4 reading-flow keyword selected on a container.
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum ReadingFlow {
+    Normal,
+    SourceOrder,
+    FlexVisual,
+    FlexFlow,
+    GridRows,
+    GridColumns,
+    GridOrder,
+}
+
+/// Whether the element's text is rendered aurally (CSS Speech Level 1).
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum Speak {
+    Auto,
+    Never,
+    Always,
+}
+
 /// Controls interpolation between intrinsic sizing keywords and numeric sizes.
 #[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq, Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]

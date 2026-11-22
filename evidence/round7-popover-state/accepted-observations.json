@@ -1,0 +1,112 @@
+{
+  "equivalent": {
+    "immediate": {
+      "open": true,
+      "attr": "AuTo",
+      "reflected": "auto"
+    },
+    "events": []
+  },
+  "namespaced": {
+    "immediate": {
+      "open": true,
+      "attr": "auto",
+      "reflected": "auto"
+    },
+    "events": []
+  },
+  "liveAttr": {
+    "immediate": {
+      "open": false,
+      "attr": "manual",
+      "reflected": "manual"
+    },
+    "events": [
+      [
+        "beforetoggle",
+        "open",
+        "closed"
+      ],
+      [
+        "toggle",
+        "open",
+        "closed"
+      ]
+    ]
+  },
+  "namedMap": {
+    "immediate": {
+      "open": false,
+      "attr": null,
+      "reflected": null
+    },
+    "events": [
+      [
+        "beforetoggle",
+        "open",
+        "closed"
+      ],
+      [
+        "toggle",
+        "open",
+        "closed"
+      ]
+    ]
+  },
+  "replaceAttr": {
+    "immediate": {
+      "open": false,
+      "attr": "hint",
+      "reflected": "hint"
+    },
+    "events": [
+      [
+        "beforetoggle",
+        "open",
+        "closed"
+      ],
+      [
+        "toggle",
+        "open",
+        "closed"
+      ]
+    ]
+  },
+  "nullish": {
+    "immediate": {
+      "open": false,
+      "attr": null,
+      "reflected": null
+    },
+    "events": [
+      [
+        "beforetoggle",
+        "open",
+        "closed"
+      ],
+      [
+        "toggle",
+        "open",
+        "closed"
+      ]
+    ]
+  },
+  "handlerRewrites": {
+    "immediate": {
+      "open": false,
+      "attr": "manual",
+      "reflected": "manual"
+    },
+    "events": [
+      [
+        "beforetoggle",
+        "open",
+        "closed"
+      ]
+    ]
+  },
+  "detachedChild": {
+    "parentOpen": true,
+    "childConnected": false
+  }
+}

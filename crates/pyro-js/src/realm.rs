@@ -153,6 +153,8 @@ pub enum ModuleType {
     /// `with { type: "css" }`: resolve with [`ModuleRequest::resolve_object`]
     /// (a `CSSStyleSheet`).
     Css,
+    /// `with { type: "text" }`: a module whose only export is the decoded string.
+    Text,
     /// A type JavaScriptCore parses but HTML does not allow here
     /// (`"webassembly"`): reject it with a TypeError.
     Unsupported,
@@ -164,6 +166,7 @@ impl ModuleType {
             sys::modules::MODULE_TYPE_JAVASCRIPT => ModuleType::JavaScript,
             sys::modules::MODULE_TYPE_JSON => ModuleType::Json,
             sys::modules::MODULE_TYPE_CSS => ModuleType::Css,
+            sys::modules::MODULE_TYPE_TEXT => ModuleType::Text,
             _ => ModuleType::Unsupported,
         }
     }
@@ -269,6 +272,18 @@ impl ModuleRequest {
     /// fails the import with a SyntaxError.
     pub fn resolve_json(self, scope: &Scope<'_>, text: &str) -> JsResult<()> {
         self.resolve_source(scope, text, sys::modules::MODULE_TYPE_JSON)
+    }
+
+    /// Supplies a text module through the pinned JSC typed resolver. Its
+    /// module map already keys the entry by (URL, Text), but its C API
+    /// accepts only JavaScript and JSON source providers. Encode the data
+    /// as one quoted string literal in a module with only a default export.
+    pub fn resolve_text(self, scope: &Scope<'_>, text: &str) -> JsResult<()> {
+        let mut source = b"export default ".to_vec();
+        serde_json::to_writer(&mut source, text).expect("encoding a string into a Vec is infallible");
+        source.push(b';');
+        let module = std::str::from_utf8(&source).expect("serialized JSON is UTF-8");
+        self.resolve_source(scope, module, sys::modules::MODULE_TYPE_JAVASCRIPT)
     }
 
     /// Provides the `default` export of a [`ModuleType::Css`] request (the
@@ -2340,6 +2355,27 @@ impl<'s> Scope<'s> {
         self.realm.global_payload.get()
     }
 
+    /// Installs an interface on this global as a writable, configurable,
+    /// non-enumerable own data property. On the fork, a custom value defers
+    /// creation until the first access (including descriptor inspection).
+    /// Other JSC builds materialize the same property immediately.
+    pub fn define_lazy_global_interface<I: LazyGlobalInterface>(&self) -> JsResult<()> {
+        let spi = sys::spi::get();
+        let target = self.realm.global_target.get();
+        if let (Some(install), Some(_)) = (spi.set_custom_value, spi.throw_exception) {
+            if !target.is_null() {
+                // SAFETY: a live global target and its interned property name.
+                // The monomorphized callback needs no borrowed Rust state.
+                let ok = unsafe {
+                    install(self.ctx, target, crate::string::atom_raw(I::NAME), Some(read_global_interface::<I>),
+                        None, sys::kJSPropertyAttributeDontEnum)
+                };
+                if ok { return Ok(()) }
+            }
+        }
+        self.global().set_atom_with(I::NAME, I::value(self)?, sys::kJSPropertyAttributeDontEnum)
+    }
+
     /// Makes `name` a constant attribute of the realm's global: a
     /// non-configurable, read-only accessor that yields `value` (a WebIDL
     /// `[LegacyUnforgeable] readonly attribute` whose value never changes for
@@ -2654,11 +2690,40 @@ pub struct Deferred {
 }
 
 impl Deferred {
+    /// The resolving function, for a host object that traces its promise
+    /// capability through JavaScriptCore instead of keeping native roots.
+    pub fn resolver<'s>(&self, scope: &Scope<'s>) -> Value<'s> {
+        self.resolve.get(scope)
+    }
+
     pub fn resolve(&self, scope: &Scope<'_>, value: Value<'_>) -> JsResult<()> {
         self.resolve.get(scope).as_object().expect("resolve").call(None, &[value]).map(|_| ())
     }
     pub fn reject(&self, scope: &Scope<'_>, value: Value<'_>) -> JsResult<()> {
         self.reject.get(scope).as_object().expect("reject").call(None, &[value]).map(|_| ())
+    }
+}
+
+/// An interface constructor cached by its realm's bindings, for
+/// [`Scope::define_lazy_global_interface`].
+pub trait LazyGlobalInterface {
+    const NAME: &'static str;
+    fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>>;
+}
+
+unsafe extern "C" fn read_global_interface<I: LazyGlobalInterface>(
+    ctx: sys::JSContextRef, _holder: sys::JSValueRef, _uid: *const c_void,
+) -> sys::JSValueRef {
+    let mut exc = ptr::null();
+    // SAFETY: JSC calls a CustomValue with its slot base's realm as ctx,
+    // including when another realm reads the descriptor.
+    unsafe {
+        let spi = sys::spi::get();
+        let value = class::guard(ctx, &mut exc, ptr::null(), |s| I::value(s).map(|v| v.raw));
+        if !exc.is_null() {
+            spi.throw_exception.expect("checked at installation")(ctx, exc);
+        }
+        if value.is_null() { sys::JSValueMakeUndefined(ctx) } else { value }
     }
 }
 
@@ -2946,6 +3011,12 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         chain
     });
     let global_name = realm.global_class.map(|gid| reg.classes[gid as usize].name);
+    let global_accessors: Vec<_> = global_chain
+        .iter()
+        .flatten()
+        .flat_map(|id| reg.classes[*id as usize].def.global_accessors.iter().copied())
+        .collect();
+    let member_class = reg.member;
     // The pure getters of the global's classes, root-first (see below).
     let global_pure: Vec<(ClassId, &'static str, u16, bool)> = global_chain
         .iter()
@@ -3022,6 +3093,24 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             let part = MemberPart::Instance(target);
             install_members_raw(scope.ctx, &realm.engine, Some(realm), gid, global, interface, helpers, part)?;
             realm.global_members_on_instance.set(true);
+        }
+        if !global_accessors.is_empty() {
+            let accessor = realm.helper(scope, "accessor")?;
+            let function_proto = scope.function_prototype()?;
+            for (name, call, set) in global_accessors {
+                let getter = make_member_fn(scope.ctx, &realm.engine, member_class, call, None, name, 0, &keys)?;
+                if let Some(proto) = function_proto {
+                    getter.set_prototype(proto);
+                }
+                let setter = if let Some(call) = set {
+                    let setter = make_member_fn(scope.ctx, &realm.engine, member_class, call, None, name, 1, &keys)?;
+                    if let Some(proto) = function_proto { setter.set_prototype(proto); }
+                    setter.value()
+                } else {
+                    scope.undefined()
+                };
+                accessor.call(None, &[global.value(), scope.string(name), getter.value(), setter])?;
+            }
         }
     }
     Ok(())

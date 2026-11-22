@@ -1,0 +1,98 @@
+{
+  "base": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "discovered": 29,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "loopLagMs": {
+      "p50": 2,
+      "p99": 9,
+      "max": 27,
+      "samples": 1418
+    },
+    "wallMs": 144638,
+    "browserCpuS": 8.41,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "binarySHA256": "87111064152475627b28b3b9ebd55dbfadd03ead13e0a0667eb675f02313eff6",
+    "commit": "1d846ee5389f572cbaa9d4a3981677960675002f",
+    "tree": "a9d1ea425ce51adadf4bf866c02a930f6a15c9f9"
+  },
+  "candidate": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "discovered": 29,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "loopLagMs": {
+      "p50": 2,
+      "p99": 23,
+      "max": 23,
+      "samples": 140
+    },
+    "wallMs": 14392,
+    "browserCpuS": 12.97,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "binarySHA256": "67408b531000cbde58ea08411812dd3f1864a3d740aab15303c0907003106d2f",
+    "commit": "064ca605d6ad6877c766773fe10d8d0afa9d3488",
+    "tree": "fd89cbc7f08ef1a41aa111c4ab8b515c7439637f"
+  },
+  "precursor": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "discovered": 29,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "loopLagMs": {
+      "p50": 2,
+      "p99": 7,
+      "max": 19,
+      "samples": 494
+    },
+    "wallMs": 50363,
+    "browserCpuS": 11.54,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "binarySHA256": "0bcf6ab576a82ee3e89499a6cd66424dd5905edf403707ce7e9926f0bfa3920a",
+    "commit": "e9c57a694fd89acf4e0a5e01e6d167b241c3e019",
+    "tree": "2d0cb1b7a5818cdbf85cd1a2060f8e700ad6d5cb"
+  },
+  "beforeMinimum": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "discovered": 29,
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "loopLagMs": {
+      "p50": 2,
+      "p99": 5,
+      "max": 10,
+      "samples": 135
+    },
+    "wallMs": 13727,
+    "browserCpuS": 12.1,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "binarySHA256": "e78b85c32b4f8eecf8967c86373b9c70913dc37db5025b4137cf81a740debfc5",
+    "commit": "4a519b51d1846d21fee190cf8dcdfead7a4ef5b0",
+    "tree": "5a71b7c398e064bbffbbfc459c8954220dd99953"
+  },
+  "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "profile": "wptiter (release-fast; no LTO; 16 codegen units; incremental; render; 1 Cargo job)",
+  "urlsSHA256": "c2a3a699303951278633aaa3553b32c829d3444514f4ad29b317f7c5ef5bd6a8"
+}

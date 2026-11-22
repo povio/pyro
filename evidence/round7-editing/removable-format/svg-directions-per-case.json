@@ -1,0 +1,4122 @@
+[
+ {
+  "tag": "text",
+  "action": "partial",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0
+    ],
+    1
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0
+    ],
+    3
+   ],
+   "direction": "forward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     2
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     2
+    ],
+    "direction": "forward",
+    "strike": true,
+    "selected": "bc",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     3
+    ],
+    "direction": "forward",
+    "selected": "bc",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "text",
+  "action": "reverse",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0
+    ],
+    3
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0
+    ],
+    1
+   ],
+   "direction": "backward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     2
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     2
+    ],
+    "direction": "backward",
+    "strike": true,
+    "selected": "bc",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     3
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "selected": "bc",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "text",
+  "action": "full",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0
+    ],
+    0
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0
+    ],
+    4
+   ],
+   "direction": "forward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "direction": "forward",
+    "strike": true,
+    "selected": "abcd",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     4
+    ],
+    "direction": "forward",
+    "selected": "abcd",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "text",
+  "action": "full-reverse",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0
+    ],
+    4
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0
+    ],
+    0
+   ],
+   "direction": "backward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "direction": "backward",
+    "strike": true,
+    "selected": "abcd",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     4
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     0
+    ],
+    "direction": "backward",
+    "selected": "abcd",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "text",
+  "action": "prefix",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0
+    ],
+    0
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0
+    ],
+    3
+   ],
+   "direction": "forward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "direction": "forward",
+    "strike": true,
+    "selected": "abc",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     3
+    ],
+    "direction": "forward",
+    "selected": "abc",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "text",
+  "action": "prefix-reverse",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0
+    ],
+    3
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0
+    ],
+    0
+   ],
+   "direction": "backward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "direction": "backward",
+    "strike": true,
+    "selected": "abc",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     3
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     0
+    ],
+    "direction": "backward",
+    "selected": "abc",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "text",
+  "action": "suffix",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0
+    ],
+    1
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0
+    ],
+    4
+   ],
+   "direction": "forward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     3
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     3
+    ],
+    "direction": "forward",
+    "strike": true,
+    "selected": "bcd",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     4
+    ],
+    "direction": "forward",
+    "selected": "bcd",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "text",
+  "action": "suffix-reverse",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0
+    ],
+    4
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0
+    ],
+    1
+   ],
+   "direction": "backward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     3
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      1,
+      0
+     ],
+     3
+    ],
+    "direction": "backward",
+    "strike": true,
+    "selected": "bcd",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0
+     ],
+     4
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "selected": "bcd",
+    "html": "left<svg width=\"100\" height=\"30\"><text id=\"original\" y=\"20\">abcd</text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "tspan",
+  "action": "partial",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    1
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    3
+   ],
+   "direction": "forward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     2
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     2
+    ],
+    "direction": "forward",
+    "strike": true,
+    "selected": "bc",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "direction": "forward",
+    "selected": "bc",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "tspan",
+  "action": "reverse",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    3
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    1
+   ],
+   "direction": "backward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     2
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     2
+    ],
+    "direction": "backward",
+    "strike": true,
+    "selected": "bc",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "selected": "bc",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "tspan",
+  "action": "full",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    0
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    4
+   ],
+   "direction": "forward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "direction": "forward",
+    "strike": true,
+    "selected": "abcd",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "direction": "forward",
+    "selected": "abcd",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "tspan",
+  "action": "full-reverse",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    4
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    0
+   ],
+   "direction": "backward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "direction": "backward",
+    "strike": true,
+    "selected": "abcd",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "start": [
+     [
+      2
+     ],
+     0
+    ],
+    "end": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "direction": "backward",
+    "selected": "abcd",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "tspan",
+  "action": "prefix",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    0
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    3
+   ],
+   "direction": "forward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "direction": "forward",
+    "strike": true,
+    "selected": "abc",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "direction": "forward",
+    "selected": "abc",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "tspan",
+  "action": "prefix-reverse",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    3
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    0
+   ],
+   "direction": "backward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "direction": "backward",
+    "strike": true,
+    "selected": "abc",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1
+     ],
+     0
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     3
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     0
+    ],
+    "direction": "backward",
+    "selected": "abc",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "tspan",
+  "action": "suffix",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    1
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    4
+   ],
+   "direction": "forward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     3
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     3
+    ],
+    "direction": "forward",
+    "strike": true,
+    "selected": "bcd",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "forward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "direction": "forward",
+    "selected": "bcd",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   }
+  }
+ },
+ {
+  "tag": "tspan",
+  "action": "suffix-reverse",
+  "initial": {
+   "anchor": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    4
+   ],
+   "focus": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    1
+   ],
+   "direction": "backward"
+  },
+  "after": {
+   "owner-parent": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     3
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     0
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     3
+    ],
+    "direction": "backward",
+    "strike": true,
+    "selected": "bcd",
+    "undo": true
+   },
+   "previous": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "none",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "final": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "start": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "end": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "strike": false,
+    "selected": "",
+    "undo": true
+   }
+  },
+  "undo": {
+   "owner-parent": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "previous": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "final": {
+    "anchor": [
+     [
+      2
+     ],
+     0
+    ],
+    "focus": [
+     [
+      2
+     ],
+     0
+    ],
+    "direction": "none",
+    "selected": "",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   },
+   "chrome": {
+    "anchor": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     4
+    ],
+    "focus": [
+     [
+      1,
+      0,
+      0,
+      0
+     ],
+     1
+    ],
+    "direction": "backward",
+    "selected": "bcd",
+    "html": "left<svg width=\"100\" height=\"30\"><text y=\"20\"><tspan id=\"original\">abcd</tspan></text></svg>right"
+   }
+  }
+ }
+]

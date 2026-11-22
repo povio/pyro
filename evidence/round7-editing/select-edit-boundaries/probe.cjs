@@ -1,0 +1,13 @@
+const fs=require('fs'),path=require('path'),net=require('net'),cp=require('child_process'),os=require('os');
+const cache=path.join(os.homedir(),'Library/Caches/lightningpanda'),pw=require(path.join(cache,'round6-reference-158/census/runner/node_modules/playwright-core'));
+(async()=>{const [label,bin]=process.argv.slice(2),s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const port=s.address().port;await new Promise(r=>s.close(r));
+const proc=cp.spawn(bin,['serve','--port',String(port),'--host','127.0.0.1','--log-level','error'],{stdio:'ignore',env:{...process.env,WPT_CHROME_STATE_DIR:fs.mkdtempSync(path.join(os.tmpdir(),'qa-enter-'))}});let b;
+try{const endpoint='http://127.0.0.1:'+port;let version;for(let i=0;i<100;i++){try{version=await(await fetch(endpoint+'/json/version')).json();break}catch{}await new Promise(r=>setTimeout(r,100))}
+b=await pw.chromium.connectOverCDP(endpoint);const p=await b.newPage(),rows=[];
+for(const multiple of [false,true])for(const cmd of ['delete','forwardDelete','insertText'])for(const boundary of ['inside','option','group','select','fromLeft','toRight','around','backwardInside','adjacent']){
+ await p.setContent('<div id=h contenteditable><p>abc</p><select '+(multiple?'multiple':'')+'><optgroup label="set"><option>def</option><option selected>ghi</option></optgroup></select><p>jkl</p></div>');
+ rows.push(await p.evaluate(({multiple,cmd,boundary})=>{const h=document.querySelector('#h'),box=h.querySelector('select'),g=box.firstChild,o=g.firstChild,t=o.firstChild,s=getSelection(),l=h.firstChild.firstChild,r=h.lastChild.firstChild;h.focus();const ends={inside:[t,1,t,1],option:[o,0,o,1],group:[g,0,g,2],select:[box,0,box,1],fromLeft:[l,2,t,1],toRight:[t,1,r,1],around:[h,1,h,2],backwardInside:[g.lastChild.firstChild,1,t,1],adjacent:[l,1,l,2]}[boundary];s.setBaseAndExtent(...ends);
+ const point=n=>{let a=[];while(n&&n!==h){if(!n.parentNode)return null;a.unshift([...n.parentNode.childNodes].indexOf(n));n=n.parentNode}return a};
+ const snap=()=>({html:h.innerHTML,anchor:[point(s.anchorNode),s.anchorOffset],focus:[point(s.focusNode),s.focusOffset],direction:s.direction,index:box.selectedIndex,identities:[box,g,o,t].map(n=>n.isConnected),undo:document.queryCommandEnabled('undo')});const before=snap(),result=document.execCommand(cmd,false,cmd==='insertText'?'XYZ':''),after=snap(),undo=document.execCommand('undo');return {multiple,cmd,boundary,before,result,after,undo,restored:snap()};},{multiple,cmd,boundary}));}
+fs.writeFileSync(path.join(__dirname,'styles-'+label+'.json'),JSON.stringify({version,rows},null,2))
+}finally{if(b)await b.close();proc.kill()}})().catch(e=>{console.error(e);process.exitCode=1});

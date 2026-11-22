@@ -15,6 +15,23 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
 
+/// The browser's origin-keyed agent clusters are partitioned by browsing context group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentClusterGroup(u64);
+
+impl Default for AgentClusterGroup {
+    fn default() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentCluster {
+    group: AgentClusterGroup,
+    origin: std::sync::Arc<str>,
+}
+
 /// High bit marks identity keys of non-node event targets / events.
 pub(crate) const OTHER_NS: u64 = 1 << 63;
 pub(crate) const EVENT_NS: u64 = 1 << 62;
@@ -62,6 +79,8 @@ impl ImageBytes {
 }
 
 pub struct PageDom {
+    /// Cookie Store uses the environment creation URL even after a history update.
+    pub(crate) cookie_creation_url: std::cell::OnceCell<String>,
     pub dom: DomRef,
     id: u64,
     disposed: Cell<bool>,
@@ -88,6 +107,10 @@ pub struct PageDom {
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
     opaque_origin: Cell<bool>,
+    /// Schemeful site of this environment's top-level document at creation.
+    cookie_partition_key: RefCell<Option<String>>,
+    cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
+    agent_cluster: RefCell<AgentCluster>,
     /// HTML "sticky activation": the user interacted with the document.
     sticky_activation: Cell<bool>,
     flushing_iframes: Cell<bool>,
@@ -170,6 +193,7 @@ pub struct PageDom {
     pub(crate) sw_controlled: Cell<bool>,
     /// The document is shown in a child frame (a client's `frameType`).
     nested_frame: Cell<bool>,
+    window_chrome: Cell<(bool, i32, i32)>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
     pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
     /// MessagePorts whose peer was collected; their pins are reconciled at
@@ -198,6 +222,7 @@ pub struct PageDom {
     /// CSS animation and transition event timelines.
     pub(crate) animation_events: crate::animation_events::State,
     pub net: RefCell<Option<pyro_net::NetClient>>,
+    pub(crate) cookie_observers: RefCell<Vec<crate::cookie_store::events::WindowObserver>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
     pub(crate) resizes: crate::resize_observer::BindingState,
     /// Scroll event targets awaiting the next rendering update, per document
@@ -301,6 +326,7 @@ pub struct PageDom {
     /// scheduled (`crate::input::update_hover_after_task`).
     pub(crate) hover_update_queued: Cell<bool>,
     press_target: Cell<Option<NodeId>>,
+    pub(crate) pressed_pseudo: Cell<Option<pyro_dom::geometry::GeneratedHit>>,
     /// The `pointerdown` of the press in progress was canceled: its
     /// compatibility mouse events (moves while down, `mouseup`) are not
     /// sent, as in Chromium; a canceled `pointerup` suppresses nothing.
@@ -312,7 +338,7 @@ pub struct PageDom {
     pub(crate) text_drag: Cell<Option<crate::input::TextDrag>>,
     /// The document selection (`crate::editing`), shared by every world.
     pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
-    pub(crate) selectionchange_pending: Cell<bool>,
+    pub(crate) selectionchange_pending: RefCell<FxHashSet<NodeId>>,
     /// The custom highlights (`CSS.highlights`, `crate::highlights`), in registration order.
     pub(crate) highlights: RefCell<Vec<crate::highlights::CustomHighlight>>,
     /// The ranges of the last fragment navigation's text directives (`::target-text`).
@@ -386,6 +412,7 @@ pub struct PageDom {
     completely_loaded: Cell<bool>,
     /// When trusted input last reached the document (transient activation).
     input_activation: Cell<Option<std::time::Instant>>,
+    debugger_gesture: Cell<bool>,
     /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
@@ -536,6 +563,7 @@ pub struct NavigationRequest {
     pub opener: bool,
     /// `window.open`'s returned object watches this popup.
     pub popup: Option<Rc<crate::popup::PopupTicket>>,
+    pub window_features: crate::window_features::WindowFeatures,
     /// The request's own referrer policy: a link's `referrerpolicy` state,
     /// no-referrer for `rel=noreferrer` (`None`: the document's policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
@@ -844,12 +872,19 @@ impl PageDom {
     pub fn new(dom: DomRef, document: NodeId) -> Rc<PageDom> {
         dom.borrow_mut().watch_iframes(document).expect("page document");
         dom.borrow_mut().set_document_scripting(document, true).expect("page document");
+        // Standalone PageDom embedders create a top-level document. The frame
+        // and worker embedders supply the actual inherited storage site below.
+        let cookie_partition_key = dom.borrow().document_data(document).ok()
+            .and_then(|d| pyro_net::Url::parse(d.url.as_ref()).ok())
+            .and_then(|url| pyro_net::cookies::partition_key(&url));
         Rc::new_cyclic(|this| PageDom {
+            cookie_creation_url: Default::default(),
             this: this.clone(),
             frame_sized: Cell::new(false),
             sw_client: RefCell::new(None),
             sw_controlled: Cell::new(false),
             nested_frame: Cell::new(false),
+            window_chrome: Cell::default(),
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
@@ -867,6 +902,13 @@ impl PageDom {
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
             opaque_origin: Cell::new(false),
+            cookie_site_context: Cell::new(if cookie_partition_key.is_some() {
+                pyro_net::cookies::SiteContext::SameSite
+            } else {
+                pyro_net::cookies::SiteContext::CrossSite
+            }),
+            cookie_partition_key: RefCell::new(cookie_partition_key),
+            agent_cluster: RefCell::new(AgentCluster { group: AgentClusterGroup::default(), origin: "".into() }),
             sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
             render_blocking: Default::default(),
@@ -907,6 +949,7 @@ impl PageDom {
             event_unforgeables: RefCell::new(FxHashMap::default()),
             animation_events: Default::default(),
             net: RefCell::new(None),
+            cookie_observers: Default::default(),
             identity: RefCell::new(Default::default()),
             context_services: Default::default(),
             max_touch_points: Cell::new(0),
@@ -956,12 +999,13 @@ impl PageDom {
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
+            pressed_pseudo: Cell::new(None),
             compat_mouse_suppressed: Cell::new(false),
             drag_candidate: Cell::new(None),
             text_drag: Cell::new(None),
             drag: RefCell::new(None),
             selection: RefCell::new(None),
-            selectionchange_pending: Cell::new(false),
+            selectionchange_pending: RefCell::new(FxHashSet::default()),
             highlights: RefCell::new(Vec::new()),
             target_text: RefCell::new(Vec::new()),
             undo: RefCell::new(Default::default()),
@@ -992,6 +1036,7 @@ impl PageDom {
             web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
+            debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_allowed: Cell::new(true),
             paint_worklet: RefCell::new(None),
@@ -1052,6 +1097,19 @@ impl PageDom {
     pub fn set_fullscreen_allowed(&self, allowed: bool) {
         self.fullscreen_allowed.set(allowed);
     }
+    /// Install the origin identity committed by the frame loader, including its opaque token.
+    pub fn set_window_agent_cluster(&self, group: AgentClusterGroup, origin: String) {
+        *self.agent_cluster.borrow_mut() = AgentCluster { group, origin: origin.into() };
+    }
+
+    pub(crate) fn agent_cluster(&self) -> AgentCluster {
+        self.agent_cluster.borrow().clone()
+    }
+
+    pub(crate) fn inherit_agent_cluster(&self, cluster: AgentCluster) {
+        *self.agent_cluster.borrow_mut() = cluster;
+    }
+
     /// The embedder's identity for the document's origin, used when that origin is opaque.
     pub fn set_opaque_origin_token(&self, token: u64) {
         self.opaque_origin_token.set(Some(token));
@@ -1110,6 +1168,20 @@ impl PageDom {
     pub fn blob_url_count(&self) -> usize {
         self.blob_urls.borrow().len()
     }
+    pub fn set_window_chrome(&self, is_popup: bool, left: i32, top: i32) {
+        self.window_chrome.set((is_popup, left, top));
+    }
+
+    pub fn screen_position(&self) -> (i32, i32) {
+        let (_, left, top) = self.window_chrome.get();
+        (left, top)
+    }
+
+    pub(crate) fn bars_visible(&self) -> bool {
+        // HTML BarProp.visible returns true when the browsing context is null.
+        !self.is_fully_active() || !self.window_chrome.get().0
+    }
+
     pub fn is_disposed(&self) -> bool {
         self.disposed.get()
     }
@@ -1133,6 +1205,7 @@ impl PageDom {
         if !self.detached.replace(true) {
             self.release_activity();
         }
+        crate::custom::release_document(self);
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());
     }
@@ -1191,6 +1264,7 @@ impl PageDom {
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
         crate::websocket::dispose(self);
+        self.cookie_observers.borrow_mut().clear();
         crate::xhr::dispose(self);
         crate::resource_timing::dispose(self);
         crate::file_reader::dispose(self);
@@ -1236,7 +1310,7 @@ impl PageDom {
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
-        drop(self.custom_elements.take());
+        crate::custom::release_document(self);
         let windows = self.window_keys.take();
         let mut dom = self.dom.borrow_mut();
         for (doc, key) in windows {
@@ -1292,6 +1366,21 @@ impl PageDom {
     pub fn set_opaque_origin(&self, opaque: bool) {
         self.opaque_origin.set(opaque);
     }
+    pub fn set_cookie_context(&self, key: Option<String>, site: pyro_net::cookies::SiteContext) {
+        *self.cookie_partition_key.borrow_mut() = key;
+        self.cookie_site_context.set(site);
+    }
+
+    /// A document's site for cookies is opaque if any ancestor is cross-site,
+    /// even when this document itself matches the top-level site.
+    pub fn cookie_site_context(&self) -> pyro_net::cookies::SiteContext {
+        self.cookie_site_context.get()
+    }
+
+    pub fn cookie_partition_key(&self) -> Option<String> {
+        self.cookie_partition_key.borrow().clone()
+    }
+
     pub fn has_opaque_origin(&self) -> bool {
         self.opaque_origin.get()
     }
@@ -1305,6 +1394,24 @@ impl PageDom {
             peer.sticky_activation.set(true);
         }
     }
+    /// CDP reports an evaluation with userGesture as a gesture source when
+    /// that evaluation opens a window. Keep automation separate from trusted
+    /// input used by navigation and the DOM user-activation APIs.
+    pub fn with_debugger_gesture<R>(&self, run: impl FnOnce() -> R) -> R {
+        struct Restore<'a>(&'a Cell<bool>, bool);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) { self.0.set(self.1); }
+        }
+
+        self.notify_user_activation();
+        let _restore = Restore(&self.debugger_gesture, self.debugger_gesture.replace(true));
+        run()
+    }
+
+    pub fn window_open_user_gesture(&self) -> bool {
+        self.has_transient_activation() || self.debugger_gesture.get()
+    }
+
     /// HTML "sticky activation".
     pub fn has_sticky_activation(&self) -> bool {
         self.sticky_activation.get()
@@ -1427,7 +1534,28 @@ impl PageDom {
     /// Reentrant mutations are drained by the outer flush; a held DOM borrow
     /// defers work until the next safe point.
     pub fn flush_iframe_events(&self) {
+        self.flush_mutation_events(None);
+    }
+
+    pub(crate) fn flush_mutation_events(&self, callback: Option<&pyro_js::Scope<'_>>) {
         use pyro_dom::iframe::IframeChange;
+        if self.dom.try_borrow().is_ok_and(|dom| dom.has_changed_popovers()) {
+            if let Some(page) = self.this.upgrade() {
+                let changed = self.dom.borrow_mut().take_changed_popovers(self.document());
+                for el in changed {
+                    let hide = || {
+                        let _ = crate::popover::hide_showing_popover(&page, el, true, true, None);
+                    };
+                    // beforetoggle runs script synchronously. A setter in that listener
+                    // must complete its own attribute change steps before returning.
+                    if let Some(scope) = callback {
+                        scope.realm().reenter_native_callback_hook(hide);
+                    } else {
+                        hide();
+                    }
+                }
+            }
+        }
         // `<details>` toggles pyro-dom queued: one empty check otherwise.
         if self.dom.try_borrow().is_ok_and(|d| d.has_details_toggles()) {
             if let Some(this) = self.this.upgrade() {
@@ -1930,6 +2058,7 @@ impl PageDom {
     /// pyro: `policy`, its `Referrer-Policy`, goes on the link in render snapshots (an engine
     /// attribute), where the renderer takes it for the sheet's own requests.
     pub fn set_stylesheet_response(&self, link: NodeId, url: &str, text: &str, policy: Option<&str>) {
+        self.dom.borrow_mut().note_preferred_link_sheet(link);
         self.dom.borrow_mut().set_sheet_policy(link, policy);
         // (Its tainting goes with its text to the renderer, `Dom::sheet_key`.)
         let opaque = !self.sheet_response(link).origin_clean;
@@ -2199,6 +2328,7 @@ impl PageDom {
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(self: &Rc<Self>) {
         self.timeline_time.set(None);
+        crate::cookie_store::events::after_task(self);
         // Drawing changes no DOM: offscreen frames are committed whether or
         // not the task was otherwise quiet (one empty-list check without).
         crate::canvas::commit_frames(self);
@@ -2245,6 +2375,7 @@ impl PageDom {
         self.trim_node_wrappers(dom.slot_count() as usize);
         let released = dom.take_released_listeners();
         drop(dom);
+        crate::custom::prune_registry_roots(self);
         crate::target::release_listener_slots(self, released);
     }
 
@@ -2262,6 +2393,7 @@ impl PageDom {
             return false;
         }
         !dom.has_iframe_events()
+            && !dom.has_changed_popovers()
             && !dom.has_details_toggles()
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
@@ -2846,6 +2978,7 @@ impl PageDom {
     }
     pub(crate) fn set_press_target(&self, el: Option<NodeId>) {
         self.press_target.set(el);
+        self.pressed_pseudo.set(None);
     }
     pub(crate) fn take_press_target(&self) -> Option<NodeId> {
         self.press_target.take().filter(|&p| self.dom.borrow().is_alive(p))

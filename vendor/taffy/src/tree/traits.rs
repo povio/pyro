@@ -387,6 +387,9 @@ pub trait LayoutFlexboxContainer: LayoutPartialTree {
     where
         Self: 'a;
 
+    /// Observe the already laid-out lines. The default never consumes the iterator.
+    fn record_flex_item_positions(&mut self, _owner: NodeId, _items: impl Iterator<Item = (NodeId, usize, usize)>) {}
+
     /// Get the container's styles
     fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_>;
 

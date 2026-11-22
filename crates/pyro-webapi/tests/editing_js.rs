@@ -277,6 +277,159 @@ fn copy_handlers_set_the_data_and_cut_deletes() {
 }
 
 #[test]
+fn removing_bold_preserves_editability_boundaries() {
+    let e = env("<body><div id=ed contenteditable></div></body>");
+    for (mode, inside, expected) in [
+        ("false", "<b>e</b>", "<b>e</b>"),
+        ("false", "<span contenteditable><b>e</b></span>", "<span contenteditable=\"\">e</span>"),
+        ("plaintext-only", "<b>e</b>", "e"),
+    ] {
+        let script = format!(r#"
+            (() => {{
+                ed.innerHTML = 'abc<b>d<span contenteditable="{mode}">{inside}</span>f</b>ghi';
+                ed.focus();
+                const carrier = ed.firstElementChild, island = carrier.firstElementChild;
+                getSelection().setBaseAndExtent(carrier.lastChild, 1, carrier.firstChild, 0);
+                document.execCommand('bold');
+                return [ed.firstElementChild === island, island.innerHTML, getSelection().direction].join('|');
+            }})()
+        "#);
+        assert_eq!(eval(&e.main, &script), format!("true|{expected}|backward"));
+    }
+    let partial = r#"
+        ed.innerHTML = '<b>left<span contenteditable="false"><i contenteditable="true"><b>inner</b></i></span>right</b>';
+        ed.focus();
+        const carrier = ed.firstChild, island = carrier.firstElementChild;
+        getSelection().setBaseAndExtent(carrier.lastChild, 2, carrier.firstChild, 2);
+        document.execCommand('bold');
+        [ed.innerHTML, ed.contains(island), getSelection().direction, document.queryCommandIndeterm('bold')].join('|')
+    "#;
+    assert_eq!(eval(&e.main, partial), r#"<b>le</b>ft<span contenteditable="false"><i contenteditable="true">inner</i></span>ri<b>ght</b>|true|backward|false"#);
+
+}
+
+#[test]
+fn inline_formatting_skips_noneditable_islands() {
+    let e = env("<body><div id=ed contenteditable>ab<span id=island contenteditable=false>LOCK</span>cd</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = island; const child = original.firstChild; const s = getSelection(); s.setBaseAndExtent(ed.lastChild,1,ed.firstChild,1);");
+    assert_eq!(eval(r, "document.execCommand('bold')"), "true");
+    assert_eq!(eval(r, "ed.innerHTML"), "a<b>b</b><span id=\"island\" contenteditable=\"false\">LOCK</span><b>c</b>d");
+    assert_eq!(eval(r, "[s.toString(),s.direction,document.queryCommandState('bold'),document.queryCommandIndeterm('bold')].join()"), "bLOCKc,backward,true,false");
+    assert_eq!(eval(r, "document.execCommand('bold'); [ed.innerHTML,original===island,original.firstChild===child].join('|')"), "ab<span id=\"island\" contenteditable=\"false\">LOCK</span>cd|true|true");
+}
+
+#[test]
+fn formatting_svg_text_restores_a_visible_caret() {
+    let e = env("<body><div id=ed contenteditable>left<svg><text id=label>abcd</text></svg>right</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, t=label.firstChild, s=getSelection(); s.setBaseAndExtent(t,3,t,1); document.execCommand('strikeThrough')");
+    assert_eq!(eval(r, "[label.innerHTML,s.isCollapsed,s.direction,s.anchorNode===t,s.anchorOffset,document.queryCommandState('strikeThrough')].join('|')"), "a<strike>bc</strike>d|true|backward|true|1|false");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+    assert_eq!(eval(r, "s.collapse(label.firstChild,0); s.direction"), "none");
+}
+
+#[test]
+fn remove_format_keeps_foreign_elements_and_the_original_suffix() {
+    let e = env("<body><div id=ed contenteditable><cite id=book>abcd</cite></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const cite=ed.firstChild, text=cite.firstChild; getSelection().setBaseAndExtent(text,0,text,3);document.execCommand('removeFormat')");
+    assert_eq!(eval(r, "[ed.lastChild===cite,cite.textContent,cite.hasAttribute('id'),getSelection().toString()].join()"), "true,d,false,abc");
+    eval(r, "const foreign=document.createElementNS('urn:example','cite');foreign.textContent='abcd';ed.replaceChildren(foreign);getSelection().selectAllChildren(foreign);document.execCommand('removeFormat')");
+    assert_eq!(eval(r, "[ed.firstChild===foreign,foreign.textContent].join()"), "true,abcd");
+}
+
+#[test]
+fn font_size_replaces_only_the_selected_part_of_an_existing_font() {
+    let e = env("<body><div id=ed contenteditable><font size=1>abcd</font></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, carrier=ed.firstChild, t=carrier.firstChild; getSelection().setBaseAndExtent(t,3,t,1)");
+    assert_eq!(eval(r, "document.execCommand('styleWithCSS',false,true); document.execCommand('fontSize',false,'4'); ed.innerHTML"), "<font size=\"1\">a</font><span style=\"font-size: large;\">bc</span><font size=\"1\">d</font>");
+    assert_eq!(eval(r, "[ed.firstChild===carrier,getSelection().toString(),getSelection().direction].join()"), "true,bc,backward");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
+fn remove_format_preserves_deletions_and_splits_ids_only_once() {
+    let e = env("<body><div id=ed contenteditable><del>deleted</del><cite id=work>abcd</cite></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, deletion=ed.firstChild, text=ed.lastChild.firstChild; getSelection().setBaseAndExtent(text,3,text,1)");
+    assert_eq!(eval(r, "document.execCommand('removeFormat'); [ed.querySelectorAll('#work').length,getSelection().toString(),getSelection().direction,ed.firstChild===deletion].join()"), "1,bc,backward,true");
+    assert_eq!(eval(r, "ed.innerHTML"), "<del>deleted</del><cite id=\"work\">a</cite>bc<cite>d</cite>");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
+fn removing_italic_preserves_a_semantic_element_and_backward_selection() {
+    let e = env("<body><div id=ed contenteditable>left<cite style='color:red'>abcd</cite>right</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, cite=ed.firstElementChild, t=cite.firstChild; getSelection().setBaseAndExtent(t,3,t,1)");
+    assert_eq!(eval(r, "document.execCommand('italic'); [ed.firstElementChild===cite,getSelection().toString(),getSelection().direction,document.queryCommandState('italic')].join()"), "true,bc,backward,false");
+    assert_eq!(eval(r, "const selectedStyle=getComputedStyle(getSelection().focusNode.parentElement); [selectedStyle.fontStyle,selectedStyle.color,getComputedStyle(cite).fontStyle].join('|')"), "normal|rgb(255, 0, 0)|italic");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
+fn removing_inherited_bold_preserves_heading_and_selected_color() {
+    let e = env("<body><div id=ed contenteditable><h3 style='color:red'>abcd</h3></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, heading=ed.firstChild, t=heading.firstChild; getSelection().setBaseAndExtent(t,3,t,1)");
+    assert_eq!(eval(r, "document.execCommand('bold'); [ed.firstChild===heading,getSelection().toString(),getSelection().direction,document.queryCommandState('bold')].join()"), "true,bc,backward,false");
+    assert_eq!(eval(r, "const style=getComputedStyle(getSelection().focusNode.parentElement); [style.fontWeight,style.color,getComputedStyle(heading).fontWeight].join('|')"), "400|rgb(255, 0, 0)|700");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
+fn numeric_bold_removal_preserves_the_unselected_text() {
+    let e = env("<body><div id=ed contenteditable><span style='font-weight:700'>abcd</span></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, t=ed.firstChild.firstChild; getSelection().setBaseAndExtent(t,3,t,1)");
+    assert_eq!(eval(r, "document.queryCommandState('bold')"), "true");
+    assert_eq!(eval(r, "document.execCommand('bold'); [getSelection().toString(),document.queryCommandState('bold'),getComputedStyle(ed.firstChild).fontWeight,getComputedStyle(ed.lastChild).fontWeight].join()"), "bc,false,700,700");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
+fn collapsed_decoration_commands_share_the_typed_run() {
+    let e = env("<body><div id=ed contenteditable>abc</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); getSelection().collapse(ed.firstChild,1); document.execCommand('styleWithCSS',false,true)");
+    assert_eq!(eval(r, "[document.execCommand('underline'), document.execCommand('strikethrough'), document.queryCommandState('underline'), document.queryCommandState('strikethrough'), ed.innerHTML, document.queryCommandEnabled('undo')].join()"), "true,true,true,true,abc,false");
+    assert_eq!(eval(r, "document.execCommand('insertText',false,'X'); ed.innerHTML"), "a<span style=\"text-decoration-line: underline line-through;\">X</span>bc");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML"), "abc");
+}
+
+#[test]
+fn collapsed_script_commands_format_only_new_text() {
+    let e = env("<body><div id=ed contenteditable>a<sup>bc</sup>d</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = ed.innerHTML; getSelection().collapse(ed.children[0].firstChild, 1)");
+    assert_eq!(eval(r, "[document.execCommand('subscript'), document.queryCommandState('subscript'), document.queryCommandState('superscript'), ed.innerHTML===original, document.queryCommandEnabled('undo')].join()"), "true,true,false,true,false");
+    assert_eq!(eval(r, "document.execCommand('insertText',false,'X'); ed.innerHTML"), "a<sup>b</sup><sub>X</sub><sup>c</sup>d");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
+fn format_block_keeps_custom_blocks_and_joins_selected_lines() {
+    let e = env("<body><div id=ed contenteditable><x-block style='display:block'>alpha</x-block><p>beta</p></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.firstChild, a=original.firstChild, b=ed.lastChild.firstChild; getSelection().setBaseAndExtent(b,3,a,1)");
+    assert_eq!(eval(r, "document.queryCommandValue('formatBlock')"), "");
+    assert_eq!(eval(r, "document.execCommand('formatBlock',false,'h1'); [ed.firstChild.localName,ed.firstChild.firstChild===original,original.firstChild===a,ed.firstChild.lastChild===b,document.queryCommandValue('formatBlock')].join()"), "h1,true,true,true,h1");
+    assert_eq!(eval(r, "const s=getSelection(); [s.anchorNode===a,s.anchorOffset,s.focusNode===b,s.focusOffset].join()"), "true,1,true,3");
+}
+
+#[test]
+fn changing_list_type_keeps_the_unselected_items_and_selected_content() {
+    let e = env("<body><div id=ed contenteditable><ul id=source><li>a</li><li>bravo</li><li>z</li></ul></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, list=ed.firstChild, item=list.children[1], t=item.firstChild; getSelection().setBaseAndExtent(t,1,t,4)");
+    assert_eq!(eval(r, "document.execCommand('insertOrderedList'); ed.innerHTML"), "<ul id=\"source\"><li>a</li></ul><ol><li>bravo</li></ol><ul><li>z</li></ul>");
+    assert_eq!(eval(r, "[ed.firstChild===list,item.parentElement.localName,getSelection().focusNode===t,getSelection().toString()].join()"), "true,ol,true,rav");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn exec_command_formatting_and_structure() {
     let e = env("<body><div id=ed contenteditable><p id=p>one two three</p></div></body>");
     let r = &e.main;
@@ -341,6 +494,29 @@ fn exec_command_formatting_and_structure() {
     );
     // Outside editable content formatting is disabled and does nothing.
     assert_eq!(eval(r, "ed.blur(); getSelection().removeAllRanges(); [document.queryCommandEnabled('bold'), document.execCommand('bold')].join()"), "false,false");
+}
+
+#[test]
+fn control_history_remembers_both_selections_across_an_intervening_move() {
+    let e = env("<body><textarea id=t>abcdef</textarea></body>");
+    let r = &e.main;
+    eval(r, "t.focus(); t.setSelectionRange(1,4,'backward'); document.execCommand('insertText',false,'Z'); t.setSelectionRange(0,1,'forward')");
+    assert_eq!(eval(r, "document.execCommand('undo'); [t.value,t.selectionStart,t.selectionEnd,t.selectionDirection].join()"), "abcdef,1,4,backward");
+    assert_eq!(eval(r, "document.execCommand('redo'); [t.value,t.selectionStart,t.selectionEnd,t.selectionDirection].join()"), "aZef,2,2,forward");
+}
+
+#[test]
+fn undo_restores_anchor_focus_and_text_boundary_affinity() {
+    let e = env("<body><div id=ed contenteditable>a😀<i>bc</i>def</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const sel=getSelection(); sel.setBaseAndExtent(ed.lastChild,1,ed.firstChild,3);");
+    assert_eq!(eval(r, "sel.direction + '|' + sel.toString()"), "backward|bcd");
+    eval(r, "document.execCommand('insertText',false,'X'); const changed=ed.innerHTML; document.execCommand('undo')");
+    assert_eq!(eval(r, "[sel.direction,sel.anchorNode===ed.lastChild,sel.anchorOffset,sel.focusNode===ed.querySelector('i').firstChild,sel.focusOffset,sel.toString()].join('|')"),
+        "backward|true|1|true|0|bcd");
+    assert_eq!(eval(r, "document.execCommand('redo'); [ed.innerHTML===changed,sel.isCollapsed].join()"), "true,true");
+    eval(r, "document.execCommand('undo'); sel.collapse(ed.firstChild,3); document.execCommand('insertText',false,'Y'); document.execCommand('undo')");
+    assert_eq!(eval(r, "[sel.isCollapsed,sel.anchorNode===ed.firstChild,sel.focusNode===ed.firstChild,sel.focusOffset].join()"), "true,true,true,3");
 }
 
 #[test]
@@ -419,6 +595,96 @@ fn word_and_line_keys_in_text_controls() {
 }
 
 #[test]
+fn deleting_an_empty_line_preserves_the_following_paragraph() {
+    let e = env("<body><div id=ed contenteditable>abc<br><br><div id=child>def<br>ghi</div></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, paragraph=child, first=child.firstChild; getSelection().setBaseAndExtent(ed,2,first,1)");
+    assert_eq!(eval(r, "document.execCommand('delete'); [ed.innerHTML,ed.lastChild===paragraph,getSelection().focusNode===first,getSelection().focusOffset].join('|')"),
+        "abc<br><div id=\"child\">ef<br>ghi</div>|true|true|0");
+    assert_eq!(eval(r, "document.execCommand('insertText',false,'X'); paragraph.textContent"), "Xefghi");
+    assert_eq!(eval(r, "document.execCommand('undo'); document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
+fn deletion_at_text_edge_preserves_locked_blocks() {
+    let e = env("<body><div id=ed contenteditable><p>abc</p><pre id=locked contenteditable=false>keep</pre></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = locked; const left = ed.firstChild.firstChild; getSelection().collapse(left,3)");
+    press(&e.page, "Delete", "", input::Modifiers::default());
+    assert_eq!(eval(r, "[original.parentNode===ed,getSelection().focusNode===left,getSelection().focusOffset,document.queryCommandEnabled('undo')].join()"), "true,true,3,false");
+    eval(r, "ed.prepend(original); getSelection().collapse(left,0)");
+    press(&e.page, "Backspace", "", input::Modifiers::default());
+    assert_eq!(eval(r, "[original.parentNode===ed,getSelection().focusNode===left,getSelection().focusOffset].join()"), "true,true,0");
+    // A second editable text run provides a position across the locked node.
+    eval(r, "ed.prepend(document.createTextNode('far')); getSelection().collapse(left,0)");
+    press(&e.page, "Backspace", "", input::Modifiers::default());
+    assert_eq!(eval(r, "[original.isConnected,ed.textContent].join()"), "false,farabc");
+    eval(r, "original.style.display='inline'; ed.append(original); getSelection().collapse(left,3)");
+    press(&e.page, "Delete", "", input::Modifiers::default());
+    assert_eq!(eval(r, "[original.isConnected,ed.textContent].join()"), "false,farabc");
+}
+
+#[test]
+fn nested_paragraph_join_preserves_the_destination_and_undo() {
+    let e = env("<body><div id=ed contenteditable><div><div>a&nbsp;&nbsp;&nbsp;</div>&nbsp;&nbsp;&nbsp;b</div></div>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const outer=ed.firstChild, inner=outer.firstChild, text=inner.firstChild; getSelection().collapse(text,4)");
+    press(&e.page, "Delete", "", input::Modifiers::default());
+    assert_eq!(eval(r, "ed.innerHTML"), "<div>a&nbsp; &nbsp; &nbsp; b</div>");
+    assert_eq!(eval(r, "[ed.firstChild===inner, getSelection().focusNode===text, getSelection().focusOffset].join()"), "true,true,4");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML"), "<div><div>a&nbsp;&nbsp;&nbsp;</div>&nbsp;&nbsp;&nbsp;b</div>");
+}
+
+#[test]
+fn insert_html_uses_the_editing_hosts_content_mode() {
+    let e = env("<body><div id=plain contenteditable='plaintext-only'>ABC</div><div contenteditable='false'><div id=island contenteditable='plaintext-only'>ABC</div></div></body>");
+    let r = &e.main;
+    eval(r, "const insert=el=>{el.focus(); const t=el.firstChild;getSelection().setBaseAndExtent(t,1,t,2);return document.execCommand('insertHTML',false,'<b>b</b>')};document.designMode='on'");
+    assert_eq!(eval(r, "[insert(plain),plain.innerHTML].join()"), "true,A<b>b</b>C");
+    assert_eq!(eval(r, "document.execCommand('undo'); plain.innerHTML"), "ABC");
+    assert_eq!(eval(r, "[insert(island),island.innerHTML].join()"), "true,AbC");
+    assert_eq!(eval(r, "document.designMode='off'; [insert(plain),plain.innerHTML].join()"), "true,AbC");
+}
+
+#[test]
+fn paragraph_insertion_leaves_select_subtrees_intact() {
+    let e = env("<body><div id=ed contenteditable><div>L<select><optgroup><option>abc</option><option selected>def</option></optgroup></select>R</div></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = ed.querySelector('select'); const option = original.firstChild.firstChild; getSelection().collapse(option.firstChild,2); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "ed.innerHTML"), r#"<div><br></div><div>L<select><optgroup><option>abc</option><option selected="">def</option></optgroup></select>R</div>"#);
+    assert_eq!(eval(r, "[ed.querySelector('select')===original,original.firstChild.firstChild===option,original.selectedIndex,getSelection().focusNode===ed.lastChild.firstChild,getSelection().focusOffset].join()"), "true,true,1,true,0");
+}
+
+#[test]
+fn paragraph_insertion_in_a_phrasing_host_uses_the_caret_style() {
+    let e = env("<body><span id=ed contenteditable style='display:block;white-space:pre'>ab</span>outside</body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); getSelection().collapse(ed.firstChild,1); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "ed.innerHTML"), "a\nb");
+    assert_eq!(eval(r, "[ed.childNodes.length,ed.childNodes[1].data,getSelection().focusNode===ed.lastChild,getSelection().focusOffset].join('|')"), "3|\n|true|0");
+    eval(r, "ed.innerHTML='<span style=\"display:block\">ab</span>'; getSelection().collapse(ed.firstChild.firstChild,1); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "ed.innerHTML"), "<span style=\"display:block\">a\nb</span>");
+    eval(r, "const blockHost=document.createElement('div'); document.body.append(blockHost); blockHost.contentEditable='true'; blockHost.innerHTML='<span style=\"display:block\">ab</span>'; blockHost.focus(); getSelection().collapse(blockHost.firstChild.firstChild,1); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "blockHost.innerHTML"), r#"<span style="display:block">a</span><span style="display:block">b</span>"#);
+    eval(r, "ed.focus()");
+    eval(r, "ed.innerHTML='<div style=\"display:inline;white-space:normal\">ab</div>'; getSelection().collapse(ed.firstChild.firstChild,1); document.execCommand('insertText',false,'\\n')");
+    assert_eq!(eval(r, "ed.innerHTML"), r#"<div style="display:inline;white-space:normal">a<br>b</div>"#);
+    assert_eq!(eval(r, "ed.nextSibling.data"), "outside");
+}
+
+#[test]
+fn fresh_typing_at_link_edges_does_not_extend_the_link() {
+    let e = env("<body><div id=ed contenteditable><p>L<a id=link href='/go'>abc</a>R</p></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = link; getSelection().collapse(link.firstChild,3); document.execCommand('insertText',false,'XY')");
+    assert_eq!(eval(r, "[ed.textContent,link.textContent,original===link,getSelection().focusOffset].join()"), "LabcXYR,abc,true,2");
+    eval(r, "getSelection().collapse(link.firstChild,0); document.execCommand('insertText',false,'Z')");
+    assert_eq!(eval(r, "ed.textContent"), "LZabcXYR");
+    eval(r, "getSelection().collapse(link.firstChild,1); document.execCommand('insertText',false,'Q')");
+    assert_eq!(eval(r, "link.textContent"), "aQbc");
+}
+
+#[test]
 fn contenteditable_line_breaks_arrows_and_words() {
     let e = env("<body><div id=ed contenteditable><p>hello world</p></div></body>");
     let r = &e.main;
@@ -427,7 +693,7 @@ fn contenteditable_line_breaks_arrows_and_words() {
     press(&e.page, "Enter", "\r", mods(true, false, false, false));
     assert_eq!(
         eval(r, "ed.innerHTML + '|' + sel() + '|' + types.join()"),
-        r#"<p>hello<br> world</p>|" world",0," world",0|insertLineBreak"#
+        "<p>hello<br>&nbsp;world</p>|\"\u{a0}world\",0,\"\u{a0}world\",0|insertLineBreak"
     );
     // ArrowUp keeps the column on the line above; ArrowDown comes back.
     press(&e.page, "ArrowRight", "", input::Modifiers::default());
@@ -435,11 +701,11 @@ fn contenteditable_line_breaks_arrows_and_words() {
     press(&e.page, "ArrowUp", "", input::Modifiers::default());
     assert_eq!(eval(r, "sel()"), r#""hello",2,"hello",2"#);
     press(&e.page, "ArrowDown", "", input::Modifiers::default());
-    assert_eq!(eval(r, "sel()"), r#"" world",2," world",2"#);
+    assert_eq!(eval(r, "sel()"), "\"\u{a0}world\",2,\"\u{a0}world\",2");
     press(&e.page, "End", "", input::Modifiers::default());
-    assert_eq!(eval(r, "sel()"), r#"" world",6," world",6"#);
+    assert_eq!(eval(r, "sel()"), "\"\u{a0}world\",6,\"\u{a0}world\",6");
     press(&e.page, "Backspace", "", word(false));
-    assert_eq!(eval(r, "ed.innerHTML + '|' + types.join()"), "<p>hello<br> </p>|insertLineBreak,deleteWordBackward");
+    assert_eq!(eval(r, "ed.innerHTML + '|' + types.join()"), "<p>hello<br>&nbsp;</p>|insertLineBreak,deleteWordBackward");
     press(&e.page, "Home", "", input::Modifiers::default());
     press(&e.page, "ArrowUp", "", input::Modifiers::default());
     press(&e.page, "ArrowRight", "", word(true));

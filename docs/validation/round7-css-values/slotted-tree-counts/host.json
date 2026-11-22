@@ -1,0 +1,454 @@
+{
+ "start": "2026-11-21T19:33:16.659Z",
+ "end": "2026-11-21T19:33:20.181Z",
+ "preciseHost": {
+  "durationSeconds": 3.522,
+  "hostBusyPct": 63.766
+ },
+ "perArm": {
+  "tree-base": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 1.791,
+   "weightedHostBusyPct": 60.7
+  },
+  "tree-head": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 1.73,
+   "weightedHostBusyPct": 66.93
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "tree-base",
+   "start": "2026-11-21T19:33:16.659Z",
+   "end": "2026-11-21T19:33:17.167Z",
+   "durationSeconds": 0.508,
+   "hostBusyPct": 79.2
+  },
+  {
+   "order": 2,
+   "binary": "tree-head",
+   "start": "2026-11-21T19:33:17.167Z",
+   "end": "2026-11-21T19:33:17.637Z",
+   "durationSeconds": 0.47,
+   "hostBusyPct": 82.015
+  },
+  {
+   "order": 3,
+   "binary": "tree-head",
+   "start": "2026-11-21T19:33:17.637Z",
+   "end": "2026-11-21T19:33:18.095Z",
+   "durationSeconds": 0.458,
+   "hostBusyPct": 82.7
+  },
+  {
+   "order": 4,
+   "binary": "tree-base",
+   "start": "2026-11-21T19:33:18.096Z",
+   "end": "2026-11-21T19:33:18.590Z",
+   "durationSeconds": 0.494,
+   "hostBusyPct": 71.378
+  },
+  {
+   "order": 5,
+   "binary": "tree-head",
+   "start": "2026-11-21T19:33:18.590Z",
+   "end": "2026-11-21T19:33:19.009Z",
+   "durationSeconds": 0.419,
+   "hostBusyPct": 65.7
+  },
+  {
+   "order": 6,
+   "binary": "tree-base",
+   "start": "2026-11-21T19:33:19.009Z",
+   "end": "2026-11-21T19:33:19.410Z",
+   "durationSeconds": 0.401,
+   "hostBusyPct": 52.943
+  },
+  {
+   "order": 7,
+   "binary": "tree-base",
+   "start": "2026-11-21T19:33:19.410Z",
+   "end": "2026-11-21T19:33:19.798Z",
+   "durationSeconds": 0.388,
+   "hostBusyPct": 30.9
+  },
+  {
+   "order": 8,
+   "binary": "tree-head",
+   "start": "2026-11-21T19:33:19.798Z",
+   "end": "2026-11-21T19:33:20.181Z",
+   "durationSeconds": 0.383,
+   "hostBusyPct": 30.9
+  }
+ ],
+ "benchmarkSHA256": "54a91d60443cd771bb0cfba3a2bf87965be575e7b4b74926d9ef57068f93deff",
+ "minOneSecondBusyPct": 30.9,
+ "maxOneSecondBusyPct": 82.7,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-21T19:33:16.259Z",
+   "end": "2026-11-21T19:33:17.259Z",
+   "cpuBusyPct": 79.2
+  },
+  {
+   "start": "2026-11-21T19:33:17.259Z",
+   "end": "2026-11-21T19:33:18.261Z",
+   "cpuBusyPct": 82.7
+  },
+  {
+   "start": "2026-11-21T19:33:18.261Z",
+   "end": "2026-11-21T19:33:19.263Z",
+   "cpuBusyPct": 65.7
+  },
+  {
+   "start": "2026-11-21T19:33:19.263Z",
+   "end": "2026-11-21T19:33:20.265Z",
+   "cpuBusyPct": 30.9
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-21T19:33:36.714Z",
+   "elapsedMs": 30001,
+   "cpuBusyPct": 40.6,
+   "load": [
+    28.4638671875,
+    41.01025390625,
+    39.29052734375
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 83,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1104,
+     "pctCpu": 24.7,
+     "rssMiB": 32764
+    },
+    "ci-runner": {
+     "n": 23,
+     "pctCpu": 107.5,
+     "rssMiB": 1490
+    },
+    "other-wpt": {
+     "n": 34,
+     "pctCpu": 286.4,
+     "rssMiB": 1872
+    },
+    "non-css": {
+     "n": 1,
+     "pctCpu": 0,
+     "rssMiB": 117
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-21T19:32:53.877Z",
+   "ciWorkerActive": true,
+   "allocation": {
+    "effectiveAt": "2026-11-21T19:32:11.471579+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 1,
+    "css": 0,
+    "qa": 1,
+    "censusShards": 1,
+    "policy": "Existing single QA runtime worker transfers serially from bacb54f82 probes to 25-URL 4c55e49fb head when probes exit; no runtime overlap. Latest 74.1%, census one admission."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [
+      {
+       "pid": 13316,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 4.1
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [
+      {
+       "pid": 13255,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 13258,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 3.6
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 6451,
+       "state": "RNs",
+       "kind": "pyro",
+       "jobs": null
+      },
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      },
+      {
+       "pid": 23415,
+       "state": "RN",
+       "kind": "Runner.Worker",
+       "jobs": null
+      },
+      {
+       "pid": 29815,
+       "state": "SN",
+       "kind": "bun",
+       "jobs": "16"
+      },
+      {
+       "pid": 29840,
+       "state": "RN",
+       "kind": "wpt-runner",
+       "jobs": "16"
+      },
+      {
+       "pid": 31610,
+       "state": "SNs",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 41.9
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T19:33:23.854Z",
+   "ciWorkerActive": true,
+   "allocation": {
+    "effectiveAt": "2026-11-21T19:33:13.782737+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 1,
+    "css": 1,
+    "qa": 0,
+    "censusShards": 2,
+    "policy": "QA worker released after bacb and 4c55. CSS one serial tree performance browser authorized post-native; exact one-second CPU already active, preserve base/3ba6dd338 arm times with census, CI, QA overlap."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [
+      {
+       "pid": 15217,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      },
+      {
+       "pid": 15830,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 4.1
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [
+      {
+       "pid": 15072,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 15186,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 15666,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 15693,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 3.2
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 6451,
+       "state": "RNs",
+       "kind": "pyro",
+       "jobs": null
+      },
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      },
+      {
+       "pid": 23415,
+       "state": "RN",
+       "kind": "Runner.Worker",
+       "jobs": null
+      },
+      {
+       "pid": 29815,
+       "state": "SN",
+       "kind": "bun",
+       "jobs": "16"
+      },
+      {
+       "pid": 29840,
+       "state": "RN",
+       "kind": "wpt-runner",
+       "jobs": "16"
+      },
+      {
+       "pid": 31610,
+       "state": "SNs",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 97
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [
+  {
+   "at": "2026-11-21T19:33:06.814207+00:00",
+   "sampleAt": "2026-11-21T19:33:06.713Z",
+   "cpuBusyPct": 34.3,
+   "recentCpu": [
+    80.9,
+    46.1,
+    34.3
+   ],
+   "pressureLevel": "1",
+   "memoryFreePct": 82,
+   "ciWorkerActive": true,
+   "activeOtherCompilerLanes": 0,
+   "claims": 1,
+   "slotsBefore": 1,
+   "slotsAfter": 2,
+   "maximum": 16,
+   "completedShards": 78,
+   "completedURLs": 7174,
+   "planShards": 320,
+   "changedAt": "2026-11-21T19:33:06.813742+00:00",
+   "reason": "two intervals below 75%; admit one additional safe shard"
+  },
+  {
+   "at": "2026-11-21T19:33:36.842328+00:00",
+   "sampleAt": "2026-11-21T19:33:36.714Z",
+   "cpuBusyPct": 40.6,
+   "recentCpu": [
+    46.1,
+    34.3,
+    40.6
+   ],
+   "pressureLevel": "1",
+   "memoryFreePct": 83,
+   "ciWorkerActive": true,
+   "activeOtherCompilerLanes": 0,
+   "claims": 2,
+   "slotsBefore": 2,
+   "slotsAfter": 3,
+   "maximum": 16,
+   "completedShards": 80,
+   "completedURLs": 7366,
+   "planShards": 320,
+   "changedAt": "2026-11-21T19:33:36.841589+00:00",
+   "reason": "two intervals below 75%; admit one additional safe shard"
+  }
+ ],
+ "qaStart": "2026-11-21T19:32:04.035463+00:00",
+ "qaEnd": "2026-11-21T19:32:04.589463+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [
+  {
+   "key": "ordinary-045",
+   "overlapSeconds": 3.522,
+   "method": "Local raw log creation through completed receipt modification, or presently active claim."
+  },
+  {
+   "key": "ordinary-046",
+   "overlapSeconds": 3.522,
+   "method": "Local raw log creation through completed receipt modification, or presently active claim."
+  }
+ ],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process."
+}

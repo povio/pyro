@@ -67,7 +67,7 @@ pub use self::box_::{
     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineShift, BaselineSource, BoxAlign,
     BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-    Display, DominantBaseline, Float, ImageOrientation, InterpolateSize, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
+    Display, DominantBaseline, Float, ImageOrientation, InterpolateSize, Isolation, ReadingFlow, Speak, LineClamp, MarginTrim, Orient, ViewTransitionScope,
     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
     PositionProperty, Resize, ScrollAxisLock, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
@@ -550,6 +550,11 @@ impl<'a> Context<'a> {
         self.resolve_tree_counting_result().sibling_index
     }
 
+    pub(crate) fn lookup_function(&self, stylist: &Stylist, name: &crate::Atom, scope_skip: usize)
+        -> Option<(Arc<crate::stylesheets::FunctionRule>, usize)> {
+        self.element_context.lookup_function(stylist, self.current_scope(), name, scope_skip)
+    }
+
     /// Returns the random base value for the given random cache key. This constructs a
     /// PRNG seed by hashing the components of the key's specified random cache name,
     /// and then generating a random value from the seed. This ensures that the same
@@ -568,6 +573,7 @@ impl<'a> Context<'a> {
                 .add_flags(ComputedValueFlags::USES_ELEMENT_SCOPED_RANDOM);
             self.rule_cache_conditions.borrow_mut().set_uncacheable();
             self.element_context.random_seed().hash(&mut hasher);
+            if let Some(seed) = key.function_invocation_seed { seed.hash(&mut hasher); }
         }
 
         // Returns a float in the range [0, 1).
@@ -922,6 +928,18 @@ impl ToComputedValue for specified::AngleOrPercentage {
                 AngleOrPercentage::Percentage(percentage.to_computed_value(context))
             },
             specified::AngleOrPercentage::Angle(angle) => {
+                AngleOrPercentage::Angle(angle.to_computed_value(context))
+            },
+            specified::AngleOrPercentage::Calc(calc) => {
+                use specified::calc::{CalcNode, Leaf};
+                let node = calc.node.map_leaves(|leaf| match leaf {
+                    Leaf::Percentage(p) => Leaf::Angle(specified::NoCalcAngle::from_degrees(p.get() * 360.0)),
+                    other => other.clone(),
+                });
+                let angle = specified::Angle::new_calc(Box::new(specified::calc::CalcNumeric {
+                    node,
+                    clamping_mode: calc.clamping_mode,
+                }));
                 AngleOrPercentage::Angle(angle.to_computed_value(context))
             },
         }

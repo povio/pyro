@@ -142,28 +142,43 @@
     }
     copyFromChannel(destination, channelNumber, bufferOffset = 0) {
       const b = bufOf(this);
-      if (!(destination instanceof F32)) throw new TypeErrorC("Failed to execute 'copyFromChannel' on 'AudioBuffer': parameter 1 is not of type 'Float32Array'.");
+      if (arguments.length < 2) throw new TypeErrorC(`Failed to execute 'copyFromChannel' on 'AudioBuffer': 2 arguments required, but only ${arguments.length} present.`);
+      checkCopyArray(destination, 'copyFromChannel');
       const c = ulong(channelNumber);
+      const offset = ulong(bufferOffset);
       if (c >= b.data.length) {
         throw new DE(`Failed to execute 'copyFromChannel' on 'AudioBuffer': The channelNumber provided (${c}) is outside the range [0, ${b.data.length - 1}].`, 'IndexSizeError');
       }
-      const offset = ulong(bufferOffset);
       const src = b.data[c];
-      if (offset < src.length) destination.set(src.subarray(offset, offset + min(destination.length, src.length - offset)));
+      copySamples(destination, 0, src, offset);
     }
     copyToChannel(source, channelNumber, bufferOffset = 0) {
       const b = bufOf(this);
-      if (!(source instanceof F32)) throw new TypeErrorC("Failed to execute 'copyToChannel' on 'AudioBuffer': parameter 1 is not of type 'Float32Array'.");
+      if (arguments.length < 2) throw new TypeErrorC(`Failed to execute 'copyToChannel' on 'AudioBuffer': 2 arguments required, but only ${arguments.length} present.`);
+      checkCopyArray(source, 'copyToChannel');
       const c = ulong(channelNumber);
+      const offset = ulong(bufferOffset);
       if (c >= b.data.length) {
         throw new DE(`Failed to execute 'copyToChannel' on 'AudioBuffer': The channelNumber provided (${c}) is outside the range [0, ${b.data.length - 1}].`, 'IndexSizeError');
       }
-      const offset = ulong(bufferOffset);
       const dst = b.data[c];
-      if (offset < dst.length) dst.set(source.subarray(0, min(source.length, dst.length - offset)), offset);
+      copySamples(dst, offset, source, 0);
     }
   }
   webidl(AudioBuffer, 'AudioBuffer');
+  function checkCopyArray(view, method) {
+    const prefix = `Failed to execute '${method}' on 'AudioBuffer': `;
+    if (apply(arrayKind, view, []) !== 'Float32Array') throw new TypeErrorC(prefix + "parameter 1 is not of type 'Float32Array'.");
+    const buffer = apply(arrayBufferOf, view, []);
+    try { apply(bufferLength, buffer, []); } catch { throw new TypeErrorC(prefix + 'The provided Float32Array value must not be shared.'); }
+    if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC(prefix + 'Expected a fixed-length ArrayBuffer.');
+  }
+  function copySamples(destination, destinationOffset, source, sourceOffset) {
+    const length = min(apply(arrayLength, source, []) - sourceOffset, apply(arrayLength, destination, []) - destinationOffset);
+    if (length <= 0) return;
+    const byteOffset = apply(arrayByteOffset, source, []) + sourceOffset * F32.BYTES_PER_ELEMENT;
+    apply(arraySet, destination, [new F32(apply(arrayBufferOf, source, []), byteOffset, length), destinationOffset]);
+  }
   function makeBuffer(rate, data) {
     made = { rate, length: data[0].length, data };
     return new AudioBuffer(secret);
@@ -188,7 +203,9 @@
     }
     get value() {
       const p = paramOf(this);
-      return p.events.length ? Math.fround(clampParam(p, valueAt(p, ctxOf(p.ctx).time()))) : p.value;
+      const context = ctxOf(p.ctx);
+      if (context.offline) return p.renderedValue ?? p.value;
+      return p.events.length ? Math.fround(clampParam(p, valueAt(p, context.time()))) : p.value;
     }
     set value(v) {
       const p = paramOf(this);
@@ -287,10 +304,12 @@
   function setParamValue(p, value, t) {
     // Setting value is equivalent to inserting a setValueAtTime at currentTime.
     checkValueAtTime(p, t);
+    value = Math.fround(clampParam(p, value));
     const at = p.events.findIndex(e => e.type === SET && e.time === t);
     if (at >= 0) p.events[at].value = value;
     else if (p.events.length) insertEvent(p, {type: SET, time: t, value});
-    p.value = Math.fround(value);
+    p.value = value;
+    p.renderedValue = value;
   }
   function nodeParam(n, ...options) {
     const param = new AudioParam(secret, n.ctx, ...options);
@@ -381,8 +400,9 @@
     p.q = q;
     const out = p.values;
     if (!p.events.length) out.fill(p.value);
-    else if (p.rate === 'k-rate') out.fill(valueAt(p, f0 / rate));
-    else for (let i = 0; i < QUANTUM; i++) out[i] = valueAt(p, (f0 + i) / rate);
+    else if (p.rate === 'k-rate') out.fill(clampParam(p, valueAt(p, f0 / rate)));
+    else for (let i = 0; i < QUANTUM; i++) out[i] = clampParam(p, valueAt(p, (f0 + i) / rate));
+    p.renderedValue = out[QUANTUM - 1];
     if (p.inputs.length) {
       const mono = new F32(QUANTUM);
       for (const { node, output } of p.inputs) mix(pull(node, q, f0, output), [mono], 'speakers', 1);
@@ -694,6 +714,227 @@
     get gain() { return nodeOf(this).gain; }
   }
   webidl(GainNode, 'GainNode');
+
+  function shapeSample(curve, sample) {
+    const last = curve.length - 1;
+    if (sample <= -1) return curve[0];
+    if (sample >= 1) return curve[last];
+    const index = (sample + 1) * (last * 0.5);
+    const lower = floor(index), fraction = index - lower;
+    return (1 - fraction) * curve[lower] + fraction * curve[min(lower + 1, last)];
+  }
+
+  const shapingKernels = new Map();
+  function shapingKernel(factor) {
+    if (shapingKernels.has(factor)) return shapingKernels.get(factor);
+    const radius = 32 * factor;
+    const taps = Array.from({length: 2 * radius + 1}, (_, index) => {
+      const distance = (index - radius) / factor;
+      const phase = PI * index / radius;
+      const window = 0.42 - 0.5 * cos(phase) + 0.08 * cos(2 * phase);
+      return window * (distance === 0 ? 1 : sin(PI * distance) / (PI * distance)) / factor;
+    });
+    const sum = taps.reduce((total, tap) => total + tap, 0);
+    const normalized = taps.map(tap => tap / sum);
+    shapingKernels.set(factor, normalized);
+    return normalized;
+  }
+
+  function oversampleChannel(samples, curve, factor, history) {
+    const taps = shapingKernel(factor);
+    const past = history.input, shaped = history.shaped;
+    for (let frame = 0; frame < samples.length; frame++) {
+      past[history.write] = samples[frame];
+      for (let phase = 0; phase < factor; phase++) {
+        let interpolated = 0, read = history.write;
+        for (let tap = phase; tap < taps.length; tap += factor) {
+          interpolated += past[read] * taps[tap];
+          if (--read < 0) read = past.length - 1;
+        }
+        shaped[history.highWrite] = shapeSample(curve, factor * interpolated);
+        if (phase === 0) {
+          let filtered = 0, highRead = history.highWrite;
+          for (let tap = 0; tap < taps.length; tap++) {
+            filtered += taps[tap] * shaped[highRead];
+            if (--highRead < 0) highRead = shaped.length - 1;
+          }
+          samples[frame] = filtered;
+        }
+        history.highWrite = (history.highWrite + 1) % shaped.length;
+      }
+      history.write = (history.write + 1) % past.length;
+    }
+  }
+
+  const waveShapers = new WeakMap();
+  function shaperOf(self) {
+    const state = waveShapers.get(self);
+    if (!state) throw invocation();
+    return state;
+  }
+  function assignShaperCurve(state, curve) {
+    if (curve != null) {
+      if (apply(arrayKind, curve, []) !== 'Float32Array') throw new TypeErrorC('Expected a Float32Array.');
+      const buffer = apply(arrayBufferOf, curve, []);
+      apply(bufferLength, buffer, []);
+      if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC('Expected a fixed-length ArrayBuffer.');
+      if (state.assigned || apply(arrayLength, curve, []) < 2) throw new DE('Cannot assign this shaping curve.', 'InvalidStateError');
+      state.curve = new F32(curve);
+      state.assigned = true;
+    } else {
+      state.curve = null;
+    }
+    state.history = [];
+  }
+  const oversamplingModes = ['none', '2x', '4x'];
+  class WaveShaperNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'WaveShaperNode');
+      const inherited = readNodeOptions(options, 'WaveShaperNode');
+      const supplied = options?.curve;
+      const curve = supplied === undefined ? null : F32.from([...supplied], value => finite(fround(value), 'construct', 'WaveShaperNode'));
+      const setting = options?.oversample, mode = setting === undefined ? 'none' : `${setting}`;
+      if (!oversamplingModes.includes(mode)) throw new TypeErrorC('Invalid OverSampleType.');
+      super(secret, context, {});
+      applyNodeOptions(this, inherited);
+      const state = {curve: null, assigned: false, mode, history: []};
+      waveShapers.set(this, state);
+      if (curve !== null) assignShaperCurve(state, curve);
+      const node = nodeOf(this);
+      node.process = (frame, quantum) => {
+        const bus = input(node, quantum, frame) ?? Array.from({length: node.mode === 'explicit' ? node.channelCount : 1}, () => new F32(QUANTUM));
+        if (!state.curve) return bus;
+        state.history.length = bus.length;
+        for (let channel = 0; channel < bus.length; channel++) {
+          const samples = bus[channel];
+          if (state.mode === 'none') {
+            for (let index = 0; index < samples.length; index++) samples[index] = shapeSample(state.curve, samples[index]);
+          } else {
+            const factor = state.mode === '2x' ? 2 : 4;
+            const length = shapingKernel(factor).length;
+            const history = state.history[channel] ??= {input: new F32(ceil(length / factor)), shaped: new F32(length), write: 0, highWrite: 0};
+            oversampleChannel(samples, state.curve, factor, history);
+          }
+        }
+        return bus;
+      };
+    }
+    get curve() { const curve = shaperOf(this).curve; return curve === null ? null : new F32(curve); }
+    set curve(value) { assignShaperCurve(shaperOf(this), value); }
+    get oversample() { return shaperOf(this).mode; }
+    set oversample(value) {
+      const state = shaperOf(this), mode = `${value}`;
+      if (oversamplingModes.includes(mode) && mode !== state.mode) {
+        state.mode = mode;
+        state.history = [];
+      }
+    }
+  }
+  webidl(WaveShaperNode, 'WaveShaperNode');
+
+  const analysers = new WeakMap();
+  function analyserOf(self) {
+    const state = analysers.get(self);
+    if (!state) throw invocation();
+    return state;
+  }
+  function analyserSpectrum(state) {
+    if (!state.dirty) return;
+    const size = state.size, real = new F64(size), imaginary = new F64(size);
+    for (let index = 0, reversed = 0; index < size; index++) {
+      const angle = 2 * PI * index / size;
+      const sample = state.history[(state.cursor - size + index) & 32767];
+      real[reversed] = sample * (0.42 - 0.5 * cos(angle) + 0.08 * cos(2 * angle));
+      let bit = size >> 1;
+      while (bit && (reversed & bit)) { reversed ^= bit; bit >>= 1; }
+      reversed ^= bit;
+    }
+    for (let width = 2; width <= size; width *= 2) {
+      const half = width / 2;
+      for (let offset = 0; offset < half; offset++) {
+        const angle = -2 * PI * offset / width, cosine = cos(angle), sine = sin(angle);
+        for (let left = offset; left < size; left += width) {
+          const right = left + half;
+          const re = real[right] * cosine - imaginary[right] * sine;
+          const im = real[right] * sine + imaginary[right] * cosine;
+          real[right] = real[left] - re; imaginary[right] = imaginary[left] - im;
+          real[left] += re; imaginary[left] += im;
+        }
+      }
+    }
+    for (let bin = 0; bin < size / 2; bin++) {
+      state.spectrum[bin] = state.smoothing * state.spectrum[bin] + (1 - state.smoothing) * hypot(real[bin], imaginary[bin]) / size;
+    }
+    state.dirty = false;
+  }
+  function readAnalyser(self, array, frequency, bytes) {
+    const state = analyserOf(self);
+    const type = bytes ? 'Uint8Array' : 'Float32Array';
+    if (apply(arrayKind, array, []) !== type) throw new TypeErrorC(`Expected a ${type}`);
+    const buffer = apply(arrayBufferOf, array, []);
+    apply(bufferLength, buffer, []);
+    if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC('Expected a fixed-length ArrayBuffer');
+    const count = min(apply(arrayLength, array, []), frequency ? state.size / 2 : state.size);
+    if (frequency) analyserSpectrum(state);
+    for (let index = 0; index < count; index++) {
+      const value = frequency ? 20 * Math.log10(state.spectrum[index]) : state.history[(state.cursor - state.size + index) & 32767];
+      array[index] = bytes ? min(255, max(0, floor(frequency ? 255 * (value - state.low) / (state.high - state.low) : 128 * (1 + value)))) : value;
+    }
+  }
+  class AnalyserNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'AnalyserNode');
+      super(secret, context, {});
+      const node = nodeOf(this), opts = nodeOptions(node, options, 'AnalyserNode');
+      const { fftSize = 2048, maxDecibels = -30, minDecibels = -100, smoothingTimeConstant = 0.8 } = opts;
+      const high = finite(maxDecibels, 'construct', 'AnalyserNode', 'double'), low = finite(minDecibels, 'construct', 'AnalyserNode', 'double');
+      if (low >= high) throw new DE('Invalid decibel range.', 'IndexSizeError');
+      const state = { history: new F32(32768), cursor: 0, low, high };
+      analysers.set(this, state);
+      this.fftSize = fftSize;
+      this.smoothingTimeConstant = smoothingTimeConstant;
+      (ctxOf(context).analyserNodes ??= new Set()).add(new WeakRefC(node));
+      node.process = (frame, quantum) => {
+        const bus = input(node, quantum, frame) ?? silentBus();
+        const mono = new F32(QUANTUM);
+        mix(bus, [mono], 'speakers');
+        state.history.set(mono, state.cursor);
+        state.cursor = (state.cursor + QUANTUM) & 32767;
+        state.dirty = true;
+        return bus;
+      };
+    }
+    get fftSize() { return analyserOf(this).size; }
+    set fftSize(value) {
+      const state = analyserOf(this), size = ulong(value);
+      if (size < 32 || size > 32768 || (size & (size - 1))) throw new DE('Invalid FFT size.', 'IndexSizeError');
+      if (state.size !== size) { state.size = size; state.spectrum = new F64(size / 2); state.dirty = true; }
+    }
+    get frequencyBinCount() { return analyserOf(this).size / 2; }
+    get minDecibels() { return analyserOf(this).low; }
+    set minDecibels(value) {
+      const state = analyserOf(this), low = finite(value, 'set', 'AnalyserNode', 'double');
+      if (low >= state.high) throw new DE('Invalid minimum decibels.', 'IndexSizeError');
+      state.low = low;
+    }
+    get maxDecibels() { return analyserOf(this).high; }
+    set maxDecibels(value) {
+      const state = analyserOf(this), high = finite(value, 'set', 'AnalyserNode', 'double');
+      if (high <= state.low) throw new DE('Invalid maximum decibels.', 'IndexSizeError');
+      state.high = high;
+    }
+    get smoothingTimeConstant() { return analyserOf(this).smoothing; }
+    set smoothingTimeConstant(value) {
+      const state = analyserOf(this), smoothing = finite(value, 'set', 'AnalyserNode', 'double');
+      if (smoothing < 0 || smoothing > 1) throw new DE('Invalid smoothing constant.', 'IndexSizeError');
+      state.smoothing = smoothing;
+    }
+    getByteTimeDomainData(array) { readAnalyser(this, array, false, true); }
+    getFloatTimeDomainData(array) { readAnalyser(this, array, false, false); }
+    getByteFrequencyData(array) { readAnalyser(this, array, true, true); }
+    getFloatFrequencyData(array) { readAnalyser(this, array, true, false); }
+  }
+  webidl(AnalyserNode, 'AnalyserNode');
 
   function writeEqualPower(bus, left, right, i, pan, gain) {
     if (bus.length === 1) {
@@ -1011,7 +1252,7 @@
       applyNodeOptions(this, inherited);
       const n = nodeOf(this);
       n.delayTime = nodeParam(n, 0, 0, fround(limit));
-      params.get(n.delayTime).value = fround(delay);
+      setParamValue(params.get(n.delayTime), delay, 0);
       // Store only the rendered part of the delay line, bounded by its maximum
       // age. Two extra quanta cover the neighboring sample and the current write.
       n.slots = max(1, ceil(limit * ctxOf(context).rate / QUANTUM)) + 2;
@@ -1114,6 +1355,8 @@
   const arrayKind = getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag).get;
   const arrayBufferOf = getOwnPropertyDescriptor(typedArrayPrototype, 'buffer').get;
   const arrayLength = getOwnPropertyDescriptor(typedArrayPrototype, 'length').get;
+  const arrayByteOffset = getOwnPropertyDescriptor(typedArrayPrototype, 'byteOffset').get;
+  const arraySet = typedArrayPrototype.set;
   const bufferLength = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'byteLength').get;
   const resizable = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'resizable')?.get;
   const { sqrt, hypot, atan2 } = Math;
@@ -1277,7 +1520,7 @@
       n.Q = parameter('Q', 1, -F32_MAX, F32_MAX);
       n.detune = parameter('detune', 0, -153600, 153600);
       n.frequency = parameter('frequency', 350, 0, rate / 2);
-      n.gain = parameter('gain', 0, -F32_MAX, Math.fround(40 * Math.log10(F32_MAX)));
+      n.gain = parameter('gain', 0, -F32_MAX, fround(40 * fround(Math.log10(F32_MAX))));
       const suppliedType = options?.type;
       if (suppliedType !== undefined) {
         const type = `${suppliedType}`;
@@ -1519,7 +1762,7 @@
       const startAt = n.start * rate;
       n.pos = n.offset * data.rate + (f0 + from - startAt) * step;
       if (n.loop && n.offset * data.rate >= loopEnd) n.pos = loopStart;
-      n.played = 0;
+      n.played = max(0, ceil(startAt - 1e-9) - startAt) * abs(step);
     }
     const maxPlayed = n.duration * data.rate;
     let pos = n.pos;
@@ -1566,8 +1809,8 @@
         if (o.type === 'custom') throw new DE("Failed to construct 'OscillatorNode': A PeriodicWave must be specified if the type is set to \"custom\"", 'InvalidStateError');
         this.type = o.type;
       }
-      if (o.frequency !== undefined) params.get(n.frequency).value = Math.fround(finite(o.frequency, 'construct', 'OscillatorNode'));
-      if (o.detune !== undefined) params.get(n.detune).value = Math.fround(finite(o.detune, 'construct', 'OscillatorNode'));
+      if (o.frequency !== undefined) setParamValue(params.get(n.frequency), finite(o.frequency, 'construct', 'OscillatorNode'), 0);
+      if (o.detune !== undefined) setParamValue(params.get(n.detune), finite(o.detune, 'construct', 'OscillatorNode'), 0);
       n.process = (f0, q) => {
         const rate = ctxOf(context).rate;
         const range = activeRange(n, rate, f0);
@@ -1673,6 +1916,8 @@
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createConvolver() { return new ConvolverNode(this); }
     createGain() { return new GainNode(this); }
+    createWaveShaper() { return new WaveShaperNode(this); }
+    createAnalyser() { return new AnalyserNode(this); }
     createDelay(maxDelayTime = 1) { return new DelayNode(this, {maxDelayTime}); }
     createPanner() { return new PannerNode(this); }
     createStereoPanner() { return new StereoPannerNode(this); }
@@ -1899,7 +2144,8 @@
       if (arguments.length < 1) return PromiseC.reject(new TypeErrorC("Failed to execute 'suspend' on 'OfflineAudioContext': 1 argument required, but only 0 present."));
       const t = +suspendTime;
       if (!(t >= 0)) return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': negative suspend time (${t}) is not allowed`, 'InvalidStateError'));
-      const frame = floor(t * c.rate / QUANTUM) * QUANTUM;
+      const lower = floor(t * c.rate / QUANTUM) * QUANTUM;
+      const frame = t > lower / c.rate ? lower + QUANTUM : lower;
       if (frame >= c.length) {
         return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': cannot schedule a suspend at frame ${frame} (${t} seconds) because it is greater than or equal to the total render duration of ${c.length} frames`, 'InvalidStateError'));
       }
@@ -1936,6 +2182,11 @@
       for (let ch = 0; ch < c.channels; ch++) c.output[ch].set(count === QUANTUM ? bus[ch] : bus[ch].subarray(0, count), f0);
       // Started sources nothing pulled still play (and end) on time.
       for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
+      if (c.analyserNodes) for (const ref of c.analyserNodes) {
+        const node = ref.deref();
+        if (!node) c.analyserNodes.delete(ref);
+        else if (node.q !== q) pull(node, q, f0);
+      }
       // Preserve a fed convolver's history even while its output is disconnected.
       if (c.convolverNodes) for (const ref of c.convolverNodes) {
         const n = ref.deref();
@@ -1984,6 +2235,6 @@
   return {
     localImpulseInfo, BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })

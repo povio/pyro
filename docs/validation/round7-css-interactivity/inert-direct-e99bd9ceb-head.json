@@ -1,0 +1,70 @@
+{
+  "version": "124.0.6367.29",
+  "results": {
+    "ordinary": {
+      "outer": "auto",
+      "target": "auto",
+      "focused": true,
+      "found": true,
+      "fullscreen": null,
+      "clicks": 1
+    },
+    "css": {
+      "outer": "inert",
+      "target": "inert",
+      "focused": false,
+      "found": false,
+      "fullscreen": null,
+      "clicks": 0
+    },
+    "cssAuto": {
+      "outer": "inert",
+      "target": "auto",
+      "focused": true,
+      "found": true,
+      "fullscreen": null,
+      "clicks": 1
+    },
+    "attr": {
+      "outer": "inert",
+      "target": "inert",
+      "focused": false,
+      "found": false,
+      "fullscreen": null,
+      "clicks": 0
+    },
+    "attrAuto": {
+      "outer": "inert",
+      "target": "auto",
+      "focused": false,
+      "found": false,
+      "fullscreen": null,
+      "clicks": 0
+    },
+    "modalInside": {
+      "outer": "inert",
+      "target": "auto",
+      "focused": false,
+      "found": true,
+      "fullscreen": null,
+      "clicks": 1
+    },
+    "modalOutside": {
+      "outer": "auto",
+      "target": "auto",
+      "focused": false,
+      "found": false,
+      "fullscreen": null,
+      "clicks": 0
+    },
+    "fullscreenRequest": true,
+    "fullscreen": {
+      "outer": "inert",
+      "target": "inert",
+      "focused": false,
+      "found": false,
+      "fullscreen": "subject",
+      "clicks": 0
+    }
+  }
+}

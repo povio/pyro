@@ -2746,7 +2746,15 @@ impl Layout {
         if let Some(leftward) = in_sync.and_then(|s| s.viewport_scrolls_leftward()) {
             return leftward;
         }
-        let Some(root) = dom.document_element(self.document()).ok().flatten() else { return false };
+        self.viewport_style_element(dom).and_then(|principal| self.style.stylo_style(dom, principal)).is_some_and(|s| match s.slow_clone_writing_mode() {
+            WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
+            WritingMode::HorizontalTb => s.slow_clone_direction() == style::computed_values::direction::T::Rtl,
+            _ => false,
+        })
+    }
+
+    fn viewport_style_element(&self, dom: &Dom) -> Option<NodeId> {
+        let root = dom.document_element(self.document()).ok().flatten()?;
         // The principal writing mode: an HTML root's `<body>` child's, else its own (CSS Writing
         // Modes 3 § 8; WPT css-writing-modes `wm-propagation-body-scroll-offset-*`).
         let body = dom
@@ -2755,12 +2763,7 @@ impl Layout {
             .and_then(|children| {
                 children.into_iter().find(|&child| dom.element(child).is_ok_and(|e| &*e.name.local == "body"))
             });
-        let principal = body.filter(|_| dom.element(root).is_ok_and(|e| &*e.name.local == "html")).unwrap_or(root);
-        self.style.stylo_style(dom, principal).is_some_and(|s| match s.slow_clone_writing_mode() {
-            WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
-            WritingMode::HorizontalTb => s.slow_clone_direction() == style::computed_values::direction::T::Rtl,
-            _ => false,
-        })
+        Some(body.filter(|_| dom.element(root).is_ok_and(|e| &*e.name.local == "html")).unwrap_or(root))
     }
 
     /// pyro: the viewport's scroll range on each axis ([`Self::viewport_x_reversed`]).
@@ -3957,11 +3960,11 @@ impl Layout {
     fn scroll_into_view_aligned_targets(&mut self, dom: &Dom, el: NodeId, center: bool) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center { centered_scroll_offset } else { center_if_needed_offset };
-        self.scroll_into_view_offset_targets(dom, el, offset, offset, false)
+        self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Physical(offset), false)
     }
 
     /// Script-facing `Element.scrollIntoView(options)` with an explicit
-    /// alignment per axis (`block` vertical, `inline` horizontal; CSSOM View
+    /// alignment per logical axis (CSSOM View
     /// "scroll an element into view"), changed targets in delivery order.
     /// The default `{block: start, inline: nearest}` aligns in every scroll
     /// container on the way too, as Chromium does.
@@ -3972,7 +3975,7 @@ impl Layout {
         block: ScrollAlign,
         inline: ScrollAlign,
     ) -> Vec<ScrollTarget> {
-        let moved = self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true);
+        let moved = self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Logical { block, inline }, true);
         self.set_scroll_target(dom, el);
         moved
     }
@@ -4030,7 +4033,7 @@ impl Layout {
     ) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center_if_needed { center_if_needed_offset } else { nearest_scroll_offset };
-        let moved = self.scroll_into_view_offset_targets(dom, el, offset, offset, true);
+        let moved = self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Physical(offset), true);
         self.set_scroll_target(dom, el);
         moved
     }
@@ -4092,8 +4095,7 @@ impl Layout {
         &mut self,
         dom: &Dom,
         el: NodeId,
-        offset_x: fn(f64, f64, f64, i64) -> Option<i32>,
-        offset_y: fn(f64, f64, f64, i64) -> Option<i32>,
+        alignment: RevealAlignment,
         script: bool,
     ) -> Vec<ScrollTarget> {
         self.force_content_visibility(dom, el);
@@ -4148,6 +4150,7 @@ impl Layout {
                 axes.y = user.y || height <= self.client_height(dom, node);
             }
             if axes.x || axes.y || explicit {
+                let (offset_x, offset_y) = alignment.offsets(|| self.style.stylo_style(dom, node).map(|style| style.writing_mode));
                 // pyro: a snap area of a snapping container is scrolled to its snap position (its
                 // `scroll-snap-align` in place of the alignment asked for), as Chromium does (CSS
                 // Scroll Snap 1 § 4; WPT css-overflow `targeted-column-scroll-marker-selection-001`).
@@ -4174,6 +4177,8 @@ impl Layout {
         // css-overflow `scrollbar-gutter-scroll-into-view`).
         let [gl, gt, gr, gb] =
             self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()).unwrap_or([0.0; 4]);
+        let (offset_x, offset_y) = alignment.offsets(|| self.viewport_style_element(dom)
+            .and_then(|node| self.style.stylo_style(dom, node)).map(|style| style.writing_mode));
         let left = offset_x(target.left() - gl, target.width, self.inner_width() as f64 - gl - gr, self.window_scroll.0 as i64);
         let top = offset_y(target.top() - gt, target.height, self.inner_height() as f64 - gt - gb, self.window_scroll.1 as i64);
         if self.window_scroll_to(dom, left, top) {
@@ -4244,6 +4249,10 @@ impl Layout {
 
     pub fn typed_computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
         let computed = || {
+            if name == "line-height" {
+                // A unitless line-height stays a number in Typed OM.
+                return self.style.used_value(dom, el, name);
+            }
             let css = self.style.computed_value(dom, el, name)?;
             if css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
                 if let Some(value) = self.style.stylo_style(dom, el)
@@ -4732,6 +4741,33 @@ pub enum ScrollAlign {
     Center,
     End,
     Nearest,
+}
+
+type ScrollOffsetFn = fn(f64, f64, f64, i64) -> Option<i32>;
+
+#[derive(Clone, Copy)]
+enum RevealAlignment {
+    Physical(ScrollOffsetFn),
+    Logical { block: ScrollAlign, inline: ScrollAlign },
+}
+
+impl RevealAlignment {
+    fn offsets(self, writing_mode: impl FnOnce() -> Option<style::logical_geometry::WritingMode>) -> (ScrollOffsetFn, ScrollOffsetFn) {
+        use style::logical_geometry::PhysicalSide::{Bottom, Right};
+        let (block, inline) = match self {
+            Self::Physical(offset) => return (offset, offset),
+            Self::Logical { block, inline } => (block, inline),
+        };
+        let Some(mode) = writing_mode() else { return (inline.offset_fn(), block.offset_fn()) };
+        let physical = |align, side| match (align, side) {
+            (ScrollAlign::Start, Right | Bottom) => ScrollAlign::End.offset_fn(),
+            (ScrollAlign::End, Right | Bottom) => ScrollAlign::Start.offset_fn(),
+            _ => align.offset_fn(),
+        };
+        let block = physical(block, mode.block_start_physical_side());
+        let inline = physical(inline, mode.inline_start_physical_side());
+        if mode.is_vertical() { (block, inline) } else { (inline, block) }
+    }
 }
 
 impl ScrollAlign {

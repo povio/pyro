@@ -1,0 +1,62 @@
+{
+  "equivalent": {
+    "immediate": {
+      "open": true,
+      "attr": "AuTo",
+      "reflected": "AuTo"
+    },
+    "events": []
+  },
+  "namespaced": {
+    "immediate": {
+      "open": true,
+      "attr": "auto",
+      "reflected": "auto"
+    },
+    "events": []
+  },
+  "liveAttr": {
+    "immediate": {
+      "open": true,
+      "attr": "manual",
+      "reflected": "manual"
+    },
+    "events": []
+  },
+  "namedMap": {
+    "immediate": {
+      "open": true,
+      "attr": null,
+      "reflected": ""
+    },
+    "events": []
+  },
+  "replaceAttr": {
+    "immediate": {
+      "open": true,
+      "attr": "hint",
+      "reflected": "hint"
+    },
+    "events": []
+  },
+  "nullish": {
+    "immediate": {
+      "open": true,
+      "attr": "null",
+      "reflected": "null"
+    },
+    "events": []
+  },
+  "handlerRewrites": {
+    "immediate": {
+      "open": true,
+      "attr": "hint",
+      "reflected": "hint"
+    },
+    "events": []
+  },
+  "detachedChild": {
+    "parentOpen": false,
+    "childConnected": false
+  }
+}

@@ -733,6 +733,8 @@ pub enum ElClass {
     SvgTextPath,
     SvgA,
     SvgRoot,
+    SvgSymbol,
+    SvgView,
     SvgClipPath,
     SvgMask,
     SvgPattern,
@@ -782,6 +784,8 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     if e.namespace() == &markup5ever::ns!(svg) {
         return match &*e.name.local {
             "svg" => ElClass::SvgRoot,
+            "symbol" => ElClass::SvgSymbol,
+            "view" => ElClass::SvgView,
             "a" => ElClass::SvgA,
             // SVGGraphicsElement interfaces (SVG 2).
             "stop" => ElClass::SvgStop,
@@ -839,6 +843,13 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     }
     if !e.is_html() {
         return ElClass::Other;
+    }
+    if e.flags & pyro_dom::node::element_flags::CUSTOM_FAILED != 0
+        && e.is_value.is_none() && dom.custom_definition_owner(id).is_ok_and(|owner| owner.is_none())
+    {
+        // The failed fallback created by synchronous autonomous construction
+        // never received a definition. A failed upgrade keeps its own class.
+        return ElClass::Unknown;
     }
     html_class_for_local(&e.name.local)
 }
@@ -1009,6 +1020,8 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgTextPath => s.wrap::<SvgTextPathElement>(d, k),
         SvgA => s.wrap::<SvgAElement>(d, k),
         SvgRoot => s.wrap::<SvgSvgElement>(d, k),
+        SvgSymbol => s.wrap::<SvgSymbolElement>(d, k),
+        SvgView => s.wrap::<SvgViewElement>(d, k),
         SvgClipPath => s.wrap::<SvgClipPathElement>(d, k),
         SvgMask => s.wrap::<SvgMaskElement>(d, k),
         SvgPattern => s.wrap::<SvgPatternElement>(d, k),
@@ -1139,6 +1152,8 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgTextPath => SvgTextPathElement::NAME,
         SvgA => SvgAElement::NAME,
         SvgRoot => SvgSvgElement::NAME,
+        SvgSymbol => SvgSymbolElement::NAME,
+        SvgView => SvgViewElement::NAME,
         SvgClipPath => SvgClipPathElement::NAME,
         SvgMask => SvgMaskElement::NAME,
         SvgPattern => SvgPatternElement::NAME,
@@ -1286,6 +1301,8 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgTextPath => crate::node::wrap_new_node::<SvgTextPathElement>(s, page, el, new_target),
         SvgA => crate::node::wrap_new_node::<SvgAElement>(s, page, el, new_target),
         SvgRoot => crate::node::wrap_new_node::<SvgSvgElement>(s, page, el, new_target),
+        SvgSymbol => crate::node::wrap_new_node::<SvgSymbolElement>(s, page, el, new_target),
+        SvgView => crate::node::wrap_new_node::<SvgViewElement>(s, page, el, new_target),
         SvgClipPath => crate::node::wrap_new_node::<SvgClipPathElement>(s, page, el, new_target),
         SvgMask => crate::node::wrap_new_node::<SvgMaskElement>(s, page, el, new_target),
         SvgPattern => crate::node::wrap_new_node::<SvgPatternElement>(s, page, el, new_target),
@@ -1690,7 +1707,22 @@ impl JsClass for HtmlElement {
             },
         );
         reflect_bool!(def, "inert", "inert");
-        reflect_str!(def, "popover", "popover");
+        def.accessor(
+            "popover",
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(dom.get_attribute(n.id, "popover").js()?.map_or(s.null(), |value| {
+                    s.string(pyro_dom::PopoverType::from_value(value).keyword())
+                }))
+            },
+            |_s, n, value| {
+                if value.is_nullish() {
+                    n.page().dom.borrow_mut().remove_attribute(n.id, "popover").js()?;
+                    return Ok(());
+                }
+                set_attr(n, "popover", &dom_string(value)?)
+            },
+        );
         define_focus_attributes(def);
         def.accessor(
             "draggable",
@@ -2114,8 +2146,9 @@ fn selection_state(n: &NodeData) -> Option<(u32, u32, Option<bool>)> {
 /// HTML "set the selection range": when the start, end or direction changed,
 /// queue an element task that fires `select` (bubbling, not cancelable).
 /// Setting the same range again fires nothing.
-fn queue_select_if_changed(n: &NodeData, before: Option<(u32, u32, Option<bool>)>) {
+fn queue_selection_events_if_changed(n: &NodeData, before: Option<(u32, u32, Option<bool>)>) {
     if selection_state(n) != before {
+        crate::editing::queue_control_selectionchange(n.page(), n.id);
         crate::input::queue_simple(n.page(), n.id, "select", true, false);
     }
 }
@@ -2142,8 +2175,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_range(n.id, st, e.max(st)).js()?;
                 dom.set_selection_direction(n.id, direction).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2168,8 +2200,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_range(n.id, st, end).js()?;
                 dom.set_selection_direction(n.id, direction).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2192,7 +2223,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             let direction = selection_direction(&dom_string(v)?);
             let before = selection_state(n);
             n.page().dom.borrow_mut().set_selection_direction(n.id, direction).js()?;
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2209,8 +2240,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             dom.set_selection_range(n.id, arg0, arg1).js()?;
             dom.set_selection_direction(n.id, direction).js()?;
         }
-        crate::editing::queue_control_selectionchange(n.page(), n.id);
-        queue_select_if_changed(n, before);
+        queue_selection_events_if_changed(n, before);
         Ok(s.undefined())
     });
     def.method("select", 0, |s, n, _a| {
@@ -2233,8 +2263,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 let mut dom = page.dom.borrow_mut();
                 dom.set_selection_range(n.id, 0, len).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
         }
         Ok(s.undefined())
     });
@@ -2277,8 +2306,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         }
         let before = selection_state(n);
         n.page().dom.borrow_mut().set_range_text(n.id, &text, start, end, mode).js()?;
-        crate::editing::queue_control_selectionchange(n.page(), n.id);
-        queue_select_if_changed(n, before);
+        queue_selection_events_if_changed(n, before);
         Ok(s.undefined())
     });
 }
@@ -3179,6 +3207,7 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
     reflect_bool!(def, "shadowRootDelegatesFocus", "shadowrootdelegatesfocus");
     reflect_bool!(def, "shadowRootClonable", "shadowrootclonable");
     reflect_bool!(def, "shadowRootSerializable", "shadowrootserializable");
+    reflect_str!(def, "shadowRootCustomElementRegistry", "shadowrootcustomelementregistry");
 });
 
 fn slot_assigned<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, elements_only: bool) -> JsResult<Value<'s>> {
@@ -3624,7 +3653,14 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
         crate::canvas::rect_value(s, page, false, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });
+fn svg_aspect_ratio<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("preserveAspectRatio", |s, n| collections::animated_aspect(s, n));
+}
+
+simple_class!(SvgSymbolElement, "SVGSymbolElement", SvgGraphicsElement, svg_aspect_ratio);
+simple_class!(SvgViewElement, "SVGViewElement", SvgElement, svg_aspect_ratio);
 simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+    svg_aspect_ratio(def);
     def.method("createSVGPoint", 0, |s, _, _| collections::detached_point(s, 0.0, 0.0));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -3653,7 +3689,7 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
     });
     def.method("animationsPaused", 0, |s, n, _a| Ok(s.boolean(crate::smil::paused(n.page()))));
     def.method("createSVGNumber", 0, |s, _n, _a| {
-        Ok(s.wrap::<collections::SvgNumber>(std::cell::Cell::new(0.0), None)?.value())
+        collections::number_value(s, pyro_dom::svg_point_list::NumberItem::detached(0.0))
     });
     def.method("createSVGAngle", 0, |s, _n, _a| Ok(collections::create_svg_angle(s)?.value()));
     def.method("createSVGLength", 0, |s, n, _a| {
@@ -3761,6 +3797,7 @@ simple_class!(SvgStopElement, "SVGStopElement", SvgElement, |def| {
 static LEN_411: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "textLength", initial: "0", dir: collections::SvgLengthDir::Other, slot: 411 };
 static LEN_414: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "startOffset", initial: "0", dir: collections::SvgLengthDir::Other, slot: 414 };
 simple_class!(SvgImageElement, "SVGImageElement", SvgGraphicsElement, |def| {
+    svg_aspect_ratio(def);
     svg_href(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -3802,7 +3839,9 @@ simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement
     def.constant("LENGTHADJUST_SPACING", 1.0);
     def.constant("LENGTHADJUST_SPACINGANDGLYPHS", 2.0);
 });
-simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement);
+simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement, |def| {
+    def.getter("rotate", |s, n| collections::animated_number_list(s, n, "rotate"));
+});
 simple_class!(SvgTextElement, "SVGTextElement", SvgTextPositioningElement);
 simple_class!(SvgTSpanElement, "SVGTSpanElement", SvgTextPositioningElement);
 simple_class!(SvgTextPathElement, "SVGTextPathElement", SvgTextContentElement, |def| {
@@ -3902,6 +3941,7 @@ simple_class!(SvgMaskElement, "SVGMaskElement", SvgElement, |def| {
     svg_enum!(def, "maskContentUnits", MASK_CONTENT_UNITS);
 });
 simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
     svg_href(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -3945,6 +3985,7 @@ simple_class!(SvgFilterElement, "SVGFilterElement", SvgElement, |def| {
     svg_enum!(def, "primitiveUnits", PRIMITIVE_UNITS);
 });
 simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
     def.getter("refX", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_366)?.value()));
     def.getter("refY", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_369)?.value()));
     def.getter("markerWidth", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_372)?.value()));
@@ -3981,8 +4022,7 @@ simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
 
 // SVG filter primitives (Filter Effects 1): their attributes as SVGAnimatedEnumeration, -String,
 // -Number, -Integer and -Boolean values (`collections`), following the specification's IDL.
-// Not implemented yet: the number lists (`values`, `tableValues`, `kernelMatrix`) and feImage's
-// `preserveAspectRatio`.
+// The number lists (`values`, `tableValues`, `kernelMatrix`) are not yet implemented.
 static FE_BLEND_MODE: collections::SvgEnum =
     collections::SvgEnum { attr: "mode", keywords: &["normal", "multiply", "screen", "darken", "lighten", "overlay", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"], initial: 1, slot: 40 };
 static FE_COLOR_MATRIX_TYPE: collections::SvgEnum =
@@ -4084,6 +4124,7 @@ simple_class!(SvgFeBlendElement, "SVGFEBlendElement", SvgElement, |def| {
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgFeColorMatrixElement, "SVGFEColorMatrixElement", SvgElement, |def| {
+    def.getter("values", |s, n| collections::animated_number_list(s, n, "values"));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -4106,6 +4147,7 @@ simple_class!(SvgFeComponentTransferElement, "SVGFEComponentTransferElement", Sv
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgComponentTransferFunctionElement, "SVGComponentTransferFunctionElement", SvgElement, |def| {
+    def.getter("tableValues", |s, n| collections::animated_number_list(s, n, "tableValues"));
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_UNKNOWN", 0.0);
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_IDENTITY", 1.0);
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_TABLE", 2.0);
@@ -4145,6 +4187,7 @@ simple_class!(SvgFeCompositeElement, "SVGFECompositeElement", SvgElement, |def| 
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgFeConvolveMatrixElement, "SVGFEConvolveMatrixElement", SvgElement, |def| {
+    def.getter("kernelMatrix", |s, n| collections::animated_number_list(s, n, "kernelMatrix"));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -4267,6 +4310,7 @@ simple_class!(SvgFeGaussianBlurElement, "SVGFEGaussianBlurElement", SvgElement, 
     });
 });
 simple_class!(SvgFeImageElement, "SVGFEImageElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -4382,7 +4426,7 @@ pub(crate) fn document_cookie(page: &PageDom, doc: NodeId) -> String {
     let (Some(net), Ok(url)) = (page.net.borrow().clone(), pyro_net::Url::parse(&url)) else { return String::new() };
     let jar = net.cookies().clone();
     let mut jar = jar.lock().unwrap();
-    jar.document_cookie(&url, pyro_net::cookies::now_secs())
+    jar.document_cookie_in(&url, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
 }
 
 pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
@@ -4393,7 +4437,7 @@ pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
     }
     let jar = net.cookies().clone();
     let mut jar = jar.lock().unwrap();
-    jar.set_from_header(&url, value, pyro_net::cookies::Access::Script, pyro_net::cookies::now_secs());
+    jar.set_from_header_in(&url, value, pyro_net::cookies::Access::Script, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context());
 }
 
 pub(crate) fn create_event<'s>(s: &Scope<'s>, page: &Rc<PageDom>, iface: &str) -> JsResult<Value<'s>> {
@@ -4917,6 +4961,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<MathMlElement>();
     engine.register::<SvgGraphicsElement>();
     engine.register::<SvgSvgElement>();
+    engine.register::<SvgSymbolElement>();
+    engine.register::<SvgViewElement>();
     engine.register::<SvgAElement>();
     engine.register::<SvgClipPathElement>();
     engine.register::<SvgMaskElement>();

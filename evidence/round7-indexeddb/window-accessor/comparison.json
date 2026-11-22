@@ -1,0 +1,432 @@
+{
+  "count": 828,
+  "passes": {
+    "parent": 827,
+    "candidate": 828,
+    "repeat": 828,
+    "chrome": 828
+  },
+  "changes": [
+    {
+      "url": "IndexedDB/idlharness.any.html",
+      "name": "Window interface: attribute indexedDB",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    }
+  ],
+  "repeatDifferences": [],
+  "chromeDifferences": [],
+  "formerWorkerGains": [
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBRequest interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBOpenDBRequest interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBVersionChangeEvent interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBDatabase interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBObjectStore interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBIndex interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBRecord interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBCursor interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBCursorWithValue interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.serviceworker.html",
+      "name": "IDBTransaction interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBRequest interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBOpenDBRequest interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBVersionChangeEvent interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBDatabase interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBObjectStore interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBIndex interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBRecord interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBCursor interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBCursorWithValue interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.sharedworker.html",
+      "name": "IDBTransaction interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBRequest interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBOpenDBRequest interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBVersionChangeEvent interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBDatabase interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBObjectStore interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBIndex interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBRecord interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBCursor interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBCursorWithValue interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "IndexedDB/idlharness.any.worker.html",
+      "name": "IDBTransaction interface: existence and properties of interface object",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "repeat": "Pass",
+      "chrome": "Pass"
+    }
+  ],
+  "pages": {
+    "IndexedDB/idlharness.any.html": {
+      "parent": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "window",
+        "protocol": "http"
+      },
+      "candidate": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "window",
+        "protocol": "http"
+      },
+      "repeat": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "window",
+        "protocol": "http"
+      },
+      "chrome": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "window",
+        "protocol": "http"
+      }
+    },
+    "IndexedDB/idlharness.any.serviceworker.html": {
+      "parent": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "serviceworker",
+        "protocol": "https"
+      },
+      "candidate": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "serviceworker",
+        "protocol": "https"
+      },
+      "repeat": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "serviceworker",
+        "protocol": "https"
+      },
+      "chrome": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "serviceworker",
+        "protocol": "https"
+      }
+    },
+    "IndexedDB/idlharness.any.sharedworker.html": {
+      "parent": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "sharedworker",
+        "protocol": "http"
+      },
+      "candidate": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "sharedworker",
+        "protocol": "http"
+      },
+      "repeat": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "sharedworker",
+        "protocol": "http"
+      },
+      "chrome": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "sharedworker",
+        "protocol": "http"
+      }
+    },
+    "IndexedDB/idlharness.any.worker.html": {
+      "parent": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "dedicatedworker",
+        "protocol": "http"
+      },
+      "candidate": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "dedicatedworker",
+        "protocol": "http"
+      },
+      "repeat": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "dedicatedworker",
+        "protocol": "http"
+      },
+      "chrome": {
+        "harnessStatus": "OK",
+        "error": null,
+        "source": "IndexedDB/idlharness.any.js",
+        "blob": "020ca37531ad759a96377e9ce4946856ba0a399f",
+        "environment": "dedicatedworker",
+        "protocol": "http"
+      }
+    }
+  }
+}

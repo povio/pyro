@@ -170,6 +170,9 @@ impl Eq for PopupTicket {}
 pub enum PopupCommand {
     Close,
     Navigate(String),
+    /// A named-window navigation initiated by window.open, with its caller's
+    /// referrer source and policy captured before the navigation task runs.
+    OpenNamed { url: String, referrer: Option<String>, policy: pyro_net::ReferrerPolicy },
 }
 
 #[derive(Clone)]

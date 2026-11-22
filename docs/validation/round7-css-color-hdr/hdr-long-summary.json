@@ -1,0 +1,22 @@
+{
+  "unstyledLimit": {
+    "ordinary-base": {
+      "wallMedianMs": 13.302,
+      "cpuMeanMs": 14.0
+    },
+    "hdr-fixed": {
+      "wallMedianMs": 13.152,
+      "cpuMeanMs": 13.5
+    }
+  },
+  "inheritedLimit": {
+    "ordinary-base": {
+      "wallMedianMs": 13.038,
+      "cpuMeanMs": 12.5
+    },
+    "hdr-fixed": {
+      "wallMedianMs": 13.478,
+      "cpuMeanMs": 13.5
+    }
+  }
+}

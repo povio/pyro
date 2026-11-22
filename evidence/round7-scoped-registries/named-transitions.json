@@ -1,0 +1,36 @@
+{
+  "scoped": [
+    [
+      "Fail",
+      "Pass",
+      "Pass",
+      240
+    ],
+    [
+      null,
+      "Pass",
+      "Pass",
+      109
+    ],
+    [
+      "Fail",
+      "Pass",
+      "Fail",
+      3
+    ],
+    [
+      null,
+      "Pass",
+      "Fail",
+      24
+    ]
+  ],
+  "legacy": [
+    [
+      "Fail",
+      "Pass",
+      "Pass",
+      78
+    ]
+  ]
+}

@@ -1,0 +1,2 @@
+{"staticText":"globalThis.executions += 100;\r\n\"ledger\" \\ ☃\u0000 END","dynamicText":"globalThis.executions += 100;\r\n\"ledger\" \\ ☃\u0000 END","keys":["default"],"jsValue":7,"executions":1}
+text_fetches=1 js_fetches=1

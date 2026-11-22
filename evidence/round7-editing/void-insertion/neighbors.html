@@ -1,0 +1,20 @@
+<!doctype html><script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script><body><script>
+for(const style of ['display:none','visibility:hidden','display:inline-block']){
+ const host = document.createElement('div'); host.contentEditable='true'; document.body.append(host);
+ const neighbor = document.createElement('span'); neighbor.style.cssText=style; neighbor.textContent='original';
+ const img=document.createElement('img'); host.append(neighbor,img); host.focus();
+ const sel=getSelection(); sel.collapse(img,0);
+ function endpoint(n,offset) {
+   const path=[]; while(n && n!==host) {
+     path.unshift([n.nodeName,Array.prototype.indexOf.call(n.parentNode.childNodes,n)]); n=n.parentNode;
+   }
+   return {inHost:n===host,path,offset};
+ }
+ const before=host.innerHTML;
+ const start=endpoint(sel.focusNode,sel.focusOffset);
+ const ret=document.execCommand('insertText',false,'X');
+ const trace={style,before,start,ret,after:host.innerHTML,neighborConnected:neighbor.parentNode===host,neighborText:neighbor.textContent,imgChildren:img.childNodes.length,anchor:endpoint(sel.anchorNode,sel.anchorOffset),focus:endpoint(sel.focusNode,sel.focusOffset)};
+ test(()=>assert_true(ret),JSON.stringify(trace));
+ host.remove();
+}
+</script>

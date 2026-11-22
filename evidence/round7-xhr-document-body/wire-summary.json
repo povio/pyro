@@ -1,0 +1,230 @@
+{
+  "base": {
+    "allCompleted": true,
+    "sequentialCompleted": 72,
+    "bodyCases": [
+      {
+        "id": "xml-utf8",
+        "method": "POST",
+        "mime": "text/plain;charset=UTF-8",
+        "hex": "5b6f626a65637420584d4c446f63756d656e745d",
+        "text": "[object XMLDocument]"
+      },
+      {
+        "id": "html-markup",
+        "method": "POST",
+        "mime": "text/plain;charset=UTF-8",
+        "hex": "5b6f626a6563742048544d4c446f63756d656e745d",
+        "text": "[object HTMLDocument]"
+      },
+      {
+        "id": "xml-author",
+        "method": "POST",
+        "mime": "application/example+xml; CHARSET=\"latin1\"; keep=\"a;b\"; CharSet=ascii",
+        "hex": "5b6f626a65637420584d4c446f63756d656e745d",
+        "text": "[object XMLDocument]"
+      },
+      {
+        "id": "str-original",
+        "method": "POST",
+        "mime": "text/plain;  CHARSET=\"utf-8\"; Keep=hello",
+        "hex": "c3a9",
+        "text": "é"
+      },
+      {
+        "id": "str-normalized",
+        "method": "POST",
+        "mime": "text/plain; CHARSET=windows-1252; label=\"café\"",
+        "hex": "e99baa",
+        "text": "雪"
+      },
+      {
+        "id": "blob-original",
+        "method": "POST",
+        "mime": "application/custom; charset=old",
+        "hex": "736e6f77",
+        "text": "snow"
+      },
+      {
+        "id": "buffer-original",
+        "method": "POST",
+        "mime": "application/custom; charset=old",
+        "hex": "0041ff",
+        "text": "\u0000A�"
+      },
+      {
+        "id": "params-original",
+        "method": "POST",
+        "mime": "application/custom; charset=old",
+        "hex": "6c65747465723d254333254139",
+        "text": "letter=%C3%A9"
+      },
+      {
+        "id": "get-ignores-doc",
+        "method": "GET",
+        "mime": null,
+        "hex": "",
+        "text": ""
+      },
+      {
+        "id": "head-ignores-doc",
+        "method": "HEAD",
+        "mime": null,
+        "hex": "",
+        "text": ""
+      }
+    ]
+  },
+  "candidate": {
+    "allCompleted": true,
+    "sequentialCompleted": 72,
+    "bodyCases": [
+      {
+        "id": "xml-utf8",
+        "method": "POST",
+        "mime": "application/xml;charset=UTF-8",
+        "hex": "3c6d20786d6c6e733d2275726e3a73616d706c65223e3c783ec3a9e99baa3c2f783e3c2f6d3e",
+        "text": "<m xmlns=\"urn:sample\"><x>é雪</x></m>"
+      },
+      {
+        "id": "html-markup",
+        "method": "POST",
+        "mime": "text/html;charset=UTF-8",
+        "hex": "3c21444f43545950452068746d6c3e3c68746d6c3e3c686561643e3c7469746c653e4f72646572733c2f7469746c653e3c2f686561643e3c626f64793e3c62723e3c703e6974656d2026616d703b207461783c2f703e3c2f626f64793e3c2f68746d6c3e",
+        "text": "<!DOCTYPE html><html><head><title>Orders</title></head><body><br><p>item &amp; tax</p></body></html>"
+      },
+      {
+        "id": "xml-author",
+        "method": "POST",
+        "mime": "application/example+xml;charset=UTF-8;keep=\"a;b\"",
+        "hex": "3c6d20786d6c6e733d2275726e3a73616d706c65223e3c783ec3a9e99baa3c2f783e3c2f6d3e",
+        "text": "<m xmlns=\"urn:sample\"><x>é雪</x></m>"
+      },
+      {
+        "id": "str-original",
+        "method": "POST",
+        "mime": "text/plain;  CHARSET=\"utf-8\"; Keep=hello",
+        "hex": "c3a9",
+        "text": "é"
+      },
+      {
+        "id": "str-normalized",
+        "method": "POST",
+        "mime": "text/plain;charset=UTF-8;label=\"café\"",
+        "hex": "e99baa",
+        "text": "雪"
+      },
+      {
+        "id": "blob-original",
+        "method": "POST",
+        "mime": "application/custom; charset=old",
+        "hex": "736e6f77",
+        "text": "snow"
+      },
+      {
+        "id": "buffer-original",
+        "method": "POST",
+        "mime": "application/custom; charset=old",
+        "hex": "0041ff",
+        "text": "\u0000A�"
+      },
+      {
+        "id": "params-original",
+        "method": "POST",
+        "mime": "application/custom; charset=old",
+        "hex": "6c65747465723d254333254139",
+        "text": "letter=%C3%A9"
+      },
+      {
+        "id": "get-ignores-doc",
+        "method": "GET",
+        "mime": null,
+        "hex": "",
+        "text": ""
+      },
+      {
+        "id": "head-ignores-doc",
+        "method": "HEAD",
+        "mime": null,
+        "hex": "",
+        "text": ""
+      }
+    ]
+  },
+  "chrome158": {
+    "allCompleted": true,
+    "sequentialCompleted": 72,
+    "bodyCases": [
+      {
+        "id": "xml-utf8",
+        "method": "POST",
+        "mime": "application/xml;charset=UTF-8",
+        "hex": "3c6d20786d6c6e733d2275726e3a73616d706c65223e3c783ec3a9e99baa3c2f783e3c2f6d3e",
+        "text": "<m xmlns=\"urn:sample\"><x>é雪</x></m>"
+      },
+      {
+        "id": "html-markup",
+        "method": "POST",
+        "mime": "text/html;charset=UTF-8",
+        "hex": "3c21444f43545950452068746d6c3e3c68746d6c3e3c686561643e3c7469746c653e4f72646572733c2f7469746c653e3c2f686561643e3c626f64793e3c62723e3c703e6974656d2026616d703b207461783c2f703e3c2f626f64793e3c2f68746d6c3e",
+        "text": "<!DOCTYPE html><html><head><title>Orders</title></head><body><br><p>item &amp; tax</p></body></html>"
+      },
+      {
+        "id": "xml-author",
+        "method": "POST",
+        "mime": "application/example+xml; CHARSET=\"UTF-8\"; keep=\"a;b\"; CharSet=UTF-8",
+        "hex": "3c6d20786d6c6e733d2275726e3a73616d706c65223e3c783ec3a9e99baa3c2f783e3c2f6d3e",
+        "text": "<m xmlns=\"urn:sample\"><x>é雪</x></m>"
+      },
+      {
+        "id": "str-original",
+        "method": "POST",
+        "mime": "text/plain;  CHARSET=\"UTF-8\"; Keep=hello",
+        "hex": "c3a9",
+        "text": "é"
+      },
+      {
+        "id": "str-normalized",
+        "method": "POST",
+        "mime": "text/plain; CHARSET=UTF-8; label=\"café\"",
+        "hex": "e99baa",
+        "text": "雪"
+      },
+      {
+        "id": "blob-original",
+        "method": "POST",
+        "mime": "application/custom; charset=old",
+        "hex": "736e6f77",
+        "text": "snow"
+      },
+      {
+        "id": "buffer-original",
+        "method": "POST",
+        "mime": "application/custom; charset=old",
+        "hex": "0041ff",
+        "text": "\u0000A�"
+      },
+      {
+        "id": "params-original",
+        "method": "POST",
+        "mime": "application/custom; charset=UTF-8",
+        "hex": "6c65747465723d254333254139",
+        "text": "letter=%C3%A9"
+      },
+      {
+        "id": "get-ignores-doc",
+        "method": "GET",
+        "mime": null,
+        "hex": "",
+        "text": ""
+      },
+      {
+        "id": "head-ignores-doc",
+        "method": "HEAD",
+        "mime": null,
+        "hex": "",
+        "text": ""
+      }
+    ]
+  }
+}

@@ -22,7 +22,8 @@ enum Step {
     ShadowClose,
 }
 
-pub(crate) fn is_void(local: &str) -> bool {
+/// Whether an HTML element with this local name omits its end tag and contents.
+pub fn is_void(local: &str) -> bool {
     matches!(
         local,
         "area"
@@ -418,6 +419,11 @@ impl Dom {
                     }
                     if f.flags & shadow_flags::CLONABLE != 0 {
                         out.push_str(" shadowrootclonable=\"\"");
+                    }
+                    use crate::RegistryAssociation::{Default, Null};
+                    let document_registry = self.registry_idx(self.n(sr).owner_doc);
+                    if !matches!((document_registry, self.registry_idx(sr)), (Null, Null) | (Default, Default)) {
+                        out.push_str(" shadowrootcustomelementregistry=\"\"");
                     }
                     out.push('>');
                     stack.push(Step::ShadowClose);

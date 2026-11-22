@@ -1,0 +1,349 @@
+{
+ "start": "2026-11-22T00:37:24.207Z",
+ "end": "2026-11-22T00:37:26.281Z",
+ "preciseHost": {
+  "durationSeconds": 2.074,
+  "hostBusyPct": 27.511
+ },
+ "perArm": {
+  "reading-base-7d932ecfa": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 0.948,
+   "weightedHostBusyPct": 27.61
+  },
+  "reading-f58a64328": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 1.125,
+   "weightedHostBusyPct": 27.43
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "reading-base-7d932ecfa",
+   "start": "2026-11-22T00:37:24.207Z",
+   "end": "2026-11-22T00:37:24.568Z",
+   "durationSeconds": 0.361,
+   "hostBusyPct": 27.3
+  },
+  {
+   "order": 2,
+   "binary": "reading-f58a64328",
+   "start": "2026-11-22T00:37:24.568Z",
+   "end": "2026-11-22T00:37:24.855Z",
+   "durationSeconds": 0.287,
+   "hostBusyPct": 27.3
+  },
+  {
+   "order": 3,
+   "binary": "reading-f58a64328",
+   "start": "2026-11-22T00:37:24.855Z",
+   "end": "2026-11-22T00:37:25.134Z",
+   "durationSeconds": 0.279,
+   "hostBusyPct": 27.32
+  },
+  {
+   "order": 4,
+   "binary": "reading-base-7d932ecfa",
+   "start": "2026-11-22T00:37:25.134Z",
+   "end": "2026-11-22T00:37:25.333Z",
+   "durationSeconds": 0.199,
+   "hostBusyPct": 27.8
+  },
+  {
+   "order": 5,
+   "binary": "reading-f58a64328",
+   "start": "2026-11-22T00:37:25.333Z",
+   "end": "2026-11-22T00:37:25.617Z",
+   "durationSeconds": 0.284,
+   "hostBusyPct": 27.8
+  },
+  {
+   "order": 6,
+   "binary": "reading-base-7d932ecfa",
+   "start": "2026-11-22T00:37:25.617Z",
+   "end": "2026-11-22T00:37:25.811Z",
+   "durationSeconds": 0.194,
+   "hostBusyPct": 27.8
+  },
+  {
+   "order": 7,
+   "binary": "reading-base-7d932ecfa",
+   "start": "2026-11-22T00:37:25.812Z",
+   "end": "2026-11-22T00:37:26.006Z",
+   "durationSeconds": 0.194,
+   "hostBusyPct": 27.8
+  },
+  {
+   "order": 8,
+   "binary": "reading-f58a64328",
+   "start": "2026-11-22T00:37:26.006Z",
+   "end": "2026-11-22T00:37:26.281Z",
+   "durationSeconds": 0.275,
+   "hostBusyPct": 27.289
+  }
+ ],
+ "benchmarkSHA256": "803bb191f7b10bbc5e479ec508daaeffcb749aa38a55eb4ea4aa7517986dff45",
+ "minOneSecondBusyPct": 26.9,
+ "maxOneSecondBusyPct": 27.8,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-22T00:37:24.120Z",
+   "end": "2026-11-22T00:37:25.123Z",
+   "cpuBusyPct": 27.3
+  },
+  {
+   "start": "2026-11-22T00:37:25.123Z",
+   "end": "2026-11-22T00:37:26.125Z",
+   "cpuBusyPct": 27.8
+  },
+  {
+   "start": "2026-11-22T00:37:26.125Z",
+   "end": "2026-11-22T00:37:27.127Z",
+   "cpuBusyPct": 26.9
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-22T00:37:46.156Z",
+   "elapsedMs": 30001,
+   "cpuBusyPct": 67,
+   "load": [
+    17.42529296875,
+    24.99267578125,
+    25.1962890625
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1131,
+     "pctCpu": 82.9,
+     "rssMiB": 36290
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 104
+    },
+    "non-css": {
+     "n": 4,
+     "pctCpu": 0.1,
+     "rssMiB": 121
+    },
+    "independent-feature": {
+     "n": 1,
+     "pctCpu": 0.1,
+     "rssMiB": 8
+    },
+    "css-values": {
+     "n": 1,
+     "pctCpu": 38.9,
+     "rssMiB": 159
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-22T00:37:16.111Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:34:21.146561+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 1,
+    "ordinary": 0,
+    "policy": "Independent formatBlock 094fc49d2 QA complete/released, revision held. Next ordinary source selection at integrated 64debfc97; no new base/Chrome run until selectors/ownership verified. Existing IDB comparative and CSS work continue."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [
+      {
+       "pid": 53026,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "1"
+      },
+      {
+       "pid": 53046,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 5.1
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [
+      {
+       "pid": 50745,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 51287,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 99.4
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T00:37:46.105Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:34:21.146561+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 1,
+    "ordinary": 0,
+    "policy": "Independent formatBlock 094fc49d2 QA complete/released, revision held. Next ordinary source selection at integrated 64debfc97; no new base/Chrome run until selectors/ownership verified. Existing IDB comparative and CSS work continue."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [
+      {
+       "pid": 50745,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 55010,
+       "state": "S",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 19.9
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-22T00:36:12.984721+00:00",
+ "qaEnd": "2026-11-22T00:36:14.166721+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "originalQAReceipts": {
+  "reading-css-f58a64328.json": "2026-11-22T00:36:11.569Z",
+  "reading-focus-f58a64328.json": "2026-11-22T00:36:14.166Z",
+  "reading-direct-chrome.json": "2026-11-22T00:36:15.517Z"
+ },
+ "workloadNotes": "Only ordinary CSS order reads have matched base and head values. Reading-flow and reading-order are separate candidate-only fixtures; their timing should not be read as a base/head differential.",
+ "nearbyBuildLogs": [
+  {
+   "name": "base-build.log",
+   "logCreated": "2026-11-22T00:36:50.582Z",
+   "lastWrite": "2026-11-22T00:38:46.529Z",
+   "overlapSeconds": 2.074
+  }
+ ]
+}

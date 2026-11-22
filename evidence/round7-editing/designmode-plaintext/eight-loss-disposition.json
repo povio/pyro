@@ -1,0 +1,234 @@
+[
+  {
+    "url": "editing/run/formatblock.html?4001-5000",
+    "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+    "occurrence": 1,
+    "shard": "guard-history-001",
+    "census": {
+      "previous": "Pass",
+      "frozen": "Fail",
+      "signed": "Fail",
+      "failure": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+    },
+    "rerun": {
+      "base": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+        "status": "Fail",
+        "msg": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+      },
+      "head": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+        "status": "Fail",
+        "msg": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+      },
+      "chrome": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+        "status": "Fail",
+        "msg": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+      }
+    }
+  },
+  {
+    "url": "editing/run/formatblock.html?4001-5000",
+    "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+    "occurrence": 1,
+    "shard": "guard-history-001",
+    "census": {
+      "previous": "Pass",
+      "frozen": "Fail",
+      "signed": "Fail",
+      "failure": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    },
+    "rerun": {
+      "base": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      },
+      "head": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      },
+      "chrome": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      }
+    }
+  },
+  {
+    "url": "editing/run/formatblock.html?4001-5000",
+    "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+    "occurrence": 1,
+    "shard": "guard-history-001",
+    "census": {
+      "previous": "Pass",
+      "frozen": "Fail",
+      "signed": "Fail",
+      "failure": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    },
+    "rerun": {
+      "base": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      },
+      "head": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      },
+      "chrome": {
+        "name": "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      }
+    }
+  },
+  {
+    "url": "editing/run/formatblock.html?4001-5000",
+    "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+    "occurrence": 1,
+    "shard": "guard-history-001",
+    "census": {
+      "previous": "Pass",
+      "frozen": "Fail",
+      "signed": "Fail",
+      "failure": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+    },
+    "rerun": {
+      "base": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+        "status": "Fail",
+        "msg": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+      },
+      "head": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+        "status": "Fail",
+        "msg": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+      },
+      "chrome": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+        "status": "Fail",
+        "msg": "assert_equals: Wrong result returned expected \"div\" but got \"\""
+      }
+    }
+  },
+  {
+    "url": "editing/run/formatblock.html?4001-5000",
+    "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+    "occurrence": 1,
+    "shard": "guard-history-001",
+    "census": {
+      "previous": "Pass",
+      "frozen": "Fail",
+      "signed": "Fail",
+      "failure": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    },
+    "rerun": {
+      "base": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      },
+      "head": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      },
+      "chrome": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      }
+    }
+  },
+  {
+    "url": "editing/run/formatblock.html?4001-5000",
+    "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+    "occurrence": 1,
+    "shard": "guard-history-001",
+    "census": {
+      "previous": "Pass",
+      "frozen": "Fail",
+      "signed": "Fail",
+      "failure": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+    },
+    "rerun": {
+      "base": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      },
+      "head": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      },
+      "chrome": {
+        "name": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\""
+      }
+    }
+  },
+  {
+    "url": "editing/run/inserttext.html?1001-2000",
+    "name": "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+    "occurrence": 1,
+    "shard": "guard-history-001",
+    "census": {
+      "previous": "Pass",
+      "frozen": "Fail",
+      "signed": "Fail",
+      "failure": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a href=\\\"/\\\">fooa</a>bar\" but got \"<a href=\\\"/\\\">foo</a>abar\""
+    },
+    "rerun": {
+      "base": {
+        "name": "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a href=\\\"/\\\">fooa</a>bar\" but got \"<a href=\\\"/\\\">foo</a>abar\""
+      },
+      "head": {
+        "name": "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a href=\\\"/\\\">fooa</a>bar\" but got \"<a href=\\\"/\\\">foo</a>abar\""
+      },
+      "chrome": {
+        "name": "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+        "status": "Fail",
+        "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a href=\\\"/\\\">fooa</a>bar\" but got \"<a href=\\\"/\\\">foo</a>abar\""
+      }
+    }
+  },
+  {
+    "url": "editing/plaintext-only/plaintext-only-in-designMode.html",
+    "name": "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+    "occurrence": 1,
+    "shard": "guard-main-004",
+    "census": {
+      "previous": "Pass",
+      "frozen": "Fail",
+      "signed": "Pass",
+      "failure": "assert_equals: expected \"<div contenteditable=\\\"plaintext-only\\\">A<b>b</b>C</div>\" but got \"<div contenteditable=\\\"plaintext-only\\\">AbC</div>\""
+    },
+    "rerun": {
+      "base": {
+        "name": "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+        "status": "Fail",
+        "msg": "assert_equals: expected \"<div contenteditable=\\\"plaintext-only\\\">A<b>b</b>C</div>\" but got \"<div contenteditable=\\\"plaintext-only\\\">AbC</div>\""
+      },
+      "head": {
+        "name": "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+        "status": "Pass",
+        "msg": ""
+      },
+      "chrome": {
+        "name": "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+        "status": "Pass",
+        "msg": ""
+      }
+    }
+  }
+]

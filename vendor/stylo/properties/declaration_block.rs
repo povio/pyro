@@ -1099,6 +1099,39 @@ impl PropertyDeclarationBlock {
     ///
     /// https://drafts.csswg.org/cssom/#serialize-a-css-declaration-block
     pub fn to_css(&self, dest: &mut CssStringWriter) -> fmt::Result {
+        self.serialize_block(dest, None, &[])
+    }
+
+    /// Serialize with values supplied as Typed OM objects. CSS text parsing may
+    /// simplify their equivalent specified value, e.g. an opacity percentage.
+    pub fn to_css_with_typed_values(&self, dest: &mut CssStringWriter, typed: &[(String, String)]) -> fmt::Result {
+        let mut separate = LonghandIdSet::new();
+        for (name, _) in typed {
+            if let Ok(id) = PropertyId::parse_enabled_for_all_content(name)
+                && let Err(PropertyDeclarationId::Longhand(id)) = id.as_shorthand() { separate.insert(id); }
+        }
+        self.serialize_block(dest, Some(&separate), typed)
+    }
+
+    /// Private style input for a renderer that reparses CSS. CSSOM serializes −0
+    /// as 0; inside unresolved math the distinction can still affect the result.
+    pub fn css_for_reparse(&self) -> Result<Option<CssString>, fmt::Error> {
+        let mut signed = LonghandIdSet::new();
+        let mut scratch = CssString::new();
+        for declaration in self.declarations() {
+            let PropertyDeclarationId::Longhand(id) = declaration.id() else { continue };
+            scratch.clear();
+            let (result, saw_signed_zero) = crate::values::serialize_for_reparse(|| declaration.to_css(&mut scratch));
+            result?;
+            if saw_signed_zero { signed.insert(id); }
+        }
+        if signed.is_empty() { return Ok(None); }
+        scratch.clear();
+        crate::values::serialize_for_reparse(|| self.serialize_block(&mut scratch, Some(&signed), &[])).0?;
+        Ok(Some(scratch))
+    }
+
+    fn serialize_block(&self, dest: &mut CssStringWriter, signed: Option<&LonghandIdSet>, typed: &[(String, String)]) -> fmt::Result {
         let mut is_first_serialization = true; // trailing serializations should have a prepended space
 
         // Step 1 -> dest = result list
@@ -1150,6 +1183,12 @@ impl PropertyDeclarationBlock {
                 },
             };
 
+            if let Some((_, css)) = typed.iter().find(|(name, _)| name == longhand_id.name()) {
+                append_serialization(dest, &property, AppendableValue::Css(css), importance, &mut is_first_serialization)?;
+                already_serialized.insert(longhand_id.into());
+                continue;
+            }
+
             // Step 3.2
             if already_serialized.contains(longhand_id.into()) {
                 continue;
@@ -1157,6 +1196,11 @@ impl PropertyDeclarationBlock {
 
             // Steps 3.3 & 3.4
             for shorthand in longhand_id.shorthands() {
+                // Shorthand compression considers +0 and -0 equal. Preserve the
+                // affected longhands separately in the internal serialization.
+                if signed.is_some_and(|set| shorthand.longhands().any(|id| set.contains(id))) {
+                    continue;
+                }
                 // We already attempted to serialize this shorthand before.
                 if already_serialized.contains(shorthand.into()) {
                     continue;

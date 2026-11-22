@@ -154,11 +154,18 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
             Some(resolved_alignment(shorthand.name(), out))
         }
         Err(declaration) => {
-            // Stylo resolves every length unzoomed but a line-height length.
+            // Serialize resolved line-height in CSS pixels at the element's effective zoom.
             if name.eq_ignore_ascii_case("line-height") {
-                if let style::values::generics::font::GenericLineHeight::Length(l) = style.get_font().line_height {
+                use style::values::generics::font::GenericLineHeight;
+                let font = style.get_font();
+                let zoomed_px = match font.line_height {
+                    GenericLineHeight::Length(l) => Some(l.0.px()),
+                    GenericLineHeight::Number(n) => Some(n.0 * font.font_size.computed_size().px()),
+                    _ => None,
+                };
+                if let Some(length) = zoomed_px {
                     let mut out = String::new();
-                    let px = style.effective_zoom.unzoom(l.0.px());
+                    let px = style.effective_zoom.unzoom(length);
                     style_traits::ToCss::to_css(&CSSPixelLength::new(px), &mut style_traits::CssWriter::new(&mut out))
                         .ok()?;
                     return Some(out);
@@ -181,10 +188,15 @@ pub(crate) fn precise_typed_numeric(style: &ComputedValues, name: &str, css: &st
     use style::typed_om::{NumericValue, TypedValue};
     let id = property_id(name)?;
     let longhand = id.longhand_id()?;
-    let mut context = style::values::resolved::Context { style, for_property: id, current_longhand: None };
-    // Use the same property-specific unzooming and resolution as the CSSOM string.
-    let declaration = style.computed_or_resolved_declaration(longhand, Some(&mut context));
-    let list = declaration.to_typed_value_list()?;
+    let border_width = longhand.logical_group() == Some(style::properties::LogicalGroupId::BorderWidth);
+    let list = if border_width {
+        // CSSOM resolves a hidden/none border to zero. Typed OM exposes its computed width.
+        style.property_value_to_typed_value_list(longhand)?
+    } else {
+        let mut context = style::values::resolved::Context { style, for_property: id, current_longhand: None };
+        let declaration = style.computed_or_resolved_declaration(longhand, Some(&mut context));
+        declaration.to_typed_value_list()?
+    };
     let [TypedValue::Numeric(NumericValue::Unit(unit))] = list.values.as_slice() else { return None };
     let suffix = match unit.unit_str() {
         "percent" => "%",
@@ -200,7 +212,8 @@ pub(crate) fn precise_typed_numeric(style: &ComputedValues, name: &str, css: &st
         n as f32 == unit.value && f64::from(n) != f64::from(unit.value)) {
         return None;
     }
-    unit.value.is_finite().then(|| format!("{}{suffix}", f64::from(unit.value)))
+    let value = if border_width { style.effective_zoom.unzoom(unit.value) } else { unit.value };
+    value.is_finite().then(|| format!("{}{suffix}", f64::from(value)))
 }
 
 fn resolved_alignment(name: &str, value: String) -> String {
@@ -276,6 +289,21 @@ pub fn supports_declaration(property: &str, value: &str) -> bool {
         CssRuleType::Style,
     )
     .is_ok()
+}
+
+/// Parse a DOMMatrix transform list without an element or a reference box.
+pub fn matrix_from_css_text(text: &str) -> Option<([f64; 16], bool)> {
+    use style::parser::{Parse, ParserContext};
+    use style::values::specified::transform::Transform;
+    ensure_parse_prefs();
+    let url = url_data();
+    let context = ParserContext::new(
+        style::stylesheets::Origin::Author, &url, None, style_traits::ParsingMode::DEFAULT,
+        QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+    );
+    let transform = cssparser::Parser::new(text).parse_entirely(|input| Transform::parse(&context, input)).ok()?;
+    let (matrix, has_3d) = transform.to_transform_3d_matrix_f64(None).ok()?;
+    Some((matrix.to_array(), !has_3d))
 }
 
 /// `CSS.supports(conditionText)`: `text` parsed as a `<supports-condition>`,

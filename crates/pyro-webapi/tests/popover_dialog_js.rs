@@ -204,6 +204,39 @@ fn popover_events_are_sync_beforetoggle_and_coalesced_toggle() {
 }
 
 #[test]
+fn attribute_close_runs_nested_changes_before_returning_to_script() {
+    let e = env("<body><div id=a popover><div id=p popover></div></div></body>");
+    e.eval("a.showPopover(); p.showPopover()");
+    e.run_tasks();
+    assert_eq!(
+        e.eval(
+            "window.events = [];
+             p.addEventListener('toggle', ev => events.push(ev.type));
+             p.addEventListener('beforetoggle', ev => {
+                 events.push(ev.newState);
+                 p.popover = 'manual';
+                 events.push(p.matches(':popover-open'));
+             }, {once:true});
+             p.getAttributeNode('popover').value = 'hint';
+             [a.matches(':popover-open'), p.matches(':popover-open'), p.popover, ...events].join()"
+        ),
+        "true,false,manual,closed,false"
+    );
+    e.run_tasks();
+    assert_eq!(e.eval("events.join()"), "closed,false");
+    e.eval("p.popover = 'auto'; p.showPopover()");
+    assert_eq!(
+        e.eval(
+            "const child = p; child.addEventListener('beforetoggle', () => child.remove(), {once:true});
+             child.removeAttribute('popover');
+             [child.isConnected, a.matches(':popover-open')].join()"
+        ),
+        "false,true"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn auto_popover_stack_and_nesting() {
     let e = env("<body><div id=a popover>A<div id=a2 popover>A2</div></div><div id=b popover>B</div>
          <div id=m popover=manual>M</div><div id=h popover=hint>H</div></body>");

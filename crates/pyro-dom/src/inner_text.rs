@@ -126,6 +126,8 @@ fn is_inner_text_block_tag(tag: &str) -> bool {
 struct State<'a> {
     out: String,
     style: &'a StyleEngine,
+    detached: bool,
+    hidden_text: bool,
     /// Line breaks accumulated for the block, emitted lazily (max wins).
     pending_breaks: u8,
     /// Suppresses leading line breaks while nothing has been written.
@@ -308,7 +310,45 @@ impl Dom {
         if matches!(inner_text_display(tag), TextDisplay::Skip | TextDisplay::Replaced) {
             return Ok(String::new());
         }
+        self.collect_text_from(style, el, false)
+    }
+
+    /// Plaintext insertion uses the rendered separators and whitespace of
+    /// the parsed fragment, without attaching its nodes to the active page.
+    pub fn plaintext_from_html(html: &str) -> DomResult<String> {
+        let (dom, container, doc) = Self::inert_editing_fragment(html)?;
+        dom.collect_text_from(&StyleEngine::new(doc), container, true)
+    }
+
+    /// Single-line text controls use the fragment's text nodes in tree order,
+    /// including non-rendered text. Line feeds and HTML breaks become spaces.
+    pub fn single_line_text_from_html(html: &str) -> DomResult<String> {
+        let (dom, container, _) = Self::inert_editing_fragment(html)?;
+        let mut text = String::new();
+        for node in dom.descendants(container)? {
+            match &dom.n(node.idx).kind {
+                NodeKind::Text(data) => text.extend(data.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c })),
+                NodeKind::Element(el) if el.is_html() && el.local_name() == &markup5ever::local_name!("br") => text.push(' '),
+                _ => {}
+            }
+        }
+        Ok(text)
+    }
+
+    fn inert_editing_fragment(html: &str) -> DomResult<(Self, NodeId, NodeId)> {
+        let mut dom = Dom::new();
+        let doc = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
+        let container = dom.create_element(doc, "div")?;
+        let fragment = crate::parse::parse_setter_fragment(&mut dom, container, html)?;
+        dom.append_child(container, fragment)?;
+        Ok((dom, container, doc))
+    }
+
+    fn collect_text_from(&self, style: &StyleEngine, el: NodeId, detached: bool) -> DomResult<String> {
+        let idx = self.check(el)?;
         let mut state = State {
+            detached,
+            hidden_text: false,
             out: String::new(),
             style,
             pending_breaks: 0,
@@ -346,7 +386,7 @@ impl Dom {
         let mut saw_cell = false;
         // The text of an invisible element isn't included, but its children
         // are still walked: they can make themselves visible again.
-        let text_hidden = state.style.has_visibility_hidden_inherited(self, self.id_of(idx));
+        let text_hidden = state.hidden_text || (!state.detached && state.style.has_visibility_hidden_inherited(self, self.id_of(idx)));
 
         let mut c = self.n(idx).first_child;
         while c != NIL {
@@ -397,7 +437,16 @@ impl Dom {
         saw_row: &mut bool,
     ) {
         let id = self.id_of(idx);
-        if state.style.has_display_none(self, id) {
+        let inline = if state.detached {
+            self.element(id).ok().and_then(|el| el.attr("style")).map(crate::style::InlineStyle::parse)
+        } else {
+            None
+        };
+        let declaration = |name| inline.as_ref().and_then(|style| style.get(name)).map(|(v, _)| v);
+        if state.detached && (matches!(tag, "script" | "style" | "noscript" | "noframes" | "title" | "head" | "template")
+            || self.element(id).ok().is_some_and(|el| el.attr("hidden").is_some())
+            || declaration("display").as_deref() == Some("none"))
+            || !state.detached && state.style.has_display_none(self, id) {
             return;
         }
         // A select's options: their own display, not an author one.
@@ -412,11 +461,16 @@ impl Dom {
             state.trim_left = true;
             return;
         }
-        let computed = state.style.computed(self, id);
+        let computed = if state.detached { None } else { state.style.computed(self, id) };
         let display = match computed {
             Some(c) if c.author_display && !in_select => {
                 computed_text_display(tag, inner_text_display(tag), c.box_kind)
             }
+            _ if state.detached => match declaration("display").as_deref() {
+                Some("inline" | "contents") => TextDisplay::Inline,
+                Some("block" | "flex" | "grid" | "flow-root") => TextDisplay::Block,
+                _ => inner_text_display(tag),
+            },
             _ => inner_text_display(tag),
         };
         if display == TextDisplay::Skip {
@@ -459,7 +513,22 @@ impl Dom {
         if own != TextTransform::Inherit {
             state.transform = own;
         }
+        let parent_hidden = state.hidden_text;
         state.white_space = computed.map_or(parent_white_space, |c| c.white_space);
+        if state.detached {
+            state.hidden_text = match declaration("visibility").as_deref() {
+                Some("visible") => false,
+                Some("hidden" | "collapse") => true,
+                _ => parent_hidden,
+            };
+            state.white_space = match declaration("white-space").as_deref() {
+                Some("pre" | "pre-wrap" | "break-spaces") => WhiteSpace::Preserve,
+                Some("pre-line") => WhiteSpace::PreserveBreaks,
+                Some("normal" | "nowrap") => WhiteSpace::Collapse,
+                None if tag == "pre" => WhiteSpace::Preserve,
+                _ => parent_white_space,
+            };
+        }
         match display {
             TextDisplay::Skip | TextDisplay::Replaced => unreachable!(),
             TextDisplay::Inline | TextDisplay::Transparent if atomic_inline => {
@@ -496,6 +565,7 @@ impl Dom {
         }
         state.transform = parent_transform;
         state.white_space = parent_white_space;
+        state.hidden_text = parent_hidden;
     }
 
     /// renderedTextFragment (Html.zig:1074-1096): a fragment of Text nodes

@@ -298,6 +298,7 @@ pub fn realm_detached(page: &PageDom, realm: RealmId) {
     crate::crypto_subtle::public_key::cancel(page.id(), Some(realm));
     crate::fetch::cancel_realm(page, realm);
     crate::websocket::cancel_realm(realm);
+    crate::cookie_store::events::detach(page, realm);
     crate::xhr::cancel_realm(page, realm);
     crate::file_reader::cancel_realm(page, realm);
     crate::mutation_observer::cancel_realm(page, realm);

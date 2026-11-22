@@ -669,7 +669,7 @@ impl StylesheetInvalidationSet {
                     // Do nothing, this animation can't affect the style of existing elements.
                 }
             },
-            CounterStyle(..) | Property(..) | FontFeatureValues(..) | FontPaletteValues(..) => {
+            CounterStyle(..) | Property(..) | Function(..) | FontFeatureValues(..) | FontPaletteValues(..) => {
                 debug!(" > Found unsupported rule, marking the whole subtree invalid.");
                 self.invalidate_fully();
             },

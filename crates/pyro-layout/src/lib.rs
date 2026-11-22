@@ -729,7 +729,13 @@ impl BlitzGeometry {
                 Some(&(_, _, old)) if old == hash => {}
                 Some(_) if is_style => changed.push(owner),
                 Some(_) => return None,
-                None if is_style => {}
+                None if is_style => {
+                    // An owner can already be in the render tree before its sheet is registered.
+                    // Its first CSSOM edit supplies new text without a DOM mutation.
+                    if style.sheet_text(dom, owner).is_some() {
+                        changed.push(owner);
+                    }
+                }
                 None => return None,
             }
         }
@@ -962,6 +968,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, property, style))
     }
 
+    fn authored_editing_style(&self, key: u64, properties: &[&str], white_space: &str) -> Vec<(&'static str, String)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.authored_editing_style(self.page, key, properties, white_space)).unwrap_or_default()
+    }
+
     fn svg_geometry_properties(&self, key: u64) -> Vec<(&'static str, String)> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.svg_geometry_properties(self.page, key)).unwrap_or_default()
     }
@@ -1132,6 +1142,22 @@ impl GeometrySource for BlitzGeometry {
             self.undisplayed.borrow_mut().insert(key, style.clone());
         }
         Some(style)
+    }
+
+    fn generated_hit(&self, owner: u64, x: f64, y: f64) -> Option<pyro_dom::geometry::GeneratedHit> {
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.generated_hit(self.page, owner, x, y))
+    }
+
+    fn flex_reading_positions(&self, owner: u64) -> Vec<(u64, usize, usize)> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.flex_reading_positions(self.page, owner))).unwrap_or_default())
+    }
+
+    fn grid_item_starts(&self, owner: u64) -> Vec<(u64, u16, u16)> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.grid_item_starts(self.page, owner))).unwrap_or_default())
+    }
+
+    fn css_animation_frames(&self, key: u64, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.css_animation_frames(self.page, key, name))
     }
 
     fn element_timing_style(

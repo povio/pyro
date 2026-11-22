@@ -117,6 +117,102 @@ fn extract_line(dom: &mut Dom, root: NodeId, start: Point, end: LineEnd) -> Opti
     Some(fragment)
 }
 
+/// A nested paragraph beside an anonymous line in its containing paragraph.
+/// Limit the join to single-leaf lines so moving it cannot consume later lines
+/// or strip unrelated inline formatting.
+pub(super) struct NestedJoin {
+    outer: NodeId,
+    inner: NodeId,
+    left: NodeId,
+    right: NodeId,
+    inner_first: bool,
+}
+
+impl NestedJoin {
+    pub(super) fn at(page: &PageDom, dom: &Dom, host: NodeId, caret: Point, backward: bool) -> Option<Self> {
+        if is_text(dom, caret.0) && caret.1 != (if backward { 0 } else { len(dom, caret.0) }) {
+            return None;
+        }
+        let block = block_of(dom, caret.0, host);
+        for outer in [Some(block), dom.parent_element(block).ok().flatten()].into_iter().flatten() {
+            if outer == host || dom.child_count(outer).ok()? != 2 || !editable_paragraph(page, dom, outer, host) {
+                continue;
+            }
+            let a = dom.first_child(outer).ok()??;
+            let b = dom.last_child(outer).ok()??;
+            let inner_first = is_block(dom, a);
+            let (inner, anonymous) = if inner_first { (a, b) } else { (b, a) };
+            if !editable_paragraph(page, dom, inner, host) || dom.child_count(inner).ok()? != 1 {
+                continue;
+            }
+            let child = dom.first_child(inner).ok()??;
+            let (left, right) = if inner_first { (child, anonymous) } else { (anonymous, child) };
+            if [left, right].iter().any(|&n| {
+                !(is_text(dom, n) || local(dom, n) == "br")
+                    || editing_host(dom, n) != Some(host) || !target_range::rendered(page, dom, n)
+            }) { continue; }
+            // A styled source needs a formatting carrier when unwrapped.
+            // Keep the existing editing path for those joins.
+            if !inner_first && is_text(dom, child) && (
+                dom.attributes(inner).ok()?.len() != 0 ||
+                ["white-space", "color", "font-weight", "font-style", "font-family", "font-size"].iter().any(|p|
+                    page.layout().computed_style_value(dom, inner, p) != page.layout().computed_style_value(dom, outer, p))
+            ) { continue; }
+            let join = Self { outer, inner, left, right, inner_first };
+            let (from, to) = join.range(dom)?;
+            let edge = if backward { deep_forward(dom, caret) } else { deep_backward(dom, caret) };
+            if caret == (if backward { to } else { from }) || edge == (if backward { to } else { from }) {
+                return Some(join);
+            }
+        }
+        None
+    }
+
+    pub(super) fn range(&self, dom: &Dom) -> Option<(Point, Point)> {
+        let from = if is_text(dom, self.left) { (self.left, len(dom, self.left)) } else { before_node(dom, self.left)? };
+        let to = if is_text(dom, self.right) { (self.right, 0) } else { before_node(dom, self.right)? };
+        Some((from, to))
+    }
+
+    pub(super) fn apply(self, page: &PageDom, dom: &mut Dom, host: NodeId) -> Option<Point> {
+        let (from, to) = self.range(dom)?;
+        let outer_leaf = if self.inner_first { self.right } else { self.left };
+        let caret = if local(dom, outer_leaf) == "br" {
+            dom.remove_node(outer_leaf).ok()?;
+            if self.inner_first { from } else { to }
+        } else if local(dom, self.right) == "br" {
+            dom.remove_node(self.inner).ok()?;
+            from
+        } else {
+            let value = dom.char_data(self.right).ok()?.to_owned();
+            let destination = if is_text(dom, self.left) {
+                dom.replace_data(self.left, from.1, 0, &value).ok()?;
+                from
+            } else {
+                let text = dom.create_text(dom.node_document(self.inner).ok()?, &value).ok()?;
+                dom.replace_child(self.inner, text, self.left).ok()?;
+                (text, 0)
+            };
+            dom.remove_node(if self.inner_first { self.right } else { self.inner }).ok()?;
+            // Resolve the seam while its paragraph still has its computed style.
+            whitespace::after_join(page, dom, host, destination);
+            // At the host's sole anonymous paragraph the outer DIV no longer
+            // separates any lines. Keep attributed or neighboring blocks.
+            if local(dom, self.outer) == "div" && dom.attributes(self.outer).ok()?.is_empty()
+                && dom.parent(self.outer).ok()? == Some(host) && dom.child_count(host).ok()? == 1
+            {
+                while let Some(child) = dom.first_child(self.outer).ok()? {
+                    dom.insert_before(host, child, Some(self.outer)).ok()?;
+                }
+                dom.remove_node(self.outer).ok()?;
+            }
+            return Some(destination);
+        };
+        whitespace::after_join(page, dom, host, caret);
+        Some(caret)
+    }
+}
+
 pub(super) fn at_boundary(
     page: &PageDom,
     dom: &mut Dom,
@@ -164,9 +260,13 @@ pub(super) fn at_boundary(
     let parent = dom.parent(left).ok()??;
     let seam = deep_backward(dom, (left, len(dom, left)));
     let layout = page.layout();
-    let left_block = matches!(local(dom, left).as_str(), "div" | "p")
+    let left_tag = local(dom, left);
+    let right_tag = local(dom, right);
+    let pre_join = matches!((left_tag.as_str(), right_tag.as_str()),
+        ("pre", "div" | "p" | "blockquote") | ("div" | "p" | "blockquote", "pre"));
+    let left_block = (pre_join || matches!(left_tag.as_str(), "div" | "p"))
         && layout.computed_style_value(dom, left, "display") == "block";
-    if left_block && parent == host && !matches!(local(dom, right).as_str(), "div" | "p") && separators.is_empty() {
+    if left_block && !pre_join && parent == host && !matches!(right_tag.as_str(), "div" | "p") && separators.is_empty() {
         if !is_text(dom, right)
             && (!formatting_element(dom, right) || layout.computed_style_value(dom, right, "display") != "inline")
         {
@@ -226,7 +326,7 @@ pub(super) fn at_boundary(
     if !(left_block || left_inline)
         || !is_text(dom, seam.0)
         || (left != seam.0 && dom.parent(seam.0).ok()?? != left)
-        || !matches!(local(dom, right).as_str(), "div" | "p")
+        || (!pre_join && !matches!(right_tag.as_str(), "div" | "p"))
         || layout.computed_style_value(dom, right, "display") != "block"
         || [left, right].into_iter().any(|n| editing_host(dom, n) != Some(host))
     {
@@ -263,7 +363,7 @@ pub(super) fn at_boundary(
     let dest_style = layout.computed_style_value(dom, destination, "white-space");
     let left_style =
         if is_text(dom, left) { parent_style } else { layout.computed_style_value(dom, left, "white-space") };
-    if source_style.is_empty() || source_style == left_style {
+    if source_style.is_empty() || (!pre_join && source_style == left_style) {
         return None;
     }
     if !is_text(dom, deep_forward(dom, (right, 0)).0) {
@@ -276,18 +376,62 @@ pub(super) fn at_boundary(
     {
         return None;
     }
+    let (mut carried, inherited) = if pre_join {
+        pre_join_style(page, dom, source, destination, &source_style)
+    } else {
+        (vec![("white-space", source_style)], Vec::new())
+    };
+    carried.retain(|(name, value)| {
+        if *name == "white-space" { *value != dest_style }
+        else { *value != layout.computed_style_value(dom, destination, name) }
+    });
     let line = first_line(page, dom, source, host)?;
+    // A single inline element can carry the joined line's formatting itself.
+    // Inspect its original context before extraction clones a partial line.
+    let carrier = if !pre_join && source == right && carried.len() == 1 {
+        dom.first_child(source).ok()?.filter(|&el| formatting_element(dom, el)).map(|el| {
+            let explicit = ["white-space", "white-space-collapse", "text-wrap-mode", "text-wrap"]
+                .iter().any(|name| layout.style().inline_declared_value(dom, el, name).is_some());
+            (explicit, layout.computed_style_value(dom, el, "white-space"))
+        })
+    } else { None };
     let (fragment, styled) = extract_styled_line(page, dom, host, source, line, source != right)?;
     if len(dom, fragment) > 0 {
-        let content = if source_style != dest_style {
+        let inline = carrier.filter(|_| len(dom, fragment) == 1);
+        let content = if let Some((explicit, original)) = inline {
+            let child = dom.first_child(fragment).ok()??;
+            if !explicit && !original.is_empty() && original != dest_style {
+                let existing = dom.get_attribute(child, "style").ok()?.unwrap_or("");
+                let style = format!("white-space: {original}; {existing}");
+                dom.set_attribute(child, "style", style.trim_end()).ok()?;
+            }
+            fragment
+        } else if !carried.is_empty() {
             let span = dom.create_element(dom.node_document(right).ok()?, "span").ok()?;
-            dom.set_attribute(span, "style", &format!("white-space: {source_style};")).ok()?;
+            dom.set_attribute(span, "style", &declaration_text(&carried)).ok()?;
             dom.append_child(span, fragment).ok()?;
             span
         } else {
             fragment
         };
         dom.insert_before(destination, content, (!left_block).then_some(right)).ok()?;
+        // An inherited declaration may contain a relative unit or a variable
+        // scoped to the old ancestor. Keep the author's spelling when it
+        // still resolves correctly, otherwise pin its original computed value.
+        if !inherited.is_empty() && content != fragment {
+            let mut changed = false;
+            for (name, expected) in inherited {
+                if layout.computed_style_value(dom, content, name) != expected {
+                    if let Some((_, value)) = carried.iter_mut().find(|(key, _)| *key == name) {
+                        *value = expected;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                dom.set_attribute(content, "style", &declaration_text(&carried)).ok()?;
+            }
+        }
     }
     for (node, values) in styled {
         preserve_style(page, dom, node, &values)?;
@@ -307,6 +451,42 @@ pub(super) fn at_boundary(
         emptied = parent;
     }
     Some(seam)
+}
+
+type Declarations = Vec<(&'static str, String)>;
+
+fn declaration_text(declarations: &Declarations) -> String {
+    declarations.iter().map(|(name, value)| format!("{name}: {value};")).collect::<Vec<_>>().join(" ")
+}
+
+fn pre_join_style(
+    page: &PageDom, dom: &Dom, source: NodeId, destination: NodeId, source_white_space: &str,
+) -> (Declarations, Declarations) {
+    let layout = page.layout();
+    let Some(engine) = layout.synced_geometry_source(dom) else { return (Vec::new(), Vec::new()) };
+    let mut carried = engine.authored_editing_style(pyro_dom::snapshot::render_key(source), TEXT_STYLE, source_white_space);
+    let mut inherited = Vec::new();
+    let mut pending: Declarations = TEXT_STYLE.iter().filter_map(|&name| {
+        if carried.iter().any(|(key, _)| *key == name) { return None; }
+        let value = layout.computed_style_value(dom, source, name);
+        (!value.is_empty() && value != layout.computed_style_value(dom, destination, name)).then_some((name, value))
+    }).collect();
+    // Walk only as long as the candidate property is inherited unchanged.
+    // This prevents a pre's own UA font or whitespace from being copied.
+    let mut parent = dom.parent_element(source).ok().flatten();
+    while let Some(ancestor) = parent {
+        pending.retain(|(name, original)| layout.computed_style_value(dom, ancestor, name) == *original);
+        if pending.is_empty() { break; }
+        let white_space = layout.computed_style_value(dom, ancestor, "white-space");
+        for (name, specified) in engine.authored_editing_style(pyro_dom::snapshot::render_key(ancestor), TEXT_STYLE, &white_space) {
+            if let Some(index) = pending.iter().position(|(key, _)| *key == name) {
+                inherited.push(pending.remove(index));
+                carried.push((name, specified));
+            }
+        }
+        parent = dom.parent_element(ancestor).ok().flatten();
+    }
+    (carried, inherited)
 }
 
 /// Properties of editable text whose resolved values can change when an
@@ -333,7 +513,19 @@ fn text_style(page: &PageDom, dom: &Dom, node: NodeId) -> Option<Vec<String>> {
 /// Retain the author's declaration text (including custom and unsupported
 /// properties). Add only the declarations affected by moving this node.
 fn preserve_style(page: &PageDom, dom: &mut Dom, node: NodeId, source: &[String]) -> Option<()> {
-    let after = text_style(page, dom, node)?;
+    preserve_line_style(page, dom, node, source, None)
+}
+
+// A moved inline carrier lives in a new paragraph. Compare its line mode
+// with the destination paragraph even if a matching stylesheet rule still
+// applies to the carrier at its new location.
+fn preserve_line_style(
+    page: &PageDom, dom: &mut Dom, node: NodeId, source: &[String], paragraph_white_space: Option<&str>,
+) -> Option<()> {
+    let mut after = text_style(page, dom, node)?;
+    if let Some(mode) = paragraph_white_space {
+        after[0] = mode.to_owned();
+    }
     let differences: Vec<_> = TEXT_STYLE
         .iter()
         .zip(source)
@@ -384,6 +576,56 @@ fn preserve_style(page: &PageDom, dom: &mut Dom, node: NodeId, source: &[String]
         dom.set_attribute(el, "style", &style).ok()?;
     }
     Some(())
+}
+
+/// The leading edge of an inline select is a visible caret stop outside
+/// the control. Backspace there can join its line to the preceding block.
+pub(super) struct ControlLine {
+    destination: NodeId,
+    nodes: Vec<NodeId>,
+    line_break: Option<NodeId>,
+    caret: Point,
+}
+
+impl ControlLine {
+    pub(super) fn before_select(page: &PageDom, dom: &Dom, host: NodeId, control: NodeId) -> Option<Self> {
+        if dom.parent(control).ok()? != Some(host) || editing_host(dom, control) != Some(host) { return None; }
+        let destination = dom.prev_sibling(control).ok()??;
+        if !editable_paragraph(page, dom, destination, host) { return None; }
+        let caret = deep_backward(dom, (destination, len(dom, destination)));
+        if !is_text(dom, caret.0) || editing_host(dom, caret.0) != Some(host) { return None; }
+        let layout = page.layout();
+        let mut nodes = Vec::new();
+        let mut current = Some(control);
+        let mut line_break = None;
+        while let Some(node) = current {
+            if local(dom, node) == "br" {
+                if editing_host(dom, node) != Some(host) { return None; }
+                line_break = Some(node);
+                break;
+            }
+            if is_text(dom, node) {
+                if dom.char_data(node).ok()?.contains('\n') && crate::edit_commands::newlines_significant_in(page, dom, node) {
+                    return None;
+                }
+            } else {
+                let display = layout.computed_style_value(dom, node, "display");
+                if display == "block" { break; }
+                // A control or a noneditable inline box moves as a whole.
+                if !(html_select(dom, node) || !is_editable(dom, node)) || !display.starts_with("inline")
+                    || layout.computed_style_value(dom, node, "visibility") != "visible" { return None; }
+            }
+            nodes.push(node);
+            current = dom.next_sibling(node).ok()?;
+        }
+        (!nodes.is_empty()).then_some(Self { destination, nodes, line_break, caret })
+    }
+
+    pub(super) fn apply(self, dom: &mut Dom) -> Point {
+        for node in self.nodes { let _ = dom.append_child(self.destination, node); }
+        if let Some(br) = self.line_break { let _ = dom.remove_node(br); }
+        self.caret
+    }
 }
 
 /// Join just the first rendered line of inline siblings following a block.
@@ -439,8 +681,22 @@ pub(super) fn join_anonymous_right(
     let fragment = extract_line(dom, host, start, end)?;
     let moved: Vec<_> = dom.descendants(fragment).ok()?.skip(1).collect();
     dom.append_child(left, fragment).ok()?;
-    for (child, values) in moved.into_iter().zip(styles) {
-        preserve_style(page, dom, child, &values)?;
+    let paragraph_mode = page.layout().computed_style_value(dom, left, "white-space");
+    let mut authored_mode = None;
+    for (child, mut values) in moved.into_iter().zip(styles) {
+        let root = dom.parent_element(child).ok()? == Some(left);
+        if root {
+            let style = page.layout();
+            let declared = ["white-space", "white-space-collapse", "text-wrap-mode", "text-wrap"]
+                .iter().any(|name| style.style().inline_declared_value(dom, child, name).is_some());
+            authored_mode = declared.then(|| values[0].clone());
+        }
+        // Relative declarations resolve in the new context. Keep dependent
+        // descendants inheriting that value instead of freezing the old one.
+        if authored_mode.as_ref() == values.first() {
+            values[0].clear();
+        }
+        preserve_line_style(page, dom, child, &values, root.then_some(paragraph_mode.as_str()))?;
     }
     Some(seam)
 }

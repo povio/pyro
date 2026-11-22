@@ -178,3 +178,79 @@ fn the_reference_and_the_position_in_flight_move_when_their_subtree_is_removed()
     assert_eq!(it.candidate(), Some((root, false)));
     dom.set_iterator_candidate(&it, None).unwrap();
 }
+
+#[test]
+fn scoped_registry_clone_adopt_and_connection_order() {
+    use RegistryAssociation::{Default as Global, Null, Scoped};
+
+    let (dom, first) = doc("<main></main>");
+    let second = parse_document(&dom, "http://test/second", "<main></main>");
+    let mut d = dom.borrow_mut();
+    d.set_document_active(second, true).unwrap();
+    let root = d.create_element(first, "section").unwrap();
+    let child = d.create_element(first, "span").unwrap();
+    d.set_registry_association(root, Scoped(11)).unwrap();
+    d.set_registry_association(child, Null).unwrap();
+    d.append_child(root, child).unwrap();
+    let imported = d.clone_node_with_registry(root, true, Some(second), Scoped(12)).unwrap();
+    let leaf = d.first_child(imported).unwrap().unwrap();
+    assert_eq!(d.registry_association(imported).unwrap(), Scoped(11));
+    assert_eq!(d.registry_association(leaf).unwrap(), Scoped(12));
+    assert!(d.scoped_registry_documents(11).is_empty());
+    let second_host = d.document_element(second).unwrap().unwrap();
+    d.append_child(second_host, imported).unwrap();
+    let first_host = d.document_element(first).unwrap().unwrap();
+    d.append_child(first_host, root).unwrap();
+    let docs: Vec<_> = d.scoped_registry_documents(11).into_iter().map(|(_, doc)| doc).collect();
+    assert_eq!(docs, [second, first]);
+    d.adopt_node(second, root).unwrap();
+    assert_eq!(d.registry_association(root).unwrap(), Scoped(11));
+    assert_eq!(d.registry_association(child).unwrap(), Null);
+    d.adopt_node(first, child).unwrap();
+    assert_eq!(d.registry_association(child).unwrap(), Global);
+}
+
+#[test]
+fn scoped_registry_fragment_and_declarative_shadow() {
+    use RegistryAssociation::{Default as Global, Null, Scoped};
+
+    let (dom, doc) = doc("<body></body>");
+    let mut d = dom.borrow_mut();
+    let host = d.create_element(doc, "div").unwrap();
+    d.set_registry_association(host, Scoped(7)).unwrap();
+    pyro_dom::parse::set_html_unsafe(&mut d, host,
+        "<section><template shadowrootmode=open shadowrootclonable shadowrootcustomelementregistry><span></span></template></section>").unwrap();
+    let section = d.first_child(host).unwrap().unwrap();
+    let sr = d.shadow_root(section).unwrap().unwrap();
+    assert_eq!(d.registry_association(section).unwrap(), Scoped(7));
+    assert_eq!(d.registry_association(sr).unwrap(), Null);
+    assert_eq!(d.registry_association(d.first_child(sr).unwrap().unwrap()).unwrap(), Null);
+    let copy = d.clone_node(section, true, None).unwrap();
+    let copy_sr = d.shadow_root(copy).unwrap().unwrap();
+    let other = d.create_document(DocumentKind::Html, "about:blank");
+    d.set_document_active(other, true).unwrap();
+    d.adopt_node(other, copy).unwrap();
+    assert_eq!(d.registry_association(copy_sr).unwrap(), Null);
+
+    pyro_dom::parse::set_html_unsafe(&mut d, host,
+        "<section><template shadowrootmode=open><span></span></template></section>").unwrap();
+    let sr = d.shadow_root(d.first_child(host).unwrap().unwrap()).unwrap().unwrap();
+    assert_eq!(d.registry_association(sr).unwrap(), Global);
+    assert_eq!(d.registry_association(d.first_child(sr).unwrap().unwrap()).unwrap(), Global);
+}
+
+#[test]
+fn shadow_disabled_definition_belongs_to_its_registry_and_local_name() {
+    let (dom, first) = doc("");
+    let second = parse_document(&dom, "http://test/second", "");
+    let mut d = dom.borrow_mut();
+    d.set_document_active(second, true).unwrap();
+    let name = LocalName::from("x-blocked");
+    let local = LocalName::from("div");
+    d.disable_shadow_for_registry(first, RegistryAssociation::Default, &name, &local);
+    for (doc, local_name, blocked) in [(first, "div", true), (second, "div", false), (first, "section", false)] {
+        let el = d.create_element(doc, local_name).unwrap();
+        d.set_is_value(el, Some(name.clone())).unwrap();
+        assert_eq!(d.attach_shadow(el, ShadowRootMode::Open).is_err(), blocked);
+    }
+}

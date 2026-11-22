@@ -1,0 +1,20 @@
+occurrences 8564 8564 missing Chrome 0 extra Chrome 0
+["editing/plaintext-only/insertText.html?white-space=pre", "execCommand(\"insertText\", false, \"a\") when []\\n", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre", "Typing \"a\" when []\\n", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre", "execCommand(\"insertText\", false, \"a\") when <p><b>AB[]</b></p> and execCommand(\"insertLineBreak\")", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre", "Typing \"a\" when <p><b>AB[]</b></p> and execCommand(\"insertLineBreak\")", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre-line", "execCommand(\"insertText\", false, \"a\") when []\\n", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre-line", "Typing \"a\" when []\\n", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre-line", "execCommand(\"insertText\", false, \"a\") when <p><b>AB[]</b></p> and execCommand(\"insertLineBreak\")", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre-line", "Typing \"a\" when <p><b>AB[]</b></p> and execCommand(\"insertLineBreak\")", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre-wrap", "execCommand(\"insertText\", false, \"a\") when []\\n", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre-wrap", "Typing \"a\" when []\\n", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre-wrap", "execCommand(\"insertText\", false, \"a\") when <p><b>AB[]</b></p> and execCommand(\"insertLineBreak\")", 1, "Fail", "Pass", "Pass"]
+["editing/plaintext-only/insertText.html?white-space=pre-wrap", "Typing \"a\" when <p><b>AB[]</b></p> and execCommand(\"insertLineBreak\")", 1, "Fail", "Pass", "Pass"]
+qa 16 exact base/head 14 15 undo restored 16
+difference {'mode': 'true', 'tag': 'div', 'line': '\n', 'adjacent': False, 'before': '<em>\n</em>', 'ok': True, 'after': '<em>K\n</em>', 'caret': ['K\n', 1], 'undo': True, 'restored': '<em>\n</em>'} {'mode': 'true', 'tag': 'div', 'line': '\n', 'adjacent': False, 'before': '<em>\n</em>', 'ok': True, 'after': '<em>K\n</em>', 'caret': ['K\n', 1], 'undo': True, 'restored': '<em>\n</em>'} {'mode': 'true', 'tag': 'div', 'line': '\n', 'adjacent': False, 'before': '<em>\n</em>', 'ok': True, 'after': '<em>K</em>', 'caret': ['K', 1], 'undo': True, 'restored': '<em>\n</em>'}
+direct 36 exact base/head 10 16 undo restored 36
+split 12 exact base/head 3 6 undo restored 12
+difference {'prior': 'pre-wrap', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx\n', 'caret': ['a\nx\n', 3], 'restored': 'a\n\n'} {'prior': 'pre-wrap', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx', 'caret': ['a\nx', 3], 'restored': 'a\n\n'} {'prior': 'pre-wrap', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx', 'caret': ['x', 1], 'restored': 'a'}
+difference {'prior': 'normal', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx\n', 'caret': ['a\nx\n', 3], 'restored': 'a\n\n'} {'prior': 'normal', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx', 'caret': ['a\nx', 3], 'restored': 'a\n\n'} {'prior': 'normal', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx', 'caret': ['x', 1], 'restored': 'a'}
+difference {'prior': 'pre-line', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx\n', 'caret': ['a\nx\n', 3], 'restored': 'a\n\n'} {'prior': 'pre-line', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx', 'caret': ['a\nx', 3], 'restored': 'a\n\n'} {'prior': 'pre-line', 'hostTag': 'div', 'action': 'enter', 'before': 'a\n\n', 'after': 'a\nx', 'caret': ['x', 1], 'restored': 'a'}

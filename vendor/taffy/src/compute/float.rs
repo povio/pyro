@@ -113,6 +113,13 @@ struct Segment {
 }
 
 impl Segment {
+    fn occupied_insets(&self) -> FloatInsets {
+        FloatInsets::new(
+            if self.has_float[0] { self.insets.left } else { f32::NEG_INFINITY },
+            if self.has_float[1] { self.insets.right } else { f32::NEG_INFINITY },
+        )
+    }
+
     /// Whether the segment can fit the passed floated box (in the horizontal axis)
     ///
     /// See [`float_fits_horizontally`] for the details of the fit rules.
@@ -123,7 +130,7 @@ impl Segment {
         bfc_width: f32,
         cb_insets: FloatInsets,
     ) -> bool {
-        float_fits_horizontally(floated_box.width, direction, bfc_width, self.insets, cb_insets)
+        float_fits_horizontally(floated_box.width, direction, bfc_width, self.occupied_insets(), cb_insets)
     }
 
     /// Widen this segment's float insets and occupied sides to cover `other`'s
@@ -168,10 +175,9 @@ fn float_fits_horizontally(
     let lead = direction;
     let trail = direction.opposite();
     let x_inset = float_insets[lead].max(cb_insets[lead]);
-    let fits_opposite_floats =
-        float_insets[trail] == 0.0 || x_inset + width <= bfc_width - float_insets[trail] + FIT_TOLERANCE;
+    let fits_opposite_floats = x_inset + width <= bfc_width - float_insets[trail] + FIT_TOLERANCE;
     let fits_containing_block =
-        float_insets[lead] == 0.0 || x_inset + width <= bfc_width - cb_insets[trail] + FIT_TOLERANCE;
+        float_insets[lead] == f32::NEG_INFINITY || x_inset + width <= bfc_width - cb_insets[trail] + FIT_TOLERANCE;
     fits_opposite_floats && fits_containing_block
 }
 
@@ -216,8 +222,8 @@ struct FloatFitter {
 
 impl FloatFitter {
     /// Create a new `FloatFitter`
-    fn new(bfc_width: f32, slot_height: f32, cb_insets: FloatInsets) -> Self {
-        Self { bfc_width, slot_height: slot_height as f64, float_insets: FloatInsets::ZERO, cb_insets }
+    fn new(bfc_width: f32, slot_height: f32, cb_insets: FloatInsets, float_insets: FloatInsets) -> Self {
+        Self { bfc_width, slot_height: slot_height as f64, float_insets, cb_insets }
     }
 
     // Horizontal fitting
@@ -610,8 +616,12 @@ impl FloatContext {
 
             start_y = start_y.max(start_segment.y.start);
             let available_height = start_segment.y.end - start_y;
-            let mut fitter = FloatFitter::new(self.available_width, available_height, containing_block_insets);
-            fitter.union_insets(start_segment.insets);
+            let mut fitter = FloatFitter::new(
+                self.available_width,
+                available_height,
+                containing_block_insets,
+                start_segment.occupied_insets(),
+            );
 
             // Pinning the start segment, loop over segments starting with the start segment
             // to find the end segment:
@@ -632,7 +642,7 @@ impl FloatContext {
                 //
                 // If it does not fit horizontally then it will never fit in this position, so
                 // continue the outer loop to find and check a new position
-                fitter.union_insets(end_segment.insets);
+                fitter.union_insets(end_segment.occupied_insets());
                 if !fitter.fits_horiontally(floated_box.width, direction) {
                     start_idx += 1;
                     end_idx = end_idx.max(start_idx);

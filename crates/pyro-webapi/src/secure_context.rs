@@ -7,7 +7,7 @@ use pyro_js::{JsResult, Scope};
 use crate::page::PageDom;
 
 /// Interface objects on the global that exist only in a secure context.
-const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet"];
+const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet", "VideoDecoder", "cookieStore"];
 /// `Navigator` members that exist only in a secure context.
 const NAVIGATOR: &[&str] = &["locks", "mediaDevices", "registerProtocolHandler", "unregisterProtocolHandler"];
 
@@ -29,6 +29,7 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
     if secure(s, page) {
         return Ok(());
     }
+    crate::storage_manager::hide_file_system_globals(s)?;
     let global = s.global();
     for name in GLOBALS {
         global.delete(name)?;

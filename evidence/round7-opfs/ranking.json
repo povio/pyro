@@ -1,0 +1,4104 @@
+{
+  "counts": {
+    "SVG length list": 56,
+    "Cookie Store": 505,
+    "OPFS selection": 799
+  },
+  "urls": {
+    "fs/FileSystemBaseHandle-getUniqueId.https.any.html": "opfs",
+    "fs/FileSystemBaseHandle-getUniqueId.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemBaseHandle-getUniqueId.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemBaseHandle-getUniqueId.https.any.worker.html": "opfs",
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.html": "opfs",
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html": "opfs",
+    "fs/FileSystemBaseHandle-remove.https.any.html": "opfs",
+    "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemBaseHandle-remove.https.any.worker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html": "opfs",
+    "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html": "opfs",
+    "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-iteration.https.any.html": "opfs",
+    "fs/FileSystemDirectoryHandle-iteration.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-iteration.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-iteration.https.any.worker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-removeEntry.https.any.html": "opfs",
+    "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-resolve.https.any.html": "opfs",
+    "fs/FileSystemDirectoryHandle-resolve.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-resolve.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemDirectoryHandle-resolve.https.any.worker.html": "opfs",
+    "fs/FileSystemFileHandle-create-sync-access-handle.https.window.html": "opfs",
+    "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html": "opfs",
+    "fs/FileSystemFileHandle-getFile.https.any.html": "opfs",
+    "fs/FileSystemFileHandle-getFile.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemFileHandle-getFile.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemFileHandle-getFile.https.any.worker.html": "opfs",
+    "fs/FileSystemFileHandle-move.https.any.html": "opfs",
+    "fs/FileSystemFileHandle-move.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemFileHandle-move.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemFileHandle-move.https.any.worker.html": "opfs",
+    "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html": "opfs",
+    "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html": "opfs",
+    "fs/FileSystemSyncAccessHandle-close.https.worker.html": "opfs",
+    "fs/FileSystemSyncAccessHandle-flush.https.worker.html": "opfs",
+    "fs/FileSystemSyncAccessHandle-getSize.https.worker.html": "opfs",
+    "fs/FileSystemSyncAccessHandle-read-write.https.worker.html": "opfs",
+    "fs/FileSystemSyncAccessHandle-truncate.https.worker.html": "opfs",
+    "fs/FileSystemWritableFileStream-piped.https.any.html": "opfs",
+    "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemWritableFileStream-piped.https.any.worker.html": "opfs",
+    "fs/FileSystemWritableFileStream-write.https.any.html": "opfs",
+    "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemWritableFileStream-write.https.any.worker.html": "opfs",
+    "fs/FileSystemWritableFileStream.https.any.html": "opfs",
+    "fs/FileSystemWritableFileStream.https.any.serviceworker.html": "opfs",
+    "fs/FileSystemWritableFileStream.https.any.sharedworker.html": "opfs",
+    "fs/FileSystemWritableFileStream.https.any.worker.html": "opfs",
+    "fs/idlharness.https.any.html": "opfs",
+    "fs/idlharness.https.any.serviceworker.html": "opfs",
+    "fs/idlharness.https.any.sharedworker.html": "opfs",
+    "fs/idlharness.https.any.worker.html": "opfs",
+    "fs/root-name.https.any.html": "opfs",
+    "fs/root-name.https.any.serviceworker.html": "opfs",
+    "fs/root-name.https.any.sharedworker.html": "opfs",
+    "fs/root-name.https.any.worker.html": "opfs",
+    "storage/buckets/idlharness-worker.https.any.html": "storage guard",
+    "storage/buckets/idlharness-worker.https.any.serviceworker.html": "storage guard",
+    "storage/buckets/idlharness-worker.https.any.sharedworker.html": "storage guard",
+    "storage/buckets/idlharness-worker.https.any.worker.html": "storage guard",
+    "storage/estimate-indexeddb.https.any.html": "storage guard",
+    "storage/estimate-indexeddb.https.any.worker.html": "storage guard",
+    "storage/estimate-parallel.https.any.html": "storage guard",
+    "storage/estimate-parallel.https.any.worker.html": "storage guard",
+    "storage/estimate-usage-details-caches.https.tentative.any.html": "storage guard",
+    "storage/estimate-usage-details-caches.https.tentative.any.worker.html": "storage guard",
+    "storage/estimate-usage-details-indexeddb.https.tentative.any.html": "storage guard",
+    "storage/estimate-usage-details-indexeddb.https.tentative.any.worker.html": "storage guard",
+    "storage/estimate-usage-details-service-workers.https.tentative.window.html": "storage guard",
+    "storage/estimate-usage-details.https.tentative.any.html": "storage guard",
+    "storage/estimate-usage-details.https.tentative.any.worker.html": "storage guard",
+    "storage/idlharness.https.any.html": "storage guard",
+    "storage/idlharness.https.any.worker.html": "storage guard",
+    "storage/partitioned-estimate-usage-details-caches.tentative.https.sub.html": "storage guard",
+    "storage/partitioned-estimate-usage-details-indexeddb.tentative.https.sub.html": "storage guard",
+    "storage/partitioned-estimate-usage-details-service-workers.tentative.https.sub.html": "storage guard",
+    "storage/persisted.https.any.html": "storage guard",
+    "storage/persisted.https.any.worker.html": "storage guard",
+    "storage/storagemanager-estimate.https.any.html": "storage guard",
+    "storage/storagemanager-estimate.https.any.worker.html": "storage guard",
+    "storage/storagemanager-persist-persisted-match.https.window.html": "storage guard",
+    "storage/storagemanager-persist.https.window.html": "storage guard",
+    "storage/storagemanager-persist.https.worker.html": "storage guard",
+    "storage/storagemanager-persisted.https.any.html": "storage guard",
+    "storage/storagemanager-persisted.https.any.worker.html": "storage guard"
+  },
+  "names": [
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle() with \".\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle() with \"..\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle() with empty name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle(create=false) rejects for non-existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle(create=false) returns existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle(create=false) when a directory already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle(create=true) creates an empty file for non-existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle(create=true) creates an empty file with all valid ASCII characters in the name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle(create=true) creates an empty file with non-ASCII characters in the name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle(create=true) returns existing files without erasing",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+      "getFileHandle(create=true) when a directory already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.worker.html",
+      "getFile() provides a file that can be sliced",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.worker.html",
+      "getFile() returns expected name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.worker.html",
+      "getFile() returns last modified time",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry comparing a file to a directory of the same path returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry comparing a file to a directory returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry comparing a file to a file in a different directory returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry comparing two directories pointing to the same path returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry comparing two files pointing to the same path returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry for different directories returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry for different files returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry for different handles for the same directory",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry for different handles for the same file",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry for identical directory handles returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry for identical file handles returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry with a directory handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry with a file handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.worker.html",
+      "isSameEntry with a root directory handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "createWritable after removeEntry succeeds but doesnt recreate the file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() of a directory while a containing file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() on a directory recursively should delete all sub-items",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() on a non-empty directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() on a non-existent directory recursively should throw NotFoundError",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() on an already removed file should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() to remove a file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() to remove an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() with \".\" name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() with \"..\" name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() with a path separator should fail.",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.worker.html",
+      "removeEntry() with empty name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle() when a file already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle() with \".\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle() with \"..\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle() with empty name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle(create=false) rejects for non-existing directories",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle(create=false) returns existing directories",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle(create=false) with a path separator when the directory exists",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle(create=true) creates an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle(create=true) returns existing directories without erasing",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.html",
+      "getDirectoryHandle(create=true) with a path separator",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface: operation getDirectoryHandle(USVString, optional FileSystemGetDirectoryOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface: operation getFileHandle(USVString, optional FileSystemGetFileOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface: operation removeEntry(USVString, optional FileSystemRemoveOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemDirectoryHandle interface: operation resolve(FileSystemHandle)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface: member createSyncAccessHandle",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface: operation createWritable(optional FileSystemCreateWritableOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemFileHandle interface: operation getFile()",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface: attribute kind",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface: attribute name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemHandle interface: operation isSameEntry(FileSystemHandle)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface: operation seek(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface: operation truncate(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "FileSystemWritableFileStream interface: operation write(FileSystemWriteChunkType)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.serviceworker.html",
+      "StorageManager interface: operation getDirectory()",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.html",
+      "Resolve returns correct path",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.html",
+      "Resolve returns correct path with non-ascii characters",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.html",
+      "Resolve returns empty array for same directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.html",
+      "Resolve returns null when entry is not a child",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.html",
+      "Resolve returns null when sibling directory name is a prefix",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "WriteParams: seek missing position param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "WriteParams: truncate missing size param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "WriteParams: write missing data param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "WriteParams: write null data param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "an errored writable stream releases its lock",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "an errored writable stream should reject the next write call",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "atomic writes: close() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "atomic writes: only one close() operation may succeed",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "atomic writes: truncate() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "atomic writes: writable file streams make atomic changes on close",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "atomic writes: write() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "getWriter() can be used",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() WriteParams without position and blob appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() WriteParams without position and string appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() a blob to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() a blob to an empty file with zero offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() a string to an empty file with zero offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() called consecutively appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() called with a blob and a valid offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() called with a string and a valid offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() called with a string and a valid offset after seek",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() called with an offset beyond the end of the file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with WriteParams without position to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with a string with unix line ending preserved",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with a string with windows line ending preserved",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with a valid typed array buffer",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with a valid utf-8 string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with an empty array buffer to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with an empty blob to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with an empty string to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.sharedworker.html",
+      "write() with an invalid blob to an empty file should reject",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test initial write with an offset",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test overwriting the file at an offset",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test read at an offset",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test read with default options",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test reading an empty file through a sync access handle.",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test reading and writing a file using the cursor",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test reading at a negative offset fails.",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test second write that is bigger than the first write",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test second write that is smaller than the first write",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test using an ArrayBuffer.",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test using an empty ArrayBuffer.",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test write with default options",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test writing and reading through a sync access handle.",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-read-write.https.worker.html",
+      "Test writing at a negative offset fails.",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "WriteParams: seek missing position param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "WriteParams: truncate missing size param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "WriteParams: write missing data param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "WriteParams: write null data param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "an errored writable stream releases its lock",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "an errored writable stream should reject the next write call",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "atomic writes: close() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "atomic writes: only one close() operation may succeed",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "atomic writes: truncate() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "atomic writes: writable file streams make atomic changes on close",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "atomic writes: write() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "getWriter() can be used",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() WriteParams without position and blob appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() WriteParams without position and string appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() a blob to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() a blob to an empty file with zero offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() a string to an empty file with zero offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() called consecutively appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() called with a blob and a valid offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() called with a string and a valid offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() called with a string and a valid offset after seek",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() called with an offset beyond the end of the file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with WriteParams without position to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with a string with unix line ending preserved",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with a string with windows line ending preserved",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with a valid typed array buffer",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with a valid utf-8 string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with an empty array buffer to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with an empty blob to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with an empty string to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.html",
+      "write() with an invalid blob to an empty file should reject",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "createWritable after removeEntry succeeds but doesnt recreate the file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() of a directory while a containing file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() on a directory recursively should delete all sub-items",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() on a non-empty directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() on a non-existent directory recursively should throw NotFoundError",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() on an already removed file should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() to remove a file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() to remove an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() with \".\" name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() with \"..\" name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() with a path separator should fail.",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.sharedworker.html",
+      "removeEntry() with empty name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-close.https.worker.html",
+      "SyncAccessHandle.close is idempotent",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-close.https.worker.html",
+      "SyncAccessHandle.flush fails after SyncAccessHandle.close",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-close.https.worker.html",
+      "SyncAccessHandle.getSize fails after SyncAccessHandle.close",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-close.https.worker.html",
+      "SyncAccessHandle.read fails after SyncAccessHandle.close",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-close.https.worker.html",
+      "SyncAccessHandle.truncate fails after SyncAccessHandle.handle.close",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-close.https.worker.html",
+      "SyncAccessHandle.write fails after SyncAccessHandle.close",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface: operation getDirectoryHandle(USVString, optional FileSystemGetDirectoryOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface: operation getFileHandle(USVString, optional FileSystemGetFileOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface: operation removeEntry(USVString, optional FileSystemRemoveOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemDirectoryHandle interface: operation resolve(FileSystemHandle)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface: member createSyncAccessHandle",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface: operation createWritable(optional FileSystemCreateWritableOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemFileHandle interface: operation getFile()",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface: attribute kind",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface: attribute name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemHandle interface: operation isSameEntry(FileSystemHandle)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface: operation seek(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface: operation truncate(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "FileSystemWritableFileStream interface: operation write(FileSystemWriteChunkType)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.sharedworker.html",
+      "StorageManager interface: operation getDirectory()",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry comparing a file to a directory of the same path returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry comparing a file to a directory returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry comparing a file to a file in a different directory returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry comparing two directories pointing to the same path returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry comparing two files pointing to the same path returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry for different directories returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry for different files returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry for different handles for the same directory",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry for different handles for the same file",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry for identical directory handles returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry for identical file handles returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry with a directory handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry with a file handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.sharedworker.html",
+      "isSameEntry with a root directory handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "A sync access handle opens in readwrite mode by default",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "After all access handles in read-only mode on a file has been closed, can open another access handle in readwrite on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "After all access handles in read-only mode on a file has been closed, can open another access handle in readwrite-unsafe on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "After all access handles in readwrite-unsafe mode on a file has been closed, can open another access handle in read-only on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "After all access handles in readwrite-unsafe mode on a file has been closed, can open another access handle in readwrite on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "After an access handle in readwrite mode on a file has been closed, can open another access handle in read-only on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "After an access handle in readwrite mode on a file has been closed, can open another access handle in readwrite on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "After an access handle in readwrite mode on a file has been closed, can open another access handle in readwrite-unsafe on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in read-only mode has a mode property equal to read-only",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in read-only mode is not writable",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in read-only mode takes a lock that is shared",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in readwrite mode has a mode property equal to readwrite",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in readwrite mode is writable",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in readwrite mode takes a lock that is exclusive",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in readwrite-unsafe mode has a mode property equal to readwrite-unsafe",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in readwrite-unsafe mode is writable",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "An access handle in readwrite-unsafe mode takes a lock that is shared",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in read-only mode on a file, can open another access handle in read-only on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in read-only mode on a file, can open another access handle in readwrite on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in read-only mode on a file, can open another access handle in readwrite-unsafe on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in read-only mode on a file, cannot open another access handle in readwrite on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in read-only mode on a file, cannot open another access handle in readwrite-unsafe on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite mode on a file, can open another access handle in read-only on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite mode on a file, can open another access handle in readwrite on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite mode on a file, can open another access handle in readwrite-unsafe on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite mode on a file, cannot open another access handle in read-only on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite mode on a file, cannot open another access handle in readwrite on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite mode on a file, cannot open another access handle in readwrite-unsafe on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite-unsafe mode on a file, can open another access handle in read-only on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite-unsafe mode on a file, can open another access handle in readwrite on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite-unsafe mode on a file, can open another access handle in readwrite-unsafe on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite-unsafe mode on a file, cannot open another access handle in read-only on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-sync-access-handle-lock-modes.https.tentative.worker.html",
+      "When there's an open access handle in readwrite-unsafe mode on a file, cannot open another access handle in readwrite on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-getSize.https.worker.html",
+      "test SyncAccessHandle.getSize after SyncAccessHandle.write",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+      "get a handle to a moved file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+      "move(\"\") to rename a file fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+      "move(name) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+      "move(name) to rename a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+      "move(name) to rename a file the same name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+      "move(name) with a name with path separators should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle() when a file already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle() with \".\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle() with \"..\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle() with empty name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle(create=false) rejects for non-existing directories",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle(create=false) returns existing directories",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle(create=false) with a path separator when the directory exists",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle(create=true) creates an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle(create=true) returns existing directories without erasing",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.serviceworker.html",
+      "getDirectoryHandle(create=true) with a path separator",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "A file with an ongoing move operation does not interfere with an open access handle in readwrite mode on another file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "A file with an ongoing remove operation does not interfere with the creation of an open access handle in readwrite mode on another file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "A file with an open access handle in readwrite mode does not interfere with moving another file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "A file with an open access handle in readwrite mode does not interfere with removing another file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "A file with an open access handle in readwrite mode does not interfere with the creation of an open writable stream in siloed mode on another file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "A file with an open writable stream in exclusive mode does not interfere with an open access handle in readwrite mode on another file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "A file with an open writable stream in siloed mode does not interfere with an open access handle in readwrite mode on another file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "After a file has finished being removed, that file can have an open access handle in readwrite mode",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "After a file has finished moving, that file can have an open access handle in readwrite mode",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "After all writable streams in siloed mode have been closed for a file, that file can have an open access handle in readwrite mode",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "When there's an open writable stream in exclusive mode on a file, cannot have an open access handle in readwrite mode on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+      "When there's an open writable stream in siloed mode on a file, cannot have an open access handle in readwrite mode on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "createWritable after removeEntry succeeds but doesnt recreate the file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() of a directory while a containing file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() on a directory recursively should delete all sub-items",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() on a non-empty directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() on a non-existent directory recursively should throw NotFoundError",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() on an already removed file should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() to remove a file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() to remove an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() with \".\" name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() with \"..\" name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() with a path separator should fail.",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.html",
+      "removeEntry() with empty name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.serviceworker.html",
+      "getFile() provides a file that can be sliced",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.serviceworker.html",
+      "getFile() returns expected name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.serviceworker.html",
+      "getFile() returns last modified time",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "can remove the root of a sandbox file system",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "remove() on a directory recursively should delete all sub-items",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "remove() on a file should ignore the recursive option",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "remove() on a non-empty directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "remove() on an already removed directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "remove() on an already removed file should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "remove() to remove a file",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "remove() to remove an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.sharedworker.html",
+      "remove() while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.worker.html",
+      "commands are queued, stream is unlocked after each operation",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.worker.html",
+      "createWritable() fails when parent directory is removed",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.worker.html",
+      "createWritable({keepExistingData: false}): atomic writable file stream initialized with empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.worker.html",
+      "createWritable({keepExistingData: true}): atomic writable file stream initialized with source contents",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.worker.html",
+      "cursor position: truncate size < offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.worker.html",
+      "cursor position: truncate size > offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.worker.html",
+      "truncate() to grow a file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.worker.html",
+      "truncate() to shrink a file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html",
+      "abort() aborts write",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html",
+      "can be piped to with a Blob",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html",
+      "can be piped to with a param object with multiple commands",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html",
+      "can be piped to with a param object with write command",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html",
+      "can be piped to with a string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html",
+      "can be piped to with an ArrayBuffer",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html",
+      "multiple operations can be queued",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.sharedworker.html",
+      "plays well with fetch",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "createWritable after removeEntry succeeds but doesnt recreate the file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() of a directory while a containing file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() on a directory recursively should delete all sub-items",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() on a non-empty directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() on a non-existent directory recursively should throw NotFoundError",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() on an already removed file should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() to remove a file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() to remove an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() with \".\" name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() with \"..\" name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() with a path separator should fail.",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-removeEntry.https.any.serviceworker.html",
+      "removeEntry() with empty name should fail",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.html",
+      "createWritable() fails when parent directory is removed",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.html",
+      "createWritable({keepExistingData: false}): atomic writable file stream initialized with empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.html",
+      "createWritable({keepExistingData: true}): atomic writable file stream initialized with source contents",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.html",
+      "truncate() to grow a file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.html",
+      "truncate() to shrink a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.html",
+      "getFile() provides a file that can be sliced",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.html",
+      "getFile() returns expected name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.html",
+      "getFile() returns last modified time",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.worker.html",
+      "@@asyncIterator: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.worker.html",
+      "entries: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.worker.html",
+      "iteration while iterator gets garbage collected",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.worker.html",
+      "keys: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.worker.html",
+      "returning early from an iteration doesn't crash",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.worker.html",
+      "values: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "get a handle to a moved file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(\"\") to rename a file fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(dir) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(dir) to move a file to a new directory",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(dir, \"\") to move a file to a new directory fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(dir, name) to move a file to a new directory",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(dir, name) to rename a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(dir, name) to rename a file the same name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(name) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(name) can overwrite an existing file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(name) to rename a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(name) to rename a file the same name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(name) while the destination file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(name) while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+      "move(name) with a name with path separators should fail",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle() with \".\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle() with \"..\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle() with empty name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=false) rejects for non-existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=false) returns existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=false) when a directory already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=false) with a path separator when the file exists.",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=true) creates an empty file for non-existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=true) creates an empty file with all valid ASCII characters in the name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=true) creates an empty file with non-ASCII characters in the name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=true) returns existing files without erasing",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=true) when a directory already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.serviceworker.html",
+      "getFileHandle(create=true) with a path separator",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-create-sync-access-handle.https.window.html",
+      "Attempt to create a sync access handle.",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.sharedworker.html",
+      "commands are queued, stream is unlocked after each operation",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.sharedworker.html",
+      "createWritable() fails when parent directory is removed",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.sharedworker.html",
+      "createWritable({keepExistingData: false}): atomic writable file stream initialized with empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.sharedworker.html",
+      "createWritable({keepExistingData: true}): atomic writable file stream initialized with source contents",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.sharedworker.html",
+      "cursor position: truncate size < offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.sharedworker.html",
+      "cursor position: truncate size > offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.sharedworker.html",
+      "truncate() to grow a file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.sharedworker.html",
+      "truncate() to shrink a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "FileSystemFileHandles are references, not paths",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "get a handle to a moved file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(\"\") to rename a file fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir) can overwrite an existing file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir) to move a file to a new directory",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir) while the destination file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir) while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, \"\") to move a file to a new directory fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, name) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, name) can overwrite an existing file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, name) to move a file to a new directory",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, name) to rename a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, name) to rename a file the same name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, name) while the destination file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, name) while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(dir, name) with a name with invalid characters should fail",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(name) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(name) can overwrite an existing file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(name) to rename a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(name) to rename a file the same name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(name) while the destination file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(name) while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.html",
+      "move(name) with a name with path separators should fail",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "WriteParams: seek missing position param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "WriteParams: truncate missing size param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "WriteParams: write missing data param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "WriteParams: write null data param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "an errored writable stream releases its lock",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "an errored writable stream should reject the next write call",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "atomic writes: close() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "atomic writes: only one close() operation may succeed",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "atomic writes: truncate() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "atomic writes: writable file streams make atomic changes on close",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "atomic writes: write() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "getWriter() can be used",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() WriteParams without position and blob appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() WriteParams without position and string appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() a blob to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() a blob to an empty file with zero offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() a string to an empty file with zero offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() called consecutively appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() called with a blob and a valid offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() called with a string and a valid offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() called with a string and a valid offset after seek",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() called with an offset beyond the end of the file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with WriteParams without position to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with a string with unix line ending preserved",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with a string with windows line ending preserved",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with a valid typed array buffer",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with a valid utf-8 string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with an empty array buffer to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with an empty blob to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with an empty string to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.worker.html",
+      "write() with an invalid blob to an empty file should reject",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.html",
+      "@@asyncIterator: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.html",
+      "entries: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.html",
+      "iteration while iterator gets garbage collected",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.html",
+      "keys: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.html",
+      "returning early from an iteration doesn't crash",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.html",
+      "values: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.sharedworker.html",
+      "@@asyncIterator: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.sharedworker.html",
+      "entries: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.sharedworker.html",
+      "iteration while iterator gets garbage collected",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.sharedworker.html",
+      "keys: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.sharedworker.html",
+      "returning early from an iteration doesn't crash",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.sharedworker.html",
+      "values: full iteration works",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface: operation getDirectoryHandle(USVString, optional FileSystemGetDirectoryOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface: operation getFileHandle(USVString, optional FileSystemGetFileOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface: operation removeEntry(USVString, optional FileSystemRemoveOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemDirectoryHandle interface: operation resolve(FileSystemHandle)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface: member createSyncAccessHandle",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface: operation createWritable(optional FileSystemCreateWritableOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemFileHandle interface: operation getFile()",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface: attribute kind",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface: attribute name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemHandle interface: operation isSameEntry(FileSystemHandle)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface: operation seek(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface: operation truncate(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "FileSystemWritableFileStream interface: operation write(FileSystemWriteChunkType)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.html",
+      "StorageManager interface: operation getDirectory()",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle() when a file already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle() with \".\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle() with \"..\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle() with empty name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle(create=false) rejects for non-existing directories",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle(create=false) returns existing directories",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle(create=false) with a path separator when the directory exists",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle(create=true) creates an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle(create=true) returns existing directories without erasing",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.worker.html",
+      "getDirectoryHandle(create=true) with a path separator",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.serviceworker.html",
+      "@@asyncIterator: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.serviceworker.html",
+      "entries: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.serviceworker.html",
+      "iteration while iterator gets garbage collected",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.serviceworker.html",
+      "keys: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.serviceworker.html",
+      "returning early from an iteration doesn't crash",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-iteration.https.any.serviceworker.html",
+      "values: full iteration works",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.sharedworker.html",
+      "getFile() provides a file that can be sliced",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.sharedworker.html",
+      "getFile() returns expected name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-getFile.https.any.sharedworker.html",
+      "getFile() returns last modified time",
+      1
+    ],
+    [
+      "fs/root-name.https.any.html",
+      "getDirectory returns a directory whose name is the empty string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.html",
+      "abort() aborts write",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.html",
+      "can be piped to with a Blob",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.html",
+      "can be piped to with a param object with multiple commands",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.html",
+      "can be piped to with a param object with write command",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.html",
+      "can be piped to with a string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.html",
+      "can be piped to with an ArrayBuffer",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.html",
+      "multiple operations can be queued",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.html",
+      "plays well with fetch",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface: operation getDirectoryHandle(USVString, optional FileSystemGetDirectoryOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface: operation getFileHandle(USVString, optional FileSystemGetFileOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface: operation removeEntry(USVString, optional FileSystemRemoveOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemDirectoryHandle interface: operation resolve(FileSystemHandle)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface: operation createSyncAccessHandle()",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface: operation createWritable(optional FileSystemCreateWritableOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemFileHandle interface: operation getFile()",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface: attribute kind",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface: attribute name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemHandle interface: operation isSameEntry(FileSystemHandle)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: operation close()",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: operation flush()",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: operation getSize()",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: operation read(AllowSharedBufferSource, optional FileSystemReadWriteOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: operation truncate(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemSyncAccessHandle interface: operation write(AllowSharedBufferSource, optional FileSystemReadWriteOptions)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface object length",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface object name",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object's \"constructor\" property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface: existence and properties of interface prototype object's @@unscopables property",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface: operation seek(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface: operation truncate(unsigned long long)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "FileSystemWritableFileStream interface: operation write(FileSystemWriteChunkType)",
+      1
+    ],
+    [
+      "fs/idlharness.https.any.worker.html",
+      "StorageManager interface: operation getDirectory()",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "can remove the root of a sandbox file system",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "remove() on a directory recursively should delete all sub-items",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "remove() on a file should ignore the recursive option",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "remove() on a non-empty directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "remove() on an already removed directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "remove() on an already removed file should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "remove() to remove a file",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "remove() to remove an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.html",
+      "remove() while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "can remove the root of a sandbox file system",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "remove() on a directory recursively should delete all sub-items",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "remove() on a file should ignore the recursive option",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "remove() on a non-empty directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "remove() on an already removed directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "remove() on an already removed file should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "remove() to remove a file",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "remove() to remove an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.serviceworker.html",
+      "remove() while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle() when a file already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle() with \".\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle() with \"..\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle() with empty name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle(create=false) rejects for non-existing directories",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle(create=false) returns existing directories",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle(create=false) with a path separator when the directory exists",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle(create=true) creates an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle(create=true) returns existing directories without erasing",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getDirectoryHandle.https.any.sharedworker.html",
+      "getDirectoryHandle(create=true) with a path separator",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle() with \".\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle() with \"..\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle() with empty name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=false) rejects for non-existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=false) returns existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=false) when a directory already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=false) with a path separator when the file exists.",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=true) creates an empty file for non-existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=true) creates an empty file with all valid ASCII characters in the name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=true) creates an empty file with non-ASCII characters in the name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=true) returns existing files without erasing",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=true) when a directory already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.worker.html",
+      "getFileHandle(create=true) with a path separator",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-flush.https.worker.html",
+      "SyncAccessHandle.read returns bytes written by SyncAccessHandle.write after SyncAccessHandle.flush",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-flush.https.worker.html",
+      "Test flush on an empty file.",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "WriteParams: seek missing position param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "WriteParams: truncate missing size param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "WriteParams: write missing data param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "WriteParams: write null data param",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "an errored writable stream releases its lock",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "an errored writable stream should reject the next write call",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "atomic writes: close() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "atomic writes: only one close() operation may succeed",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "atomic writes: truncate() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "atomic writes: writable file streams make atomic changes on close",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "atomic writes: write() after close() fails",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "getWriter() can be used",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() WriteParams without position and blob appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() WriteParams without position and string appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() a blob to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() a blob to an empty file with zero offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() a string to an empty file with zero offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() called consecutively appends",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() called with a blob and a valid offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() called with a string and a valid offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() called with a string and a valid offset after seek",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() called with an offset beyond the end of the file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with WriteParams without position to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with a string with unix line ending preserved",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with a string with windows line ending preserved",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with a valid typed array buffer",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with a valid utf-8 string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with an empty array buffer to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with an empty blob to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with an empty string to an empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-write.https.any.serviceworker.html",
+      "write() with an invalid blob to an empty file should reject",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "can remove the root of a sandbox file system",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "remove() on a directory recursively should delete all sub-items",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "remove() on a file should ignore the recursive option",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "remove() on a non-empty directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "remove() on an already removed directory should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "remove() on an already removed file should fail",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "remove() to remove a file",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "remove() to remove an empty directory",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-remove.https.any.worker.html",
+      "remove() while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.serviceworker.html",
+      "Resolve returns correct path",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.serviceworker.html",
+      "Resolve returns correct path with non-ascii characters",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.serviceworker.html",
+      "Resolve returns empty array for same directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.serviceworker.html",
+      "Resolve returns null when entry is not a child",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.serviceworker.html",
+      "Resolve returns null when sibling directory name is a prefix",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.serviceworker.html",
+      "commands are queued, stream is unlocked after each operation",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.serviceworker.html",
+      "createWritable() fails when parent directory is removed",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.serviceworker.html",
+      "createWritable({keepExistingData: false}): atomic writable file stream initialized with empty file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.serviceworker.html",
+      "createWritable({keepExistingData: true}): atomic writable file stream initialized with source contents",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.serviceworker.html",
+      "cursor position: truncate size < offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.serviceworker.html",
+      "cursor position: truncate size > offset",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.serviceworker.html",
+      "truncate() to grow a file",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream.https.any.serviceworker.html",
+      "truncate() to shrink a file",
+      1
+    ],
+    [
+      "fs/root-name.https.any.sharedworker.html",
+      "getDirectory returns a directory whose name is the empty string",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "FileSystemFileHandles are references, not paths",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "get a handle to a moved file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(\"\") to rename a file fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir) can overwrite an existing file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir) to move a file to a new directory",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir) while the destination file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir) while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, \"\") to move a file to a new directory fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, name) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, name) can overwrite an existing file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, name) to move a file to a new directory",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, name) to rename a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, name) to rename a file the same name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, name) while the destination file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, name) while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(dir, name) with a name with invalid characters should fail",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(name) can be called multiple times",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(name) can overwrite an existing file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(name) to rename a file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(name) to rename a file the same name",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(name) while the destination file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(name) while the file has an open writable fails",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-move.https.any.worker.html",
+      "move(name) with a name with path separators should fail",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "A writable stream in exclusive mode has a mode property equal to exclusive",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "A writable stream in exclusive mode takes a lock that is exclusive",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "A writable stream in siloed mode has a mode property equal to siloed",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "A writable stream in siloed mode takes a lock that is shared",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "A writable stream opens in siloed mode by default",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "After a writable stream in exclusive mode on a file has been closed, can open another writable stream in exclusive on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "After a writable stream in exclusive mode on a file has been closed, can open another writable stream in siloed on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "After all writable streams in siloed mode on a file has been closed, can open another writable stream in exclusive on the same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "When there's an open writable stream in exclusive mode on a file, can open another writable stream in exclusive on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "When there's an open writable stream in exclusive mode on a file, can open another writable stream in siloed on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "When there's an open writable stream in exclusive mode on a file, cannot open another writable stream in exclusive on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "When there's an open writable stream in exclusive mode on a file, cannot open another writable stream in siloed on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "When there's an open writable stream in siloed mode on a file, can open another writable stream in exclusive on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "When there's an open writable stream in siloed mode on a file, can open another writable stream in siloed on a different file",
+      1
+    ],
+    [
+      "fs/FileSystemFileHandle-writable-file-stream-lock-modes.https.tentative.worker.html",
+      "When there's an open writable stream in siloed mode on a file, cannot open another writable stream in exclusive on that same file",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.worker.html",
+      "Resolve returns correct path",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.worker.html",
+      "Resolve returns correct path with non-ascii characters",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.worker.html",
+      "Resolve returns empty array for same directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.worker.html",
+      "Resolve returns null when entry is not a child",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.worker.html",
+      "Resolve returns null when sibling directory name is a prefix",
+      1
+    ],
+    [
+      "fs/root-name.https.any.worker.html",
+      "getDirectory returns a directory whose name is the empty string",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.sharedworker.html",
+      "Resolve returns correct path",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.sharedworker.html",
+      "Resolve returns correct path with non-ascii characters",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.sharedworker.html",
+      "Resolve returns empty array for same directory",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.sharedworker.html",
+      "Resolve returns null when entry is not a child",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-resolve.https.any.sharedworker.html",
+      "Resolve returns null when sibling directory name is a prefix",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.worker.html",
+      "abort() aborts write",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.worker.html",
+      "can be piped to with a Blob",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.worker.html",
+      "can be piped to with a param object with multiple commands",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.worker.html",
+      "can be piped to with a param object with write command",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.worker.html",
+      "can be piped to with a string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.worker.html",
+      "can be piped to with an ArrayBuffer",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.worker.html",
+      "multiple operations can be queued",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.worker.html",
+      "plays well with fetch",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle() with \".\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle() with \"..\" name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle() with empty name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=false) rejects for non-existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=false) returns existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=false) when a directory already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=false) with a path separator when the file exists.",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=true) creates an empty file for non-existing files",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=true) creates an empty file with all valid ASCII characters in the name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=true) creates an empty file with non-ASCII characters in the name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=true) returns existing files without erasing",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=true) when a directory already exists with the same name",
+      1
+    ],
+    [
+      "fs/FileSystemDirectoryHandle-getFileHandle.https.any.html",
+      "getFileHandle(create=true) with a path separator",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry comparing a file to a directory of the same path returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry comparing a file to a directory returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry comparing a file to a file in a different directory returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry comparing two directories pointing to the same path returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry comparing two files pointing to the same path returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry for different directories returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry for different files returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry for different handles for the same directory",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry for different handles for the same file",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry for identical directory handles returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry for identical file handles returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry with a directory handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry with a file handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.html",
+      "isSameEntry with a root directory handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html",
+      "abort() aborts write",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html",
+      "can be piped to with a Blob",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html",
+      "can be piped to with a param object with multiple commands",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html",
+      "can be piped to with a param object with write command",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html",
+      "can be piped to with a string",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html",
+      "can be piped to with an ArrayBuffer",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html",
+      "multiple operations can be queued",
+      1
+    ],
+    [
+      "fs/FileSystemWritableFileStream-piped.https.any.serviceworker.html",
+      "plays well with fetch",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry comparing a file to a directory of the same path returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry comparing a file to a directory returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry comparing a file to a file in a different directory returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry comparing two directories pointing to the same path returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry comparing two files pointing to the same path returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry for different directories returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry for different files returns false",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry for different handles for the same directory",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry for different handles for the same file",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry for identical directory handles returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry for identical file handles returns true",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry with a directory handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry with a file handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemBaseHandle-isSameEntry.https.any.serviceworker.html",
+      "isSameEntry with a root directory handle that was just cloned via postMessage",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-truncate.https.worker.html",
+      "Test truncate effect on cursor",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-truncate.https.worker.html",
+      "test SyncAccessHandle.truncate after SyncAccessHandle.write",
+      1
+    ],
+    [
+      "fs/FileSystemSyncAccessHandle-truncate.https.worker.html",
+      "test SyncAccessHandle.truncate with different sizes",
+      1
+    ],
+    [
+      "fs/root-name.https.any.serviceworker.html",
+      "getDirectory returns a directory whose name is the empty string",
+      1
+    ]
+  ]
+}

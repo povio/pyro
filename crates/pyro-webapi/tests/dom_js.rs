@@ -105,6 +105,33 @@ pub(crate) fn eval(realm: &Realm, src: &str) -> String {
 }
 
 #[test]
+fn retiring_an_isolated_world_preserves_the_reused_windows_message_listener() {
+    let e = env("<body></body>");
+    let old = &e.page;
+    let utility = new_realm(&e.engine, e.engine.register::<TestWindow>(), old, "utility");
+    let doc = parse_document(&old.dom, "http://localhost:5173/child", "<body></body>");
+    let new = PageDom::new(old.dom.clone(), doc);
+    new.create_window_target(doc);
+    assert!(adopt_window(old, &new, e.main.id()));
+
+    let target = EventTargetData::window(&new, new.window_target().unwrap());
+    {
+        let scope = e.main.scope().unwrap();
+        scope.global_data::<TestWindow>().unwrap().target.hand_over(&target);
+    }
+    e.main.replace_global_data::<TestWindow>(TestWindowData { page: new.clone(), target }).unwrap();
+    rebind_window(&e.main.scope().unwrap(), new).unwrap();
+    assert_eq!(eval(&e.main, "globalThis.seen = []; addEventListener('message', e => seen.push(e.data)); seen.length"), "0");
+
+    // Release the isolated world's original global payload after registration.
+    let retired = utility.downgrade();
+    utility.dispose();
+    drop(utility);
+    assert!(retired.upgrade().is_none());
+    assert_eq!(eval(&e.main, "postMessage('expected', '*'); seen.join()"), "expected");
+}
+
+#[test]
 fn attribute_reflection_kinds() {
     let e = env("<!doctype html><html><body><p>x</p></body></html>");
     let r = &e.main;
@@ -820,6 +847,29 @@ fn range_boundaries_follow_mutations() {
     assert_eq!(eval(&e.main, "y.firstChild.remove(); pts()"), "DIV,2,DIV,3");
     assert_eq!(eval(&e.main, "y.children[1].remove(); pts()"), "DIV,1,DIV,2");
     assert_eq!(eval(&e.main, "y.innerHTML = ''; pts()"), "DIV,0,DIV,0");
+}
+
+#[test]
+fn composed_selection_uses_iterable_roots_and_static_snapshots() {
+    let e = env("<body><div id=host></div></body>");
+    assert_eq!(eval(&e.main, r#"
+        const host = document.getElementById('host');
+        const outer = host.attachShadow({mode:'closed'});
+        const nested = outer.appendChild(document.createElement('div'));
+        const inner = nested.attachShadow({mode:'closed'});
+        const text = inner.appendChild(document.createTextNode('abc'));
+        const selection = document.getSelection();
+        selection.setBaseAndExtent(text, 2, text, 1);
+        const [range] = selection.getComposedRanges({shadowRoots:new Set([inner])});
+        const [scoped] = selection.getComposedRanges({shadowRoots:[outer]});
+        text.deleteData(0, 1);
+        [range instanceof StaticRange, range.startContainer === text, range.startOffset,
+         range.endOffset, scoped.startContainer === outer, scoped.startOffset, scoped.endOffset].join()
+    "#), "true,true,1,2,true,0,1");
+    assert_eq!(eval(&e.main, r#"
+        selection.removeAllRanges();
+        try { selection.getComposedRanges({shadowRoots:[host]}); } catch (e) { e.name }
+    "#), "TypeError");
 }
 
 #[test]
@@ -6827,6 +6877,41 @@ fn font_face_descriptors_share_a_live_block() {
 }
 
 #[test]
+fn font_face_rule_serializes_its_live_descriptors() {
+    let e = env("<style>@media all {@font-face {\nfont-family: 'Two  Words';\ncolor: red;\nsrc: local(Demo);\n}}</style>");
+    assert_eq!(
+        eval(&e.main, "const media = document.styleSheets[0].cssRules[0], face = media.cssRules[0];
+            const matches = () => face.cssText === '@font-face { ' + face.style.cssText + ' }';
+            const checks = [matches(), !face.cssText.includes('\\n'), !face.cssText.includes('color:'),
+                face.cssText.includes('Two  Words'), media.cssText.includes(face.cssText)];
+            face.style.fontWeight = '700'; checks.push(matches(), media.cssText.includes(face.cssText));
+            face.style.cssText = ''; checks.push(face.cssText === '@font-face { }'); checks.join('|')"),
+        "true|true|true|true|true|true|true|true"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn stylesheet_owner_node_tracks_association() {
+    let e = env("<style id=s>a{}</style>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const style = document.getElementById('s'), first = style.sheet;
+             const checks = [first.ownerNode === style, new CSSStyleSheet().ownerNode === null];
+             style.textContent = 'b{}'; const second = style.sheet;
+             checks.push(first.ownerNode === null, second.ownerNode === style);
+             style.remove(); checks.push(second.ownerNode === null);
+             document.head.appendChild(style);
+             checks.push(second.ownerNode === null, style.sheet !== second, style.sheet.ownerNode === style);
+             checks.join('|')"
+        ),
+        "true|true|true|true|true|true|true|true"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn cssom_interface_shapes_and_import_parts() {
     let e = env(concat!(
         "<style id=s>@import \"a.css\" layer(x.y) supports(display: grid) SCREEN; @page {} b { color: red }",
@@ -7773,4 +7858,46 @@ fn a_resnap_follows_the_column_it_snapped_to() {
     assert_eq!(eval(&e.main, "s.scrollLeft=200;String(s.scrollLeft)"), "200");
     assert_eq!(eval(&e.main, "s.style.width='200px';String(s.scrollLeft)"), "400");
     e.page.dispose();
+}
+
+#[test]
+fn encoded_chunks_snapshot_views_and_validate_transfers_before_detaching() {
+    let e = env("");
+    for class in ["EncodedAudioChunk", "EncodedVideoChunk"] {
+        let script = r#"(() => {
+            const C = globalThis[CLASS];
+            const buffer = new Uint8Array([0, 11, 22, 33]).buffer;
+            const config = { type: 'key', timestamp: -7, data: new DataView(buffer, 1, 2) };
+            let duplicate;
+            try { new C({...config, transfer: [buffer, buffer]}); } catch (ex) { duplicate = ex.name; }
+            const retained = buffer.byteLength;
+            const chunk = new C({...config, transfer: [buffer]});
+            const bytes = new Uint8Array(4).fill(9);
+            chunk.copyTo(new DataView(bytes.buffer, 1, 2));
+            return [duplicate, retained, buffer.byteLength, chunk.byteLength, chunk.timestamp,
+                    chunk.duration === null, bytes.join(',')].join('|');
+        })()"#;
+        assert_eq!(eval(&e.main, &script.replace("CLASS", &format!("'{class}'"))), "DataCloneError|4|0|2|-7|true|9,11,22,9");
+    }
+}
+
+#[test]
+fn encoded_chunks_clone_internal_slots_and_reject_storage() {
+    let e = env("");
+    for class in ["EncodedAudioChunk", "EncodedVideoChunk"] {
+        let script = format!("globalThis.chunk = new {class}({{type:'delta', timestamp:22, duration:5, data:new Uint8Array([3,8])}})");
+        eval(&e.main, &script);
+        assert_eq!(eval(&e.main, r#"(() => {
+            Object.defineProperty(chunk, 'type', {get(){throw Error('public accessor read')}});
+            const value = structuredClone({a:chunk,b:[chunk]});
+            const out = new Uint8Array(2);
+            value.a.copyTo(out);
+            return [value.a === value.b[0], value.a !== chunk, value.a.type, value.a.timestamp, value.a.duration, ...out].join(',');
+        })()"#), "true,true,delta,22,5,3,8");
+        let scope = e.main.scope().unwrap();
+        let graph = scope.eval("({nested:[chunk]})", None, 1).unwrap();
+        let error = serialize_for_storage(&scope, graph).err().expect("encoded chunks must not be stored");
+        let exception = error.to_value(&scope).as_object().unwrap();
+        assert_eq!(exception.get_atom("name").unwrap().to_string().unwrap(), "DataCloneError");
+    }
 }

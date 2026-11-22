@@ -1,0 +1,220 @@
+{
+  "named": {
+    "base": 80,
+    "candidate": 108,
+    "chrome": 116,
+    "gained": [
+      [
+        "IndexedDB/idbobjectstore-rename-abort.any.html",
+        "IndexedDB object store creation and rename in an aborted transaction",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore-rename-abort.any.serviceworker.html",
+        "IndexedDB object store creation and rename in an aborted transaction",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore-rename-abort.any.sharedworker.html",
+        "IndexedDB object store creation and rename in an aborted transaction",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore-rename-abort.any.worker.html",
+        "IndexedDB object store creation and rename in an aborted transaction",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.html",
+        "Created stores get their indexes marked as deleted after the transaction that created them aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.html",
+        "Created+deleted stores still have their indexes marked as deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.html",
+        "Deleted stores get their indexes marked as not-deleted after the transaction that deleted them aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.serviceworker.html",
+        "Created stores get their indexes marked as deleted after the transaction that created them aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.serviceworker.html",
+        "Created+deleted stores still have their indexes marked as deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.serviceworker.html",
+        "Deleted stores get their indexes marked as not-deleted after the transaction that deleted them aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.sharedworker.html",
+        "Created stores get their indexes marked as deleted after the transaction that created them aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.sharedworker.html",
+        "Created+deleted stores still have their indexes marked as deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.sharedworker.html",
+        "Deleted stores get their indexes marked as not-deleted after the transaction that deleted them aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.worker.html",
+        "Created stores get their indexes marked as deleted after the transaction that created them aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.worker.html",
+        "Created+deleted stores still have their indexes marked as deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-index-metadata-revert.any.worker.html",
+        "Deleted stores get their indexes marked as not-deleted after the transaction that deleted them aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.html",
+        "Deleted indexes in created+deleted stores are still marked as deleted after their transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.html",
+        "Deleted indexes in deleted stores are still marked as not-deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.html",
+        "Deleted indexes in newly created stores are still marked as deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.serviceworker.html",
+        "Deleted indexes in created+deleted stores are still marked as deleted after their transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.serviceworker.html",
+        "Deleted indexes in deleted stores are still marked as not-deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.serviceworker.html",
+        "Deleted indexes in newly created stores are still marked as deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.sharedworker.html",
+        "Deleted indexes in created+deleted stores are still marked as deleted after their transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.sharedworker.html",
+        "Deleted indexes in deleted stores are still marked as not-deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.sharedworker.html",
+        "Deleted indexes in newly created stores are still marked as deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.worker.html",
+        "Deleted indexes in created+deleted stores are still marked as deleted after their transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.worker.html",
+        "Deleted indexes in deleted stores are still marked as not-deleted after the transaction aborts",
+        1
+      ],
+      [
+        "IndexedDB/transaction-abort-multiple-metadata-revert.any.worker.html",
+        "Deleted indexes in newly created stores are still marked as deleted after the transaction aborts",
+        1
+      ]
+    ],
+    "lost": [],
+    "chrome_only": [
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.html",
+        "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.html",
+        "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.serviceworker.html",
+        "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.serviceworker.html",
+        "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.sharedworker.html",
+        "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.sharedworker.html",
+        "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.worker.html",
+        "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.worker.html",
+        "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+        1
+      ]
+    ],
+    "candidate_only": []
+  },
+  "pages": {
+    "base": 18,
+    "candidate": 30,
+    "chrome": 34,
+    "gained": [
+      "IndexedDB/idbobjectstore-rename-abort.any.html",
+      "IndexedDB/idbobjectstore-rename-abort.any.serviceworker.html",
+      "IndexedDB/idbobjectstore-rename-abort.any.sharedworker.html",
+      "IndexedDB/idbobjectstore-rename-abort.any.worker.html",
+      "IndexedDB/transaction-abort-index-metadata-revert.any.html",
+      "IndexedDB/transaction-abort-index-metadata-revert.any.serviceworker.html",
+      "IndexedDB/transaction-abort-index-metadata-revert.any.sharedworker.html",
+      "IndexedDB/transaction-abort-index-metadata-revert.any.worker.html",
+      "IndexedDB/transaction-abort-multiple-metadata-revert.any.html",
+      "IndexedDB/transaction-abort-multiple-metadata-revert.any.serviceworker.html",
+      "IndexedDB/transaction-abort-multiple-metadata-revert.any.sharedworker.html",
+      "IndexedDB/transaction-abort-multiple-metadata-revert.any.worker.html"
+    ],
+    "lost": [],
+    "chrome_only": [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.html",
+      "IndexedDB/idbdatabase_deleteObjectStore.any.serviceworker.html",
+      "IndexedDB/idbdatabase_deleteObjectStore.any.sharedworker.html",
+      "IndexedDB/idbdatabase_deleteObjectStore.any.worker.html"
+    ],
+    "candidate_only": []
+  }
+}

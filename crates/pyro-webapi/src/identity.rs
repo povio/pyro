@@ -107,6 +107,8 @@ impl PageDom {
         self.identity.borrow().bypass_service_worker
     }
     pub(crate) fn apply_request_defaults(&self, request: &mut Request) {
+        request.top_level_site = self.cookie_partition_key();
+        request.cross_site_ancestor = self.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite;
         let identity = self.identity.borrow();
         request.defaults = RequestDefaults {
             extra_headers: identity.extra_headers.clone(),

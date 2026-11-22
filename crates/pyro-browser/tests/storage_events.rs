@@ -77,3 +77,35 @@ fn storage_changes_reach_other_same_origin_documents_only() {
         "q,,v,u,true,false,,"
     );
 }
+
+#[test]
+fn opfs_writer_copies_a_mutable_view_in_a_storage_task() {
+    let mut t = crate::browser_thread().unwrap();
+    let url = "https://app.test/write";
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert(url, "text/html", r#"<script>
+        globalThis.outcome = 'pending';
+        (async () => {
+            const root = await navigator.storage.getDirectory();
+            const file = await root.getFileHandle('bytes', {create: true});
+            const stream = await file.createWritable();
+            const writer = stream.getWriter();
+            const buffer = new Uint8Array([7, 1, 8]);
+            const write = writer.write(new DataView(buffer.buffer, 1, 1));
+            let settled = false;
+            write.then(() => { settled = true; });
+            for (let i = 0; i < 16; ++i) await Promise.resolve();
+            const settledDuringCheckpoint = settled;
+            buffer[1] = 9;
+            await write;
+            await writer.close();
+            const bytes = new Uint8Array(await (await file.getFile()).arrayBuffer());
+            outcome = [settledDuringCheckpoint, bytes.length, bytes[0]].join(',');
+        })().catch(error => { outcome = error.name; });
+    </script>"#, Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar(url)).unwrap();
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "outcome"), "false,1,9");
+}

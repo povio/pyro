@@ -1,0 +1,1907 @@
+{
+  "counts": {
+    "SVG length list": 56,
+    "registry suite": 372,
+    "dialog closedby": 39
+  },
+  "pages": {
+    "element-mutation-null-registry-removal.html": 1,
+    "CustomElementRegistry-multi-register.html": 2,
+    "constructor-reentry-with-different-definition.html": 4,
+    "CustomElementRegistry-initialize.html": 13,
+    "pseudo-class-defined.window.html": 3,
+    "scoped-custom-element-registry-customelementregistry-attribute-in-xhtml.xhtml": 4,
+    "Document-importNode.html": 20,
+    "upgrade.html": 2,
+    "ShadowRoot-init-customElementRegistry.html": 12,
+    "scoped-registry-define-upgrade-criteria.html": 12,
+    "scoped-registry-define-upgrade-order.html": 7,
+    "constructor-direct-call-fallback-registry.window.html": 2,
+    "scoped-registry-initialize-upgrades.html": 12,
+    "Document-customElementRegistry.html": 4,
+    "scoped-registry-registry-define-get-etc.html": 7,
+    "Document-createElementNS.html": 10,
+    "scoped-registry-initialize.html": 27,
+    "CustomElementRegistry-define.html": 3,
+    "ShadowRoot-init-declarative.html": 3,
+    "ShadowRoot-innerHTML.html": 4,
+    "Element-customElementRegistry-exceptions.html": 2,
+    "valid-custom-element-names.html": 16,
+    "adoption.window.html": 36,
+    "scoped-registry-effective-global-registry.html": 42,
+    "constructor-reentry-createElement.window.html": 2,
+    "Construct.html": 3,
+    "Document-createElement.html": 10,
+    "global.window.html": 5,
+    "Document-importNode-cross-document.window.html": 15,
+    "Element-innerHTML.html": 12,
+    "CustomElementRegistry-upgrade.html": 5,
+    "Element-customElementRegistry.html": 11,
+    "scoped-registry-append.html": 14,
+    "scoped-custom-element-registry-customelementregistry-attribute.html": 23,
+    "element-mutation.html": 15,
+    "template.window.html": 9
+  },
+  "names": [
+    [
+      "custom-elements/registries/element-mutation-null-registry-removal.html",
+      "An element's null customElementRegistry should not mutate after removal from a declarative shadow root with shadowrootcustomelementregistry.",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-multi-register.html",
+      "Non-global registries still reject duplicate registrations of the same constructor",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-multi-register.html",
+      "Same constructor can be registered to different registries",
+      1
+    ],
+    [
+      "custom-elements/registries/constructor-reentry-with-different-definition.html",
+      "Re-entry via direct constructor call after calling super()",
+      1
+    ],
+    [
+      "custom-elements/registries/constructor-reentry-with-different-definition.html",
+      "Re-entry via direct constructor call before calling super()",
+      1
+    ],
+    [
+      "custom-elements/registries/constructor-reentry-with-different-definition.html",
+      "Re-entry via upgrade after calling super()",
+      1
+    ],
+    [
+      "custom-elements/registries/constructor-reentry-with-different-definition.html",
+      "Re-entry via upgrade before calling super()",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize does not set descendants whose customElementRegistry already uses a different registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize does not set the registry of nested shadow tree to a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize does not set the registry of nested shadow tree to the global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize is a function on both global and scoped CustomElementRegistry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize is no-op on a subtree with a non-null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize sets element.customElementRegistry permantently",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize sets element.customElementRegistry to a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize sets element.customElementRegistry to the global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize sets registry on shadow root descendants with no registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize throws when the registry scoped is false and the root document already has another registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize throws when the registry scoped is false and the root is the document.",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize works on Document",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-initialize.html",
+      "initialize works on DocumentFragment",
+      1
+    ],
+    [
+      "custom-elements/registries/pseudo-class-defined.window.html",
+      "\"custom\" :defined doesn't care about your registry",
+      1
+    ],
+    [
+      "custom-elements/registries/pseudo-class-defined.window.html",
+      "\"custom\" :defined should apply after initialize",
+      1
+    ],
+    [
+      "custom-elements/registries/pseudo-class-defined.window.html",
+      "\"uncustomized\" :defined doesn't care about your registry'",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute-in-xhtml.xhtml",
+      "XHTML fragment parser should create a custom element candidate with null registry if customelementregistry is set",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute-in-xhtml.xhtml",
+      "XHTML fragment parser should create a defined custom element with null registry if customelementregistry is set",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute-in-xhtml.xhtml",
+      "XHTML parser should create a custom element candidate with null registry if customelementregistry is set",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute-in-xhtml.xhtml",
+      "XHTML parser should create a defined custom element with null registry if customelementregistry is set",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone a shadow host with a declarative shadow DOM using a specified scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone a shadow host with a declarative shadow DOM using the global registry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone a template content using a specified scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone a template content using the global registry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone a template content with a nested template element using a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone using target's registry if non-null",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone using target's registry if non-null, including when it's not the global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone using the global regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should clone using the specified registry if target's registry is null",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should preserve null-ness of custom element registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode should use the provided fallback registry for null-registry descendants nested under non-null-registry ancestors",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: don't pass options argument",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: pass options argument with value false",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: pass options argument with value true",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: pass options argument with value undefined",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: pass options argument with value { customElementRegistry: null }",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: pass options argument with value { customElementRegistry: scopedRegistry }",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: pass options argument with value { selfOnly: false }",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: pass options argument with value { selfOnly: true }",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode.html",
+      "importNode: pass options argument with value { }",
+      1
+    ],
+    [
+      "custom-elements/registries/upgrade.html",
+      "Elements inside a template contents DocumentFragment node",
+      1
+    ],
+    [
+      "custom-elements/registries/upgrade.html",
+      "Two elements as shadow-including descendants (and not descendants) of the upgraded node",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "A newly attached ShadowRoot should use the global registry by default even if the host is within another shadow tree that uses a custom registry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "A newly attached ShadowRoot should use the global registry by default even if the host uses a custom registry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "A newly attached connected ShadowRoot should use the global registry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "A newly attached connected ShadowRoot should use the scoped registry if explicitly specified in attachShadow",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "A newly attached disconnected ShadowRoot should use the global registry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "A newly attached disconnected ShadowRoot should use the scoped registry if explicitly specified in attachShadow",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "attachShadow() should use null registry when customElementRegistry is null (host uses custom registry)",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "attachShadow() should use null registry when customElementRegistry is null (host uses global registry)",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "attachShadow() should use the null registry when the shadow host uses null registry and customElementRegistry is null",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "attchShadow on a builtin element with null customElementRegistry should create a ShadowRoot with null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "attchShadow on a custom elememnt candidate with null customElementRegistry should create a ShadowRoot with null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-customElementRegistry.html",
+      "attchShadow on a custom elememnt with null customElementRegistry should create a ShadowRoot with null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to global registry should not affect shadow roots using scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry affects associated shadow roots in all iframes",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry affects associated shadow roots in other frame trees",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should affect all associated shadow roots",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should not affect document tree scope",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should not affect shadow roots using other registries",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should not upgrade disconnected elements",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should not upgrade nodes in constructed documents",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should not upgrade nodes in detached frames",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should upgrade nodes associated with the registry.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should upgrade nodes even after the node is moved into a separate shadow tree.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-criteria.html",
+      "Adding definition to scoped registry should upgrade nodes even after the node is moved to a separate shadow tree using a different registry.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-order.html",
+      "Elements in the \"owner\" window of a scoped registry are not always upgraded first",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-order.html",
+      "Upgrade in association order across documents, then tree order in each document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-order.html",
+      "Upgrade in shadow-including tree order across tree scopes",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-order.html",
+      "Upgrade in tree order in the same tree scope",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-order.html",
+      "Upgrade order does not depend on shadow root attach order",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-order.html",
+      "Upgrade order is affected by shadow tree adoption across documents",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-define-upgrade-order.html",
+      "Upgrade order is not affected by DOM order between child frames",
+      1
+    ],
+    [
+      "custom-elements/registries/constructor-direct-call-fallback-registry.window.html",
+      "Direct construction of a global-only element after super() during a scoped upgrade",
+      1
+    ],
+    [
+      "custom-elements/registries/constructor-direct-call-fallback-registry.window.html",
+      "Direct construction of a global-only element before super() during a scoped upgrade",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "CustomElementRegistry.prototype.initialize upgrades already initialized elements",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "CustomElementRegistry.prototype.initialize upgrades custom elements in declarative shadow root when initialize() runs before define()",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "CustomElementRegistry.prototype.initialize upgrades custom elements in imperative shadow root when inserted before define()",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "Document: CustomElementRegistry.prototype.initialize only upgrades elements beloning to the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "Document: CustomElementRegistry.prototype.initialize should upgrade elements in tree order",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "Document: CustomElementRegistry.prototype.initialize should upgrade the element given to the first argument",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "HTMLDocument: CustomElementRegistry.prototype.initialize only upgrades elements beloning to the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "HTMLDocument: CustomElementRegistry.prototype.initialize should upgrade elements in tree order",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "HTMLDocument: CustomElementRegistry.prototype.initialize should upgrade the element given to the first argument",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "XHTMLDocument: CustomElementRegistry.prototype.initialize only upgrades elements beloning to the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "XHTMLDocument: CustomElementRegistry.prototype.initialize should upgrade elements in tree order",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize-upgrades.html",
+      "XHTMLDocument: CustomElementRegistry.prototype.initialize should upgrade the element given to the first argument",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-customElementRegistry.html",
+      "customElementRegistry on a document of a connected iframe should return contentWindow.customElements",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-customElementRegistry.html",
+      "customElementRegistry on a document of a disconnected iframe should return contentWindow.customElements",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-customElementRegistry.html",
+      "customElementRegistry on a document should return window.customElements by default",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-customElementRegistry.html",
+      "customElementRegistry on a document without a browsing context should return null",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-registry-define-get-etc.html",
+      "Custom element registries with a registered custom element resolve the class in their whenDefined method",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-registry-define-get-etc.html",
+      "Custom element registries with a registered custom element return the class in their get method, and the name in their getName method",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-registry-define-get-etc.html",
+      "Scoped Custom element registries allow registering name that exists in global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-registry-define-get-etc.html",
+      "Scoped Custom element registries do not inherit names or classes from the global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-registry-define-get-etc.html",
+      "Scoped Custom element registries resolve the same constructor from whenDefined when it is defined in both",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-registry-define-get-etc.html",
+      "Scoped Custom element registries return the same constructor when it is defined in both",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-registry-define-get-etc.html",
+      "Scoped Custom element registry getters do not resolve globally registered classes from whenDefined",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "createElementNS on a non-HTML document should still handle registries correctly",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "createElementNS should create a builtin element regardless of a custom element registry specified",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "createElementNS should create an upgrade candidate and the candidate should be upgraded when the element is defined",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "createElementNS should create an upgrade candidate when there is no matching definition in the specified registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "createElementNS should use the global registry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "createElementNS should use the specified global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "createElementNS should use the specified scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "document.createElement should create a builtin element with null registry if customElement is set to null",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "document.createElement should create a custom element candidate with null registry if customElement is set to null",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElementNS.html",
+      "document.createElement should create a defined custom element with null registry if customElement is set to null",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of an element created after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of an unknown element after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of an unknown element created with a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of an unknown element created with an explicit customElementRegistry argument should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of an upgrade candidate after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of an upgrade candidate connected to a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of an upgrade candidate created with a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of an upgrade candidate created with an explicit customElementRegistry argument should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "Document: customElementRegistry of document and an upgrade candidate after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of an element created after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of an unknown element after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of an unknown element created with a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of an unknown element created with an explicit customElementRegistry argument should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of an upgrade candidate after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of an upgrade candidate connected to a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of an upgrade candidate created with a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of an upgrade candidate created with an explicit customElementRegistry argument should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "HTMLDocument: customElementRegistry of document and an upgrade candidate after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of an element created after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of an unknown element after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of an unknown element created with a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of an unknown element created with an explicit customElementRegistry argument should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of an upgrade candidate after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of an upgrade candidate connected to a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of an upgrade candidate created with a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of an upgrade candidate created with an explicit customElementRegistry argument should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-initialize.html",
+      "XHTMLDocument: customElementRegistry of document and an upgrade candidate after calling CustomElementRegistry.prototype.initialize should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-define.html",
+      "Create a CustomElementRegistry not identically equal to window.customElements",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-define.html",
+      "Defining an element in a scoped global registry does not add a definition to the global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-define.html",
+      "Defining an element in the global registry does not add a definition to a scoped CustomElementRegistry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-declarative.html",
+      "Built-in element inside 'shadowrootcustomelementregistry' declarative shadow root should use document's registry as attachShadow default registry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-declarative.html",
+      "Built-in element inside 'shadowrootcustomelementregistry' shadow root parsed via setHTMLUnsafe should use null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-init-declarative.html",
+      "Custom element inside 'shadowrootcustomelementregistry' declarative shadow root should use document's registry as attachShadow default registry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-innerHTML.html",
+      "innerHTML on a connected shadow root should be able to create an unknown element",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-innerHTML.html",
+      "innerHTML on a connected shadow root should not upgrade a custom element inside a template element",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-innerHTML.html",
+      "innerHTML on a connected shadow root should use the associated scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/ShadowRoot-innerHTML.html",
+      "innerHTML on a shadow root should use the scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry-exceptions.html",
+      "customElementRegistry on a failed custom element created by calling createElement on CustomElementRegistry should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry-exceptions.html",
+      "customElementRegistry on a failed custom element created by setting innerHTML should return the associated scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,0,45,101,108,101,109,101,110,116], string: \"a\u0000-element\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,10,45,101,108,101,109,101,110,116], string: \"a\n-element\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,12,45,101,108,101,109,101,110,116], string: \"a\f-element\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,13,45,101,108,101,109,101,110,116], string: \"a\r-element\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,32,45,101,108,101,109,101,110,116], string: \"a -element\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,45,0], string: \"a-\u0000\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,45,10], string: \"a-\n\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,45,12], string: \"a-\f\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,45,13], string: \"a-\r\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,45,32], string: \"a- \"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,45,47], string: \"a-/\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,45,62], string: \"a->\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,45,9], string: \"a-\t\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,47,45,101,108,101,109,101,110,116], string: \"a/-element\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,62,45,101,108,101,109,101,110,116], string: \"a>-element\"",
+      1
+    ],
+    [
+      "custom-elements/registries/valid-custom-element-names.html",
+      "Invalid custom element name: code points: [97,9,45,101,108,101,109,101,110,116], string: \"a\t-element\"",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with explicit global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with explicit global registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with explicit global registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with explicit global registry into a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with explicit global registry into a scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with explicit global registry into a scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with global registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with global registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with global registry into a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with global registry into a scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with global registry into a scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with scoped registry into a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with scoped registry into a scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption including shadow root with scoped registry into a scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with explicit global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with explicit global registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with explicit global registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with explicit global registry into a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with explicit global registry into a scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with explicit global registry into a scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with global registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with global registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with global registry into a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with global registry into a scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with global registry into a scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with scoped registry into a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with scoped registry into a scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/adoption.window.html",
+      "Adoption with scoped registry into a scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Global registry element with element parent without custom element registry attribute (global registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Global registry element with element parent without custom element registry attribute (global registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Global registry element with element parent without custom element registry attribute (null registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Global registry element with element parent without custom element registry attribute (null registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Global registry element with element parent without custom element registry attribute (scoped registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Global registry element with element parent without custom element registry attribute (scoped registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Global registry element with exclusive DocumentFragment parent adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Global registry element with exclusive DocumentFragment parent appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with declarative shadow root parent with custom element registry attribute (null registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with declarative shadow root parent with custom element registry attribute (null registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with declarative shadow root parent with custom element registry attribute (scoped registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with declarative shadow root parent with custom element registry attribute (scoped registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with element parent without custom element registry attribute (global registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with element parent without custom element registry attribute (global registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with element parent without custom element registry attribute (null registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with element parent without custom element registry attribute (null registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with exclusive DocumentFragment parent adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with exclusive DocumentFragment parent appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with imperative shadow root parent (scoped registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Null registry element with imperative shadow root parent (scoped registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with declarative shadow root parent with custom element registry attribute (global registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with declarative shadow root parent with custom element registry attribute (global registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with declarative shadow root parent with custom element registry attribute (null registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with declarative shadow root parent with custom element registry attribute (null registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with declarative shadow root parent with custom element registry attribute (scoped registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with declarative shadow root parent with custom element registry attribute (scoped registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with declarative shadow root parent without custom element registry attribute adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with declarative shadow root parent without custom element registry attribute appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with element parent without custom element registry attribute (global registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with element parent without custom element registry attribute (global registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with element parent without custom element registry attribute (null registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with element parent without custom element registry attribute (null registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with element parent without custom element registry attribute (scoped registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with element parent without custom element registry attribute (scoped registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with exclusive DocumentFragment parent adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with exclusive DocumentFragment parent appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with imperative shadow root parent (global registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with imperative shadow root parent (global registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with imperative shadow root parent (null registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with imperative shadow root parent (null registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with imperative shadow root parent (scoped registry) adopted by new document",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-effective-global-registry.html",
+      "Scoped registry element with imperative shadow root parent (scoped registry) appended to new document",
+      1
+    ],
+    [
+      "custom-elements/registries/constructor-reentry-createElement.window.html",
+      "Direct construction of a global-only element after super() during a scoped createElement construction",
+      1
+    ],
+    [
+      "custom-elements/registries/constructor-reentry-createElement.window.html",
+      "Direct construction of a global-only element before super() during a scoped createElement construction",
+      1
+    ],
+    [
+      "custom-elements/registries/Construct.html",
+      "A constructor creating an element from another registry before or after super call should work",
+      1
+    ],
+    [
+      "custom-elements/registries/Construct.html",
+      "A constructor uses the global registry to create an element",
+      1
+    ],
+    [
+      "custom-elements/registries/Construct.html",
+      "A constructor with only a scoped custom element registry definition should fail upon construction",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "createElement on a non-HTML document should still handle registries correctly",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "createElement should create a builtin element regardless of a custom element registry specified",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "createElement should create an upgrade candidate and the candidate should be upgraded when the element is defined",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "createElement should create an upgrade candidate when there is no matching definition in the specified registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "createElement should use the global registry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "createElement should use the specified global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "createElement should use the specified scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "document.createElement should create a builtin element with null registry if customElementRegistry is set to null",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "document.createElement should create a custom element candidate with null registry if customElementRegistry is set to null",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-createElement.html",
+      "document.createElement should create a custom element candidate with null registry if customElementRegistry is set to null even if there is a custom element of the same name in the glboal registry",
+      1
+    ],
+    [
+      "custom-elements/registries/global.window.html",
+      "attachShadow() should throw with global registry from another document",
+      1
+    ],
+    [
+      "custom-elements/registries/global.window.html",
+      "createElement() should throw with global registry from another document",
+      1
+    ],
+    [
+      "custom-elements/registries/global.window.html",
+      "createElementNS() should throw with global registry from another document",
+      1
+    ],
+    [
+      "custom-elements/registries/global.window.html",
+      "importNode() should throw with global registry from another document",
+      1
+    ],
+    [
+      "custom-elements/registries/global.window.html",
+      "initialize() of global registry should throw for nodes from another document",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning including shadow tree with explicit global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning including shadow tree with explicit global registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning including shadow tree with global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning including shadow tree with global registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning including shadow tree with global registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning including shadow tree with scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning including shadow tree with scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning including shadow tree with scoped registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning with explicit global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning with explicit global registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning with global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning with global registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning with global registry (scoped registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning with scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Document-importNode-cross-document.window.html",
+      "Cloning with scoped registry (null registry target)",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "createContextualFragment on a range inside a template should use null registry even when the template has a scoped registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "createContextualFragment on a range inside an element with scoped registry should use the scoped registry of the element",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "innerHTML on a disconnected element should use the scoped registry it was created with",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "innerHTML on a disconnected element should use the scoped registry it was created with when parsing a simple HTML",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "innerHTML on a template with a scoped registry should use the scoped registry of the document",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "innerHTML on an inserted element should continue to use the scoped registry it was created with",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "insertAdjacentHTML should use the element's registry even when the registry is null",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "insertAdjacentHTML with afterend should use the containing scope's registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "insertAdjacentHTML with beforebegin should use the containing scope's registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "nested descendants in innerHTML on a disconnected element should use the scoped registry the element was created with",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "nested descendants in innerHTML should use the null registry when the container element has null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-innerHTML.html",
+      "outerHTML setter should use the parent scope's registry, not the replaced element's",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-upgrade.html",
+      "upgrade is a function on both global and scoped CustomElementRegistry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-upgrade.html",
+      "upgrade is a no-op when called on a shadow root with no association",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-upgrade.html",
+      "upgrade is a no-op when called on an element associated with a different registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-upgrade.html",
+      "upgrade should not upgrade a candidate element not associated with a registry",
+      1
+    ],
+    [
+      "custom-elements/registries/CustomElementRegistry-upgrade.html",
+      "upgrade should upgrade a candidate element when called on a shadow root with an association",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry inside a custom element constructor should return the correct registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on a builtin element created by calling createElement on CustomElementRegistry should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on a clone of a declarative shadow tree with shadowrootcustomelementregistry should return null",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on a clone of a declarative shadow tree with shadowrootcustomelementregistry should return the global registry after getting inserted into a document",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on a defined custom element created by calling createElement on CustomElementRegistry should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on a newly constrcuted element should return window.customElements by default",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on an element inside a declarative shadow DOM should return window.customElements by default",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on an element inside a declarative shadow DOM with shadowrootcustomelementregistry should return null",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on an element inside a declarative shadow DOM with shadowrootcustomelementregistry should return the scoped registry after calling initialize",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on an unknown element created by calling createElement on CustomElementRegistry should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/Element-customElementRegistry.html",
+      "customElementRegistry on an upgarde candidate created by calling createElement on CustomElementRegistry should return the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Connecting a custom element candiate in a shadow root with a scoped custom element registry has null registry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Connecting a custom element candiate with a scoped custom element registry does not change the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Connecting a custom element candiate with null registry does not set the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Declarative shadow DOM with shadowrootcustomelementregistry attribute without registry initialized should remain null registry after adoption.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Declarative shadow DOM without shadowrootcustomelementregistry attribute without registry initialized should gain effective global registry after adoption.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Inserting a custom element candiate with null registry does not change the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Inserting a node cloned from a template with null registry into a scoped shadow root should set global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Inserting a node from another document with global registry results in the custom element registry to be set and upgraded.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Inserting a node from another document with null registry results in the custom element registry to be set and upgraded.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Inserting the shadow host of a shadow root with a scoped custom element registry does not change the registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Null registry element should gain effective global registry of null from its parent upon adoption.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "Null registry element should gain effective global registry of scoped registry from its parent upon adoption.",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "adoptNode then inserting into a scoped shadow root should preserve global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-registry-append.html",
+      "customElementRegistry of an upgrade candidate created in a document without a browsing context uses null regsitry by default",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Body with customelementregistry attribute during initial parse should have null registry and propagate to children",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Body with customelementregistry in a complete document structure should have null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Cloning a builtin element with null regsitry should create an element with null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Cloning a custom element candidate with null regsitry should create an element with null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Cloning a custom element with null regsitry should create an element with null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Custom element candidate child of body with customelementregistry should have null registry during initial parse",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Descendants of an element with customelementregistry should use null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Descendants of body with customelementregistry should all have null registry during initial parse",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "HTML parser should create a builtin element with null registry if customelementregistry is set",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "HTML parser should create a custom element candidate with null registry if customelementregistry is set",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "HTML parser should create a custom element with null registry if customelementregistry is set",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Initial parse: built-in element with customelementregistry has null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Initial parse: built-in element without customelementregistry uses global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Initial parse: child of element with customelementregistry inherits null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Initial parse: custom element candidate child inherits null registry from parent",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Initial parse: custom element candidate with customelementregistry has null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Initial parse: custom element candidate without customelementregistry uses global registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Initial parse: deeply nested descendant inherits null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Initial parse: global registry define only upgrades elements without customelementregistry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Setting customelementregistry content attribute after a builtin element had finishsed parsing should not set null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Setting customelementregistry content attribute after a custom element candidate had finishsed parsing should not set null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Setting customelementregistry content attribute after a custom element had finishsed parsing should not set null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html",
+      "Setting customelementregistry content attribute during constructor should not make it use null registry",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "A freshly created element should preserve global registry after append into and removal from a scoped shadow root.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "A freshly created element should preserve global registry after appendChild into and removal from a scoped shadow root.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "A freshly created element should preserve global registry after prepend into and removal from a scoped shadow root.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "A freshly created element should preserve global registry when run append between scoped shadow roots.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "A freshly created element should preserve global registry when run appendChild between scoped shadow roots.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "A freshly created element should preserve global registry when run prepend between scoped shadow roots.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with global registry should not change its registry when run append into a shadow tree with scoped registry.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with global registry should not change its registry when run appendChild into a shadow tree with scoped registry.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with global registry should not change its registry when run prepend into a shadow tree with scoped registry.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with scoped registry should not change its registry when run append into another shadow tree with different scoped registry.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with scoped registry should not change its registry when run append out of the shadow tree.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with scoped registry should not change its registry when run appendChild into another shadow tree with different scoped registry.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with scoped registry should not change its registry when run appendChild out of the shadow tree.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with scoped registry should not change its registry when run prepend into another shadow tree with different scoped registry.",
+      1
+    ],
+    [
+      "custom-elements/registries/element-mutation.html",
+      "An element with scoped registry should not change its registry when run prepend out of the shadow tree.",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "A declarative shadow root gets its default registry from its node document",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "Serializing a global registry ShadowRoot with a global registry host (document)",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "Serializing a null registry ShadowRoot with a global registry host (document)",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "Serializing a null registry ShadowRoot with a null registry host (document)",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "Serializing a null registry ShadowRoot with a scoped registry host (document)",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "Serializing a scoped registry ShadowRoot with a global registry host (document)",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "Serializing a scoped registry ShadowRoot with a null registry host (document)",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "Serializing a scoped registry ShadowRoot with a scoped registry host (document)",
+      1
+    ],
+    [
+      "custom-elements/registries/template.window.html",
+      "shadowRootCustomElementRegistry reflects as string",
+      1
+    ]
+  ]
+}

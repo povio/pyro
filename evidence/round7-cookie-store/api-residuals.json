@@ -1,0 +1,194 @@
+[
+  [
+    "cookiestore/idlharness.https.any.sharedworker.html",
+    "ServiceWorkerRegistration interface: member cookies",
+    "Fail",
+    "undefined is not an Object. (evaluating 'member.name in this.get_interface_object()')",
+    "Pass",
+    ""
+  ],
+  [
+    "cookiestore/idlharness.https.any.worker.html",
+    "ServiceWorkerRegistration interface: member cookies",
+    "Fail",
+    "undefined is not an Object. (evaluating 'member.name in this.get_interface_object()')",
+    "Pass",
+    ""
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set defaults with positional name and value",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set defaults with name and value in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set with expires set to a timestamp 10 years in the future",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set with expires set to a Date 10 years in the future",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set with domain set to the current hostname",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set with path set to the current directory",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set does not add / to path if it does not end with /",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set with sameSite set to strict",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set with sameSite set to lax",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "CookieListItem - cookieStore.set with sameSite set to none",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieListItem_attributes.https.window.html",
+    "Test max-age attribute over the 400 days",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "assert_array_equals: lengths differ, expected array [\"name\", \"value\"] length 2, got [\"domain\", \"expires\", \"name\", \"partitioned\", \"path\", \"sameSite\", \"secure\", \"value\"] length 8"
+  ],
+  [
+    "cookiestore/cookieStore_getAll_arguments.https.any.serviceworker.html",
+    "cookieStore.getAll with absolute url in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: The cookie URL must match this environment's creation URL.\"",
+    "Pass",
+    ""
+  ],
+  [
+    "cookiestore/cookieStore_getAll_arguments.https.any.serviceworker.html",
+    "cookieStore.getAll with relative url in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: The cookie URL must match this environment's creation URL.\"",
+    "Pass",
+    ""
+  ],
+  [
+    "cookiestore/cookieStore_getAll_arguments.https.any.serviceworker.html",
+    "cookieStore.getAll with same-origin url path in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: The cookie URL must match this environment's creation URL.\"",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: Failed to execute 'getAll' on 'CookieStore': URL must be within Service Worker scope\""
+  ],
+  [
+    "cookiestore/cookieStore_getAll_arguments.https.any.serviceworker.html",
+    "cookieStore.getAll with absolute url with fragment in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: The cookie URL must match this environment's creation URL.\"",
+    "Pass",
+    ""
+  ],
+  [
+    "cookiestore/cookieStore_get_arguments.https.any.serviceworker.html",
+    "cookieStore.get with absolute url in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: The cookie URL must match this environment's creation URL.\"",
+    "Pass",
+    ""
+  ],
+  [
+    "cookiestore/cookieStore_get_arguments.https.any.serviceworker.html",
+    "cookieStore.get with relative url in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: The cookie URL must match this environment's creation URL.\"",
+    "Pass",
+    ""
+  ],
+  [
+    "cookiestore/cookieStore_get_arguments.https.any.serviceworker.html",
+    "cookieStore.get with same-origin url path in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: The cookie URL must match this environment's creation URL.\"",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: Failed to execute 'get' on 'CookieStore': URL must be within Service Worker scope\""
+  ],
+  [
+    "cookiestore/cookieStore_get_arguments.https.any.serviceworker.html",
+    "cookieStore.get with absolute url with fragment in options",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"TypeError: The cookie URL must match this environment's creation URL.\"",
+    "Pass",
+    ""
+  ],
+  [
+    "cookiestore/cookieStore_set_path.https.window.html",
+    "CookieListItem - cookieStore.set with empty string path defaults to current URL",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\""
+  ],
+  [
+    "cookiestore/cookieStore_set_path.https.window.html",
+    "CookieListItem - cookieStore.set with empty string path in a document whose default path is \"/\"",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\"",
+    "Fail",
+    "promise_test: Unhandled rejection with value: object \"Error: get_named_cookie() is not implemented by testdriver-vendor.js\""
+  ],
+  [
+    "cookiestore/cookieStore_set_domain_parsing.tentative.sub.https.html",
+    "cookieStore.set with domain on IP host",
+    "Timeout",
+    "Test timed out",
+    "Timeout",
+    "Test timed out"
+  ]
+]

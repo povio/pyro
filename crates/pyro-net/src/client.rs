@@ -547,7 +547,10 @@ impl Shared {
         if send_cookies && !h.contains_key(header::COOKIE) {
             let top = matches!(req.destination, Destination::Document);
             let safe = matches!(req.method, Method::GET | Method::HEAD);
-            let ctx = if req.mode == RequestMode::Navigate && req.origin.is_none() {
+            let ancestor = cookie_partition_cross_site(req, &req.url);
+            let ctx = if !top && (req.cross_site_ancestor || req.destination == Destination::Iframe && ancestor) {
+                SiteContext::CrossSite
+            } else if req.mode == RequestMode::Navigate && req.origin.is_none() {
                 SiteContext::SameSite
             } else if req.origin.is_some() && origin_url.is_none() {
                 if top && safe {
@@ -558,7 +561,15 @@ impl Shared {
             } else {
                 site_context(origin_url, &req.url, top, safe)
             };
-            let cookie = cookies.lock().unwrap().header_for(&req.url, ctx, crate::cookies::now_secs());
+            let cookie = {
+                let mut jar = cookies.lock().unwrap();
+                if jar.is_empty() {
+                    None
+                } else {
+                    let partition = request_cookie_partition(req, &req.url);
+                    jar.header_for_context(&req.url, ctx, crate::cookies::now_secs(), partition.as_deref(), ancestor)
+                }
+            };
             if let Some(c) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
                 h.insert(header::COOKIE, c);
             }
@@ -595,6 +606,39 @@ impl Shared {
             headers.entry(header::CACHE_CONTROL).or_insert(HeaderValue::from_static("no-cache"));
         }
         mode
+    }
+}
+
+// Each top-level navigation hop selects the destination's partition. An
+// iframe or subresource retains the outermost document's site on redirects.
+fn request_cookie_partition<'a>(request: &'a Request, url: &Url) -> Option<Cow<'a, str>> {
+    if request.destination == Destination::Document {
+        crate::cookies::partition_key(url).map(Cow::Owned)
+    } else {
+        request.top_level_site.as_deref().map(Cow::Borrowed)
+    }
+}
+
+fn cookie_partition_cross_site(request: &Request, url: &Url) -> bool {
+    request.destination != Destination::Document
+        && (request.cross_site_ancestor || request.top_level_site.as_deref().is_some_and(|top| {
+            crate::cookies::partition_key(url).as_deref() != Some(top)
+        }))
+}
+
+/// RFC 6265bis allows a top-level navigation to set any SameSite cookie,
+/// even when initiated cross-site and using an unsafe method. Subresource
+/// responses remain subject to the request's site-for-cookies.
+fn response_cookie_site(request: &Request, url: &Url) -> SiteContext {
+    if request.destination == Destination::Document {
+        return SiteContext::SameSite;
+    }
+    if cookie_partition_cross_site(request, url) {
+        return SiteContext::CrossSite;
+    }
+    match request.origin.as_deref() {
+        Some(origin) => Url::parse(origin).map_or(SiteContext::CrossSite, |origin| site_context(Some(&origin), url, false, false)),
+        None => SiteContext::SameSite,
     }
 }
 
@@ -1586,6 +1630,7 @@ fn default_accept(d: Destination) -> &'static str {
         }
         Destination::Style => "text/css,*/*;q=0.1",
         Destination::Json => "application/json,*/*;q=0.5",
+        Destination::Text => "text/plain,*/*;q=0.5",
         Destination::Image => "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         Destination::EventSource => "text/event-stream",
         _ => "*/*",
@@ -1854,15 +1899,19 @@ impl Io {
         }
     }
 
-    fn store_cookies(&self, url: &Url, headers: &HeaderMap, allowed: bool) {
-        if !allowed {
+    fn store_cookies(&self, request: &Request, url: &Url, headers: &HeaderMap, allowed: bool) {
+        if !allowed || !headers.contains_key(header::SET_COOKIE) {
             return;
         }
         let now = crate::cookies::now_secs();
         let mut jar = self.cookies.lock().unwrap();
+        let partition = request_cookie_partition(request, url);
+        let site = response_cookie_site(request, url);
         for v in headers.get_all(header::SET_COOKIE) {
-            if let Ok(s) = v.to_str() {
-                jar.set_from_header(url, s, crate::cookies::Access::Http, now);
+            // HeaderValue::to_str only accepts visible ASCII. Cookie Store
+            // names/values can contain UTF-8, including a leading BOM.
+            if let Ok(s) = std::str::from_utf8(v.as_bytes()) {
+                jar.set_from_header_in(url, s, crate::cookies::Access::Http, now, partition.as_deref(), site);
             }
         }
     }
@@ -2279,7 +2328,7 @@ impl Io {
             }
             // pyro: the same decision as the cookies sent (`includes_credentials`): a tainted hop
             // (a no-cors chain that went through another origin) neither sends nor stores.
-            self.store_cookies(&url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
+            self.store_cookies(&req, &url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
             let response_time = wall_time();
             if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
                 && (status.is_success() || status.is_redirection())
@@ -2744,7 +2793,7 @@ impl Io {
             return Err(NetError::UnsupportedScheme("file".into()));
         }
         if req.mode == RequestMode::Cors
-            && matches!(req.destination, Destination::Script | Destination::Style | Destination::Json)
+            && matches!(req.destination, Destination::Script | Destination::Style | Destination::Json | Destination::Text)
         {
             return Err(NetError::Cors("Cross origin requests are not supported for the file: scheme".into()));
         }
@@ -3154,5 +3203,36 @@ pub(crate) fn includes_credentials(credentials: Credentials, basic_tainting: boo
         Credentials::Include => true,
         Credentials::SameOrigin => basic_tainting,
         Credentials::Omit => false,
+    }
+}
+
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+
+    #[test]
+    fn response_cookie_site_distinguishes_subresources_and_top_level_navigation() {
+        use crate::cookies::{now_secs, Access};
+        let url = Url::parse("https://widget.test/").unwrap();
+        let mut request = Request::get(url.clone(), Destination::Iframe);
+        request.top_level_site = Some("https://site.test".into());
+        request.origin = Some("https://site.test".into());
+        request.method = Method::POST;
+        let mut jar = CookieJar::new();
+        for destination in [Destination::Iframe, Destination::Fetch, Destination::Document] {
+            request.destination = destination;
+            let top = destination == Destination::Document;
+            let site = response_cookie_site(&request, &url);
+            let partition = request_cookie_partition(&request, &url);
+            assert_eq!(site == SiteContext::SameSite, top);
+            assert_eq!(partition.as_deref(), Some(if top { "https://widget.test" } else { "https://site.test" }));
+            assert_eq!(
+                jar.set_from_header_in(&url, "a=lax; Secure; SameSite=Lax", Access::Http, now_secs(), partition.as_deref(), site), top
+            );
+            assert!(jar.set_from_header_in(
+                &url, "b=none; Secure; SameSite=None; Partitioned", Access::Http, now_secs(), partition.as_deref(), site
+            ));
+        }
     }
 }

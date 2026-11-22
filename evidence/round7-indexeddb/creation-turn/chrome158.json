@@ -1,0 +1,164 @@
+{
+  "results": [
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/transaction-deactivation-timing.any.serviceworker.html",
+      "source": "IndexedDB/transaction-deactivation-timing.any.js",
+      "blob": "668e47d05b3de025a89009fe8ac9c7c3d803af27",
+      "environment": "serviceworker",
+      "long": false,
+      "protocol": "https",
+      "status": "complete",
+      "ms": 97,
+      "error": null,
+      "subtests": [
+        {
+          "name": "New transactions are deactivated before next task",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions are not deactivated until after the microtask checkpoint",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions from microtask are deactivated before next task",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions from microtask are still active through the microtask checkpoint",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Deactivation of new transactions happens at end of invocation",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/transaction-deactivation-timing.any.sharedworker.html",
+      "source": "IndexedDB/transaction-deactivation-timing.any.js",
+      "blob": "668e47d05b3de025a89009fe8ac9c7c3d803af27",
+      "environment": "sharedworker",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 97,
+      "error": null,
+      "subtests": [
+        {
+          "name": "New transactions are deactivated before next task",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions are not deactivated until after the microtask checkpoint",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions from microtask are deactivated before next task",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions from microtask are still active through the microtask checkpoint",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Deactivation of new transactions happens at end of invocation",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/transaction-deactivation-timing.any.worker.html",
+      "source": "IndexedDB/transaction-deactivation-timing.any.js",
+      "blob": "668e47d05b3de025a89009fe8ac9c7c3d803af27",
+      "environment": "dedicatedworker",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 385,
+      "error": null,
+      "subtests": [
+        {
+          "name": "New transactions are deactivated before next task",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions are not deactivated until after the microtask checkpoint",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions from microtask are deactivated before next task",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions from microtask are still active through the microtask checkpoint",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Deactivation of new transactions happens at end of invocation",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/transaction-deactivation-timing.any.html",
+      "source": "IndexedDB/transaction-deactivation-timing.any.js",
+      "blob": "668e47d05b3de025a89009fe8ac9c7c3d803af27",
+      "environment": "window",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 35,
+      "error": null,
+      "subtests": [
+        {
+          "name": "New transactions are deactivated before next task",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions are not deactivated until after the microtask checkpoint",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions from microtask are deactivated before next task",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "New transactions from microtask are still active through the microtask checkpoint",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Deactivation of new transactions happens at end of invocation",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    }
+  ]
+}

@@ -659,6 +659,8 @@ class Longhand(Property):
                 "TextAnchor",
                 "ImageOrientation",
                 "InterpolateSize",
+                "Speak",
+                "ReadingFlow",
                 "TextOrientation",
                 "BoxCollapse",
                 "Visibility",

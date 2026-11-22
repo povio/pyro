@@ -1,0 +1,25 @@
+[
+  [
+    "retained scoped definitions after normal frame removal",
+    [
+      true,
+      true,
+      false
+    ]
+  ],
+  [
+    "registry remains usable when the retained instance is created in its own realm",
+    [
+      true,
+      true,
+      true
+    ]
+  ],
+  [
+    "detached foreign host receives a later shadow flag",
+    [
+      true,
+      "NotSupportedError"
+    ]
+  ]
+]

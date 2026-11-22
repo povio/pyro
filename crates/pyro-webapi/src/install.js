@@ -129,6 +129,46 @@
     },
   };
 
+  const fontFeatureMap = (proto) => {
+    const nextEntry = proto.nextEntry, nativeSet = proto.set;
+    const size = getOwnPropertyDescriptor(proto, 'size').get;
+    delete proto.nextEntry;
+    const define = (name, value) => defineProperty(proto, name, { __proto__: null, value, writable: true, enumerable: true, configurable: true });
+    function entries() { return iterator(this, 0); }
+    function iterator(map, kind) {
+      apply(size, map, []); // Brand check at iterator creation.
+      let cursor = 0, done = false;
+      return {
+        __proto__: iteratorPrototypeOfArrays,
+        next() {
+          const entry = done ? undefined : apply(nextEntry, map, [cursor]);
+          if (entry === undefined) { done = true; return { value: undefined, done }; }
+          cursor = entry[0];
+          return { value: kind === 1 ? entry[1] : kind === 2 ? entry[2] : [entry[1], entry[2]], done };
+        },
+      };
+    }
+    define('set', function set(key, indexes) {
+      apply(size, this, []);
+      if (arguments.length < 2) throw new TypeError_('CSSFontFeatureValuesMap.set requires two arguments');
+      if (typeof key === 'symbol') throw new TypeError_('Cannot convert symbol to string');
+      key = String_(key);
+      const values = [];
+      const method = indexes !== null && (typeof indexes === 'object' || typeof indexes === 'function')
+        ? indexes[symbolIterator] : undefined;
+      if (method == null) { append(values, indexes >>> 0); }
+      else {
+        for (const v of { [symbolIterator]() { return apply(method, indexes, []); } }) append(values, v >>> 0);
+      }
+      return apply(nativeSet, this, [key, values]);
+    });
+    define('entries', entries);
+    define('keys', function keys() { return iterator(this, 1); });
+    define('values', function values() { return iterator(this, 2); });
+    define('forEach', forEachOf(entries));
+    defineProperty(proto, symbolIterator, { __proto__: null, value: entries, writable: true, configurable: true });
+  };
+
   // url_search_params, given the native USVString conversion: [helpers, the
   // steps completing URLSearchParams.prototype and the iterator prototype
   // once their members are installed].
@@ -223,6 +263,64 @@
     if (variable) throw new TypeError_('Expected a fixed-length backing buffer');
     return apply(viewLength, view, []);
   };
+  // WebCodecs uses fixed BufferSources, including shared buffers and views.
+  // Use brand-checking intrinsic getters so an overridden buffer or byteLength
+  // property cannot change the range copied.
+  const fixedByteView = (value, source = false) => {
+    let buffer = value;
+    const view = isView(value);
+    const typed = view && apply(viewName, value, []) !== undefined;
+    if (view) buffer = apply(typed ? viewBuffer : dataViewBuffer, value, []);
+    let shared = false, length;
+    try { length = apply(bufferLength, buffer, []); }
+    catch (error) {
+      if (!sharedLength) throw error;
+      length = apply(sharedLength, buffer, []);
+      shared = true;
+    }
+    const variable = shared ? growable : resizable;
+    if (variable && apply(variable, buffer, [])) throw new TypeError_('Expected a fixed-length buffer');
+    // Reading the bytes held by a detached input produces the empty byte
+    // sequence. A copy destination must remain writable.
+    if (source && length === 0) return new Uint8Array_(0);
+    if (!view) return new Uint8Array_(buffer);
+    const offset = apply(typed ? viewOffset : dataViewOffset, value, []);
+    return new Uint8Array_(buffer, offset, apply(typed ? viewLength : dataViewLength, value, []));
+  };
+  const transferBuffer = ArrayBuffer.prototype.transfer, byteSet = Uint8Array_.prototype.set;
+  const Set_ = Set, setAdd = Set.prototype.add, setHas = Set.prototype.has;
+  const CloneException = DOMException;
+  const chunkTransferList = value => {
+    const out = [];
+    if (value !== undefined) {
+      if (value === null || (typeof value !== 'object' && typeof value !== 'function'))
+        throw new TypeError_('Chunk transfer list must be a sequence');
+      for (const entry of value) {
+        apply(bufferLength, entry, []);
+        if (resizable && apply(resizable, entry, [])) throw new TypeError_('Expected a fixed-length transfer buffer');
+        append(out, entry);
+      }
+    }
+    return out;
+  };
+  const copyChunkInput = (bytes, transfers) => {
+    const seen = new Set_();
+    for (let i = 0; i < transfers.length; i++) {
+      const entry = transfers[i];
+      if (apply(setHas, seen, [entry])) throw new CloneException('Duplicate transfer', 'DataCloneError');
+      apply(setAdd, seen, [entry]);
+      try { new Uint8Array_(entry, 0, 0); }
+      catch (_) { throw new CloneException('Detached transfer', 'DataCloneError'); }
+    }
+    // Take a snapshot, including for shared data, before detaching any input.
+    const snapshot = new Uint8Array_(bytes);
+    for (let i = 0; i < transfers.length; i++) apply(transferBuffer, transfers[i], [0]);
+    return snapshot;
+  };
+  const copyChunkTo = (dst, src) => {
+    if (apply(viewLength, src, []) > apply(viewLength, dst, [])) throw new TypeError_('Chunk destination is too small');
+    apply(byteSet, dst, [src]);
+  };
   const toWellFormed = String.prototype.toWellFormed;
   const blobParts = (parts) => {
     const out = [];
@@ -258,12 +356,13 @@
 
   return {
     blobParts,
-    encoding: { __proto__: null, viewBytes, encodeIntoCapacity },
+    encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, chunkTransferList, copyChunkInput, copyChunkTo },
     mutationOptions,
     intersection: [intersectionThresholds, freeze],
     formData: [formDataPopulated, formDataIteratorPopulated],
     headers: [headersHelpers, headersPopulated],
     urlSearchParams,
+    fontFeatureMap,
     structuredClone: structuredCloneFactory,
     // Element's own [Unscopable] `slot` (DOM) joins ChildNode's and ParentNode's.
     unscopables: [unscopable([...child, ...parent, 'slot']), unscopable(child), unscopable(child), unscopable([...parent, 'fullscreen']), unscopable(parent)],

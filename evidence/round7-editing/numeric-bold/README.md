@@ -1,0 +1,15 @@
+# Removing bold from an inline numeric font weight
+
+Tested source 8b29fba4216a7c1f04f5946717379b4019bdb818 against exact parent f329ccf6b20a6e9ae7d6927590bf14c6f54c107d. The frozen executable SHA-256 values were 50d3e054f9c24ccedba69a9bb5a1e0ffaa8d59735ca948da14291bc9e8a1b92b and 20765c79e60c957ca6a770ce738d0ff803639055f4151b90d1a0b5968fce3f03 respectively. The parent was built once and shared read-only. Both build receipts record source tree, JSC archive, compiler and profile. Commit 659ec8f30 adds only the backward-selection native test.
+
+The command already recognized a computed weight of 600 or above as bold. When removing formatting, the editor previously recognized a span carrying only the literal font-weight:bold declaration but missed an equivalent numeric weight. Removal and state queries now share the numeric threshold. A partial selection can therefore lose its bold formatting while the text on either side keeps its original weight.
+
+## Named WPT
+
+Independent QA verified **51 gains and zero losses** across 33,316 matched formatting names on 44 pages. All 51 gains pass signed Chrome 158.0.8127.37. They comprise 28 command-state and 23 serialized markup assertions. Passes rose from 29,496 to 29,547; fully passing pages remained 2/44. On the ten multitest shards, all 10,092 statuses held (8,992 passing). All 928 Pyro-only passes were retained (766 formatting and 162 multitest). The separate 36 Chrome-only formatting names are included in the union ledger and excluded from the 43,408 matched-name denominator. Parent and candidate measurements were fresh; the signed WPT reference was reused from the matching profiles. Each ledger row contains URL, name, occurrence, parent, candidate and Chrome status.
+
+## Direct editing and undo
+
+QA checked 599, 600, 700, 800 and 900 in forward/backward and full/partial selections. For spans whose only declaration was a numeric weight of 600 or above, all 16 cases matched Chrome's exact post-edit markup and computed text weights/colors. Including the four 599 cases, exact markup agreement for pure numeric spans rose from 0 to 16/20, and bold-state agreement rose from 4 to 20/20. The 599 cases retained parent behavior. Across all 60 independent cases, selected text and selection direction matched Chrome in 60/60; undo restored the original markup in 60/60. The holding of original wrapper references after edit agreed with Chrome in 58/60 (50/60 on the parent). Undo uses the existing snapshot implementation; object identity after undo differs from Chrome.
+
+Spans with another inline declaration and class-styled spans still follow the existing formatting path. Exact markup agreement remained 0/20 for mixed declarations and 4/20 for class styling. These known differences, including selected and unselected text weights and colors, are retained in the raw QA controls. A separate 96-case owner matrix also exercised collapsed typing, numeric 650/1000 and the literal bold keyword. No parent-relative markup or state losses were observed in that matrix. Three exact native filters passed, including the new partial backward-selection guard.

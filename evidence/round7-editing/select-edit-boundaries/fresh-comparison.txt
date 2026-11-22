@@ -1,0 +1,12 @@
+fresh48 parent delete {'html': 0, 'anchor': 0, 'focus': 0, 'direction': 16, 'index': 16, 'connected': 4, 'undo': 16, 'events': 0, 'undoReturn': 16, 'undoHTML': 16}
+fresh48 parent forwardDelete {'html': 0, 'anchor': 0, 'focus': 0, 'direction': 16, 'index': 12, 'connected': 0, 'undo': 16, 'events': 0, 'undoReturn': 16, 'undoHTML': 16}
+fresh48 parent insertText {'html': 0, 'anchor': 0, 'focus': 0, 'direction': 16, 'index': 16, 'connected': 16, 'undo': 16, 'events': 0, 'undoReturn': 16, 'undoHTML': 16}
+fresh48 r3 delete {'html': 4, 'anchor': 4, 'focus': 4, 'direction': 4, 'index': 16, 'connected': 4, 'undo': 4, 'events': 0, 'undoReturn': 4, 'undoHTML': 16}
+fresh48 r3 forwardDelete {'html': 0, 'anchor': 3, 'focus': 0, 'direction': 0, 'index': 12, 'connected': 0, 'undo': 0, 'events': 0, 'undoReturn': 0, 'undoHTML': 16}
+fresh48 r3 insertText {'html': 0, 'anchor': 0, 'focus': 0, 'direction': 0, 'index': 16, 'connected': 16, 'undo': 0, 'events': 0, 'undoReturn': 0, 'undoHTML': 16}
+fresh48 final delete {'html': 8, 'anchor': 8, 'focus': 8, 'direction': 8, 'index': 16, 'connected': 4, 'undo': 8, 'events': 0, 'undoReturn': 8, 'undoHTML': 16}
+fresh48 final forwardDelete {'html': 16, 'anchor': 15, 'focus': 15, 'direction': 16, 'index': 12, 'connected': 16, 'undo': 16, 'events': 0, 'undoReturn': 16, 'undoHTML': 16}
+fresh48 final insertText {'html': 16, 'anchor': 16, 'focus': 16, 'direction': 16, 'index': 16, 'connected': 16, 'undo': 16, 'events': 0, 'undoReturn': 16, 'undoHTML': 16}
+fresh48 outside delete {'html': 8, 'anchor': 12, 'focus': 12, 'direction': 16, 'index': 16, 'connected': 4, 'undo': 8, 'events': 0, 'undoReturn': 8, 'undoHTML': 16}
+fresh48 outside forwardDelete {'html': 16, 'anchor': 15, 'focus': 15, 'direction': 16, 'index': 12, 'connected': 16, 'undo': 16, 'events': 0, 'undoReturn': 16, 'undoHTML': 16}
+fresh48 outside insertText {'html': 16, 'anchor': 16, 'focus': 16, 'direction': 16, 'index': 16, 'connected': 16, 'undo': 16, 'events': 0, 'undoReturn': 16, 'undoHTML': 16}

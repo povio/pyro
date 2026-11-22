@@ -146,6 +146,18 @@ where
     W::Data: WindowHost,
 {
     crate::handlers::define_window(def);
+    macro_rules! bar_prop {
+        ($property:literal, $slot:literal) => {
+            def.accessor($property, |s, w| bar_prop(s, w.page(), $slot),
+                |s, w, value| replace_window_attribute(s, w.page(), $property, value));
+        };
+    }
+    bar_prop!("locationbar", 5);
+    bar_prop!("menubar", 6);
+    bar_prop!("personalbar", 7);
+    bar_prop!("scrollbars", 8);
+    bar_prop!("statusbar", 9);
+    bar_prop!("toolbar", 10);
     // `install` makes `document` the global's own constant attribute where
     // the JavaScriptCore can (`has_window_constants`). Otherwise (the system
     // framework) this getter serves it: the lean dispatch, which finds the
@@ -162,7 +174,8 @@ where
         |s, _w| crate::target::current_event(s),
         |s, w, value| replace_window_attribute(s, w.page(), "event", value),
     );
-    def.getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
+    def.global_getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
+    def.global_getter("cookieStore", |s, w| crate::cookie_store::member(s, w.page(), "cookieStore"));
     def.getter("caches", |s, w| crate::cache_storage::caches(s, w.page()));
     def.getter("localStorage", |s, w| crate::storage::window_storage(s, w.page(), false));
     def.getter("sessionStorage", |s, w| crate::storage::window_storage(s, w.page(), true));
@@ -178,6 +191,7 @@ where
     crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition");
     crate::crypto::define_globals(def);
     crate::storage_manager::define_globals(def);
+    crate::storage_manager::define_file_system_globals(def);
     crate::service_worker::define_globals(def);
     crate::cache_storage::define_globals(def);
     crate::event_source::define_globals(def);
@@ -188,6 +202,7 @@ where
     crate::web_locks::define_globals(def);
     crate::media_devices::define_globals(def);
     crate::paint_worklet::define_globals(def);
+    crate::lazy_module::lazy_globals!(def, crate::pseudo_element::MODULE, "CSSPseudoElement");
     crate::typed_om::define_globals(def);
     crate::trusted_types::define_globals(def);
     crate::trusted_types::define_parser_options_global(def);
@@ -257,10 +272,10 @@ where
     def.getter("scrollY", |s, w| Ok(s.number(w.page().layout.borrow().scroll_y() as f64)));
     def.getter("pageXOffset", |s, w| Ok(s.number(w.page().layout.borrow().scroll_x() as f64)));
     def.getter("pageYOffset", |s, w| Ok(s.number(w.page().layout.borrow().scroll_y() as f64)));
-    def.getter("screenX", |s, _w| Ok(s.number(0.0)));
-    def.getter("screenY", |s, _w| Ok(s.number(0.0)));
-    def.getter("screenLeft", |s, _w| Ok(s.number(0.0)));
-    def.getter("screenTop", |s, _w| Ok(s.number(0.0)));
+    def.getter("screenX", |s, w| Ok(s.number(f64::from(w.page().screen_position().0))));
+    def.getter("screenY", |s, w| Ok(s.number(f64::from(w.page().screen_position().1))));
+    def.getter("screenLeft", |s, w| Ok(s.number(f64::from(w.page().screen_position().0))));
+    def.getter("screenTop", |s, w| Ok(s.number(f64::from(w.page().screen_position().1))));
     def.method("scroll", 0, |s, w, a| window_scroll(w.page(), &a, false).map(|_| s.undefined()));
     def.method("scrollTo", 0, |s, w, a| window_scroll(w.page(), &a, false).map(|_| s.undefined()));
     def.method("scrollBy", 0, |s, w, a| window_scroll(w.page(), &a, true).map(|_| s.undefined()));
@@ -819,7 +834,24 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     Ok(o.value())
 }
 
+struct BarProp;
+impl JsClass for BarProp {
+    const NAME: &'static str = "BarProp";
+    type Data = std::rc::Weak<PageDom>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("visible", |s, page| Ok(s.boolean(page.upgrade().is_none_or(|p| p.bars_visible()))));
+    }
+}
+
+fn bar_prop<'s>(s: &Scope<'s>, page: &Rc<PageDom>, slot: u64) -> JsResult<Value<'s>> {
+    let key = pyro_js::IdentityKey(page.id() | (1 << 57), slot);
+    same_object(s, page, key, || s.wrap::<BarProp>(Rc::downgrade(page), Some(key)))
+}
+
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<BarProp>();
     engine.register::<Navigator>();
     engine.register::<Screen>();
     engine.register::<VisualViewport>();
@@ -839,11 +871,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<Value<'s>> {
     let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
     let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
-    let features = crate::util::opt_dom_string(a.get(2))?.unwrap_or_default().to_ascii_lowercase();
-    let no_opener = features
-        .split(|c: char| c == ',' || c.is_ascii_whitespace())
-        .filter_map(|f| f.split('=').next())
-        .any(|f| f == "noopener" || f == "noreferrer");
+    let features = crate::window_features::WindowFeatures::parse(&crate::util::opt_dom_string(a.get(2))?.unwrap_or_default());
+    let no_opener = features.noopener;
     let url_given = !url.is_empty();
     let url = if url.is_empty() {
         "about:blank".to_owned()
@@ -866,7 +895,11 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
             page.popups.borrow().iter().find(|(n, p)| *n == target && !p.is_closed()).map(|(_, p)| p.clone());
         if let Some(popup) = existing {
             if url_given {
-                page.popup_command(popup.clone(), crate::popup::PopupCommand::Navigate(url));
+                page.popup_command(popup.clone(), crate::popup::PopupCommand::OpenNamed {
+                    url,
+                    referrer: page.client_referrer().map(Into::into),
+                    policy: page.referrer_policy(),
+                });
             }
             return crate::popup::wrap_popup(s, page, &popup);
         }
@@ -888,11 +921,8 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
         opener,
         popup: ticket,
         // The `noreferrer` feature: no referrer (the others: the document's policy).
-        referrer_policy: features
-            .split(|c: char| c == ',' || c.is_ascii_whitespace())
-            .filter_map(|f| f.split('=').next())
-            .any(|f| f == "noreferrer")
-            .then_some(pyro_net::ReferrerPolicy::NoReferrer),
+        window_features: features,
+        referrer_policy: features.noreferrer.then_some(pyro_net::ReferrerPolicy::NoReferrer),
         source: None,
         form_entries: None,
         replace: false,
@@ -1001,6 +1031,14 @@ fn find_text(page: &Rc<PageDom>, needle: &str, case_sensitive: bool, backwards: 
             true => (lo..=hi).rev().find(|&at| matches(text, at)),
         };
         if let Some(at) = found {
+            let searchable = {
+                let dom = page.dom.borrow();
+                dom.parent_element(*node).ok().flatten().is_some_and(|parent| {
+                    page.layout().style().computed(&dom, parent).is_some_and(|s|
+                        !s.inert && !s.in_display_none && !s.visibility_hidden)
+                })
+            };
+            if !searchable { continue; }
             // As Chromium: selecting the match starts a selection (`selectstart` at its text, which
             // a listener may cancel).
             if !crate::input::fire_simple(page, *node, "selectstart", true, true) {

@@ -1,0 +1,3628 @@
+{
+  "counts": {
+    "base": 205,
+    "candidate": 209,
+    "repeat": 209,
+    "chrome": 209
+  },
+  "gain": [
+    [
+      "IndexedDB/key_invalid.any.html",
+      "Invalid key - proxy of an array"
+    ],
+    [
+      "IndexedDB/key_invalid.any.serviceworker.html",
+      "Invalid key - proxy of an array"
+    ],
+    [
+      "IndexedDB/key_invalid.any.sharedworker.html",
+      "Invalid key - proxy of an array"
+    ],
+    [
+      "IndexedDB/key_invalid.any.worker.html",
+      "Invalid key - proxy of an array"
+    ]
+  ],
+  "loss": [],
+  "repeatGain": [],
+  "repeatLoss": [],
+  "cost": {
+    "base": {
+      "wallMs": 613,
+      "browserCpuS": 0.8,
+      "runnerCpuS": 0.891437,
+      "serverCpuS": 0,
+      "restarts": 0,
+      "watchdogKills": 0
+    },
+    "candidate": {
+      "wallMs": 678,
+      "browserCpuS": 0.89,
+      "runnerCpuS": 0.914327,
+      "serverCpuS": 0,
+      "restarts": 0,
+      "watchdogKills": 0
+    },
+    "repeat": {
+      "wallMs": 556,
+      "browserCpuS": 0.73,
+      "runnerCpuS": 0.790792,
+      "serverCpuS": 0,
+      "restarts": 0,
+      "watchdogKills": 0
+    },
+    "chrome": {}
+  },
+  "urls": {
+    "IndexedDB/key_invalid.any.html": {
+      "base": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": [
+          {
+            "name": "Invalid key - proxy of an array",
+            "status": "Fail",
+            "msg": "assert_throws_dom: function \"() => {\n        objStore.add('value', key);\n      }\" did not throw"
+          }
+        ]
+      },
+      "candidate": {
+        "status": "complete",
+        "error": null,
+        "pass": 35,
+        "other": []
+      },
+      "repeat": {
+        "status": "complete",
+        "error": null,
+        "pass": 35,
+        "other": []
+      },
+      "chrome": {
+        "status": "complete",
+        "error": null,
+        "pass": 35,
+        "other": []
+      }
+    },
+    "IndexedDB/key_invalid.any.serviceworker.html": {
+      "base": {
+        "status": "complete",
+        "error": null,
+        "pass": 33,
+        "other": [
+          {
+            "name": "Invalid key - proxy of an array",
+            "status": "Fail",
+            "msg": "assert_throws_dom: function \"() => {\n        objStore.add('value', key);\n      }\" did not throw"
+          }
+        ]
+      },
+      "candidate": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      },
+      "repeat": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      },
+      "chrome": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      }
+    },
+    "IndexedDB/key_invalid.any.sharedworker.html": {
+      "base": {
+        "status": "complete",
+        "error": null,
+        "pass": 33,
+        "other": [
+          {
+            "name": "Invalid key - proxy of an array",
+            "status": "Fail",
+            "msg": "assert_throws_dom: function \"() => {\n        objStore.add('value', key);\n      }\" did not throw"
+          }
+        ]
+      },
+      "candidate": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      },
+      "repeat": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      },
+      "chrome": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      }
+    },
+    "IndexedDB/key_invalid.any.worker.html": {
+      "base": {
+        "status": "complete",
+        "error": null,
+        "pass": 33,
+        "other": [
+          {
+            "name": "Invalid key - proxy of an array",
+            "status": "Fail",
+            "msg": "assert_throws_dom: function \"() => {\n        objStore.add('value', key);\n      }\" did not throw"
+          }
+        ]
+      },
+      "candidate": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      },
+      "repeat": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      },
+      "chrome": {
+        "status": "complete",
+        "error": null,
+        "pass": 34,
+        "other": []
+      }
+    },
+    "IndexedDB/key_valid.any.html": {
+      "base": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "candidate": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "repeat": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "chrome": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      }
+    },
+    "IndexedDB/key_valid.any.serviceworker.html": {
+      "base": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "candidate": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "repeat": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "chrome": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      }
+    },
+    "IndexedDB/key_valid.any.sharedworker.html": {
+      "base": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "candidate": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "repeat": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "chrome": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      }
+    },
+    "IndexedDB/key_valid.any.worker.html": {
+      "base": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "candidate": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "repeat": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      },
+      "chrome": {
+        "status": "complete",
+        "error": null,
+        "pass": 18,
+        "other": []
+      }
+    }
+  },
+  "passSets": {
+    "base": [
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - document.getElementsByTagName(\"script\")"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Date(0)"
+      ]
+    ],
+    "candidate": [
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - document.getElementsByTagName(\"script\")"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Date(0)"
+      ]
+    ],
+    "repeat": [
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - document.getElementsByTagName(\"script\")"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Date(0)"
+      ]
+    ],
+    "chrome": [
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - document.getElementsByTagName(\"script\")"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.serviceworker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.sharedworker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - /foo/"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Array (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Array clone\u2019s instance"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - Math"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - NaN"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - String (object)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [,1]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [1,2,3,,]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [[1], [3], [7], [[ sparse array ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [[], [], [], [[ Date ]]]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [undefined]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - [{}]"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array directly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array indirectly contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - array member contains self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - false"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - function() {}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Boolean()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Date(Infinity)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Date(NaN)"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new Number()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new RegExp()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - new String()"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - null"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - proxy of an array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - self"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - sparse array"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - sparse array 2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - true"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - undefined"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - undefined2"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - { obj: 1 }"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - {length:0,constructor:Array}"
+      ],
+      [
+        "IndexedDB/key_invalid.any.worker.html",
+        "Invalid key - {}"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.serviceworker.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.sharedworker.html",
+        "Valid key - new Date(0)"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"NaN\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\\"\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\n\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\u0000\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"\\u1234\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - \"foo\""
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - -Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 0"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 1.5"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 3e-38"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - 3e38"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - Infinity"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - [\"undefined\"]"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - []"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Array()"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Date()"
+      ],
+      [
+        "IndexedDB/key_valid.any.worker.html",
+        "Valid key - new Date(0)"
+      ]
+    ]
+  }
+}

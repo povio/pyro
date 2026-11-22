@@ -125,6 +125,20 @@ fn check(name: &str, html: &str, scroll_y: i32, expected: &[(&str, [f64; 8])], d
 }
 
 #[test]
+fn flex_container_intrinsic_height_bounds() {
+    let layout = page("<!doctype html><style>
+        section {display:inline-flex;vertical-align:top;width:50px;border:2px solid}
+        section > div {height:30px;flex:none}
+        </style>
+        <section id=min style='height:0;min-height:min-content'><div></div></section>
+        <section id=max style='height:90px;max-height:max-content;flex-direction:column'><div></div><div></div></section>
+        <section id=unclamped style='height:90px;min-height:max-content'><div></div></section>");
+    assert_eq!(layout.metrics("min")[3], 34.0);
+    assert_eq!(layout.metrics("max")[3], 64.0);
+    assert_eq!(layout.metrics("unclamped")[3], 94.0);
+}
+
+#[test]
 fn flow_parity_stack() {
     let html = "<!doctype html><body><div id=a style=\"height:30px\"></div><div id=b style=\"height:40px;margin-top:10px\"></div><div id=c style=\"width:200px;height:20px;margin:5px auto\"></div><div id=d style=\"width:50%;height:10px\"></div></body>";
     check(
@@ -1207,6 +1221,23 @@ fn flow_parity_shrink_to_fit_min_content_floor() {
     // b and d wrap below a and c.
     assert!(p.metrics("b")[1] > p.metrics("a")[1] && p.metrics("d")[1] > p.metrics("c")[1], "wrapped");
     assert!(diffs.is_empty(), "shrink-to-fit:\n{}", diffs.join("\n"));
+}
+
+#[test]
+fn flex_compressible_mixed_percentage_keeps_length() {
+    for (direction, writing_mode, metric) in [("row", "horizontal-tb", 2), ("column", "vertical-lr", 3)] {
+        for kind in ["text", "range"] {
+            for (sizing, expected) in [("border-box", 140.0), ("content-box", 154.0)] {
+                let html = format!(
+                    "<!doctype html><div style='display:flex;flex-direction:{direction};width:300px;height:300px'>\
+                     <div style='flex:0 0 200px'></div>\
+                     <input id=field type={kind} style='appearance:none;writing-mode:{writing_mode};\
+                     inline-size:calc(100% + 140px);box-sizing:{sizing};padding:5px;border:2px solid;margin:0'></div>"
+                );
+                assert_eq!(page(&html).metrics("field")[metric], expected, "{direction} {kind} {sizing}");
+            }
+        }
+    }
 }
 
 #[test]

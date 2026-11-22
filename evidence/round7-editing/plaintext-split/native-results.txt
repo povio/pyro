@@ -1,0 +1,2 @@
+test editing_js::paragraph_insertion_in_a_phrasing_host_uses_the_caret_style ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 703 filtered out; finished in 0.21s

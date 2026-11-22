@@ -391,6 +391,58 @@ struct ResolvedFrame {
 }
 
 impl BaseDocument {
+    /// Compute CSS animation declarations for script without changing playback.
+    pub fn css_animation_frames(&self, id: NodeId, name: &str) -> Option<Vec<(f64, Option<String>, Option<String>, Vec<(String, String, String)>)>> {
+        use style_traits::ToCss;
+        let node = self.nodes.get(id)?;
+        let primary = node.primary_styles()?.clone();
+        let _scope = crate::stylo::LayoutThreadScope::enter();
+        let guard = self.guard.read();
+        let shared = SharedStyleContext {
+            traversal_flags: TraversalFlags::empty(), stylist: &self.stylist, options: GLOBAL_STYLE_DATA.options.clone(),
+            guards: StylesheetGuards::same(&guard), visited_styles_enabled: false, animations: self.animations.clone(),
+            current_time_for_animations: 0.0, snapshot_map: &self.snapshots,
+            registered_speculative_painters: &crate::stylo::RegisteredPaintersImpl,
+        };
+        let name = Atom::from(name);
+        let animation = match animation_name_scope(self, node) {
+            Some(scope) => self.stylist.lookup_keyframes_scoped(&name, scope, node),
+            None => self.stylist.lookup_keyframes(&name, node),
+        }?;
+        let mut thread = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread };
+        let tree = self.stylist.rule_tree();
+        let base_rules = tree.remove_animation_rules(primary.rules());
+        let base = if base_rules == *primary.rules() { primary } else { cascade(node, &mut context, base_rules.clone(), &primary) };
+        let mut frames = Vec::new();
+        for step in &animation.steps {
+            let KeyframesStepValue::Declarations { block } = &step.value else { continue };
+            let specified = block.read_with(&guard);
+            let mut easing = None;
+            let mut composite = None;
+            for declaration in specified.normal_declaration_iter() {
+                match declaration {
+                    PropertyDeclaration::AnimationTimingFunction(v) => easing = v.0.first().map(|f| f.to_computed_value_without_context().to_css_string()),
+                    PropertyDeclaration::AnimationComposition(v) => composite = v.0.first().map(|c| c.to_css_string()),
+                    _ => {}
+                }
+            }
+            let block = keyframe_block(specified, &base);
+            let ids: Vec<_> = block.normal_declaration_iter().map(|d| d.id().to_owned()).collect();
+            if ids.is_empty() && easing.is_none() && composite.is_none() { continue; }
+            let locked = ServoArc::new(self.guard.wrap(block));
+            let rules = tree.update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations), LayerOrder::root(),
+                Some(locked.borrow_arc()), &base_rules, &shared.guards, &mut false).unwrap_or_else(|| base_rules.clone());
+            let computed = cascade(node, &mut context, rules, &base);
+            let values = ids.into_iter().map(|id| {
+                let id = id.as_borrowed();
+                (id.name().into_owned(), computed.computed_value_to_string(id), base.computed_value_to_string(id))
+            }).collect();
+            frames.push((f64::from(step.start_offset.percentage.0), easing, composite, values));
+        }
+        Some(frames)
+    }
+
     pub(crate) fn animated_marker_style(
         &self, node: &Node, primary: &ServoArc<ComputedValues>, base: Option<&ServoArc<ComputedValues>>,
     ) -> Option<ServoArc<ComputedValues>> {

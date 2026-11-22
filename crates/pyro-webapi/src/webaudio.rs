@@ -50,6 +50,8 @@ where
         "OscillatorNode",
         "ConstantSourceNode",
         "GainNode",
+        "WaveShaperNode",
+        "AnalyserNode",
         "DelayNode",
         "ConvolverNode",
         "StereoPannerNode",

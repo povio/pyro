@@ -1,0 +1,8 @@
+[
+  "css/geometry/structured-serialization.html",
+  "css/geometry/DOMPoint-001.html",
+  "css/geometry/DOMRect-001.html",
+  "css/geometry/DOMQuad-001.html",
+  "css/geometry/DOMMatrix-001.html",
+  "css/geometry/DOMMatrix-invert-preserves-2d.html"
+]

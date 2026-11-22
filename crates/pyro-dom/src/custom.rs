@@ -91,6 +91,9 @@ pub(crate) struct ReactionQueue {
     observed: FxHashMap<LocalName, Vec<LocalName>>,
     /// The element names some window defined (the parser constructs those).
     defined: FxHashSet<LocalName>,
+    /// Qualified prefilter for creation reactions. A definition in another
+    /// registry does not enqueue an upgrade on a freshly parsed element.
+    registry_definitions: FxHashSet<(Option<NodeId>, crate::RegistryAssociation, LocalName, LocalName)>,
     /// Installed by the bindings of a window with its first definition,
     /// by the window's document.
     parser: FxHashMap<NodeId, Rc<dyn ParserCustomElements>>,
@@ -175,6 +178,9 @@ impl Dom {
         {
             self.inline_transitions_seen = true;
         }
+        if name.ns == markup5ever::ns!() && &*name.local == "popover" {
+            self.popover_attribute_changed(i, old, new);
+        }
         let observes = self.n(i).element().is_some_and(|e| e.flags & element_flags::OBSERVES_ATTRIBUTES != 0);
         if observes {
             self.observed_attribute_changed(i, name, old, new);
@@ -223,6 +229,27 @@ impl Dom {
             parser.insert(document, hooks);
         }
         self.reactions.parser = parser;
+    }
+
+    pub fn note_registry_definition(&mut self, doc: NodeId, registry: crate::RegistryAssociation,
+        name: &LocalName, local: &LocalName, observed: Vec<LocalName>) {
+        self.note_custom_definition(name, observed);
+        let owner = (registry == crate::RegistryAssociation::Default).then_some(doc);
+        self.reactions.registry_definitions.insert((owner, registry, name.clone(), local.clone()));
+    }
+
+    pub(crate) fn fragment_definition_name(&self, i: u32) -> Option<LocalName> {
+        let registry = self.registry_idx(i);
+        if registry == crate::RegistryAssociation::Null { return None; }
+        let owner = (registry == crate::RegistryAssociation::Default).then(|| self.id_of(self.n(i).owner_doc));
+        let el = self.n(i).element().unwrap();
+        let local = el.local_name();
+        let found = |name: &LocalName| self.reactions.registry_definitions.contains(&(owner, registry, name.clone(), local.clone()));
+        if found(local) { Some(local.clone()) } else { el.is_value.as_ref().filter(|is| found(is)).cloned() }
+    }
+
+    pub(crate) fn forget_registry_definitions(&mut self, registry: crate::RegistryAssociation, document: Option<NodeId>) {
+        self.reactions.registry_definitions.retain(|(owner, r, _, _)| *r != registry || *owner != document);
     }
 
     /// The parser hooks of `document`, when an HTML element named `name`

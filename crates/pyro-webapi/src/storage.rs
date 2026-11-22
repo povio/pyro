@@ -168,6 +168,7 @@ fn seed_origin(text: &str) -> Result<String, String> {
 struct Namespace {
     indexed_db: crate::indexeddb::Namespace,
     caches: crate::cache_storage::Namespace,
+    opfs: crate::opfs::Namespace,
     origins: RefCell<FxHashMap<String, Rc<RefCell<Area>>>>,
     quota: usize,
     /// Pages attached to this namespace (`PageDom::set_storage_namespaces`):
@@ -192,20 +193,25 @@ impl StorageNamespace {
         Self(Rc::new(Namespace {
             indexed_db: Default::default(),
             caches: Default::default(),
+            opfs: Default::default(),
             origins: RefCell::new(FxHashMap::default()),
             quota: bytes,
             pages: RefCell::new(Vec::new()),
         }))
     }
 
-    /// A fresh namespace whose IndexedDB data and caches are `indexed_db`'s
-    /// and `caches`' (a worker shares its owner's databases and Cache
-    /// Storage; workers have no Web Storage).
-    pub(crate) fn with_shared(indexed_db: crate::indexeddb::Namespace, caches: crate::cache_storage::Namespace) -> Self {
+    /// Workers share their owner's context storage, with a fresh Web Storage
+    /// namespace (workers do not expose localStorage or sessionStorage).
+    pub(crate) fn with_shared(
+        indexed_db: crate::indexeddb::Namespace,
+        caches: crate::cache_storage::Namespace,
+        opfs: crate::opfs::Namespace,
+    ) -> Self {
         let namespace = Self::default();
         let mut inner = Rc::try_unwrap(namespace.0).ok().expect("fresh namespace");
         inner.indexed_db = indexed_db;
         inner.caches = caches;
+        inner.opfs = opfs;
         Self(Rc::new(inner))
     }
 
@@ -274,6 +280,14 @@ impl StorageNamespace {
 
     pub(crate) fn caches(&self) -> crate::cache_storage::Namespace {
         self.0.caches.clone()
+    }
+
+    pub(crate) fn opfs(&self) -> crate::opfs::Namespace {
+        self.0.opfs.clone()
+    }
+
+    pub(crate) fn opfs_usage(&self, origin: &str) -> u64 {
+        self.0.opfs.usage(origin)
     }
 
     fn area(&self, origin: String) -> Rc<RefCell<Area>> {

@@ -1,0 +1,19 @@
+[
+  "css/css-values/calc-complex-unresolved-serialize.html",
+  "css/css-values/calc-infinity-nan-computed.html",
+  "css/css-values/calc-infinity-nan-serialize-length.html",
+  "css/css-values/calc-infinity-nan-serialize-number.html",
+  "css/css-values/signs-abs-computed.html",
+  "css/css-values/signs-abs-invalid.html",
+  "css/css-values/signs-abs-serialize.html",
+  "css/css-values/typed_arithmetic.html",
+  "css/cssom/css-style-attribute-modifications.html",
+  "css/cssom/cssom-cssstyledeclaration-set.html",
+  "css/cssom/cssstyledeclaration-csstext-all-shorthand.html",
+  "css/cssom/cssstyledeclaration-csstext-important.html",
+  "css/cssom/cssstyledeclaration-csstext.html",
+  "css/cssom/cssstyledeclaration-setter-attr.html",
+  "css/cssom/cssstyledeclaration-setter-declarations.html",
+  "css/cssom/cssstyledeclaration-setter-logical.html",
+  "css/cssom/style-set-property.html"
+]

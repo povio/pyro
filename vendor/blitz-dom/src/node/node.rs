@@ -1376,6 +1376,22 @@ impl Node {
         (transform, context)
     }
 
+    /// Flex item identities and their indices within the logical flex lines.
+    pub fn flex_reading_positions(&self) -> Option<&[(taffy::NodeId, usize, usize)]> {
+        match &self.element_data()?.detailed_layout_info {
+            taffy::DetailedLayoutInfo::FlexReadingOrder(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// Placed in-flow items of this grid, as recorded by Taffy.
+    pub fn placed_grid_items(&self) -> Option<&[taffy::DetailedGridItemsInfo]> {
+        match &self.element_data()?.detailed_layout_info {
+            taffy::DetailedLayoutInfo::Grid(info) => Some(&info.items),
+            _ => None,
+        }
+    }
+
     pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
         match index {
             0 => self.after(),
@@ -1406,6 +1422,19 @@ impl Node {
                 display
             },
         )
+    }
+
+    pub fn table_box_display_inside(&self) -> Option<DisplayInside> {
+        let inside = self.display_style()?.inside();
+        match inside {
+            DisplayInside::TableRow | DisplayInside::TableRowGroup | DisplayInside::TableHeaderGroup
+            | DisplayInside::TableFooterGroup | DisplayInside::TableColumn | DisplayInside::TableColumnGroup => {
+                let element = self.element_data()?;
+                let control = matches!(element.name.local.as_ref(), "input" | "select" | "textarea");
+                (!control && !crate::layout::replaced::is_replaced(element)).then_some(inside)
+            }
+            _ => None,
+        }
     }
 
     /// Whether this is a `<br>` that generates a line break. Like Chrome, a `<br>` is a piece of

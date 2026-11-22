@@ -1,0 +1,65 @@
+{
+ "rows": [
+  {
+   "name": "static",
+   "error": "TypeError",
+   "message": "Import attribute type \"text\" is not valid"
+  },
+  {
+   "name": "text-first-text",
+   "error": "TypeError",
+   "message": "Import attribute type \"text\" is not valid"
+  },
+  {
+   "name": "text-first-js",
+   "value": {
+    "identity": true,
+    "keys": [
+     "default"
+    ],
+    "valueMatches": true
+   }
+  },
+  {
+   "name": "js-first-js",
+   "value": {
+    "identity": true,
+    "keys": [
+     "default"
+    ],
+    "valueMatches": true
+   }
+  },
+  {
+   "name": "js-first-text",
+   "error": "TypeError",
+   "message": "Import attribute type \"text\" is not valid"
+  },
+  {
+   "name": "text-execution-count",
+   "value": 2
+  }
+ ],
+ "received": [
+  {
+   "path": "/page",
+   "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+   "dest": "document"
+  },
+  {
+   "path": "/root.mjs",
+   "accept": "*/*",
+   "dest": "script"
+  },
+  {
+   "path": "/value/text-first",
+   "accept": "*/*",
+   "dest": "script"
+  },
+  {
+   "path": "/value/js-first",
+   "accept": "*/*",
+   "dest": "script"
+  }
+ ]
+}

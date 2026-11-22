@@ -647,8 +647,10 @@ pub struct ComputedStyle {
     pub visibility_hidden: bool,
     /// Inherited `pointer-events: none`.
     pub pointer_events_none: bool,
-    /// This element or a flat-tree ancestor has the `inert` attribute.
+    /// Inert for hit testing, focus and find, including computed CSS interactivity.
     pub inert: bool,
+    /// Host-language inertness propagated independently of CSS inheritance.
+    host_inert: bool,
     /// This element or a flat-tree ancestor has display:none.
     pub in_display_none: bool,
     /// This element or a flat-tree ancestor has opacity:0.
@@ -1020,6 +1022,31 @@ impl StyleEngine {
             Some(view) => style::servo_arc::Arc::new(view),
             None => style,
         })
+    }
+
+    pub fn registered_value_components(&self, dom: &Dom, el: NodeId, name: &str) -> Option<Vec<(&'static str, String)>> {
+        use style::properties::PropertyId;
+        use style::properties_and_values::value::ComputedValueComponent as C;
+        use style::values::resolved::{Context, ToResolvedValue};
+        use style_traits::ToCss;
+
+        let name = style::Atom::from(style::custom_properties::parse_name(name).ok()?);
+        let style = self.stylo_style(dom, el)?;
+        let properties = style.custom_properties();
+        let value = properties.inherited.get(&name).or_else(|| properties.non_inherited.get(&name))?;
+        let context = Context { style: &style, for_property: PropertyId::Custom(name), current_longhand: None };
+        Some(value.components()?.iter().map(|component| {
+            let kind = match component {
+                C::CustomIdent(_) => "keyword",
+                C::Image(_) => "image",
+                C::TransformFunction(_) => "transform-function",
+                C::TransformList(_) => "transform",
+                C::Url(_) | C::Color(_) | C::String(_) => "plain",
+                C::Length(_) | C::LengthPercentage(_) | C::Number(_) | C::Integer(_) | C::Percentage(_) |
+                C::Angle(_) | C::Time(_) | C::Resolution(_) => "numeric",
+            };
+            (kind, component.clone().to_resolved_value(&context).to_css_string())
+        }).collect())
     }
 
     pub fn computed_custom_names(&self, dom: &Dom, el: NodeId, pseudo: &crate::stylo::PseudoArg) -> Vec<String> {
@@ -1492,11 +1519,12 @@ impl StyleEngine {
         // dialog"). One empty-set check when there is no modal dialog.
         if let Some(modal) = dom.topmost_modal() {
             if modal == el {
-                c.inert = e.is_html() && e.attr("inert").is_some();
+                c.host_inert = e.is_html() && e.attr("inert").is_some();
             } else if parent.is_none() && dom.check(modal).is_ok_and(|m| dom.n(m).owner_doc == dom.n(idx).owner_doc) {
-                c.inert = true;
+                c.host_inert = true;
             }
         }
+        c.inert |= c.host_inert;
         self.memo.borrow_mut().insert(el, c);
         c
     }
@@ -1617,11 +1645,13 @@ impl StyleEngine {
     /// Text the loader or CSSOM gave `owner`'s sheet; `None` for a
     /// `<style>` element read from the DOM, or no sheet.
     pub fn sheet_text(&self, dom: &Dom, owner: NodeId) -> Option<&str> {
-        self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
-            // pyro: and a link that applies nothing now (its `disabled` attribute, its `rel`).
-            _ if Self::is_off(s, dom) || link_not_stylesheet(dom, owner) => Some(""),
-            _ => s.supplied_text(dom),
-        })
+        match self.sheets.iter().find(|sheet| sheet.owner == owner) {
+            Some(sheet) if Self::inactive(sheet, dom) => Some(""),
+            Some(sheet) => sheet.supplied_text(dom),
+            None if dom.element(owner).is_ok_and(|el| el.name.local == local_name!("style"))
+                && dom.sheet_outside_preferred_set(owner) => Some(""),
+            None => None,
+        }
     }
 
     /// pyro: the text the loader or CSSOM gave `owner`'s sheet, disabled or not (a disabled sheet
@@ -1642,6 +1672,10 @@ impl StyleEngine {
     /// another style block generation of the owner is not this one's).
     fn is_off(sheet: &Sheet, dom: &Dom) -> bool {
         sheet.disabled && dom.style_sheet_generation(sheet.owner) == sheet.disabled_at
+    }
+
+    fn inactive(sheet: &Sheet, dom: &Dom) -> bool {
+        Self::is_off(sheet, dom) || link_not_stylesheet(dom, sheet.owner) || dom.sheet_outside_preferred_set(sheet.owner)
     }
 
     /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.
@@ -1676,7 +1710,7 @@ impl StyleEngine {
     /// script-font sheet).
     pub fn for_each_author_sheet_owned(&self, dom: &Dom, f: &mut dyn FnMut(Option<NodeId>, &str)) {
         for sheet in &self.sheets {
-            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if !dom.is_connected(sheet.owner).unwrap_or(false) || Self::inactive(sheet, dom) {
                 continue;
             }
             match sheet.supplied_text(dom) {
@@ -1701,7 +1735,7 @@ impl StyleEngine {
     /// document or a shadow root).
     pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
         for sheet in &self.sheets {
-            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if !dom.is_connected(sheet.owner).unwrap_or(false) || Self::inactive(sheet, dom) {
                 continue;
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
@@ -1788,6 +1822,7 @@ impl StyleEngine {
             // (A link whose `rel` lost `stylesheet` applies nothing, as one that left the document.)
             let on = dom.is_alive(sheet.owner)
                 && dom.is_connected(sheet.owner).unwrap_or(false)
+                && !dom.sheet_outside_preferred_set(sheet.owner)
                 && !(matches!(sheet.source, SheetSource::Text(_)) && link_not_stylesheet(dom, sheet.owner));
             if i < 64 {
                 connected |= u64::from(on) << i;
@@ -1834,7 +1869,7 @@ impl StyleEngine {
     pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
         let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
         // A disabled sheet's text is empty: its own identity, its revision of the toggle.
-        if Self::is_off(sheet, dom) {
+        if Self::inactive(sheet, dom) {
             return Some((sheet.revision << 2) | 2);
         }
         Some(match sheet.supplied_text(dom) {
@@ -1979,6 +2014,11 @@ impl StyleEngine {
         self.computed(dom, el).is_some_and(|c| c.pointer_events_none)
     }
 
+    /// Combined host and CSS inertness, falling back to the DOM rule without a styled box.
+    pub fn is_inert(&self, dom: &Dom, el: NodeId) -> bool {
+        self.computed(dom, el).map_or_else(|| dom.is_inert(el), |c| c.inert)
+    }
+
     /// Blink's VisibleToHitTestRequest, ignoring display:none (StyleManager.zig:687-692).
     /// Inert content is not hit-testable (Blink's UsedPointerEvents).
     pub fn is_hit_testable(&self, dom: &Dom, el: NodeId) -> bool {
@@ -2106,6 +2146,7 @@ impl StyleEngine {
         let unregistered: Vec<(NodeId, u64)> = if dom.has_resource_events() {
             self.unregistered_style_elements(dom)
                 .into_iter()
+                .filter(|owner| !dom.sheet_outside_preferred_set(*owner))
                 .map(|n| (n, dom.style_element_text_revision(n).unwrap_or_default()))
                 .collect()
         } else {
@@ -2300,7 +2341,8 @@ fn derive_computed(
         visibility_hidden: style.get_inherited_box().visibility != style::computed_values::visibility::T::Visible,
         pointer_events_none: style.get_inherited_ui().pointer_events
             == style::values::specified::ui::PointerEvents::None,
-        inert: above.inert || (e.is_html() && e.attr("inert").is_some()),
+        inert: style.get_inherited_ui().interactivity == style::values::specified::ui::Interactivity::Inert,
+        host_inert: above.host_inert || (e.is_html() && e.attr("inert").is_some()),
         in_display_none: display == Display::None || above.in_display_none,
         in_opacity_zero: above.in_opacity_zero || effects.opacity == 0.0,
         overflow_x_scrolls: ox == Overflow::Scroll,

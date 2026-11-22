@@ -18,6 +18,9 @@ use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
 
+mod svg_aspect;
+pub(crate) use svg_aspect::animated_aspect;
+
 const COLL_NS: u64 = 1 << 61;
 
 fn coll_identity(page: &PageDom, slot: u64, id: NodeId) -> IdentityKey {
@@ -1733,18 +1736,28 @@ impl JsClass for SvgAnimatedString {
     }
 }
 
-/// A detached SVG number object, as returned by SVGSVGElement.createSVGNumber().
+use pyro_dom::svg_point_list::{NumberItem, NumberLists};
+
 pub struct SvgNumber;
 impl JsClass for SvgNumber {
     const NAME: &'static str = "SVGNumber";
-    type Data = Cell<f32>;
+    type Data = Rc<NumberItem>;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.accessor("value", |s, n| Ok(s.number(f64::from(n.get()))), |_s, n, v| {
-            n.set(finite_float(v, "SVGNumber")? as f32);
-            Ok(())
+        def.accessor("value", |s, n| Ok(s.number(f64::from(n.value()))), |_s, n, v| {
+            n.set_value(finite_float(v, "SVGNumber")? as f32).js()
         });
     }
+}
+
+pub(crate) fn number_value<'s>(s: &Scope<'s>, item: Rc<NumberItem>) -> JsResult<Value<'s>> {
+    let key = IdentityKey((1 << 59) | (2 << 56), Rc::as_ptr(&item) as u64);
+    Ok(s.wrap::<SvgNumber>(item, Some(key))?.value())
+}
+
+fn number_argument(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<NumberItem>> {
+    let item = s.unwrap::<SvgNumber>(value).ok_or_else(|| JsError::Type("Expected an SVGNumber.".into()))?;
+    Ok((*item).clone())
 }
 
 /// `SVGAnimatedNumber`: `baseVal` is the attribute's number (its initial value when absent or
@@ -2491,11 +2504,14 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgAnimatedEnumeration>();
     engine.register::<SvgAnimatedString>();
     engine.register::<SvgNumber>();
+    engine.register::<SvgAnimatedNumberList>();
+    engine.register::<SvgNumberList>();
     engine.register::<SvgAnimatedNumber>();
     engine.register::<SvgAnimatedInteger>();
     engine.register::<SvgAnimatedBoolean>();
     engine.register::<SvgAngle>();
     engine.register::<SvgAnimatedAngle>();
+    svg_aspect::register(engine);
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
     engine.register::<SvgPoint>();
@@ -2594,7 +2610,7 @@ impl JsClass for SvgPoint {
     }
 }
 
-use pyro_dom::svg_point_list::{PointItem, PointLists};
+use pyro_dom::svg_point_list::PointItem;
 
 fn point_value<'s>(s: &Scope<'s>, item: Rc<PointItem>) -> JsResult<Value<'s>> {
     // The wrapper owns this Rc and its weak identity entry ends at GC. Each
@@ -2614,76 +2630,117 @@ fn point_argument(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<PointItem>> {
     })
 }
 
-pub struct PointListData {
-    lists: Rc<PointLists>,
+use pyro_dom::svg_point_list::{ListItem, ListStorage};
+
+pub struct SvgListData<T: Copy> {
+    lists: Rc<ListStorage<T>>,
     animated: bool,
 }
 
-impl PointListData {
-    fn writable(&self) -> JsResult<&Rc<PointLists>> {
-        if self.animated { return Err(dom_err(pyro_dom::svg_point_list::read_only())); }
+impl<T: Copy> SvgListData<T> {
+    fn writable(&self) -> JsResult<&Rc<ListStorage<T>>> {
+        if self.animated {
+            return Err(dom_err(pyro_dom::svg_point_list::read_only()));
+        }
         Ok(&self.lists)
     }
+}
+
+trait SvgItemList<T: Copy>: JsClass<Data = SvgListData<T>> {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<ListItem<T>>) -> JsResult<Value<'s>>;
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<ListItem<T>>>;
 }
 
 pub struct SvgPointList;
 impl JsClass for SvgPointList {
     const NAME: &'static str = "SVGPointList";
-    type Data = PointListData;
+    type Data = SvgListData<(f32, f32)>;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        for name in ["numberOfItems", "length"] {
-            def.getter(name, |s, l| Ok(s.number(l.lists.len(l.animated) as f64)));
-        }
-        def.legacy_platform_object();
-        def.indexed_iterator();
-        def.indexed(|s, l, i| l.lists.item(i as usize, l.animated).map(|v| point_value(s, v)).transpose());
-        def.named_setter(|s, l, name, value| {
-            let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
-                return Ok(false);
-            };
-            let item = point_argument(s, value)?;
-            l.writable()?.insert(i as usize, &item, true).js()?;
-            Ok(true)
-        });
-        def.method("getItem", 1, |s, l, a| {
-            a.require(1, "SVGPointList.getItem")?;
-            let i = svg_list_index(a.get(0))?;
-            let item = l.lists.item(i, l.animated).ok_or_else(|| JsError::dom("IndexSizeError", "The index is outside the SVG point list."))?;
-            point_value(s, item)
-        });
-        def.method("clear", 0, |s, l, _| {
-            l.writable()?.clear().js()?;
-            Ok(s.undefined())
-        });
-        def.method("initialize", 1, |s, l, a| {
-            a.require(1, "SVGPointList.initialize")?;
-            let item = point_argument(s, a.get(0))?;
-            point_value(s, l.writable()?.initialize(&item).js()?)
-        });
-        def.method("appendItem", 1, |s, l, a| {
-            a.require(1, "SVGPointList.appendItem")?;
-            let item = point_argument(s, a.get(0))?;
-            point_value(s, l.writable()?.insert(usize::MAX, &item, false).js()?)
-        });
-        def.method("insertItemBefore", 2, |s, l, a| {
-            a.require(2, "SVGPointList.insertItemBefore")?;
-            let item = point_argument(s, a.get(0))?;
-            let i = svg_list_index(a.get(1))?;
-            point_value(s, l.writable()?.insert(i, &item, false).js()?)
-        });
-        def.method("replaceItem", 2, |s, l, a| {
-            a.require(2, "SVGPointList.replaceItem")?;
-            let item = point_argument(s, a.get(0))?;
-            let i = svg_list_index(a.get(1))?;
-            point_value(s, l.writable()?.insert(i, &item, true).js()?)
-        });
-        def.method("removeItem", 1, |s, l, a| {
-            a.require(1, "SVGPointList.removeItem")?;
-            let i = svg_list_index(a.get(0))?;
-            point_value(s, l.writable()?.remove(i).js()?)
-        });
+        define_svg_list(def);
     }
+}
+
+impl SvgItemList<(f32, f32)> for SvgPointList {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<PointItem>) -> JsResult<Value<'s>> {
+        point_value(s, item)
+    }
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<PointItem>> {
+        point_argument(s, value)
+    }
+}
+
+pub struct SvgNumberList;
+impl JsClass for SvgNumberList {
+    const NAME: &'static str = "SVGNumberList";
+    type Data = SvgListData<f32>;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        define_svg_list(def);
+    }
+}
+
+impl SvgItemList<f32> for SvgNumberList {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<NumberItem>) -> JsResult<Value<'s>> {
+        number_value(s, item)
+    }
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<NumberItem>> {
+        number_argument(s, value)
+    }
+}
+
+fn define_svg_list<T: Copy + 'static, C: SvgItemList<T>>(def: &mut ClassDef<C>) {
+    for name in ["numberOfItems", "length"] {
+        def.getter(name, |s, l| Ok(s.number(l.lists.len(l.animated) as f64)));
+    }
+    def.legacy_platform_object();
+    def.indexed_iterator();
+    def.indexed(|s, l, i| l.lists.item(i as usize, l.animated).map(|v| C::wrap_item(s, v)).transpose());
+    def.named_setter(|s, l, name, value| {
+        let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+            return Ok(false);
+        };
+        let item = C::unwrap_item(s, value)?;
+        l.writable()?.insert(i as usize, &item, true).js()?;
+        Ok(true)
+    });
+    def.method("getItem", 1, |s, l, a| {
+        a.require(1, C::NAME)?;
+        let i = svg_list_index(a.get(0))?;
+        let item = l.lists.item(i, l.animated).ok_or_else(|| JsError::dom("IndexSizeError", "The index is outside the SVG list."))?;
+        C::wrap_item(s, item)
+    });
+    def.method("clear", 0, |s, l, _| {
+        l.writable()?.clear().js()?;
+        Ok(s.undefined())
+    });
+    def.method("initialize", 1, |s, l, a| {
+        a.require(1, C::NAME)?;
+        let item = C::unwrap_item(s, a.get(0))?;
+        C::wrap_item(s, l.writable()?.initialize(&item).js()?)
+    });
+    def.method("appendItem", 1, |s, l, a| {
+        a.require(1, C::NAME)?;
+        let item = C::unwrap_item(s, a.get(0))?;
+        C::wrap_item(s, l.writable()?.insert(usize::MAX, &item, false).js()?)
+    });
+    def.method("insertItemBefore", 2, |s, l, a| {
+        a.require(2, C::NAME)?;
+        let item = C::unwrap_item(s, a.get(0))?;
+        let i = svg_list_index(a.get(1))?;
+        C::wrap_item(s, l.writable()?.insert(i, &item, false).js()?)
+    });
+    def.method("replaceItem", 2, |s, l, a| {
+        a.require(2, C::NAME)?;
+        let item = C::unwrap_item(s, a.get(0))?;
+        let i = svg_list_index(a.get(1))?;
+        C::wrap_item(s, l.writable()?.insert(i, &item, true).js()?)
+    });
+    def.method("removeItem", 1, |s, l, a| {
+        a.require(1, C::NAME)?;
+        let i = svg_list_index(a.get(0))?;
+        C::wrap_item(s, l.writable()?.remove(i).js()?)
+    });
 }
 
 pub fn point_list<'s>(s: &Scope<'s>, n: &NodeData, animated: bool) -> JsResult<Value<'s>> {
@@ -2698,5 +2755,37 @@ pub fn point_list<'s>(s: &Scope<'s>, n: &NodeData, animated: bool) -> JsResult<V
         }
     });
     let lists = n.page().dom.borrow_mut().svg_point_lists(n.id, write).js()?;
-    Ok(s.wrap::<SvgPointList>(PointListData { lists, animated }, Some(key))?.value())
+    Ok(s.wrap::<SvgPointList>(SvgListData { lists, animated }, Some(key))?.value())
+}
+
+pub struct SvgAnimatedNumberList;
+
+impl JsClass for SvgAnimatedNumberList {
+    const NAME: &'static str = "SVGAnimatedNumberList";
+    type Data = Rc<NumberLists>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, lists| number_list_view(s, lists, false));
+        def.getter("animVal", |s, lists| number_list_view(s, lists, true));
+    }
+}
+
+fn number_list_view<'s>(s: &Scope<'s>, lists: &Rc<NumberLists>, animated: bool) -> JsResult<Value<'s>> {
+    let key = IdentityKey((1 << 59) | (3 << 56) | u64::from(animated), Rc::as_ptr(lists) as u64);
+    Ok(s.wrap::<SvgNumberList>(SvgListData { lists: lists.clone(), animated }, Some(key))?.value())
+}
+
+pub fn animated_number_list<'s>(s: &Scope<'s>, n: &NodeData, attr: &'static str) -> JsResult<Value<'s>> {
+    // All four exposing element interfaces have exactly one number list attribute.
+    let key = coll_identity(n.page(), 447, n.id);
+    if let Some(obj) = s.lookup_identity(key) {
+        return Ok(obj.value());
+    }
+    let hold = NodeHold::new(n.page(), n.id)?;
+    let write = Box::new(move |text: &str| {
+        hold.page.dom.borrow_mut().set_attribute_local(hold.id, &pyro_dom::LocalName::from(attr), text)
+    });
+    let lists = n.page().dom.borrow_mut().svg_number_lists(n.id, attr, write).js()?;
+    Ok(s.wrap::<SvgAnimatedNumberList>(lists, Some(key))?.value())
 }

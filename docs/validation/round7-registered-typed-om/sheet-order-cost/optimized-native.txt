@@ -1,0 +1,6 @@
+running 2 tests
+test css_declarations::later_stylesheet_registration_wins_after_earlier_sheets_are_removed ... ok
+test css_declarations::registered_computed_map_keeps_list_items_and_specified_token_streams ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 533 filtered out; finished in 0.10s
+

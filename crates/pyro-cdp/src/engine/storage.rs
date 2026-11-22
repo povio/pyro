@@ -50,7 +50,7 @@ fn invalid_cookie() -> CdpError {
 impl CookieParam {
     fn normalize(self) -> CdpResult<NormalizedCookie> {
         if self.partition_key.is_some() || self.same_party {
-            return Err(CdpError::server("Partitioned and SameParty cookies are not supported"));
+            return Err(CdpError::server("Setting partitioned and SameParty cookies through CDP is not supported"));
         }
         if self.priority.as_deref().is_some_and(|p| p != "Medium")
             || self.source_scheme.as_deref().is_some_and(|s| s != "Unset")
@@ -148,18 +148,44 @@ impl EngineHost {
                 struct Params {
                     urls: Option<Vec<String>>,
                 }
-                let urls = match cmd.command.params::<Params>()?.urls {
-                    Some(urls) => urls,
-                    // The page's frames, as Chrome.
-                    None => self.thread.browser.frames(page).into_iter().map(|f| f.url).collect(),
+                let requested = cmd.command.params::<Params>()?.urls;
+                let browser = &self.thread.browser;
+                let partition = browser.page(page).and_then(|p| p.main_frame.page_dom.as_ref()?.cookie_partition_key());
+                // A URL can be loaded by both a first-party frame and a
+                // same-site descendant of a cross-site frame. Keep those
+                // partition keys distinct even when the URL strings match.
+                let frames: Vec<_> = browser.frames(page).into_iter().filter_map(|frame| {
+                    let url = Url::parse(&frame.url).ok()?;
+                    let cross = browser.frame(page, &frame.id)?.page_dom.as_ref()?.cookie_site_context()
+                        == SiteContext::CrossSite;
+                    Some((url, cross))
+                }).collect();
+                let urls = match requested {
+                    None => frames,
+                    Some(list) => {
+                        let mut queries = Vec::new();
+                        for url in list.iter().filter_map(|value| Url::parse(value).ok()) {
+                            let mut matched = false;
+                            for (_, cross) in frames.iter().filter(|(frame_url, _)| frame_url == &url) {
+                                queries.push((url.clone(), *cross));
+                                matched = true;
+                            }
+                            if !matched {
+                                let cross = pyro_net::cookies::partition_key(&url) != partition;
+                                queries.push((url, cross));
+                            }
+                        }
+                        queries
+                    }
                 };
                 let mut jar = net.cookies().lock().unwrap();
                 let now = pyro_net::cookies::now_secs();
                 let mut cookies: Vec<Value> = Vec::new();
                 let mut seen = std::collections::HashSet::new();
-                for url in urls.iter().filter_map(|u| Url::parse(u).ok()) {
-                    for c in jar.matching(&url, Access::Http, SiteContext::SameSite, now) {
-                        if seen.insert((c.name.clone(), c.domain.clone(), c.path.clone())) {
+                for (url, cross) in urls {
+                    for c in jar.matching_partition(&url, Access::Http, SiteContext::SameSite, now, partition.as_deref(), cross) {
+                        if seen.insert((c.name.clone(), c.domain.clone(), c.path.clone(), c.host_only,
+                                        c.partition_key.clone(), c.partition_has_cross_site_ancestor)) {
                             cookies.push(cookie_wire(c));
                         }
                     }
@@ -186,8 +212,13 @@ impl EngineHost {
                     url: Option<String>,
                     domain: Option<String>,
                     path: Option<String>,
+                    #[serde(rename = "partitionKey")]
+                    partition_key: Option<Value>,
                 }
                 let p: Params = cmd.command.params()?;
+                if p.partition_key.is_some() {
+                    return Err(CdpError::unsupported("Network.deleteCookies partitionKey"));
+                }
                 let url_host =
                     p.url.as_deref().and_then(|u| Url::parse(u).ok()).and_then(|u| u.host_str().map(str::to_owned));
                 let domain = p.domain.or(url_host);
@@ -214,6 +245,12 @@ fn cookie_wire(c: &Cookie) -> Value {
         "path":c.path, "expires":c.expires.unwrap_or(-1.0), "size":c.size(),
         "httpOnly":c.http_only, "secure":c.secure, "session":c.expires.is_none(), "priority":"Medium",
     });
+    if let Some(site) = &c.partition_key {
+        wire["partitionKey"] = json!({
+            "topLevelSite": site,
+            "hasCrossSiteAncestor": c.partition_has_cross_site_ancestor,
+        });
+    }
     if c.same_site != SameSite::Unspecified {
         wire["sameSite"] = json!(match c.same_site {
             SameSite::Strict => "Strict",

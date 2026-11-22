@@ -2089,6 +2089,8 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
 /// This matches the Chrome and Firefox's format as of 2nd Jan 2024.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DetailedGridItemsInfo {
+    /// Layout node that generated this grid item.
+    pub node: NodeId,
     /// row-start with 1-indexed grid line numbers
     pub row_start: u16,
     /// row-end with 1-indexed grid line numbers
@@ -2111,6 +2113,7 @@ impl DetailedGridItemsInfo {
         }
 
         DetailedGridItemsInfo {
+            node: grid_item.node,
             row_start: to_one_indexed_grid_line(grid_item.row_indexes.start),
             row_end: to_one_indexed_grid_line(grid_item.row_indexes.end),
             column_start: to_one_indexed_grid_line(grid_item.column_indexes.start),

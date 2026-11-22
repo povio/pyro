@@ -1,0 +1,858 @@
+[
+  [
+    "xhr/getallresponseheaders.htm",
+    "XMLHttpRequest: getAllResponseHeaders()",
+    1,
+    "Fail",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "xhr/getallresponseheaders.htm",
+    "XMLHttpRequest: getAllResponseHeaders() 1",
+    1,
+    "Fail",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "xhr/getallresponseheaders.htm",
+    "XMLHttpRequest: getAllResponseHeaders() 2",
+    1,
+    "Fail",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "xhr/getallresponseheaders.htm",
+    "XMLHttpRequest: getAllResponseHeaders() 3",
+    1,
+    "Fail",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "xhr/getallresponseheaders.htm",
+    "XMLHttpRequest: getAllResponseHeaders() 4",
+    1,
+    "Fail",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "xhr/getallresponseheaders.htm",
+    "XMLHttpRequest: getAllResponseHeaders() 5",
+    1,
+    "Fail",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "xhr/getallresponseheaders.htm",
+    "XMLHttpRequest: getAllResponseHeaders() 6",
+    1,
+    "Fail",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "xhr/response-data-gzip.htm",
+    "XMLHttpRequest: GZIP response was correctly inflated",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-blob-with-no-mime-type.html",
+    "Asynchronous blob loading with invalid mime type [POST]",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-blob-with-no-mime-type.html",
+    "Asynchronous blob loading with invalid mime type [PUT]",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-blob-with-no-mime-type.html",
+    "Asynchronous blob loading with no mime type [POST]",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-blob-with-no-mime-type.html",
+    "Asynchronous blob loading with no mime type [PUT]",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-blob-with-no-mime-type.html",
+    "Synchronous blob loading with invalid mime type [POST]",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-blob-with-no-mime-type.html",
+    "Synchronous blob loading with invalid mime type [PUT]",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-blob-with-no-mime-type.html",
+    "Synchronous blob loading with no mime type [POST]",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-blob-with-no-mime-type.html",
+    "Synchronous blob loading with no mime type [PUT]",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "If charset= param is UTF-8 (case-insensitive), it should not be changed",
+    1,
+    "Pass",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "If charset= param is UTF-8 (case-insensitive), it should not be changed (bogus charset)",
+    1,
+    "Pass",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "If no charset= param is given, implementation should not add one - known MIME",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "If no charset= param is given, implementation should not add one - known MIME, unknown param, two spaces",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "If no charset= param is given, implementation should not add one - unknown MIME",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "Multiple non-UTF-8 charset parameters deduplicate, bogus parameter dropped",
+    1,
+    "Fail",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "No content type set, give MIME and charset",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "bogus charset and bogus header - missing MIME type",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "charset given but wrong, fix it (known MIME, actual charset)",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "charset given but wrong, fix it (unknown MIME, bogus charset)",
+    1,
+    "Fail",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "charset in double quotes that is UTF-8 does not change",
+    1,
+    "Pass",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "charset in double quotes with backslashes that is UTF-8 does not change",
+    1,
+    "Pass",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "charset in double quotes with space",
+    1,
+    "Fail",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "charset with leading space that is UTF-8 does change",
+    1,
+    "Fail",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "charset with trailing space that is UTF-8 does not change",
+    1,
+    "Pass",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "header with invalid MIME type (empty string) is not changed",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "header with invalid MIME type is not changed",
+    1,
+    "Pass",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "known charset but bogus header - missing MIME type",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-charset.htm",
+    "unknown parameters need to be preserved",
+    1,
+    "Fail",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-content-type-string.htm",
+    "XMLHttpRequest: send() - Content-Type",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-string.htm",
+    "XMLHttpRequest: send() - Content-Type 1",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-content-type-string.htm",
+    "XMLHttpRequest: send() - Content-Type 2",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-data-arraybuffer.any.html",
+    "XMLHttpRequest.send(arraybuffer)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-data-arraybuffer.any.worker.html",
+    "XMLHttpRequest.send(arraybuffer)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-data-arraybufferview.any.html",
+    "XMLHttpRequest.send(arraybufferview)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-data-arraybufferview.any.worker.html",
+    "XMLHttpRequest.send(arraybufferview)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-data-blob.htm",
+    "XMLHttpRequest: The send() method: Blob data",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-data-formdata.any.html",
+    "XMLHttpRequest.send(formdata)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-data-formdata.any.worker.html",
+    "XMLHttpRequest.send(formdata)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-basic.htm",
+    "XMLHttpRequest: send() - data argument (1)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-basic.htm",
+    "XMLHttpRequest: send() - data argument (10000000)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-basic.htm",
+    "XMLHttpRequest: send() - data argument (1=2&3=4)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-basic.htm",
+    "XMLHttpRequest: send() - data argument (2,2)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-basic.htm",
+    "XMLHttpRequest: send() - data argument (A\u0000A)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-basic.htm",
+    "XMLHttpRequest: send() - data argument (false)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document-bogus.htm",
+    "Serializing documents through XMLHttpRequest: ''",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document-bogus.htm",
+    "Serializing documents through XMLHttpRequest: '<test:test test:test=\"gee\" x=\"�\"/>'",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document-bogus.htm",
+    "Serializing documents through XMLHttpRequest: '<test:test test:test=\"gee\"/>'",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document-bogus.htm",
+    "Serializing documents through XMLHttpRequest: '<test:test/>'",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document.htm",
+    "HTML document, invalid UTF-8",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document.htm",
+    "HTML document, shift-jis",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document.htm",
+    "XML document, windows-1252",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document.htm",
+    "empty div",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document.htm",
+    "image file",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document.htm",
+    "img tag",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-document.htm",
+    "plain text file",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-empty.htm",
+    "XMLHttpRequest: send(\"\") - empty entity body (HEAD)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-empty.htm",
+    "XMLHttpRequest: send(\"\") - empty entity body (POST)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-empty.htm",
+    "XMLHttpRequest: send(\"\") - empty entity body (PUT)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-get-head.htm",
+    "XMLHttpRequest: send() - non-empty data argument and GET/HEAD (GET)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-get-head.htm",
+    "XMLHttpRequest: send() - non-empty data argument and GET/HEAD (HEAD)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-none.htm",
+    "Explicit content type (HEAD)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-none.htm",
+    "Explicit content type (POST)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-none.htm",
+    "Explicit content type (PUT)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-none.htm",
+    "No content type (HEAD)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-none.htm",
+    "No content type (POST)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-entity-body-none.htm",
+    "No content type (PUT)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (300, GET, content.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (301, GET, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (301, GET, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (301, HEAD, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (301, HEAD, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (301, POST, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (301, POST, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (302, GET, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (302, GET, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (302, HEAD, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (302, HEAD, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (302, POST, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (302, POST, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (303, CHICKEN, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (303, GET, content.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (303, GET, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (303, HEAD, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (303, HEAD, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (303, POST, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (303, POST, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (304, GET, content.py)",
+    1,
+    "Fail",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (305, GET, content.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (306, GET, content.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (307, GET, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (307, GET, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (307, HEAD, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (307, HEAD, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (307, POST, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (307, POST, redirect.py%3Flocation%3Dcontent.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (308, GET, content.py)",
+    1,
+    "Pass",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (309, GET, content.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (310, GET, content.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (350, GET, content.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "xhr/send-redirect.htm",
+    "XMLHttpRequest: send() - Redirects (basics) (399, GET, content.py)",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]

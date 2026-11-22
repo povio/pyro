@@ -244,6 +244,7 @@ pub struct Dom {
     /// pyro: the user agent's pan and zoom of an `<svg>` (`SVGSVGElement.currentTranslate` and
     /// `currentScale`): its translation and scale, when not the identity.
     pub(crate) svg_points: rustc_hash::FxHashMap<u32, std::rc::Weak<crate::svg_point_list::PointLists>>,
+    pub(crate) svg_numbers: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::NumberLists>>>,
     pub(crate) svg_strings: rustc_hash::FxHashMap<(u32, crate::svg_string_list::StringListAttribute), Vec<String>>,
     pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
@@ -266,7 +267,10 @@ pub struct Dom {
     /// never reads styles pays nothing.
     style_snapshots: std::cell::RefCell<Option<StyleSnapshots>>,
     /// Custom element names whose definitions disable shadow roots.
-    shadow_disabled: Vec<Box<str>>,
+    shadow_disabled: Vec<(Option<NodeId>, RegistryAssociation, LocalName, LocalName)>,
+    scoped_registry_docs: rustc_hash::FxHashMap<u64, Vec<(u64, NodeId)>>,
+    registry_associations: rustc_hash::FxHashMap<u32, RegistryAssociation>,
+    custom_definition_owners: rustc_hash::FxHashMap<u32, CustomDefinitionOwner>,
     /// Shadow roots ever attached (selective style invalidation does not
     /// model slot assignment, so consumers fall back to full invalidation).
     shadow_roots: u32,
@@ -350,6 +354,7 @@ impl Dom {
             journal: Vec::new(),
             frame_content_heights: Default::default(),
             svg_points: Default::default(),
+            svg_numbers: Default::default(),
             svg_strings: Default::default(),
             svg_pans: Default::default(),
             frame_documents: Default::default(),
@@ -360,6 +365,9 @@ impl Dom {
             journal_floor: 0,
             style_snapshots: Default::default(),
             shadow_disabled: Vec::new(),
+            scoped_registry_docs: Default::default(),
+            registry_associations: Default::default(),
+            custom_definition_owners: Default::default(),
             shadow_roots: 0,
             pending_inline_handlers: Vec::new(),
             base_seen: false,
@@ -916,6 +924,8 @@ impl Dom {
             DocumentKind::Xml => "application/xml",
         };
         let data = DocumentData {
+            has_global_registry: false,
+            preferred_sheet_name: None,
             raster_budget: Default::default(),
             kind,
             quirks: QuirksMode::NoQuirks,
@@ -1010,7 +1020,7 @@ impl Dom {
     pub fn set_document_active(&mut self, doc: NodeId, active: bool) -> DomResult<()> {
         let i = self.check(doc)?;
         match &mut self.n_mut(i).kind {
-            NodeKind::Document(d) => d.active = active,
+            NodeKind::Document(d) => { d.active = active; d.has_global_registry |= active; }
             _ => return Err(DomError::Type("not a document")),
         }
         if active {
@@ -1513,6 +1523,86 @@ impl Dom {
         }
     }
 
+    fn implicit_registry(&self, node: u32) -> RegistryAssociation {
+        let doc = self.n(node).owner_doc;
+        if self.doc_data(doc).has_global_registry { RegistryAssociation::Default } else { RegistryAssociation::Null }
+    }
+
+    pub(crate) fn registry_idx(&self, node: u32) -> RegistryAssociation {
+        self.registry_associations.get(&node).copied().unwrap_or_else(|| self.implicit_registry(node))
+    }
+
+    pub(crate) fn set_registry_idx(&mut self, node: u32, registry: RegistryAssociation) {
+        if registry == self.implicit_registry(node) {
+            if !self.registry_associations.is_empty() { self.registry_associations.remove(&node); }
+        } else {
+            self.registry_associations.insert(node, registry);
+        }
+    }
+
+    pub fn registry_association(&self, node: NodeId) -> DomResult<RegistryAssociation> {
+        Ok(self.registry_idx(self.check(node)?))
+    }
+
+    pub fn set_registry_association(&mut self, node: NodeId, registry: RegistryAssociation) -> DomResult<()> {
+        let node = self.check(node)?;
+        self.set_registry_idx(node, registry);
+        Ok(())
+    }
+
+    pub fn live_scoped_registries(&self) -> FxHashSet<u64> {
+        self.registry_associations.values().copied()
+            .chain(self.custom_definition_owners.values().map(|d| d.registry))
+            .chain(self.upgrades.pending_creations.values().copied())
+            .filter_map(|association| match association {
+                RegistryAssociation::Scoped(id) => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The order belongs to the registry across documents, even if an embedder
+    /// keeps those documents in different DOM arenas.
+    pub fn note_scoped_registry_document(&mut self, registry: u64, doc: NodeId) -> DomResult<()> {
+        self.check(doc)?;
+        self.note_registry_connection(registry, doc);
+        Ok(())
+    }
+
+    fn note_registry_connection(&mut self, registry: u64, doc: NodeId) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let documents = self.scoped_registry_docs.entry(registry).or_default();
+        if !documents.iter().any(|(_, known)| *known == doc) {
+            documents.push((NEXT.fetch_add(1, Ordering::Relaxed), doc));
+        }
+    }
+
+    /// Called once the registry has no live wrapper or DOM references.
+    pub fn forget_scoped_registry(&mut self, registry: u64) {
+        self.scoped_registry_docs.remove(&registry);
+        self.forget_registry_definitions(RegistryAssociation::Scoped(registry), None);
+        self.shadow_disabled.retain(|(_, association, _, _)| *association != RegistryAssociation::Scoped(registry));
+    }
+
+    pub fn scoped_registry_documents(&self, registry: u64) -> Vec<(u64, NodeId)> {
+        self.scoped_registry_docs.get(&registry).cloned().unwrap_or_default()
+    }
+
+    pub fn custom_definition_owner(&self, el: NodeId) -> DomResult<Option<CustomDefinitionOwner>> {
+        Ok(self.custom_definition_owners.get(&self.check(el)?).copied())
+    }
+
+    pub fn set_custom_definition_owner(&mut self, el: NodeId, owner: CustomDefinitionOwner) -> DomResult<()> {
+        let i = self.check(el)?;
+        self.custom_definition_owners.insert(i, owner);
+        Ok(())
+    }
+
+    pub fn shadow_including_nodes(&self, root: NodeId) -> DomResult<Vec<NodeId>> {
+        Ok(self.shadow_including_subtree(self.check(root)?).into_iter().map(|i| self.id_of(i)).collect())
+    }
+
     /// Creates an element without name validation (parser / internal use).
     pub fn create_element_raw(&mut self, doc: NodeId, name: QualName) -> DomResult<NodeId> {
         let owner = self.owner_for(doc)?;
@@ -1525,6 +1615,7 @@ impl Dom {
             _ => {}
         }
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
+        self.set_registry_idx(idx, self.registry_idx(owner));
         if is_template {
             let inert = self.inert_doc_for(owner);
             let frag = self.alloc(NodeKind::Fragment(FragmentData::new(idx, None, 0)), inert);
@@ -1674,22 +1765,14 @@ impl Dom {
                     | "p"
                     | "section"
                     | "span"
-            ) || (el.name.local.contains('-')
-                && !matches!(
-                    &*el.name.local,
-                    "annotation-xml"
-                        | "color-profile"
-                        | "font-face"
-                        | "font-face-src"
-                        | "font-face-uri"
-                        | "font-face-format"
-                        | "font-face-name"
-                        | "missing-glyph"
-                )));
+            ) || is_valid_custom_element_name(&el.name.local));
         if !valid_host {
             return Err(DomError::new(DomErrorKind::NotSupported, "This element does not support attachShadow"));
         }
-        if self.shadow_disabled.iter().any(|name| **name == *el.name.local) {
+        if self.shadow_disabled.iter().any(|(doc, registry, name, local)| {
+            *local == el.name.local && (name == local || el.is_value.as_ref() == Some(name))
+                && *registry == self.registry_idx(h) && doc.is_none_or(|d| d == self.id_of(self.n(h).owner_doc))
+        }) {
             return Err(DomError::new(
                 DomErrorKind::NotSupported,
                 "attachShadow() is disabled by disabledFeatures static field",
@@ -1739,6 +1822,7 @@ impl Dom {
         }
         let owner = self.n(h).owner_doc;
         let sr = self.alloc(NodeKind::Fragment(FragmentData::new(h, Some(mode), flags)), owner);
+        self.set_registry_idx(sr, self.registry_idx(owner));
         let tree = self.shadow_root_flags_for(h);
         self.n_mut(sr).set_tree_flags(tree);
         self.n_mut(h).element_mut().unwrap().shadow_root = sr;
@@ -1755,7 +1839,11 @@ impl Dom {
             return None;
         }
         let id = self.id_of(h);
-        self.attach_shadow_with(id, mode, flags | shadow_flags::DECLARATIVE).ok().map(|sr| sr.idx)
+        let flags = flags | shadow_flags::DECLARATIVE | shadow_flags::AVAILABLE_TO_INTERNALS;
+        let sr = self.attach_shadow_with(id, mode, flags).ok()?.idx;
+        let registry = if flags & shadow_flags::KEEP_REGISTRY_NULL != 0 { RegistryAssociation::Null } else { self.registry_idx(self.n(h).owner_doc) };
+        self.set_registry_idx(sr, registry);
+        Some(sr)
     }
 
     /// `shadow_flags` of a shadow root (0 for anything else).
@@ -1769,7 +1857,13 @@ impl Dom {
 
     /// A custom element name defined with `disabledFeatures: ["shadow"]`.
     pub fn disable_shadow_for(&mut self, name: &str) {
-        self.shadow_disabled.push(name.into());
+        self.shadow_disabled.push((None, RegistryAssociation::Default, name.into(), name.into()));
+    }
+
+    pub fn disable_shadow_for_registry(&mut self, doc: NodeId, registry: RegistryAssociation, name: &str, local: &LocalName) {
+        let doc = (registry == RegistryAssociation::Default).then_some(doc);
+        let key = (doc, registry, LocalName::from(name), local.clone());
+        if !self.shadow_disabled.contains(&key) { self.shadow_disabled.push(key); }
     }
 
     /// HTML "scripting is enabled" for the nodes of `doc`: set for a document
@@ -2856,6 +2950,15 @@ impl Dom {
         }
         self.n_mut(parent).add_child_count();
         self.tree_linked(node);
+        if !self.registry_associations.is_empty() && self.is_connected_idx(node) && !self.is_fragment_parse_host(self.n(node).owner_doc) {
+            let mut i = node;
+            while i != NIL {
+                if let Some(&RegistryAssociation::Scoped(registry)) = self.registry_associations.get(&i) {
+                    self.note_registry_connection(registry, self.id_of(self.n(i).owner_doc));
+                }
+                i = self.next_shadow_including(i, node);
+            }
+        }
     }
 
     /// Every unlink (DOM, parsers, moves) goes through here and every link
@@ -2970,7 +3073,38 @@ impl Dom {
         let mut held = 0u32;
         while let Some(i) = stack.pop() {
             if self.n(i).owner_doc == old {
+                let registry = self.registry_idx(i);
+                let element = self.n(i).element().is_some();
+                let shadow_flags = match &self.n(i).kind {
+                    NodeKind::Fragment(f) if f.shadow.is_some() => Some(f.flags),
+                    _ => None,
+                };
+                let registry = if self.is_fragment_parse_host(old) && !self.is_inert_doc(doc) {
+                    // Fragment parser nodes already have their semantic registry;
+                    // moving them out of our temporary owner is not DOM adoption.
+                    registry
+                } else if matches!(registry, RegistryAssociation::Scoped(_)) {
+                    registry
+                } else if element {
+                    let parent = self.n(i).parent;
+                    let source = if registry == RegistryAssociation::Null && parent != NIL
+                        && !matches!(&self.n(parent).kind, NodeKind::Fragment(f) if f.shadow.is_none()) {
+                        self.registry_idx(parent)
+                    } else {
+                        self.registry_idx(doc)
+                    };
+                    source.effective_global()
+                } else if let Some(flags) = shadow_flags {
+                    if registry == RegistryAssociation::Null && flags & shadow_flags::KEEP_REGISTRY_NULL != 0 {
+                        RegistryAssociation::Null
+                    } else {
+                        self.registry_idx(doc).effective_global()
+                    }
+                } else {
+                    registry
+                };
                 self.n_mut(i).owner_doc = doc;
+                if element || shadow_flags.is_some() { self.set_registry_idx(i, registry); }
                 moved += 1;
                 held += u32::from(self.n(i).ext_refs > 0);
                 if let Some(from) = created_in {
@@ -3109,6 +3243,14 @@ impl Dom {
     }
 
     pub fn clone_node(&mut self, node: NodeId, deep: bool, doc: Option<NodeId>) -> DomResult<NodeId> {
+        let fallback = match doc {
+            Some(d) => self.registry_association(d)?,
+            None => RegistryAssociation::Null,
+        };
+        self.clone_node_with_registry(node, deep, doc, fallback)
+    }
+
+    pub fn clone_node_with_registry(&mut self, node: NodeId, deep: bool, doc: Option<NodeId>, fallback: RegistryAssociation) -> DomResult<NodeId> {
         let n = self.check(node)?;
         let d = match doc {
             Some(d) => self.check(d)?,
@@ -3120,11 +3262,11 @@ impl Dom {
         if matches!(&self.n(n).kind, NodeKind::Fragment(f) if f.shadow.is_some()) {
             return Err(DomError::new(DomErrorKind::NotSupported, "ShadowRoot nodes are not clonable."));
         }
-        let c = self.clone_idx(n, d, deep)?;
+        let c = self.clone_idx(n, d, deep, fallback)?;
         Ok(self.id_of(c))
     }
 
-    fn clone_idx(&mut self, n: u32, doc: u32, deep: bool) -> DomResult<u32> {
+    fn clone_idx(&mut self, n: u32, doc: u32, deep: bool, fallback: RegistryAssociation) -> DomResult<u32> {
         let copy = match &self.n(n).kind {
             NodeKind::Document(d) => {
                 let (kind, url, ct, q) = (d.kind, d.url.clone(), d.content_type.clone(), d.quirks);
@@ -3134,6 +3276,9 @@ impl Dom {
                     dd.content_type = ct;
                     dd.quirks = q;
                     dd.allow_declarative_shadow_roots = allow_dsd;
+                }
+                if let registry @ RegistryAssociation::Scoped(_) = self.registry_idx(n) {
+                    self.set_registry_idx(nd, registry);
                 }
                 nd
             }
@@ -3148,7 +3293,13 @@ impl Dom {
                 let started = e.flags & crate::node::element_flags::SCRIPT_ALREADY_STARTED;
                 // DOM "clone a single node": the copy has the same is value.
                 let is_value = e.is_value.clone();
+                let registry = match self.registry_idx(n) {
+                    RegistryAssociation::Null => fallback,
+                    other => other,
+                };
+                let registry = if registry == RegistryAssociation::Default { self.registry_idx(doc).effective_global() } else { registry };
                 let id = self.create_element_raw(self.id_of(doc), name)?;
+                self.set_registry_idx(id.idx, registry);
                 let el = self.n_mut(id.idx).element_mut().unwrap();
                 el.is_value = is_value;
                 el.set_attr_state(attrs);
@@ -3194,7 +3345,7 @@ impl Dom {
         if deep {
             let kids: Vec<u32> = self.child_idx_iter(n).collect();
             for k in kids {
-                let kc = self.clone_idx(k, child_doc, true)?;
+                let kc = self.clone_idx(k, child_doc, true, fallback)?;
                 self.link(kc, copy, NIL);
             }
             // Template contents are cloned too (HTML "cloning steps").
@@ -3204,7 +3355,7 @@ impl Dom {
                 let inert = self.n(dst_tc).owner_doc;
                 let kids: Vec<u32> = self.child_idx_iter(src_tc).collect();
                 for k in kids {
-                    let kc = self.clone_idx(k, inert, true)?;
+                    let kc = self.clone_idx(k, inert, true, RegistryAssociation::Null)?;
                     self.link(kc, dst_tc, NIL);
                 }
             }
@@ -3215,9 +3366,12 @@ impl Dom {
             if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, .. }) = self.n(src_sr).kind {
                 if flags & shadow_flags::CLONABLE != 0 {
                     let dst_sr = self.new_shadow_root(copy, mode, flags & !shadow_flags::AVAILABLE_TO_INTERNALS);
+                    let registry = self.registry_idx(src_sr);
+                    let registry = if registry == RegistryAssociation::Default { self.registry_idx(doc).effective_global() } else { registry };
+                    self.set_registry_idx(dst_sr, registry);
                     let kids: Vec<u32> = self.child_idx_iter(src_sr).collect();
                     for k in kids {
-                        let kc = self.clone_idx(k, doc, true)?;
+                        let kc = self.clone_idx(k, doc, true, RegistryAssociation::Null)?;
                         self.link(kc, dst_sr, NIL);
                     }
                 }
@@ -3396,6 +3550,35 @@ impl Dom {
         Ok(())
     }
 
+    /// Set both the CSSOM serialization and the style parser's backing in one DOM mutation.
+    pub fn set_cssom_inline_style(&mut self, id: NodeId, canonical: String, semantic: Option<String>) -> DomResult<()> {
+        self.set_cssom_inline_style_with_typed_values(id, canonical, semantic, None)
+    }
+
+    pub fn set_cssom_inline_style_with_typed_values(
+        &mut self, id: NodeId, canonical: String, semantic: Option<String>, typed: Option<crate::stylo::declarations::TypedStyleValues>,
+    ) -> DomResult<()> {
+        let (i, el) = self.el(id)?;
+        let local = local_name!("style");
+        let slot = el.attrs.iter().position(|a| a.name.local == local && a.name.ns == ns!());
+        let backing = (semantic.is_some() || typed.is_some()).then(|| {
+            std::sync::Arc::new(crate::node::InlineStyleBacking { semantic, typed })
+        });
+        let semantic_only = el.semantic_style != backing && slot.is_some_and(|k| *el.attrs[k].value == *canonical);
+        match slot {
+            Some(k) => self.change_attr(i, k, &canonical),
+            None => self.append_attr(i, QualName::new(None, ns!(), local.clone()), &canonical),
+        }
+        let el = self.n_mut(i).element_mut().unwrap();
+        el.semantic_style = backing;
+        el.checked_style_backing = true;
+        if semantic_only {
+            self.bump();
+            self.note(Change::attr(i, &QualName::new(None, ns!(), local)));
+        }
+        Ok(())
+    }
+
     /// Sets the attribute in no namespace named `local`, as a reflected IDL
     /// attribute does (`className`, `id`, `slot`): the name is a valid,
     /// lowercase atom already, so nothing is validated, lowercased or looked up.
@@ -3455,11 +3638,19 @@ impl Dom {
         let old_for = (plain && name.local == local_name!("for") && el.is_html() && el.name.local == local_name!("label"))
             .then(|| el.attr_local(&local_name!("for")).map(Box::<str>::from));
         let r = f(el);
+        if plain && name.local == local_name!("disabled") && el.is_html() && el.name.local == local_name!("link") {
+            el.link_explicitly_enabled = el.attr_local(&name.local).is_none();
+        }
         debug_assert!(el.derived_in_step());
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
         if plain && &*name.local == "points" && !self.svg_points.is_empty() {
             if let Some(lists) = self.svg_points.get(&i).and_then(std::rc::Weak::upgrade) {
                 lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
+            }
+        }
+        if plain && !self.svg_numbers.is_empty() {
+            if let Some(lists) = self.svg_numbers.get(&i).and_then(|attrs| attrs.get(&*name.local)).and_then(std::rc::Weak::upgrade) {
+                lists.attribute_changed(&name.local, self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
             }
         }
         if plain && name.local == local_name!("class") {
@@ -3475,7 +3666,59 @@ impl Dom {
             let doc = self.n(i).owner_doc;
             self.html_base_changed(doc);
         }
+        if plain && matches!(&*name.local, "title" | "type") && self.n(i).in_document_tree() {
+            self.note_preferred_style(i);
+        }
         r
+    }
+
+    pub(crate) fn note_preferred_style(&mut self, idx: u32) {
+        let node = self.n(idx);
+        let Some(element) = node.element() else { return };
+        if !element.is_html() || element.name.local != local_name!("style")
+            || element.attr("type").is_some_and(|kind| !kind.is_empty() && !kind.eq_ignore_ascii_case("text/css"))
+        {
+            return;
+        }
+        self.note_preferred_sheet_name(idx);
+    }
+
+    pub fn note_preferred_link_sheet(&mut self, link: NodeId) {
+        let Ok(idx) = self.check(link) else { return };
+        let node = self.n(idx);
+        let Some(element) = node.element() else { return };
+        if !node.in_document_tree() || !element.is_html() || element.name.local != local_name!("link")
+            || element.link_explicitly_enabled || element.attr("disabled").is_some()
+            || element.attr("rel").is_none_or(|rel| rel.split_ascii_whitespace().any(|token| token.eq_ignore_ascii_case("alternate")))
+        {
+            return;
+        }
+        self.note_preferred_sheet_name(idx);
+    }
+
+    fn note_preferred_sheet_name(&mut self, idx: u32) {
+        let node = self.n(idx);
+        let doc = node.owner_doc;
+        if self.doc_data(doc).preferred_sheet_name.is_none() {
+            let title = node.element().and_then(|el| el.attr("title")).filter(|title| !title.is_empty()).map(Into::into);
+            self.doc_data_mut(doc).preferred_sheet_name = title;
+        }
+    }
+
+    pub(crate) fn sheet_outside_preferred_set(&self, owner: NodeId) -> bool {
+        let Ok(node) = self.node(owner) else { return false };
+        let Some(element) = node.element() else { return false };
+        if !element.is_html() || !matches!(&*element.name.local, "style" | "link")
+            || !node.in_document_tree() || element.link_explicitly_enabled {
+            return false;
+        }
+        let title = element.attr("title").filter(|title| !title.is_empty());
+        let preferred = self.doc_data(node.owner_doc).preferred_sheet_name.as_deref();
+        if element.name.local == local_name!("link") && element.attr("rel").is_some_and(|rel|
+            rel.split_ascii_whitespace().any(|token| token.eq_ignore_ascii_case("alternate"))) {
+            return title.is_none() || title != preferred;
+        }
+        title.is_some() && preferred.is_some() && title != preferred
     }
 
     pub(crate) fn change_attr(&mut self, i: u32, k: usize, value: &str) {
@@ -3483,6 +3726,11 @@ impl Dom {
         let name = el.attrs[k].name.clone();
         let old = self.edit_attrs(i, &name, |el| el.replace_attr_value(k, value.into()));
         if *old != *value {
+            if name.ns == ns!() && name.local == local_name!("style") {
+                let el = self.n_mut(i).element_mut().unwrap();
+                el.semantic_style = None;
+                el.checked_style_backing = false;
+            }
             self.note_style_attr(i, &name, Some(&old));
         }
         if *old == *value {
@@ -3553,7 +3801,13 @@ impl Dom {
     }
     fn remove_attr_at(&mut self, i: u32, k: usize) {
         let name = self.n(i).element().unwrap().attrs[k].name.clone();
-        let attr = self.edit_attrs(i, &name, |el| el.remove_attr(k));
+        let attr = self.edit_attrs(i, &name, |el| {
+            if name.ns == ns!() && name.local == local_name!("style") {
+                el.semantic_style = None;
+                el.checked_style_backing = false;
+            }
+            el.remove_attr(k)
+        });
         if !self.attr_nodes.is_empty() {
             self.attr_removed(i, &attr.name, &attr.value);
         }
@@ -3591,6 +3845,18 @@ impl Dom {
     }
 
     // ----- names -------------------------------------------------------
+
+    /// Applies the validated qualified name's prefix after synchronous
+    /// construction. Shared tag-name strings are keyed by prefix and local name.
+    pub fn set_element_prefix(&mut self, id: NodeId, prefix: Option<Prefix>) -> DomResult<()> {
+        let index = self.check(id)?;
+        let el = self.n_mut(index).element_mut().ok_or(DomError::Type("not an element"))?;
+        if el.name.prefix != prefix {
+            el.name.prefix = prefix;
+            self.bump_tree();
+        }
+        Ok(())
+    }
 
     /// `Element.tagName` / `nodeName` for elements.
     pub fn tag_name(&self, id: NodeId) -> DomResult<String> {
@@ -4285,12 +4551,22 @@ impl Dom {
     fn free_slot(&mut self, i: u32, component_root: u32) {
         let owner = self.n(i).owner_doc;
         if !self.svg_points.is_empty() { self.svg_points.remove(&i); }
+        if !self.svg_numbers.is_empty() { self.svg_numbers.remove(&i); }
+        if !self.registry_associations.is_empty() { self.registry_associations.remove(&i); }
+        if !self.custom_definition_owners.is_empty() { self.custom_definition_owners.remove(&i); }
         if !self.svg_strings.is_empty() {
             use crate::svg_string_list::StringListAttribute;
             self.svg_strings.remove(&(i, StringListAttribute::RequiredExtensions));
             self.svg_strings.remove(&(i, StringListAttribute::SystemLanguage));
         }
         if owner == i {
+            let doc = self.id_of(i);
+            self.forget_registry_definitions(RegistryAssociation::Default, Some(doc));
+            self.scoped_registry_docs.retain(|_, docs| {
+                docs.retain(|(_, known)| *known != doc);
+                !docs.is_empty()
+            });
+            self.shadow_disabled.retain(|(owner, _, _, _)| *owner != Some(doc));
             self.snapshot_nonces.get_mut().remove(&i);
         }
         let inert = match &self.n(i).kind {
@@ -4500,6 +4776,25 @@ pub fn is_valid_element_local_name(name: &str) -> bool {
         return false;
     }
     chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':' | '_') || c >= '\u{80}')
+}
+
+/// HTML "valid custom element name".
+pub fn is_valid_custom_element_name(name: &str) -> bool {
+    const RESERVED: &[&str] = &[
+        "annotation-xml",
+        "color-profile",
+        "font-face",
+        "font-face-src",
+        "font-face-uri",
+        "font-face-format",
+        "font-face-name",
+        "missing-glyph",
+    ];
+    name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name.contains('-')
+        && is_valid_element_local_name(name)
+        && !name.chars().any(|c| c.is_ascii_uppercase())
+        && !RESERVED.contains(&name)
 }
 
 /// DOM "valid attribute local name".

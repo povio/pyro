@@ -11,12 +11,15 @@ pub(super) fn for_input(page: &Rc<PageDom>, host: NodeId, input_type: &str) -> O
         if editing_host(&dom, start.0) != Some(host) || editing_host(&dom, end.0) != Some(host) {
             return None;
         }
-        if start == end && matches!(input_type, "deleteContentBackward" | "deleteContentForward") {
-            let (caret, span) = deletion_plan(page, &dom, host, start, input_type == "deleteContentBackward");
-            span.unwrap_or((caret, caret))
-        } else {
-            (start, end)
-        }
+        if matches!(input_type, "deleteContentBackward" | "deleteContentForward") {
+            let backward = input_type == "deleteContentBackward";
+            if let Some(plan) = child_line::Deletion::plan(page, &dom, host, start, end, backward) {
+                plan.range
+            } else if start == end {
+                let (caret, span) = deletion_plan(page, &dom, host, start, backward);
+                span.unwrap_or((caret, caret))
+            } else { (start, end) }
+        } else { (start, end) }
     };
     crate::range::StaticRangeData::from_points(page, start, end).ok()
 }
@@ -27,7 +30,7 @@ fn character(dom: &Dom, p: Point, backward: bool) -> Option<(Point, Point)> {
 }
 
 /// A hidden descendant cannot supply a visible editable character.
-pub(super) fn rendered(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
+pub(crate) fn rendered(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     let mut current = if dom.node_type(node).ok() == Some(NodeType::Element) {
         Some(node)
     } else {
@@ -53,6 +56,9 @@ pub(super) fn deletion_plan(
     caret: Point,
     backward: bool,
 ) -> (Point, Option<(Point, Point)>) {
+    if let Some(join) = paragraph_join::NestedJoin::at(page, dom, host, caret, backward) {
+        return (caret, join.range(dom));
+    }
     let mut p = editable_edge(dom, caret, !backward);
     // Don't descend from a parent boundary into hidden content.
     if p != caret && !rendered(page, dom, p.0) {
@@ -100,6 +106,43 @@ fn cell(dom: &Dom, host: NodeId, mut n: NodeId) -> Option<NodeId> {
         }
         n = dom.parent_element(n).ok()??;
     }
+}
+
+/// Whether a caret can be reached beyond a locked block in this editor.
+/// A visible inline object or BR supplies a position, as does editable
+/// rendered text. A locked block's own text belongs to neither side.
+fn has_content_beyond(page: &PageDom, dom: &Dom, host: NodeId, mut node: NodeId, backward: bool) -> bool {
+    let layout = page.layout();
+    while node != host {
+        let sibling = if backward { dom.prev_sibling(node) } else { dom.next_sibling(node) };
+        let Some(next) = sibling.ok().flatten() else {
+            let Some(parent) = dom.parent(node).ok().flatten() else { break };
+            node = parent;
+            continue;
+        };
+        node = next;
+        let Ok(mut subtree) = dom.descendants(node) else { continue };
+        if subtree.any(|n| {
+            if is_text(dom, n) {
+                let text = dom.char_data(n).unwrap_or("");
+                return !text.is_empty() && editing_host(dom, n) == Some(host) && rendered(page, dom, n)
+                    && (text.chars().any(|c| !matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0c'))
+                        || layout.text_rect(dom, n).is_some_and(|r| r.width > 0.0));
+            }
+            if dom.node_type(n).ok() != Some(NodeType::Element) || !rendered(page, dom, n) {
+                return false;
+            }
+            if editing_host(dom, n) == Some(host) {
+                return !is_container(dom, n);
+            }
+            dom.parent(n).ok().flatten().is_some_and(|parent| editing_host(dom, parent) == Some(host))
+                && !is_editable(dom, n)
+                && layout.style().computed(dom, n).is_some_and(|s| s.box_kind == pyro_dom::style::BoxKind::Inline)
+        }) {
+            return true;
+        }
+    }
+    false
 }
 
 fn at_edge(page: &PageDom, dom: &Dom, host: NodeId, p: Point, backward: bool) -> Option<(Point, Point)> {
@@ -169,6 +212,14 @@ fn at_edge(page: &PageDom, dom: &Dom, host: NodeId, p: Point, backward: bool) ->
                     && placeholder_block(dom, block)
                 {
                     return Some(((parent, dom.index_in_parent(block).ok()?), (block, len(dom, block))));
+                }
+                // A terminal locked block has no editable position to delete
+                // towards. Between two runs of content it remains atomic.
+                if is_text(dom, editable_edge(dom, p, backward).0)
+                    && page.layout().style().computed(dom, candidate).is_some_and(|s| s.box_kind == pyro_dom::style::BoxKind::Block)
+                    && !has_content_beyond(page, dom, host, candidate, backward)
+                {
+                    return Some((p, p));
                 }
                 let at = dom.index_in_parent(candidate).ok()?;
                 return Some(((parent, at), (parent, at + 1)));

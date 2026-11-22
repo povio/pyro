@@ -1,0 +1,419 @@
+{
+ "start": "2026-11-22T01:42:01.651Z",
+ "end": "2026-11-22T01:42:09.244Z",
+ "preciseHost": {
+  "durationSeconds": 7.593,
+  "hostBusyPct": 39.283
+ },
+ "perArm": {
+  "grid-scopes-base-d045ec7b8": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 3.969,
+   "weightedHostBusyPct": 44.54
+  },
+  "grid-scopes-237a30897": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 3.624,
+   "weightedHostBusyPct": 33.52
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "grid-scopes-base-d045ec7b8",
+   "start": "2026-11-22T01:42:01.651Z",
+   "end": "2026-11-22T01:42:02.641Z",
+   "durationSeconds": 0.99,
+   "hostBusyPct": 31.988
+  },
+  {
+   "order": 2,
+   "binary": "grid-scopes-237a30897",
+   "start": "2026-11-22T01:42:02.641Z",
+   "end": "2026-11-22T01:42:03.588Z",
+   "durationSeconds": 0.947,
+   "hostBusyPct": 29.647
+  },
+  {
+   "order": 3,
+   "binary": "grid-scopes-237a30897",
+   "start": "2026-11-22T01:42:03.588Z",
+   "end": "2026-11-22T01:42:04.473Z",
+   "durationSeconds": 0.885,
+   "hostBusyPct": 29.92
+  },
+  {
+   "order": 4,
+   "binary": "grid-scopes-base-d045ec7b8",
+   "start": "2026-11-22T01:42:04.473Z",
+   "end": "2026-11-22T01:42:05.362Z",
+   "durationSeconds": 0.889,
+   "hostBusyPct": 30.5
+  },
+  {
+   "order": 5,
+   "binary": "grid-scopes-237a30897",
+   "start": "2026-11-22T01:42:05.362Z",
+   "end": "2026-11-22T01:42:06.262Z",
+   "durationSeconds": 0.9,
+   "hostBusyPct": 34.131
+  },
+  {
+   "order": 6,
+   "binary": "grid-scopes-base-d045ec7b8",
+   "start": "2026-11-22T01:42:06.262Z",
+   "end": "2026-11-22T01:42:07.446Z",
+   "durationSeconds": 1.184,
+   "hostBusyPct": 67.406
+  },
+  {
+   "order": 7,
+   "binary": "grid-scopes-base-d045ec7b8",
+   "start": "2026-11-22T01:42:07.446Z",
+   "end": "2026-11-22T01:42:08.352Z",
+   "durationSeconds": 0.906,
+   "hostBusyPct": 42.169
+  },
+  {
+   "order": 8,
+   "binary": "grid-scopes-237a30897",
+   "start": "2026-11-22T01:42:08.352Z",
+   "end": "2026-11-22T01:42:09.244Z",
+   "durationSeconds": 0.892,
+   "hostBusyPct": 40.587
+  }
+ ],
+ "benchmarkSHA256": "d470fae1ee1ee34cca4b58c5b8f6a5f77a1a50cf12be65c1308ee56d9fecae06",
+ "minOneSecondBusyPct": 29.6,
+ "maxOneSecondBusyPct": 73.5,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-22T01:42:01.437Z",
+   "end": "2026-11-22T01:42:02.439Z",
+   "cpuBusyPct": 32.6
+  },
+  {
+   "start": "2026-11-22T01:42:02.439Z",
+   "end": "2026-11-22T01:42:03.441Z",
+   "cpuBusyPct": 29.6
+  },
+  {
+   "start": "2026-11-22T01:42:03.441Z",
+   "end": "2026-11-22T01:42:04.443Z",
+   "cpuBusyPct": 29.9
+  },
+  {
+   "start": "2026-11-22T01:42:04.443Z",
+   "end": "2026-11-22T01:42:05.445Z",
+   "cpuBusyPct": 30.5
+  },
+  {
+   "start": "2026-11-22T01:42:05.445Z",
+   "end": "2026-11-22T01:42:06.447Z",
+   "cpuBusyPct": 34.5
+  },
+  {
+   "start": "2026-11-22T01:42:06.447Z",
+   "end": "2026-11-22T01:42:07.448Z",
+   "cpuBusyPct": 73.5
+  },
+  {
+   "start": "2026-11-22T01:42:07.448Z",
+   "end": "2026-11-22T01:42:08.450Z",
+   "cpuBusyPct": 42.1
+  },
+  {
+   "start": "2026-11-22T01:42:08.450Z",
+   "end": "2026-11-22T01:42:09.453Z",
+   "cpuBusyPct": 40.4
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-22T01:42:16.466Z",
+   "elapsedMs": 30001,
+   "cpuBusyPct": 62,
+   "load": [
+    18.6337890625,
+    22.64013671875,
+    20.65185546875
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1152,
+     "pctCpu": 58.8,
+     "rssMiB": 38076
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 86
+    },
+    "independent-feature": {
+     "n": 1,
+     "pctCpu": 0,
+     "rssMiB": 9
+    },
+    "css-values": {
+     "n": 7,
+     "pctCpu": 13.7,
+     "rssMiB": 512
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-22T01:41:31.316Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T01:40:51.093224+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 2,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "CSS native slot and editing PGID27699 released. Dedicated CSS 237a30897 + separate editing bfdb018b7 each independently gets one serial QA slot, including direct/guards. Count each once. Real-Tab perf pending grid QA; no timing claim yet."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 31668,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 31671,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 98.9
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 1
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T01:42:01.321Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T01:41:53.080758+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 1,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "237a30897 dedicated QA release 01:40:59Z (13/13, adjacent 12/12+8/8+40/40 all retained). Direct START reserved real-Tab ABBA/BAAB vs d045ec7b8 on one-second mean 22.6%, min14.1 max33.2, no CI Worker. General independent editing QA separately accounted."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 31668,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 31671,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 100
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0.9
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T01:42:31.326Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T01:41:53.080758+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 1,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "237a30897 dedicated QA release 01:40:59Z (13/13, adjacent 12/12+8/8+40/40 all retained). Direct START reserved real-Tab ABBA/BAAB vs d045ec7b8 on one-second mean 22.6%, min14.1 max33.2, no CI Worker. General independent editing QA separately accounted."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-22T01:40:35.183433+00:00",
+ "qaEnd": "2026-11-22T01:40:39.411433+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "dedicatedQARecordedUTC": [
+  "2026-11-22T01:40:32Z",
+  "2026-11-22T01:40:59Z"
+ ],
+ "actualRawLogOverlaps": [
+  {
+   "file": "round7-opfs/native-stream.log",
+   "start": "2026-11-22T01:41:19.752+00:00",
+   "through": "2026-11-22T01:42:17.928+00:00",
+   "overlapSeconds": 7.593
+  }
+ ],
+ "notes": "The candidate and base retained their own per-arm Tab-step mixes; candidate-only feature observations and any display/shadow limitations are separate from aggregate timing."
+}

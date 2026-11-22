@@ -1,0 +1,9 @@
+[
+  "css/css-properties-values-api/typedom.html",
+  "css/css-properties-values-api/at-property-typedom.html",
+  "css/css-properties-values-api/register-property.html",
+  "css/css-properties-values-api/registered-property-computation.html",
+  "css/css-typed-om/the-stylepropertymap/computed/iterable.tentative.html",
+  "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+  "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html"
+]

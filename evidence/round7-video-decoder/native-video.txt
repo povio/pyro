@@ -1,0 +1,10 @@
+running 6 tests
+test packet_av1_capability_matches_supported_sdr_colorimetry ... ok
+test decodes_av1_mp4 ... ok
+test decodes_av1_webm ... ok
+test packet_av1_keeps_sample_tags_and_restarts_after_flush ... ok
+test decodes_h264_mp4_with_b_frames ... ok
+test packet_avc_and_annex_b_keep_sample_tags_and_restart_after_flush ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+

@@ -1,0 +1,26 @@
+{
+  "version": "124.0.6367.29",
+  "results": {
+    "ordinary": {
+      "found": true,
+      "node": "visible",
+      "selected": "NEEDLE-814"
+    },
+    "cssInert": {
+      "found": false,
+      "node": null,
+      "selected": ""
+    },
+    "htmlInert": {
+      "found": false,
+      "node": null,
+      "selected": ""
+    },
+    "modal": {
+      "focused": "b",
+      "afterUpdate": "b",
+      "afterOutsideFocus": "b",
+      "computed": "auto"
+    }
+  }
+}

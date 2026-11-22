@@ -1,0 +1,179 @@
+{
+  "version": "124.0.6367.29",
+  "results": {
+    "ordinary": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ]
+    },
+    "displayContents": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ]
+    },
+    "nonfocusableWrapper": {
+      "forward": [
+        "b",
+        "c",
+        "a",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "a",
+        "c",
+        "b",
+        "start"
+      ]
+    },
+    "positive": {
+      "forward": [
+        "b",
+        "a",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "a",
+        "b",
+        "start"
+      ]
+    },
+    "nested": {
+      "forward": [
+        "c",
+        "b",
+        "a",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "a",
+        "b",
+        "c",
+        "start"
+      ]
+    },
+    "slot": {
+      "forward": [
+        "c",
+        "b",
+        "a",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "a",
+        "b",
+        "c",
+        "start"
+      ]
+    },
+    "explicitGrid": {
+      "forward": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "end"
+      ],
+      "reverse": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "start"
+      ]
+    },
+    "autoGrid": {
+      "forward": [
+        "a",
+        "c",
+        "b",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "b",
+        "c",
+        "a",
+        "start"
+      ]
+    },
+    "reorderedGrid": {
+      "forward": [
+        "c",
+        "d",
+        "b",
+        "a",
+        "end"
+      ],
+      "reverse": [
+        "a",
+        "b",
+        "d",
+        "c",
+        "start"
+      ]
+    },
+    "dynamic": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ],
+      "changedForward": [
+        "c",
+        "a",
+        "b",
+        "d",
+        "end"
+      ],
+      "changedReverse": [
+        "d",
+        "b",
+        "a",
+        "c",
+        "start"
+      ]
+    }
+  }
+}

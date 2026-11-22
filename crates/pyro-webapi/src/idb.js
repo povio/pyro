@@ -129,7 +129,7 @@
       for (let i = 0; i < bytes.length; i++) out += HEX[bytes[i] >>> 4] + HEX[bytes[i] & 15];
       return out + '!';
     }
-    if (isArray(input)) {
+    if (N.isArrayKeyObject(input)) {
       if (!seen) seen = new Set();
       if (seen.has(input)) return undefined;
       seen.add(input);
@@ -160,7 +160,7 @@
     if (t === '3') {
       let out = '', units = [];
       while (s[st.i] !== '!') {
-        units.push(parseInt(s.slice(st.i, st.i + 4), 16));
+        own(units, units.length, parseInt(s.slice(st.i, st.i + 4), 16));
         st.i += 4;
         if (units.length === 4096) {
           out += apply(fromCharCode, null, units);
@@ -173,14 +173,14 @@
     if (t === '4') {
       const bytes = [];
       while (s[st.i] !== '!') {
-        bytes.push(parseInt(s.slice(st.i, st.i + 2), 16));
+        own(bytes, bytes.length, parseInt(s.slice(st.i, st.i + 2), 16));
         st.i += 2;
       }
       st.i++;
       return new U8(bytes).buffer;
     }
     const out = [];
-    while (s[st.i] !== '!') out.push(decodeAt(s, st));
+    while (s[st.i] !== '!') own(out, out.length, decodeAt(s, st));
     st.i++;
     return out;
   }
@@ -326,8 +326,12 @@
     for (const id of path.split('.')) {
       if (typeof value === 'string' && id === 'length') value = value.length;
       else if (isArray(value) && id === 'length') value = value.length;
-      else if (value === null || typeof value !== 'object' || !hasOwn(value, id)) return FAIL;
-      else value = value[id];
+      else if (value === null || typeof value !== 'object') return FAIL;
+      else if (hasOwn(value, id)) value = value[id];
+      else if (id === 'size' || id === 'type' || id === 'name' || id === 'lastModified') {
+        value = N.blobKeyPath(value, id);
+        if (value === undefined) return FAIL;
+      } else return FAIL;
     }
     return value;
   }
@@ -572,10 +576,11 @@
   function loadMeta(name) {
     const meta = new Map();
     for (const [store, kp, ai, indexes] of N.schema(name)) {
-      const m = { name: store, keyPath: parse(kp), ai, indexes: new Map(), deleted: false };
+      const m = { name: store, backingName: store, backingIndexes: new Set(), keyPath: parse(kp), ai, indexes: new Map(), deleted: false };
       for (const [index, ikp, unique, multiEntry] of indexes) {
-        m.indexes.set(index, { name: index, keyPath: parse(ikp), unique, multiEntry, deleted: false });
+        m.indexes.set(index, { name: index, backingName: index, keyPath: parse(ikp), unique, multiEntry, deleted: false });
       }
+      for (const im of m.indexes.values()) m.backingIndexes.add(im);
       meta.set(store, m);
     }
     return meta;
@@ -641,8 +646,8 @@
       if (ai && (keyPath === '' || isArray(keyPath))) {
         throw fail('InvalidAccessError', 'The autoIncrement option was set but the keyPath option was empty or an array.');
       }
-      N.createStore(c.name, name, stringify(keyPath), ai);
-      const m = { name, keyPath, ai, indexes: new Map(), deleted: false };
+      enqueueSchema(x, () => N.createStore(c.name, name, stringify(keyPath), ai));
+      const m = { name, backingName: name, backingIndexes: new Set(), keyPath, ai, indexes: new Map(), deleted: false };
       c.meta.set(name, m);
       x.created.push(m);
       return storeHandle(x, m);
@@ -655,10 +660,9 @@
       if (x.state !== 'active') throw fail('TransactionInactiveError', 'The transaction is not active.');
       const m = c.meta.get(name);
       if (!m) throw fail('NotFoundError', 'The specified object store was not found.');
-      N.deleteStore(c.name, name);
+      enqueueSchema(x, () => N.deleteStore(c.name, name));
       c.meta.delete(name);
-      m.deleted = true;
-      for (const im of m.indexes.values()) im.deleted = true;
+      markStoreDeleted(m);
     }
     transaction(storeNames, mode = undefined, options = undefined) {
       if (!arguments.length) throw new TE("Failed to execute 'transaction' on 'IDBDatabase': 1 argument required.");
@@ -764,7 +768,14 @@
       mode,
       durability,
       upgrade,
-      state: 'active',
+      phase: 'active',
+      creationTurn: upgrade ? undefined : N.scriptTurn(),
+      get state() {
+        return this.phase === 'active' && this.creationTurn !== undefined && this.creationTurn !== N.scriptTurn() ? 'inactive' : this.phase;
+      },
+      set state(value) {
+        this.phase = value;
+      },
       started: false,
       inflight: false,
       queue: [],
@@ -782,6 +793,7 @@
     if (!upgrade) {
       // Inactive once the creating task is over.
       post(() => {
+        x.creationTurn = undefined;
         if (x.state === 'active') x.state = 'inactive';
         pump(x);
       });
@@ -810,11 +822,12 @@
       pump(x);
     }
   }
-  function finish(x) {
+  function finish(x, committed) {
     x.state = 'finished';
     const i = txs.indexOf(x);
     if (i >= 0) txs.splice(i, 1);
     x.conn.txs.delete(x);
+    post(() => finishedEvent(x, committed ? 'complete' : 'abort', committed));
     tryStart();
     if (!x.upgrade) maybeClose(x.conn);
   }
@@ -827,9 +840,27 @@
       commitTx(x);
     }
   }
+  function enqueueSchema(x, op) {
+    x.queue.push({ request: null, op });
+    pump(x);
+  }
   function execute(x) {
     if (x.state === 'finished') {
       x.inflight = false;
+      return;
+    }
+    while (x.queue.length && !x.queue[0].request) {
+      try {
+        x.queue.shift().op();
+      } catch (error) {
+        x.inflight = false;
+        abortTx(x, error);
+        return;
+      }
+    }
+    if (!x.queue.length) {
+      x.inflight = false;
+      pump(x);
       return;
     }
     const r = x.queue.shift();
@@ -847,10 +878,12 @@
       e: error ? plainEvent('error', true, true) : plainEvent('success', false, false),
       a: (notCanceled, threw) => {
         x.inflight = false;
-        if (x.state === 'active') x.state = 'inactive';
+        if (x.state === 'active') {
+          x.state = 'inactive';
+          if (threw) return abortTx(x, fail('AbortError', 'An exception was thrown in an event handler.'));
+        }
         if (x.state === 'finished') return;
-        if (threw) abortTx(x, fail('AbortError', 'An exception was thrown in an event handler.'));
-        else if (error && notCanceled) abortTx(x, error);
+        if (error && notCanceled) abortTx(x, error);
         else pump(x);
       },
     };
@@ -858,8 +891,7 @@
   function commitTx(x) {
     x.state = 'committing';
     N.commit(x.conn.name, x.id);
-    finish(x);
-    post(() => finishedEvent(x, 'complete', true));
+    finish(x, true);
   }
   function abortTx(x, error) {
     if (x.state === 'finished') return;
@@ -867,21 +899,27 @@
     x.error = error;
     if (x.upgrade) revertUpgrade(x);
     for (const r of x.queue.splice(0)) {
+      if (!r.request) continue;
       failed(requestState(r.request), fail('AbortError', 'The transaction was aborted, so the request cannot be fulfilled.'));
       post(() => ({ t: r.request, e: plainEvent('error', true, true) }));
     }
-    finish(x);
-    post(() => finishedEvent(x, 'abort', false));
+    finish(x, false);
   }
   // `complete` or `abort`. An upgrade no longer runs while its listeners do
   // (the open request keeps its transaction until after them).
   function finishedEvent(x, type, committed) {
-    if (x.upgrade) x.conn.upgrade = null;
+    if (x.upgrade) {
+      x.conn.upgrade = null;
+      post(() => finishOpen(x, committed));
+    }
     return {
       t: x.obj,
       e: plainEvent(type, !committed, false),
       a: () => {
-        if (x.upgrade) upgradeFinished(x, committed);
+        if (x.upgrade) {
+          requestState(x.openItem.request).tx = null;
+          maybeClose(x.conn);
+        }
       },
     };
   }
@@ -901,17 +939,17 @@
       }
       c.meta.set(name, m);
     }
-    for (const m of x.created) {
-      if (!x.snapshot.stores.some(([s]) => s === m)) {
-        m.deleted = true;
-        for (const im of m.indexes.values()) im.deleted = true;
-      }
-    }
+    for (const store of x.created) markStoreDeleted(store);
     for (const im of x.createdIndexes || []) im.deleted = true;
     c.closePending = true;
   }
 
   // ---- Object stores ----
+  function markStoreDeleted(store) {
+    store.deleted = true;
+    for (const index of store.indexes.values()) index.deleted = true;
+    store.indexes.clear();
+  }
   let storeOf;
   function storeHandle(x, m) {
     let h = x.handles.get(m);
@@ -954,19 +992,19 @@
   function storeRecord(h, value, key, noOverwrite) {
     const m = h.m, x = h.x, name = x.conn.name;
     if (key === undefined) {
-      const n = N.nextKey(name, m.name, x.id);
+      const n = N.nextKey(name, m.backingName);
       if (n < 0) throw fail('ConstraintError', 'The key generator has reached its maximum value.');
       key = numberKey(n);
       if (m.keyPath !== null) inject(value, m.keyPath, n);
-    } else if (m.ai && key[0] === '1') {
-      N.bumpKey(name, m.name, x.id, decodeKey(key));
     }
     const idx = [];
-    for (const im of m.indexes.values()) idx.push([im.name, indexKeys(im, value)]);
-    const code = N.put(name, m.name, x.id, key, value, idx, noOverwrite);
+    for (const im of m.backingIndexes) idx.push([im.backingName, indexKeys(im, value)]);
+    const code = N.put(name, m.backingName, x.id, key, value, idx, noOverwrite);
     if (code === 1) throw fail('ConstraintError', 'Key already exists in the object store.');
     if (code === 2) throw fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.');
-    return decodeKey(key);
+    const primaryKey = decodeKey(key);
+    if (m.ai && key[0] === '1') N.bumpKey(name, m.backingName, x.id, primaryKey);
+    return primaryKey;
   }
   function addOrPut(store, args, noOverwrite, what) {
     if (!args.length) throw new TE(`Failed to execute '${what}' on 'IDBObjectStore': 1 argument required.`);
@@ -1013,9 +1051,9 @@
     if (index) indexCheck(index);
     else check(h, false);
     const range = toRange(a.query, false);
-    const name = index ? index.im.name : null;
     return request(h.x, source, () => {
-      const flat = N.getAll(h.x.conn.name, h.m.name, name, ...range, a.count, a.dir, kind !== 1);
+      const name = index ? index.im.backingName : null;
+      const flat = N.getAll(h.x.conn.name, h.m.backingName, name, ...range, a.count, a.dir, kind !== 1);
       const out = [];
       for (let i = 0; i < flat.length; i += 3) {
         if (kind === 0) out.push(flat[i + 2]);
@@ -1025,11 +1063,27 @@
       return out;
     });
   }
+  function requestOperations(proto, owners, names) {
+    const operations = O.create(null);
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i], original = proto[name];
+      operations[name] = original;
+      const method = { [name]() {
+        const owner = owners.get(this);
+        if (!owner) throw new TE('Illegal invocation');
+        return apply(owner[name], this, arguments);
+      } }[name];
+      defineProperty(method, 'length', { value: original.length });
+      defineProperty(proto, name, { value: method });
+    }
+    return operations;
+  }
   class IDBObjectStore {
     #h;
     constructor(t = undefined, h) {
       if (t !== token) throw illegal();
       this.#h = h;
+      N.storeOperations.set(this, storeOperations);
     }
     static {
       storeOf = (s) => s.#h;
@@ -1042,7 +1096,10 @@
       upgradeCheck(h, h.m.deleted);
       if (h.m.name === name) return;
       if (c.meta.has(name)) throw fail('ConstraintError', 'An object store with the specified name already exists.');
-      N.renameStore(c.name, h.m.name, name);
+      enqueueSchema(h.x, () => {
+        N.renameStore(c.name, h.m.backingName, name);
+        h.m.backingName = name;
+      });
       c.meta.delete(h.m.name);
       h.m.name = name;
       c.meta.set(name, h.m);
@@ -1073,7 +1130,7 @@
       check(h, true);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        N.deleteRange(h.x.conn.name, h.m.name, h.x.id, ...range);
+        N.deleteRange(h.x.conn.name, h.m.backingName, h.x.id, ...range);
         return undefined;
       });
     }
@@ -1081,7 +1138,7 @@
       const h = this.#h;
       check(h, true);
       return request(h.x, this, () => {
-        N.clear(h.x.conn.name, h.m.name, h.x.id);
+        N.clear(h.x.conn.name, h.m.backingName, h.x.id);
         return undefined;
       });
     }
@@ -1091,7 +1148,7 @@
       check(h, false);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        const r = N.getRecord(h.x.conn.name, h.m.name, null, ...range, true);
+        const r = N.getRecord(h.x.conn.name, h.m.backingName, null, ...range, true);
         return r ? r[2] : undefined;
       });
     }
@@ -1101,7 +1158,7 @@
       check(h, false);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        const r = N.getRecord(h.x.conn.name, h.m.name, null, ...range, false);
+        const r = N.getRecord(h.x.conn.name, h.m.backingName, null, ...range, false);
         return r ? decodeKey(r[1]) : undefined;
       });
     }
@@ -1118,7 +1175,7 @@
       const h = this.#h;
       check(h, false);
       const range = toRange(query, false);
-      return request(h.x, this, () => N.count(h.x.conn.name, h.m.name, null, ...range));
+      return request(h.x, this, () => N.count(h.x.conn.name, h.m.backingName, null, ...range));
     }
     openCursor(query = undefined, dir = undefined) {
       return openCursor(this, this.#h, null, query, dir, false);
@@ -1149,18 +1206,19 @@
       if (isArray(keyPath) && multiEntry) {
         throw fail('InvalidAccessError', 'The keyPath argument was an array and the multiEntry option is true.');
       }
-      N.createIndex(c.name, h.m.name, name, stringify(keyPath), unique, multiEntry);
-      const im = { name, keyPath, unique, multiEntry, deleted: false };
+      const im = { name, backingName: name, keyPath, unique, multiEntry, deleted: false };
       h.m.indexes.set(name, im);
       (x.createdIndexes || (x.createdIndexes = [])).push(im);
-      const rows = N.records(c.name, h.m.name);
-      let ok = true;
-      for (let i = 0; i < rows.length && ok; i += 2) {
-        ok = N.indexAdd(c.name, h.m.name, name, rows[i], indexKeys(im, rows[i + 1]));
-      }
-      if (!ok) {
-        post(() => abortTx(x, fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.')));
-      }
+      enqueueSchema(x, () => {
+        N.createIndex(c.name, h.m.backingName, name, stringify(keyPath), unique, multiEntry);
+        const rows = N.records(c.name, h.m.backingName);
+        for (let i = 0; i < rows.length; i += 2) {
+          if (!N.indexAdd(c.name, h.m.backingName, name, rows[i], indexKeys(im, rows[i + 1]))) {
+            throw fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.');
+          }
+        }
+        h.m.backingIndexes.add(im);
+      });
       return indexHandle(this, h, im);
     }
     deleteIndex(name) {
@@ -1170,7 +1228,10 @@
       upgradeCheck(h, h.m.deleted);
       const im = h.m.indexes.get(name);
       if (!im) throw fail('NotFoundError', 'The specified index was not found.');
-      N.deleteIndex(h.x.conn.name, h.m.name, name);
+      enqueueSchema(h.x, () => {
+        N.deleteIndex(h.x.conn.name, h.m.backingName, name);
+        h.m.backingIndexes.delete(im);
+      });
       h.m.indexes.delete(name);
       im.deleted = true;
     }
@@ -1178,6 +1239,9 @@
   tag(IDBObjectStore, 'IDBObjectStore', 'name', 'keyPath', 'indexNames', 'transaction', 'autoIncrement', 'put',
     'add', 'delete', 'clear', 'get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor',
     'openKeyCursor', 'index', 'createIndex', 'deleteIndex');
+
+  const storeOperations = requestOperations(IDBObjectStore.prototype, N.storeOperations,
+    ['put', 'add', 'delete', 'clear', 'get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor']);
 
   // ---- Indexes ----
   let indexOf;
@@ -1198,6 +1262,7 @@
     constructor(t = undefined, d) {
       if (t !== token) throw illegal();
       this.#d = d;
+      N.indexOperations.set(this, indexOperations);
     }
     static {
       indexOf = (i) => i.#d;
@@ -1210,7 +1275,10 @@
       upgradeCheck(h, d.im.deleted || h.m.deleted);
       if (d.im.name === name) return;
       if (h.m.indexes.has(name)) throw fail('ConstraintError', 'An index with the specified name already exists.');
-      N.renameIndex(h.x.conn.name, h.m.name, d.im.name, name);
+      enqueueSchema(h.x, () => {
+        N.renameIndex(h.x.conn.name, h.m.backingName, d.im.backingName, name);
+        d.im.backingName = name;
+      });
       h.m.indexes.delete(d.im.name);
       d.im.name = name;
       h.m.indexes.set(name, d.im);
@@ -1235,7 +1303,7 @@
       indexCheck(d);
       const range = toRange(query, true);
       return request(d.h.x, this, () => {
-        const r = N.getRecord(d.h.x.conn.name, d.h.m.name, d.im.name, ...range, true);
+        const r = N.getRecord(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range, true);
         return r ? r[2] : undefined;
       });
     }
@@ -1245,7 +1313,7 @@
       indexCheck(d);
       const range = toRange(query, true);
       return request(d.h.x, this, () => {
-        const r = N.getRecord(d.h.x.conn.name, d.h.m.name, d.im.name, ...range, false);
+        const r = N.getRecord(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range, false);
         return r ? decodeKey(r[1]) : undefined;
       });
     }
@@ -1262,7 +1330,7 @@
       const d = this.#d;
       indexCheck(d);
       const range = toRange(query, false);
-      return request(d.h.x, this, () => N.count(d.h.x.conn.name, d.h.m.name, d.im.name, ...range));
+      return request(d.h.x, this, () => N.count(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range));
     }
     openCursor(query = undefined, dir = undefined) {
       return openCursor(this, this.#d.h, this.#d, query, dir, false);
@@ -1273,6 +1341,9 @@
   }
   tag(IDBIndex, 'IDBIndex', 'name', 'objectStore', 'keyPath', 'multiEntry', 'unique', 'get', 'getKey', 'getAll',
     'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor');
+
+  const indexOperations = requestOperations(IDBIndex.prototype, N.indexOperations,
+    ['get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor']);
 
   // ---- Cursors ----
   function openCursor(source, h, index, query, dir, keyOnly) {
@@ -1304,8 +1375,8 @@
   function iterate(c, key, primaryKey, count) {
     const r = N.seek(
       c.h.x.conn.name,
-      c.h.m.name,
-      c.im ? c.im.name : null,
+      c.h.m.backingName,
+      c.im ? c.im.backingName : null,
       ...c.range,
       c.dir,
       c.key ?? null,
@@ -1427,7 +1498,7 @@
       cursorWrite(c);
       const pk = c.pk;
       return request(c.h.x, this, () => {
-        N.deleteRange(c.h.x.conn.name, c.h.m.name, c.h.x.id, pk, pk, false, false);
+        N.deleteRange(c.h.x.conn.name, c.h.m.backingName, c.h.x.id, pk, pk, false, false);
         return undefined;
       });
     }
@@ -1542,19 +1613,15 @@
     };
   }
   // After the upgrade transaction's complete or abort event.
-  function upgradeFinished(x, committed) {
+  function finishOpen(x, committed) {
     const item = x.openItem, c = x.conn, s = requestState(item.request);
-    maybeClose(c);
-    post(() => {
-      s.tx = null;
-      N.release(item.name);
-      if (committed && !c.closePending) {
-        succeed(s, c.db);
-        return settle(item, plainEvent('success', false, false));
-      }
-      failed(s, fail('AbortError', committed ? 'The connection was closed.' : 'The version change transaction was aborted.'));
-      return settle(item, plainEvent('error', true, true));
-    });
+    N.release(item.name);
+    if (committed && !c.closePending) {
+      succeed(s, c.db);
+      return settle(item, plainEvent('success', false, false));
+    }
+    failed(s, fail('AbortError', committed ? 'The connection was closed.' : 'The version change transaction was aborted.'));
+    return settle(item, plainEvent('error', true, true));
   }
   function runDelete(item) {
     const name = item.name;

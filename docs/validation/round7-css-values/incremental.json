@@ -1,0 +1,19 @@
+{
+  "previousLosses": [
+    {
+      "url": "css/css-mixins/function-parameter-scoping.html",
+      "name": "Default referencing a later parameter is guaranteed-invalid",
+      "base": "Pass",
+      "previous": "Fail",
+      "head": "Fail"
+    },
+    {
+      "url": "css/css-mixins/function-parameter-scoping.html",
+      "name": "Default referencing a later parameter does not see the calling element",
+      "base": "Pass",
+      "previous": "Fail",
+      "head": "Fail"
+    }
+  ],
+  "incrementalChanges": []
+}

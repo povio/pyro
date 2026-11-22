@@ -1,0 +1,14 @@
+00b7ab0bf630acf6362be3376430614552203492
+647bddc163b54b1b708f1fb38912b56af1f23449
+bdbb41a00f8b9df720027f27927c9cdeda388b0a
+4a919c8b05fe3d4a11bee09a67f7984499bb2129
+a421f2fea5eb7f91e0db399e44b0fb0779ee1603
+Identifier=com.google.Chrome
+CDHash=e510a580195f8c3f3f14de59756f049f6ba0c191
+Authority=Developer ID Application: Google LLC (EQHXZ8M8AV)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=EQHXZ8M8AV
+158.0.8127.37
+ec816222d73089da0342fdea65adfd03aa49f4fb075a2e8bf6649985133da912  selection.json
+787b74ee9cdd036db5165c6a3433297c82f320c48019abfb785de88829c98e5b  parent-test.patch

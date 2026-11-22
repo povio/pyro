@@ -1,0 +1,48 @@
+{
+  "scores": {
+    "baseFull": 29,
+    "candidateFull": 31,
+    "chrome158Full": 32,
+    "baseNamed": 1576,
+    "candidateNamed": 1678,
+    "chrome158Named": 2247,
+    "gained": 102,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 581,
+    "lpOnly": 12
+  },
+  "gainsByPage": {
+    "svg/animations/non-additive-type-from-by-animation.html": 1,
+    "svg/idlharness.window.html": 99,
+    "svg/types/SameObject-identity.html": 1,
+    "svg/types/scripted/SVGAnimatedPreserveAspectRatio.html": 1
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 38
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "96fd3b134ba6658e77803cf1a804bc1a7c64d93edcc931b2efd53182a59413e5"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 38
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "2a53204c6780b76a8e7db983cf273faa220906cabd7f876f8c834b6d69617a9d"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 38
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "7864b3974e5abc979ac8b7b3a8b4ac75467a3ad9d76ec33869381b1db6a487d6"
+    }
+  }
+}

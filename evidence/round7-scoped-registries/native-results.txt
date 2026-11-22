@@ -1,0 +1,38 @@
+running 17 tests
+test custom_elements_js::adopted_callback_gets_the_old_and_new_documents ... ok
+test custom_elements_js::attribute_changed_callback_runs_for_observed_attributes_only ... ok
+test custom_elements_js::a_constructor_that_throws_leaves_a_failed_element_never_upgraded_again ... ok
+test custom_elements_js::attach_internals_rules ... ok
+test custom_elements_js::form_associated_callbacks_follow_owner_disabled_state_and_reset ... ok
+test custom_elements_js::clones_of_defined_elements_are_upgraded_by_the_cloning_call ... ok
+test custom_elements_js::element_internals_validation ... ok
+test custom_elements_js::define_upgrades_the_elements_of_shadow_trees ... ok
+test custom_elements_js::customized_built_in_elements ... ok
+test custom_elements_js::upgrade_reports_existing_observed_attributes_before_connected ... ok
+test custom_elements_js::form_associated_custom_elements_submit_their_value ... ok
+test custom_elements_js::fragment_upgrade_keeps_definition_chosen_before_sibling_adoption ... ok
+test custom_elements_js::synchronous_autonomous_construction_reports_and_returns_a_fresh_failed_element ... ok
+test custom_elements_js::fresh_autonomous_construction_reenters_without_consuming_an_upgrade_target ... ok
+test custom_elements_js::scoped_registry_identity_and_definition_follow_a_retained_element ... ok
+test custom_elements_js::registry_initialization_does_not_replace_other_definitions ... ok
+test custom_elements_js::custom_states_match_state_pseudo_class ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 663 filtered out; finished in 0.09s
+running 8 tests
+test adoption::adopting_a_template_moves_its_contents_to_the_new_template_contents_owner ... ok
+test adoption::the_reference_and_the_position_in_flight_move_when_their_subtree_is_removed ... ok
+test adoption::scoped_registry_clone_adopt_and_connection_order ... ok
+test adoption::shadow_disabled_definition_belongs_to_its_registry_and_local_name ... ok
+test adoption::a_node_keeps_the_document_it_was_created_in_across_adoptions ... ok
+test adoption::removing_an_ancestor_of_the_root_leaves_the_iterator_alone ... ok
+test adoption::a_document_without_a_window_gives_its_nodes_the_realm_of_its_creator ... ok
+test adoption::scoped_registry_fragment_and_declarative_shadow ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 240 filtered out; finished in 0.00s
+running 7 tests
+test custom_reactions::adoption_queues_adopted_with_both_documents ... ok
+test custom_reactions::only_observing_elements_queue_attribute_reactions_for_observed_names ... ok
+test custom_reactions::a_failed_element_drops_its_reactions_and_is_no_upgrade_candidate ... ok
+test custom_reactions::form_associated_elements_track_owner_and_disabled_state ... ok
+test custom_reactions::detached_fragment_creation_queues_only_its_registry_definition ... ok
+test custom_reactions::created_upgrade_keeps_its_definition_when_a_sibling_is_adopted ... ok
+test custom_reactions::defined_selector_respects_the_namespace_and_custom_element_state ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 241 filtered out; finished in 0.00s

@@ -10,6 +10,8 @@
 
 use std::rc::Rc;
 
+use crate::edit_commands::EditSource;
+
 use pyro_dom::NodeId;
 
 use crate::data_transfer::{Mode, NativeTransfer};
@@ -106,7 +108,7 @@ fn write(page: &PageDom, items: Vec<(String, String)>) {
 
 /// Copy, cut or paste as the user does it. Returns false when there was
 /// nothing it could act on (execCommand's result).
-pub(crate) fn run(page: &Rc<PageDom>, action: Action) -> bool {
+pub(crate) fn run(page: &Rc<PageDom>, action: Action, origin: EditSource) -> bool {
     let doc = page.document();
     let src = source(page);
     let Some(target) = event_target(page, &src) else { return false };
@@ -152,7 +154,7 @@ pub(crate) fn run(page: &Rc<PageDom>, action: Action) -> bool {
                 }
                 write(page, items);
                 if action == Action::Cut {
-                    cut_selection(page, &src);
+                    cut_selection(page, &src, origin);
                 }
             }
         }
@@ -192,7 +194,7 @@ pub(crate) fn run(page: &Rc<PageDom>, action: Action) -> bool {
 
 /// Cut's deletion: the selection of the control or editable content
 /// (`deleteByCut`); nothing outside editable content.
-fn cut_selection(page: &Rc<PageDom>, src: &Source) {
+fn cut_selection(page: &Rc<PageDom>, src: &Source, origin: EditSource) {
     match *src {
         Source::Control(c) => crate::edit_commands::control_delete(
             page,
@@ -200,6 +202,7 @@ fn cut_selection(page: &Rc<PageDom>, src: &Source) {
             false,
             crate::edit_commands::Gran::Character,
             Some("deleteByCut"),
+            origin,
         ),
         Source::Host(h) => {
             let (s, e) = editing::host_range(page, h);

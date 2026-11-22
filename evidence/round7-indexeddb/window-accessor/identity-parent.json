@@ -1,0 +1,57 @@
+{
+  "version": "124.0.6367.29",
+  "results": {
+    "descriptor": {
+      "own": true,
+      "prototype": true,
+      "enumerable": true,
+      "configurable": true,
+      "setterAbsent": true,
+      "getterName": "get indexedDB",
+      "getterLength": 0,
+      "sameFactory": true,
+      "globalReceiver": true,
+      "undefinedReceiver": true,
+      "wrongReceiver": "TypeError",
+      "assigned": false,
+      "deleted": true,
+      "presentAfterDelete": false
+    },
+    "window": {
+      "factory": true,
+      "request": true,
+      "range": true,
+      "database": true,
+      "transaction": true,
+      "store": true,
+      "ordinaryRequest": true
+    },
+    "dedicated": {
+      "factory": true,
+      "request": true,
+      "range": true,
+      "database": true,
+      "transaction": true,
+      "store": true,
+      "ordinaryRequest": true
+    },
+    "shared": {
+      "factory": true,
+      "request": true,
+      "range": true,
+      "database": true,
+      "transaction": true,
+      "store": true,
+      "ordinaryRequest": true
+    },
+    "service": {
+      "factory": true,
+      "request": true,
+      "range": true,
+      "database": true,
+      "transaction": true,
+      "store": true,
+      "ordinaryRequest": true
+    }
+  }
+}

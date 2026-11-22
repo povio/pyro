@@ -1,0 +1,12 @@
+246c0a72c8b921a8b067b3b4394b1063e42bd26f
+6f2acda563578548d858f145c75d7e4cf1bac062
+Clean status required before build; profile wptiter, features render, LTO false, 16 codegen units, incremental true, PYRO_BUILD_JOBS=1.
+rustc 1.100.0 (0ef1bc386 2026-11-09)
+binary: rustc
+commit-hash: 0ef1bc386059596dada8fb65b50425aab2ea637a
+commit-date: 2026-11-09
+host: aarch64-apple-darwin
+release: 1.100.0
+LLVM version: 23.1.5
+70283618f15826b06b3a29f5902ad009a2a161ad0db72a1e6bdf1fa98d1c9f90  /Users/xban1x/Library/Caches/lightningpanda/round7-editing/insert-html-style/pyro
+3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029  /Users/xban1x/Library/Caches/lightningpanda/jsc/0e0dd7038a7a-6f4649e395e0/lib/libJavaScriptCore.a

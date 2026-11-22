@@ -2060,6 +2060,53 @@ impl Renderer {
         Some(m.doc.resolved_transform_value(id, property, style))
     }
 
+    /// Transfer the source block's authored text formatting, omitting UA
+    /// defaults such as preformatted whitespace and monospace on a pre.
+    pub fn authored_editing_style(
+        &self, page: u64, key: u64, properties: &[&str], white_space: &str,
+    ) -> Option<Vec<(&'static str, String)>> {
+        use style::properties::{LonghandId, PropertyDeclaration, PropertyDeclarationId};
+        use style::rule_tree::CascadeOrigin;
+        let mirror = self.mirrors.get(&page)?;
+        let computed = self.element_style(page, key)?;
+        let guard = mirror.doc.guard().read();
+        let mut result = Vec::new();
+        let mut whitespace_parts = [None, None];
+        for rule in computed.rules.as_ref()?.self_and_ancestors() {
+            let level = rule.cascade_level();
+            if level.origin() != CascadeOrigin::Author { continue; }
+            let Some(source) = rule.style_source() else { continue };
+            for (decl, importance) in source.read(&guard).declaration_importance_iter() {
+                if importance.important() != level.is_important() { continue; }
+                let PropertyDeclarationId::Longhand(id) = decl.id() else { continue };
+                let part = match id {
+                    LonghandId::WhiteSpaceCollapse => Some(0),
+                    LonghandId::TextWrapMode => Some(1),
+                    _ => None,
+                };
+                if let Some(part) = part {
+                    whitespace_parts[part].get_or_insert_with(|| match decl {
+                        PropertyDeclaration::CSSWideKeyword(wide) => Some(wide.keyword.to_str()),
+                        _ => None,
+                    });
+                } else if properties.contains(&id.name()) && !result.iter().any(|(name, _)| *name == id.name()) {
+                    let mut value = String::new();
+                    decl.to_css(&mut value).ok()?;
+                    result.push((id.name(), value));
+                }
+            }
+        }
+        let whitespace = match whitespace_parts {
+            [None, None] => None,
+            [Some(Some(a)), Some(Some(b))] if a == b => Some(a),
+            _ => Some(white_space),
+        };
+        if let Some(value) = whitespace {
+            result.push(("white-space", value.to_owned()));
+        }
+        Some(result)
+    }
+
     pub fn svg_geometry_properties(&self, page: u64, key: u64) -> Option<Vec<(&'static str, String)>> {
         use style::properties::{LonghandId, PropertyDeclarationId};
         use style::rule_tree::CascadeOrigin;
@@ -2139,6 +2186,62 @@ impl Renderer {
                 caches.clear();
             }
         }
+    }
+
+    /// Identify an existing generated hit, only within the nominated DOM owner.
+    pub fn generated_hit(&mut self, page: u64, owner: u64, x: f64, y: f64) -> Option<pyro_dom::geometry::GeneratedHit> {
+        use pyro_dom::geometry::GeneratedHit::*;
+        let mirror = self.mirrors.get_mut(&page)?;
+        let owner = mirror.node(owner)?;
+        let origin = mirror.doc.get_node(owner)?;
+        let (before, after) = (origin.before(), origin.after());
+        if before.is_none() && after.is_none() && !origin.element_data().is_some_and(|e| e.marker_style.is_some() || e.marker_combined_box.is_some()) {
+            return None;
+        }
+        let scroll = mirror.doc.viewport_scroll();
+        let hit = mirror.doc.hit((x + scroll.x) as f32, (y + scroll.y) as f32)?;
+        let mut id = hit.node_id;
+        let mut marker = false;
+        while id != owner {
+            // Never attribute a hit from another DOM element to this owner.
+            if mirror.key_of(id).is_some() { return None; }
+            let node = mirror.doc.get_node(id)?;
+            let parent = node.parent?;
+            let ancestor = mirror.doc.get_node(parent)?;
+            if ancestor.element_data().is_some_and(|e| e.marker_style == Some(id) || e.marker_combined_box == Some(id)) {
+                marker = true;
+            }
+            if parent == owner {
+                if before == Some(id) { return Some(if marker { BeforeMarker } else { Before }); }
+                if after == Some(id) { return Some(if marker { AfterMarker } else { After }); }
+                return marker.then_some(Marker);
+            }
+            id = parent;
+        }
+        None
+    }
+
+    pub fn flex_reading_positions(&self, page: u64, owner: u64) -> Vec<(u64, usize, usize)> {
+        let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
+        let items = mirror.node(owner).and_then(|id| mirror.doc.get_node(id)).and_then(|n| n.flex_reading_positions());
+        items.into_iter().flatten().filter_map(|&(item, line, index)| {
+            Some((mirror.key_of(blitz_dom::NodeId::from_u64(item.into()))?, line, index))
+        }).collect()
+    }
+
+    /// Mirror only actual DOM owners; anonymous grid items have no focus target.
+    pub fn grid_item_starts(&self, page: u64, owner: u64) -> Vec<(u64, u16, u16)> {
+        let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
+        let items = mirror.node(owner).and_then(|id| mirror.doc.get_node(id)).and_then(|node| node.placed_grid_items());
+        items.into_iter().flatten().filter_map(|item| {
+            let key = mirror.key_of(blitz_dom::NodeId::from_u64(item.node.into()))?;
+            Some((key, item.row_start, item.column_start))
+        }).collect()
+    }
+
+    pub fn css_animation_frames(&self, page: u64, key: u64, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.css_animation_frames(mirror.node(key)?, name)
     }
 
     /// The element or pseudo's timing properties with the renderer's suppression rule omitted.

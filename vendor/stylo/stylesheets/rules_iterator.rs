@@ -91,6 +91,7 @@ where
             | CssRule::Property(_)
             | CssRule::LayerStatement(_)
             | CssRule::FontFeatureValues(_)
+            | CssRule::Function(_)
             | CssRule::FontPaletteValues(_)
             | CssRule::NestedDeclarations(_)
             | CssRule::PositionTry(_)

@@ -34,7 +34,7 @@ use selectors::{Element, matching::QuirksMode};
 use smallvec::SmallVec;
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, Bound, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -2479,12 +2479,9 @@ impl BaseDocument {
         let element = &mut self.nodes[node_id].element_data_mut().unwrap();
         element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
 
-        // TODO: Nodes could potentially get reused so ordering by node_id might be wrong.
-        let insertion_point = self
-            .nodes_to_stylesheet
-            .range((Bound::Excluded(node_id), Bound::Unbounded))
-            .next()
-            .map(|(_, sheet)| sheet);
+        // A node slot can be reused after removal. The cascade follows the live
+        // owner elements' document order, including when a sheet is replaced.
+        let insertion_point = self.next_document_stylesheet(node_id);
 
         if let Some(insertion_point) = insertion_point {
             self.stylist.insert_stylesheet_before(
@@ -2496,6 +2493,50 @@ impl BaseDocument {
             self.stylist
                 .append_stylesheet(stylesheet, &self.guard.read())
         }
+    }
+
+    /// Reposition already loaded document sheets after their owners move. Remove the
+    /// whole moved group first so insertion always sees an ordered set of other sheets.
+    pub(crate) fn reposition_document_stylesheets(&mut self, owners: Vec<NodeId>) {
+        if owners.is_empty() { return; }
+        let guard = self.guard.read();
+        let mut moved = Vec::with_capacity(owners.len());
+        for owner in owners {
+            if let Some(sheet) = self.nodes_to_stylesheet.remove(&owner) {
+                self.stylist.remove_stylesheet(sheet.clone(), &guard);
+                moved.push((owner, sheet));
+            }
+        }
+        for (owner, sheet) in moved {
+            let next = self.next_document_stylesheet(owner).cloned();
+            self.nodes_to_stylesheet.insert(owner, sheet.clone());
+            if let Some(next) = next {
+                self.stylist.insert_stylesheet_before(sheet, next, &guard);
+            } else {
+                self.stylist.append_stylesheet(sheet, &guard);
+            }
+        }
+        self.stylesheet_generation += 1;
+    }
+
+    fn next_document_stylesheet(&self, owner: NodeId) -> Option<&DocumentStyleSheet> {
+        let node = &self.nodes[owner];
+        if let Some(parent) = node.parent {
+            // When all stylesheet owners are siblings, their order is the parent's
+            // child list. Avoid constructing two ancestor chains per comparison.
+            if self.nodes_to_stylesheet.keys().all(|id| self.nodes.get(*id).is_some_and(|n| n.parent == Some(parent))) {
+                let siblings = &self.nodes[parent].children;
+                if siblings.last() == Some(&owner) { return None; }
+                let index = node.child_index()?;
+                return siblings[index + 1..].iter().find_map(|id| self.nodes_to_stylesheet.get(id));
+            }
+        }
+        let root = node.owner_doc().id;
+        self.nodes_to_stylesheet.keys().copied()
+            .filter(|&id| id != owner && self.nodes.get(id).is_some_and(|n| n.owner_doc().id == root))
+            .filter(|&id| self.compare_document_order(owner, id).is_lt())
+            .min_by(|&a, &b| self.compare_document_order(a, b))
+            .and_then(|id| self.nodes_to_stylesheet.get(&id))
     }
 
     pub fn handle_messages(&mut self) {
@@ -4237,6 +4278,10 @@ impl BaseDocument {
         drop(root_styles);
 
         let old_device = self.stylist.device();
+        let style_uses_media_conditions = old_device.style_uses_media_conditions();
+        if style_uses_media_conditions {
+            device.note_style_media_condition();
+        }
         if old_device.style_uses_font_metrics() {
             device.note_style_font_metrics();
         }
@@ -4274,7 +4319,9 @@ impl BaseDocument {
         // when the viewport size changes, even if no media query results
         // changed. Invalidate just the elements whose styles use viewport
         // units (tracked via per-element computed value flags).
-        if viewport_size_changed && styles_use_viewport_units {
+        // Inline media conditions use the same per-style dependency flag. Their
+        // predicates can also change on a media type or input-device update.
+        if (viewport_size_changed && styles_use_viewport_units) || style_uses_media_conditions {
             if self
                 .stylist
                 .get_custom_property_initial_values_flags()

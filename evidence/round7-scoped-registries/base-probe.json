@@ -1,0 +1,21 @@
+[
+  [
+    "global construction",
+    true
+  ],
+  [
+    "document registry",
+    false
+  ],
+  [
+    "valid name predicate",
+    "accepted"
+  ],
+  [
+    "construct distinct registry",
+    {
+      "error": "TypeError",
+      "message": "Illegal constructor"
+    }
+  ]
+]

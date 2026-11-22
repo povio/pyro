@@ -55,7 +55,7 @@ const CONTEXT_2D: &str = "__lpCanvas2d";
 /// The OffscreenCanvas of an offscreen context (hidden on its wrapper).
 const OFFSCREEN: &str = "__lpOffscreen";
 
-static MODULE: LazyModule = LazyModule {
+pub(crate) static MODULE: LazyModule = LazyModule {
     key: "lpCanvas2d",
     source: include_str!("canvas2d.js"),
     url: "pyro://internal/canvas2d.js",
@@ -80,6 +80,7 @@ where
     W::Data: WindowHost,
 {
     lazy_globals!(def, VIDEO_FRAMES, "VideoFrame", "VideoColorSpace");
+    crate::video_decoder::define(def);
 }
 
 /// Adds the lazy interface names to pyro-browser's `Window` class.
@@ -150,6 +151,12 @@ pub(crate) fn rect_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rects: &[Value<'s
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
+    natives.set_atom("worker", s.boolean(crate::worker_scope::is_worker(s)))?;
+    let transform = s.function("parseTransform", |s, _, a| {
+        let Some((matrix, is_2d)) = pyro_dom::stylo::matrix_from_css_text(&dom_string(a.get(0))?) else { return Ok(s.null()) };
+        Ok(s.array(&[s.array(&matrix.map(|v| s.number(v)))?.value(), s.boolean(is_2d)])?.value())
+    })?;
+    natives.set_atom("parseTransform", transform.value())?;
     let parse = s.function("parseColor", |s, _this, a| {
         Ok(match canvas_color(&dom_string(a.get(0))?) {
             Some(c) => s.string(&c),

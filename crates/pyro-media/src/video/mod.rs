@@ -8,6 +8,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 pub mod demux;
+mod packet;
+pub use packet::{PacketConfig, PacketDecoder, PacketFrame};
 #[cfg(any(feature = "av1", feature = "h264"))]
 mod yuv;
 
@@ -46,11 +48,11 @@ pub(crate) trait Decoder {
         &mut self,
         sample: &[u8],
         tag: u64,
-        want: &mut dyn FnMut(u64) -> bool,
+        want: &mut dyn FnMut(u64, u32, u32) -> bool,
         out: &mut Vec<Decoded>,
     ) -> Result<(), String>;
     /// The end of the stream: the pictures still held.
-    fn finish(&mut self, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) -> Result<(), String>;
+    fn finish(&mut self, want: &mut dyn FnMut(u64, u32, u32) -> bool, out: &mut Vec<Decoded>) -> Result<(), String>;
 }
 
 /// A decoded frame: its index in presentation order, its time, and straight
@@ -156,7 +158,7 @@ impl Player {
         let time = self.frame_time(target);
         let rank = &self.rank;
         let samples = &self.track.samples;
-        let mut want = |tag: u64| rank.get(tag as usize) == Some(&target);
+        let mut want = |tag: u64, _: u32, _: u32| rank.get(tag as usize) == Some(&target);
         let mut out = Vec::new();
         let mut found = None;
         let mut done = false;

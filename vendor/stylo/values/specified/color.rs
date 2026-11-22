@@ -1230,3 +1230,117 @@ impl ForcedColors {
         matches!(self, Self::Active)
     }
 }
+
+/// The three contributions in a computed dynamic range limit, in CSS serialization order.
+#[derive(Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum DynamicRangeLevel {
+    /// HDR reference white.
+    Standard,
+    /// A peak above reference white suitable for mixed SDR and HDR content.
+    Constrained,
+    /// The unrestricted peak.
+    NoLimit,
+}
+
+impl DynamicRangeLevel {
+    pub(crate) const ORDER: [Self; 3] = [Self::Standard, Self::Constrained, Self::NoLimit];
+}
+
+/// A keyword or an ordered, possibly nested dynamic-range-limit-mix().
+#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
+pub enum DynamicRangeLimit {
+    /// An individual limit.
+    Level(DynamicRangeLevel),
+    /// The specified percentages have not yet been normalized or resolved.
+    Mix(Box<[(DynamicRangeLimit, Percentage)]>),
+}
+
+impl Parse for DynamicRangeLimit {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if let Ok(level) = input.try_parse(DynamicRangeLevel::parse) {
+            return Ok(Self::Level(level));
+        }
+        input.expect_function_matching("dynamic-range-limit-mix")?;
+        input.parse_nested_block(|input| {
+            let items = input.parse_comma_separated(|i| {
+                // The value and percentage can appear in either order.
+                let first = i.try_parse(|i| Percentage::parse_zero_to_a_hundred(context, i)).ok();
+                let limit = Self::parse(context, i)?;
+                let percentage = match first {
+                    Some(percentage) => percentage,
+                    None => Percentage::parse_zero_to_a_hundred(context, i)?,
+                };
+                Ok((limit, percentage))
+            })?;
+            Ok(Self::Mix(items.into_boxed_slice()))
+        })
+    }
+}
+
+impl ToCss for DynamicRangeLimit {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        match self {
+            Self::Level(level) => level.to_css(dest),
+            Self::Mix(items) => {
+                dest.write_str("dynamic-range-limit-mix(")?;
+                for (i, (limit, weight)) in items.iter().enumerate() {
+                    if i != 0 {
+                        dest.write_str(", ")?;
+                    }
+                    limit.to_css(dest)?;
+                    dest.write_char(' ')?;
+                    weight.to_css(dest)?;
+                }
+                dest.write_char(')')
+            },
+        }
+    }
+}
+
+impl ToComputedValue for DynamicRangeLimit {
+    type ComputedValue = crate::values::computed::color::DynamicRangeLimit;
+
+    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
+        match self {
+            Self::Level(level) => Self::ComputedValue::from_level(*level),
+            Self::Mix(items) => {
+                let mut contributions = [0.0; 3];
+                for (limit, weight) in items.iter() {
+                    let weight = f64::from(weight.to_computed_value(context).0);
+                    let inner = limit.to_computed_value(context);
+                    for (sum, part) in contributions.iter_mut().zip(inner.weights()) {
+                        *sum += weight * f64::from(part);
+                    }
+                }
+                Self::ComputedValue::normalized(contributions)
+            },
+        }
+    }
+
+    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
+        if let Some(level) = computed.single_level() {
+            return Self::Level(level);
+        }
+        let items = DynamicRangeLevel::ORDER.into_iter().zip(computed.weights())
+            .filter(|(_, weight)| *weight > 0.0)
+            .map(|(level, weight)| (Self::Level(level), Percentage::new(weight)))
+            .collect();
+        Self::Mix(items)
+    }
+}
+
+impl SpecifiedValueInfo for DynamicRangeLimit {
+    fn collect_completion_keywords(f: KeywordsCollectFn) {
+        f(&["standard", "constrained", "no-limit", "dynamic-range-limit-mix"]);
+    }
+}
+
+impl ToTyped for DynamicRangeLimit {
+    fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
+        match self {
+            Self::Level(level) => level.to_typed(dest),
+            Self::Mix(_) => Err(()),
+        }
+    }
+}

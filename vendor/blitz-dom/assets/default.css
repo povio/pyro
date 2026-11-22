@@ -1318,6 +1318,11 @@ dialog {
     height: -moz-fit-content;
 }
 
+/* HTML inertness applies to the attribute owner even with author declarations.
+ * A modal dialog can escape an inherited inert state. */
+[inert] { interactivity: inert !important; }
+dialog:modal { interactivity: auto; }
+
 dialog:not([open]) {
     display: none;
 }

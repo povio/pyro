@@ -863,7 +863,7 @@ pub fn substitute_references_if_needed_and_apply(
                 .substitution_functions
                 .insert_attr(name, value);
         },
-        SubstitutionFunctionKind::Env | SubstitutionFunctionKind::If => unreachable!("Only var and attr populate the substitution map."),
+        SubstitutionFunctionKind::Env | SubstitutionFunctionKind::If | SubstitutionFunctionKind::Inherit => unreachable!("Only var and attr populate the substitution map."),
     }
 }
 

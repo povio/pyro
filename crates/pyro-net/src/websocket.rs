@@ -59,6 +59,9 @@ pub struct WebSocketRequest {
     pub protocols: Vec<String>,
     /// Serialized origin of the client (`Origin`, cookie site checks).
     pub origin: String,
+    /// Top-level schemeful site of the initiating environment.
+    pub top_level_site: Option<String>,
+    pub cross_site_ancestor: bool,
     /// Frame of the creating document, for CDP routing.
     pub frame_id: Option<String>,
     /// The owner's user agent, language and extra headers.
@@ -214,13 +217,17 @@ impl NetClient {
     /// [`WsEvent::Open`]) for `url`, a `ws:`/`wss:` URL. The owner calls it
     /// when it handles the event, so script sees them from then on.
     pub fn store_websocket_cookies(&self, url: &Url, headers: &HeaderMap) {
+        self.store_websocket_cookies_for(url, headers, None, SiteContext::SameSite);
+    }
+
+    pub fn store_websocket_cookies_for(&self, url: &Url, headers: &HeaderMap, top_level_site: Option<&str>, site: SiteContext) {
         let mut http_url = url.clone();
         let _ = http_url.set_scheme(if url.scheme() == "wss" { "https" } else { "http" });
         let now = crate::cookies::now_secs();
         let mut jar = self.inner.cookies.lock().unwrap_or_else(|e| e.into_inner());
         for value in headers.get_all(header::SET_COOKIE) {
             if let Ok(value) = value.to_str() {
-                jar.set_from_header(&http_url, value, crate::cookies::Access::Http, now);
+                jar.set_from_header_in(&http_url, value, crate::cookies::Access::Http, now, top_level_site, site);
             }
         }
     }
@@ -534,10 +541,11 @@ impl Io {
         // Credentials mode "include": the jar's cookies for the http(s) URL.
         let origin = Url::parse(&req.origin).ok().filter(|o| o.host_str().is_some());
         let context = match &origin {
+            Some(_) if req.cross_site_ancestor => SiteContext::CrossSite,
             Some(origin) => site_context(Some(origin), http_url, false, true),
             None => SiteContext::CrossSite,
         };
-        let cookie = self.cookies.lock().unwrap().header_for(http_url, context, crate::cookies::now_secs());
+        let cookie = self.cookies.lock().unwrap().header_for_partition(http_url, context, crate::cookies::now_secs(), req.top_level_site.as_deref());
         if let Some(v) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
             h.insert(header::COOKIE, v);
         }

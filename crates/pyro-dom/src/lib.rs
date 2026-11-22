@@ -48,6 +48,7 @@ mod slots;
 pub mod snapshot;
 pub mod style;
 pub mod stylo;
+pub mod svg_aspect_ratio;
 pub mod svg_geometry;
 pub mod svg_string_list;
 pub mod svg_point_list;
@@ -61,11 +62,11 @@ pub mod xml;
 pub mod xpath;
 
 pub use dom::{attr_name_hash, position, CollectionWatch, Dom, FrameDocument, FrameTable, ScriptName};
-pub use top_layer::PopoverStack;
+pub use top_layer::{PopoverStack, PopoverType};
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{
-    shadow_flags, Atom, Attr, AttrNodeData, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
+    shadow_flags, Atom, Attr, AttrNodeData, ControlState, CustomDefinitionOwner, RegistryAssociation, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
 };
 
 pub use markup5ever::{LocalName, Namespace, Prefix, QualName};
