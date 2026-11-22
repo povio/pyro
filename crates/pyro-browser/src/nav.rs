@@ -542,6 +542,13 @@ impl PageNav {
         });
     }
 
+    /// A traversal of document `doc` to another document's entry has made
+    /// that entry the active one, and the document has not changed yet.
+    fn traversal_pending(&self, doc: u64) -> bool {
+        let st = self.state.borrow();
+        st.doc_seq == doc && st.entries.get(st.index).is_some_and(|e| e.doc != doc)
+    }
+
     fn traverse(&self, delta: i64) {
         let target = {
             let st = self.state.borrow();
@@ -567,6 +574,13 @@ impl PageNav {
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
+            // While a traversal to another document is under way, later
+            // traversals are ignored, as in Chrome: of `go(-3); go(-2)` in one
+            // task the first wins (the active entry already belongs to the
+            // next document).
+            if nav.traversal_pending(current_doc) {
+                return;
+            }
             if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
                 // Only a same-document traversal can be canceled or intercepted.
                 let same = entry.doc == current_doc;
@@ -585,6 +599,9 @@ impl PageNav {
                 // a forward entry, while this task waits. Never apply an obsolete
                 // entry or write an index that is no longer in the history list.
                 if state.doc_seq != current_doc || state.entries.get(index) != Some(&entry) {
+                    return;
+                }
+                if state.entries.get(state.index).is_some_and(|e| e.doc != current_doc) {
                     return;
                 }
                 state.index = index;
