@@ -2203,13 +2203,20 @@ fn queue_selection_events_if_changed(n: &NodeData, before: Option<(u32, u32, Opt
 fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.method("createValueRange", 2, |s, n, a| {
         a.require(2, "createValueRange")?;
-        // Web IDL converts both arguments before entering the DOM algorithm.
-        // Reduce the Number modulo 2^32 before narrowing even for huge values.
-        let offset = |v: Value<'_>| -> JsResult<u32> {
-            Ok(v.to_number()?.trunc().rem_euclid(4_294_967_296.0) as u32)
+        // Unlike the JSC C API's number conversion, the JS unsigned shift
+        // rejects BigInt even when an object's primitive conversion returns it.
+        const CONVERTER: &str = "lpValueRangeUnsignedLong";
+        let global = s.global();
+        let convert = match s.get_hidden(global, CONVERTER)?.and_then(|v| v.as_object()) {
+            Some(convert) => convert,
+            None => {
+                let convert = s.eval("(value => value >>> 0)", None, 1)?.as_object().expect("conversion function");
+                s.set_hidden(global, CONVERTER, convert.value())?;
+                convert
+            }
         };
-        let start = offset(a.get(0))?;
-        let end = offset(a.get(1))?;
+        let start = convert.call(None, &[a.get(0)])?.to_number()? as u32;
+        let end = convert.call(None, &[a.get(1)])?.to_number()? as u32;
         let range = n.page().dom.borrow_mut().create_value_range(n.id, start, end).js()?;
         let control = collections::NodeHold::new(n.page(), n.id)?;
         range.hold_control(Box::new(move || drop(control)));
