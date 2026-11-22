@@ -12,13 +12,14 @@ npm install --save-dev --save-exact @povio/pyro@0.0.50-rc.6
 
 ## RC.5 standalone macOS arm64 executable
 
-The ordinary macOS arm64 executable from the RC.5 release workflow loads the system JavaScriptCore framework and reports `fork: false`. The npm macOS arm64 binary uses a patched static JavaScriptCore and supports fork mode. The measurements in this section cover the standalone executable.
+Two Apple silicon Macs ran the same standalone RC.5 workflow executable from `516dc3159`, using the same system JavaScriptCore on macOS 27.2.1. Together they covered all **30,179 eligible non-CSS URLs** across 320 disjoint shards. The local Mac ran the even shards (15,072 URLs) and the Mac Studio ran the odd shards (15,107 URLs). The RC.6 npm macOS arm64 package uses a patched static JavaScriptCore with fork support. Its conformance is outside this measurement.
 
-| Verified shard set | Eligible URLs measured | Named assertions passing / observed | Fully passing pages |
-| --- | ---: | ---: | ---: |
-| 160 even shards | 15,072 | 825,072 / 874,074 | 7,664 |
+| Measured executable | Named assertions passing / observed | Fully passing pages out of 30,179 |
+| --- | ---: | ---: |
+| Pyro RC.5 standalone | 1,691,766 / 1,785,720 | 15,277 |
+| Signed Chrome 158.0.8127.37 (archived reference) | 1,754,948 / 1,802,021 | 24,385 |
 
-The even-shard run used macOS 27.2.1. On the same URLs, archived signed Chrome 158.0.8127.37 results recorded 856,367 of 879,997 named assertions passing and 12,174 fully passing pages. The full non-CSS plan contains 320 shards and 30,179 eligible URLs. [Executable identity, runtime and even-shard receipts](https://github.com/povio/pyro/tree/9a39f6638cee1d721bb028607c9975f13ef8ebed/evidence/rc5-census-516dc3159-even)
+Across matched named occurrences, **75,805 passed only in Chrome** and **12,623 passed only in Pyro**. The pinned inventory also contains 1,469 historical holds and 179 additional held variants. [Combined census, runtime identity and shard receipts](https://github.com/povio/pyro/blob/3c1e7fd0442f4bd4b9223a99967f9df9df16ab27/evidence/rc5-census-516dc3159-combined/README.md)
 
 ## Development checkpoint with pinned JavaScriptCore
 
