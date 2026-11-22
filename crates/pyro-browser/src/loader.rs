@@ -129,6 +129,11 @@ pub struct FetchRequest {
     /// The CSP guard of a request its initiator checked (`pyro_webapi::csp`): the client
     /// checks each redirect against it. `None`: unchecked, or no policy.
     pub csp: Option<std::sync::Arc<pyro_net::csp::RequestCsp>>,
+    /// CSP Embedded Enforcement: the policy a child frame's navigation requires, taken once as the
+    /// navigation started (`csp_embedded::requirement`), which the network loader sends as
+    /// `Sec-Required-CSP` (on every hop of its redirects). The commit checks the response against
+    /// the same snapshot.
+    pub required_csp: Option<String>,
 }
 
 impl FetchRequest {
@@ -180,6 +185,9 @@ pub struct Resource {
     /// Trusted Types directives are acted on (`Dom::set_trusted_types_policies`); other
     /// directives are not enforced.
     pub header_csp: Option<String>,
+    /// A navigation's `Allow-CSP-From` response header (its values joined by `, `; empty when one
+    /// was not ASCII), which lets an embedder's required policy apply (CSP Embedded Enforcement).
+    pub allow_csp_from: Option<String>,
     /// The `Refresh` response header (HTML declarative refresh), if any.
     pub refresh: Option<String>,
     /// A document's `Content-Language` response header, if any (its
@@ -481,6 +489,14 @@ impl ResourceLoader for NetLoader {
             }
             req.origin = request.frame_id.as_deref().and_then(|id| frame_origin(browser, request.page, id));
         }
+        // CSP Embedded Enforcement: the snapshot of a child frame's required policy. The client
+        // keeps a request's headers on every redirect hop (cross-origin ones drop only
+        // `Authorization` and `Cookie`), so each hop sends it.
+        if let Some(policy) = request.required_csp.as_deref().filter(|_| request.kind == ResourceKind::Iframe) {
+            if let Ok(value) = pyro_net::http::HeaderValue::from_str(policy) {
+                req.headers.insert(pyro_net::http::HeaderName::from_static("sec-required-csp"), value);
+            }
+        }
         // Resource Timing: an iframe navigation's entry goes to the parent,
         // so its TAO check runs against the parent's origin, not `origin`
         // (a POST's: the frame's own document).
@@ -537,6 +553,7 @@ impl ResourceLoader for NetLoader {
                 charset: head.charset,
                 content_disposition: None,
                 header_csp: None,
+                allow_csp_from: None,
                 refresh: None,
                 content_language: None,
                 last_modified: None,
@@ -621,6 +638,7 @@ impl ResourceLoader for NetLoader {
                     immutable_local: false,
                     content_disposition: None,
                     header_csp: None,
+                    allow_csp_from: None,
                     refresh: None,
                     content_language: None,
                     last_modified: None,
@@ -658,6 +676,7 @@ impl ResourceLoader for NetLoader {
                 };
                 let result = match head.take() {
                     Some(h) => Ok(Resource {
+                        allow_csp_from: document.then(|| allow_csp_from_header(&h.headers)).flatten(),
                         timing: timing(&h),
                         partial: None,
                         opaque: h.kind == pyro_net::ResponseKind::Opaque,
@@ -952,6 +971,10 @@ pub struct StaticLoader {
     entries: RefCell<std::collections::HashMap<String, StaticEntry>>,
     /// The `Content-Security-Policy` header value served with a URL.
     csp: RefCell<std::collections::HashMap<String, String>>,
+    /// The `Allow-CSP-From` header value served with a URL.
+    allow_csp_from: RefCell<std::collections::HashMap<String, String>>,
+    /// Each request's URL and the `Sec-Required-CSP` the network loader would send with it.
+    pub required_csp: RefCell<Vec<(String, Option<String>)>>,
     pub log: RefCell<Vec<String>>,
     /// The `Referrer-Policy` header value served with a URL.
     referrer_policy: RefCell<std::collections::HashMap<String, String>>,
@@ -970,6 +993,15 @@ impl StaticLoader {
     /// Serves `url` with a `Content-Security-Policy: {policy}` header.
     pub fn set_csp(&self, url: &str, policy: &str) {
         self.csp.borrow_mut().insert(url.to_string(), policy.to_string());
+    }
+    /// Serves `url` with an `Allow-CSP-From: {value}` header.
+    pub fn set_allow_csp_from(&self, url: &str, value: &str) {
+        self.allow_csp_from.borrow_mut().insert(url.to_string(), value.to_string());
+    }
+    /// The `Sec-Required-CSP` of the last request for `url`: `None` if it was not requested,
+    /// `Some(None)` if it was sent without one.
+    pub fn required_csp_of(&self, url: &str) -> Option<Option<String>> {
+        self.required_csp.borrow().iter().rev().find(|(u, _)| u == url).map(|(_, p)| p.clone())
     }
     /// Serves `url` with a `Referrer-Policy: {policy}` header.
     pub fn set_referrer_policy(&self, url: &str, policy: &str) {
@@ -993,6 +1025,8 @@ impl ResourceLoader for StaticLoader {
         let sent_referrer =
             url::Url::parse(&request.url).ok().and_then(|u| request_referrer(browser, &request).header(&u));
         self.referers.borrow_mut().push((request.url.clone(), sent_referrer.clone()));
+        let sent_required = request.required_csp.clone().filter(|_| request.kind == ResourceKind::Iframe);
+        self.required_csp.borrow_mut().push((request.url.clone(), sent_required));
         let document = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe);
         let sent_referrer = document.then(|| sent_referrer.unwrap_or_default());
         let referrer_policy = self
@@ -1002,6 +1036,7 @@ impl ResourceLoader for StaticLoader {
             .and_then(|v| pyro_net::ReferrerPolicy::from_header([v.as_str()]));
         let entry = self.entries.borrow().get(&request.url).cloned();
         let csp = self.csp.borrow().get(&request.url).cloned();
+        let allow_csp_from = self.allow_csp_from.borrow().get(&request.url).cloned().filter(|_| document);
         let url = request.url;
         let part = request.part;
         let delay = entry.as_ref().map_or(Duration::ZERO, |e| e.2);
@@ -1040,6 +1075,7 @@ impl ResourceLoader for StaticLoader {
                         immutable_local: true,
                         content_disposition: None,
                         header_csp: csp.clone(),
+                        allow_csp_from: allow_csp_from.clone(),
                         refresh: None,
                         content_language: None,
                         last_modified: None,
@@ -1420,6 +1456,17 @@ impl ModuleFetcher for PageModuleFetcher {
     }
 }
 
+/// A response's `Allow-CSP-From` values joined by `, ` (`None`: absent); a value that is not
+/// ASCII makes it empty, which allows nothing.
+fn allow_csp_from_header(headers: &http::HeaderMap) -> Option<String> {
+    let mut values = Vec::new();
+    for value in headers.get_all("allow-csp-from") {
+        let Ok(value) = value.to_str() else { return Some(String::new()) };
+        values.push(value);
+    }
+    (!values.is_empty()).then(|| values.join(", "))
+}
+
 /// `scheme://host[:port]` of an absolute URL, or `"null"`.
 pub(crate) fn origin_of(url: &str) -> String {
     match url::Url::parse(url) {
@@ -1668,8 +1715,13 @@ impl Browser {
             p.pending_loader = Some(loader_id.clone());
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
         }
+        // CSP Embedded Enforcement: a child frame's required policy, taken once here. The loader
+        // sends it; the response is judged against it at commit (whatever loader answered), and
+        // the committed document keeps it to bound its own frames' requirements.
+        let requirement = crate::csp_embedded::requirement(self, page, &opts.url);
         let req = FetchRequest {
             csp: None,
+            required_csp: requirement.as_ref().map(|r| r.policy.clone()),
             parser_priority: false,
             credentials: None,
             post: opts.post.clone(),
@@ -1705,6 +1757,14 @@ impl Browser {
                         cancel.disarm();
                     }
                 }
+                // A response that neither accepts nor subsumes the required policy fails with
+                // net::ERR_BLOCKED_BY_CSP; one that accepts it enforces it (`enforce`).
+                let judged = res.and_then(|r| crate::csp_embedded::judge(b, page, requirement.as_ref(), r));
+                let (res, enforce) = match judged {
+                    Ok((resource, enforce)) => (Ok(resource), enforce),
+                    Err(e) => (Err(e), None),
+                };
+                let required_csp = requirement.map(|r| r.policy);
                 match res {
                     Ok(resource)
                         if (200..300).contains(&resource.status)
@@ -1739,11 +1799,13 @@ impl Browser {
                     Ok(resource) if b.frame_ancestors_block(page, &resource) => {
                         // CSP `frame-ancestors` refuses this frame's ancestors: Chrome commits
                         // its (opaque-origin) error document instead, and the frame loads.
+                        b.prepare_required_csp(page, required_csp, None);
                         b.commit_error_document(page, opts, loader_id, BLOCKED_BY_RESPONSE.into(), history);
                     }
                     Ok(resource) if (200..300).contains(&resource.status) || resource.status == 0 => {
                         let mut opts = opts;
                         opts.url = resource.url.clone();
+                        b.prepare_required_csp(page, required_csp, enforce);
                         if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, history) {
                             b.navigation_failed(page, &opts, loader_id, e.to_string());
                         }
@@ -1752,11 +1814,19 @@ impl Browser {
                         // Error pages still commit in browsers; keep their body.
                         let mut opts = opts;
                         opts.url = resource.url.clone();
+                        b.prepare_required_csp(page, required_csp, enforce);
                         if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, history) {
                             b.navigation_failed(page, &opts, loader_id, e.to_string());
                         }
                     }
-                    Err(e) => b.document_fetch_failed(page, opts, loader_id, e, history),
+                    Err(e) => {
+                        // A child frame a policy blocked commits the error document
+                        // (`document_fetch_failed`), which keeps the requirement too.
+                        if page.child.is_some() && e.starts_with(pyro_net::csp::BLOCKED_BY_CSP) {
+                            b.prepare_required_csp(page, required_csp, None);
+                        }
+                        b.document_fetch_failed(page, opts, loader_id, e, history)
+                    }
                 }
                 // A traversal whose document did not commit (a download, a 204, a
                 // network error) leaves the frame on the entry it was on.
@@ -1807,7 +1877,8 @@ impl Browser {
     /// document ([`Browser::commit_error_document`]), as Chrome commits
     /// one, so the window has a document and clients waiting for its first
     /// commit (Playwright's `popup` event) go on. So does a child frame whose
-    /// navigation CSP blocked (the parent's `frame-src`): Chrome's error
+    /// navigation CSP blocked (the parent's `frame-src`, or the frame's
+    /// required policy: CSP Embedded Enforcement): Chrome's error
     /// document is opaque, so the frame reads as blocked (cross-origin), not
     /// as its parent's same-origin about:blank. Any other navigation fails
     /// and leaves the document as it was (Chrome would show its error page
@@ -1871,6 +1942,7 @@ impl Browser {
             immutable_local: false,
             content_disposition: None,
             header_csp: None,
+            allow_csp_from: None,
             refresh: None,
             content_language: None,
             last_modified: None,
@@ -1981,6 +2053,9 @@ impl Browser {
         history: HistoryHandling,
         unreachable: Option<crate::NavigationError>,
     ) -> Result<(), JsError> {
+        // CSP Embedded Enforcement: the required policy this document accepted, taken before
+        // anything can fail (`Browser::prepare_required_csp`).
+        let enforce_required = self.doc_mut(page).and_then(|mut p| p.enforce_required_csp.take());
         let origin = origin_of(&resource.url);
         // The policy the navigation request was sent with (its initiator's).
         let policy = match (&opts.referrer, opts.referrer_policy) {
@@ -2067,6 +2142,11 @@ impl Browser {
                 page_dom.set_document_domain_sandboxed(true);
             }
             let _ = dom.borrow_mut().set_trusted_types_policies(doc, enforce, report_only);
+        }
+        // CSP Embedded Enforcement: an accepted required policy joins the policies recorded above
+        // (the response's own, or those a local-scheme document inherited), before the parser.
+        if let Some(policy) = enforce_required {
+            crate::csp_embedded::enforce_on_document(self, page, &policy);
         }
         if let Some(refresh) = resource.refresh.as_deref() {
             self.refresh_header(page, refresh);
@@ -2631,6 +2711,7 @@ impl Browser {
         let request_url = url.clone();
         let req = FetchRequest {
             csp: csp_guard.clone(),
+            required_csp: None,
             parser_priority,
             post: None,
             url,
@@ -3142,6 +3223,7 @@ impl Browser {
                 let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
                 let req = FetchRequest {
                     csp: None,
+                    required_csp: None,
                     parser_priority: false,
                     credentials: None,
                     post: None,
@@ -4117,6 +4199,7 @@ mod disposition_tests {
             immutable_local: false,
             content_disposition: None,
             header_csp: None,
+            allow_csp_from: None,
             refresh: None,
             content_language: None,
             last_modified: None,

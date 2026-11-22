@@ -73,6 +73,7 @@ impl ManualLoader {
             immutable_local: false,
             content_disposition: None,
             header_csp: None,
+            allow_csp_from: None,
             refresh: None,
             content_language: None,
             last_modified: None,

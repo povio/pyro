@@ -425,6 +425,7 @@ impl Browser {
         };
         let mut request = FetchRequest {
             csp: None,
+            required_csp: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -565,6 +566,7 @@ impl Browser {
         };
         let mut request = FetchRequest {
             csp: None,
+            required_csp: None,
             // Low priority: never ahead of the parser's requests.
             parser_priority: false,
             credentials: None,

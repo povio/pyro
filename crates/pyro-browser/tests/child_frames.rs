@@ -267,6 +267,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             immutable_local: false,
             content_disposition: None,
             header_csp: None,
+            allow_csp_from: None,
             refresh: None,
             content_language: None,
             last_modified: None,
