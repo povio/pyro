@@ -137,6 +137,49 @@ onconnect = (e) => {
 };
 "#;
 
+/// A dedicated or shared worker whose `probe` replaces its [Replaceable]
+/// `origin` and `name`, reads the descriptors, deletes and replaces them
+/// again and checks a same-origin fetch still goes through; `read` reports
+/// both.
+const REPLACEABLE_WORKER: &str = r#"
+const kind = (k) => {
+  for (let o = self; o; o = Object.getPrototypeOf(o)) {
+    const d = Object.getOwnPropertyDescriptor(o, k);
+    if (d) return (o === self ? 'own-' : 'proto-') + ('get' in d ? 'accessor' : 'data');
+  }
+  return 'missing';
+};
+// Another realm's global prototype keeps its own `origin`; this one is per realm.
+const owner = (k) => { for (let o = self; o; o = Object.getPrototypeOf(o)) if (Object.hasOwn(o, k)) return o === self ? 'self' : o === Object.getPrototypeOf(self) ? 'global-proto' : 'other'; return 'none'; };
+const desc = (k) => { const d = Object.getOwnPropertyDescriptor(self, k); return [d.value, d.writable, d.enumerable, d.configurable].join(':'); };
+const probe = async () => {
+  const real = [self.origin, self.name];
+  const layout = [owner('origin'), owner('name')].join();
+  const before = [kind('origin'), kind('name')].join();
+  self.origin = 'replaced-origin';
+  self.name = 42;
+  const after = [desc('origin'), desc('name'), typeof self.name, kind('origin'), kind('name')].join();
+  self.origin = 'again';
+  const again = self.origin;
+  const gone = (k, v) => (kind(k) === 'missing' ? self[k] === undefined : self[k] === v);
+  const deleted = [delete self.origin, delete self.name, gone('origin', real[0]), gone('name', real[1]), kind('origin'), kind('name')].join();
+  self.origin = 'kept';
+  self.name = 'kept-name';
+  const body = await (await fetch('/real')).text();
+  return [layout, real.join('|'), before, after, again, deleted, body, new URL(location.href).origin === real[0]].join(' / ');
+};
+const answer = (target, data) => {
+  if (data === 'probe') probe().then((r) => target.postMessage(r), (e) => target.postMessage('error:' + e));
+  else if (data === 'read') target.postMessage([self.origin, self.name].join('|'));
+};
+if (typeof SharedWorkerGlobalScope !== 'undefined' && self instanceof SharedWorkerGlobalScope) {
+  let connections = 0;
+  onconnect = (e) => { connections++; const port = e.ports[0]; port.onmessage = (m) => m.data === 'count' ? port.postMessage(connections) : answer(port, m.data); };
+} else {
+  onmessage = (m) => answer(self, m.data);
+}
+"#;
+
 const PORTS_WORKER: &str = r#"
 onmessage = async (e) => {
   if (e.data.kind === 'port') {
@@ -258,6 +301,7 @@ impl Server {
                     "/throws.js" => respond(&mut stream, "200 OK", &js, b"throw new Error('top level')"),
                     "/ports-worker.js" => respond(&mut stream, "200 OK", &js, PORTS_WORKER.as_bytes()),
                     "/shared-worker.js" => respond(&mut stream, "200 OK", &js, SHARED_WORKER.as_bytes()),
+                    "/replaceable-worker.js" => respond(&mut stream, "200 OK", &js, REPLACEABLE_WORKER.as_bytes()),
                     "/real" | "/api/passthrough" => {
                         respond(&mut stream, "200 OK", &[("Content-Type", "text/plain")], b"from network")
                     }
@@ -1259,4 +1303,96 @@ fn shared_workers_are_shared_between_documents_by_url_and_name() {
         eval(&thread, a, "(() => { try { new SharedWorker('/shared-worker.js', {type: 'module'}); } catch (e) { return e.name } })()"),
         "NotSupportedError"
     );
+}
+
+/// [Replaceable] `origin` (Window and workers) and `name` (dedicated and
+/// shared workers): assignment shadows the attribute with an own writable,
+/// enumerable, configurable data property of that global only. Window
+/// `origin` and worker `name` are the global's own accessors ([Global]), so
+/// deleting the replacement leaves no property, as in Chrome; worker `origin`
+/// is inherited (WorkerGlobalScope), so deleting it shows the original
+/// again. The realm's origin (postMessage's origin,
+/// same-origin fetch) and the worker's name (SharedWorker matching) stay.
+#[test]
+fn origin_and_worker_name_are_replaceable_per_global() {
+    let (server, mut thread) = setup();
+    let a = open(&mut thread, &server, "/page");
+    let b = open(&mut thread, &server, "/page2");
+    let origin = server.origin.clone();
+    // Window.
+    assert_eq!(
+        eval(
+            &thread,
+            a,
+            "globalThis.real = self.origin;
+             const k = (n) => { for (let o = self; o; o = Object.getPrototypeOf(o)) { const d = Object.getOwnPropertyDescriptor(o, n); if (d) return (o === self ? 'own-' : 'proto-') + ('get' in d ? 'accessor' : 'data'); } return 'missing'; };
+             const before = k('origin');
+             self.origin = 'replaced';
+             const d = Object.getOwnPropertyDescriptor(self, 'origin');
+             const after = [d.value, d.writable, d.enumerable, d.configurable, k('origin'), origin].join(':');
+             origin = 7;
+             const again = typeof origin + ':' + origin;
+             const deleted = [delete self.origin, before === 'own-accessor' ? self.origin === undefined : self.origin === real, k('origin')].join(':');
+             self.origin = 'kept';
+             globalThis.log = [];
+             addEventListener('message', (e) => log.push(e.origin));
+             postMessage('x', '*');
+             [real, before, after, again, deleted].join(' / ')",
+        ),
+        format!("{origin} / own-accessor / replaced:true:true:true:own-data:replaced / number:7 / true:true:missing")
+    );
+    until(&mut thread, a, "log.length === 1");
+    assert_eq!(eval(&thread, a, "log[0] === real && self.origin"), "kept");
+    // Another window keeps its own attribute.
+    assert_eq!(
+        eval(&thread, b, "[self.origin, 'get' in Object.getOwnPropertyDescriptor(self, 'origin')].join()"),
+        format!("{origin},true")
+    );
+
+    // Dedicated workers: one replaces, the other (same URL, other name) keeps its own.
+    eval(
+        &thread,
+        a,
+        "globalThis.got = { one: [], two: [] };
+         globalThis.one = new Worker('/replaceable-worker.js', { name: 'dw-one' });
+         globalThis.two = new Worker('/replaceable-worker.js', { name: 'dw-two' });
+         one.onmessage = (e) => got.one.push(e.data);
+         two.onmessage = (e) => got.two.push(e.data);
+         one.postMessage('probe'); 'ok'",
+    );
+    until(&mut thread, a, "got.one.length === 1");
+    let expected = |name: &str| {
+        format!(
+            "global-proto,self / {origin}|{name} / proto-accessor,own-accessor / \
+             replaced-origin:true:true:true,42:true:true:true,number,own-data,own-data / again / \
+             true,true,true,true,proto-accessor,missing / from network / true"
+        )
+    };
+    assert_eq!(eval(&thread, a, "got.one[0]"), expected("dw-one"));
+    eval(&thread, a, "one.postMessage('read'); two.postMessage('read'); 'ok'");
+    until(&mut thread, a, "got.one.length === 2 && got.two.length === 1");
+    assert_eq!(eval(&thread, a, "got.one[1] + ' ' + got.two[0]"), format!("kept|kept-name {origin}|dw-two"));
+    eval(&thread, a, "one.terminate(); two.terminate(); 'ok'");
+
+    // Shared worker: replacing its name leaves the name it is matched by.
+    eval(
+        &thread,
+        a,
+        "globalThis.shared = [];
+         globalThis.sh = new SharedWorker('/replaceable-worker.js', 'sn');
+         sh.port.onmessage = (e) => shared.push(e.data);
+         sh.port.postMessage('probe'); 'ok'",
+    );
+    until(&mut thread, a, "shared.length === 1");
+    assert_eq!(eval(&thread, a, "shared[0]"), expected("sn"));
+    eval(
+        &thread,
+        b,
+        "globalThis.shared = [];
+         globalThis.sh = new SharedWorker('/replaceable-worker.js', { name: 'sn' });
+         sh.port.onmessage = (e) => shared.push(e.data);
+         sh.port.postMessage('count'); sh.port.postMessage('read'); 'ok'",
+    );
+    until(&mut thread, b, "shared.length === 2");
+    assert_eq!(eval(&thread, b, "shared.join(' ')"), "2 kept|kept-name");
 }

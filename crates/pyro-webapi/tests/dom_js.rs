@@ -3862,6 +3862,36 @@ fn window_event_is_replaceable_and_skips_shadow_tree_targets() {
     );
 }
 
+/// The reusable Window members (`define_members`), without pyro-browser's
+/// Window: `origin` is [Replaceable]. Assignment replaces the global's own
+/// accessor ([Global]) with a data property in that realm only; the getter
+/// still answers from the document's URL in another realm, and deleting the
+/// replacement leaves no property, as in Chrome.
+#[test]
+fn window_origin_is_replaceable_in_standalone_window_members() {
+    let e = env("<body></body>");
+    let r = &e.main;
+    let other = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "other");
+    assert_eq!(
+        eval(
+            r,
+            "const k = () => { for (let o = globalThis; o; o = Object.getPrototypeOf(o)) { const d = Object.getOwnPropertyDescriptor(o, 'origin'); if (d) return (o === globalThis ? 'own-' : 'proto-') + ('get' in d ? 'accessor' : 'data'); } return 'missing'; };
+             const before = [globalThis.origin, k()].join();
+             globalThis.origin = 'replaced';
+             const d = Object.getOwnPropertyDescriptor(globalThis, 'origin');
+             const after = [d.value, d.writable, d.enumerable, d.configurable, k()].join();
+             origin = 5;
+             [before, after, typeof origin, new URL(document.URL).origin].join(' / ')",
+        ),
+        "http://localhost:5173,own-accessor / replaced,true,true,true,own-data / number / http://localhost:5173"
+    );
+    assert_eq!(eval(&other, "globalThis.origin + ' ' + ('get' in Object.getOwnPropertyDescriptor(globalThis, 'origin'))"), "http://localhost:5173 true");
+    let doc = e.page.document();
+    e.page.dom.borrow_mut().set_document_url(doc, "https://example.test/next").unwrap();
+    assert_eq!(eval(&other, "globalThis.origin"), "https://example.test");
+    assert_eq!(eval(r, "[origin, delete globalThis.origin, typeof globalThis.origin].join()"), "5,true,undefined");
+}
+
 #[test]
 fn window_event_does_not_retain_the_event_after_dispatch() {
     let e = env("<body><b id=t></b></body>");

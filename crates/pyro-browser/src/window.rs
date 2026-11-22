@@ -413,7 +413,13 @@ impl JsClass for Window {
             },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "length", v),
         );
-        def.getter("origin", |s, _| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
+        // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it
+        // with an own data property; the realm's origin is left as it is.
+        def.accessor(
+            "origin",
+            |s, _| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))),
+            |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "origin", v),
+        );
         def.indexed(|s, w, index| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => {
                 host.child_keys(key).get(index as usize).map(|target| host.window_value(s, key, *target)).transpose()
