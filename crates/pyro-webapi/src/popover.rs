@@ -280,7 +280,8 @@ fn nearest_invoked_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
     let mut cur = Some(node);
     while let Some(n) = cur {
         let target = popover_target_with(dom, n)
-            .or_else(|| command_for_element(dom, n));
+            // A disabled command button invokes nothing (as a disabled popovertarget one).
+            .or_else(|| command_for_element(dom, n).filter(|_| !dom.is_disabled(n).unwrap_or(false)));
         if let Some(t) = target.filter(|&t| dom.is_popover_showing(t)) {
             if matches!(popover_type(dom, t), Some(PopoverType::Auto | PopoverType::Hint)) {
                 return Some(t);
