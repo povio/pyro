@@ -542,9 +542,11 @@ fn fire_change_if_dirty(page: &Rc<PageDom>, el: NodeId) {
     if edited {
         let _ = page.dom.borrow_mut().set_user_validity(el, true);
     }
+    // As Chrome: a value only script changed since focus fires no change.
+    let since_focus = page.dom.borrow().control_state(el).ok().flatten().is_some_and(|c| c.edited_since_focus);
     let current = page.dom.borrow().value(el).ok();
     if let (Some(cur), Some(old)) = (current, page.take_focus_value(el)) {
-        if cur != old && is_text_control(&page.dom.borrow(), el) {
+        if since_focus && cur != old && is_text_control(&page.dom.borrow(), el) {
             fire_user_change(page, el);
         }
     }
@@ -1417,6 +1419,9 @@ fn clear_search_field(page: &Rc<PageDom>, el: NodeId) -> bool {
             && !dom.has_attribute(el, "readonly").unwrap_or(false);
         if !search || dom.value(el).map_or(true, |v| v.is_empty()) || dom.set_value(el, "").is_err() {
             return false;
+        }
+        if let Ok(c) = dom.control_state_mut(el) {
+            c.edited_since_focus = true;
         }
     }
     fire_simple(page, el, "input", true, false);

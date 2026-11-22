@@ -359,6 +359,9 @@ pub struct ControlState {
     pub(crate) selection_direction: Option<(bool, (u32, u32))>,
     /// Value changed by user editing (enables tooLong/tooShort).
     pub user_edited: bool,
+    /// The user edited the value since the control got focus (or since its
+    /// last `change`): only then does blurring it fire `change`.
+    pub edited_since_focus: bool,
     /// HTML "user validity": the user committed a change, or a submission
     /// validated the form (`:user-valid` / `:user-invalid`); reset clears it.
     pub user_validity: bool,

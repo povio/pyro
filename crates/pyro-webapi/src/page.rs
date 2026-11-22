@@ -2862,7 +2862,9 @@ impl PageDom {
     }
 
     pub(crate) fn remember_focus_value(&self, el: NodeId) {
-        if let Ok(v) = self.dom.borrow().value(el) {
+        let mut dom = self.dom.borrow_mut();
+        dom.clear_edited_since_focus(el);
+        if let Ok(v) = dom.value(el) {
             self.focus_values.borrow_mut().insert(el, v);
         }
     }

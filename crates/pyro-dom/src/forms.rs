@@ -1869,6 +1869,16 @@ impl Dom {
         self.replace_control_text(id, Some(range), text)
     }
 
+    /// Forgets the user's edits since focus (`ControlState::edited_since_focus`);
+    /// state no selector reads, so no restyle.
+    pub fn clear_edited_since_focus(&mut self, id: NodeId) {
+        if let Ok(i) = self.check(id) {
+            if let Some(c) = self.n_mut(i).element_mut().and_then(|e| e.control.as_mut()) {
+                c.edited_since_focus = false;
+            }
+        }
+    }
+
     /// Replaces the current selection with `text` (typing, Input.insertText,
     /// or deletion with empty text). Returns true if the value changed.
     pub fn insert_text(&mut self, id: NodeId, text: &str) -> DomResult<bool> {
@@ -1927,6 +1937,7 @@ impl Dom {
         c.value = Some(value);
         c.dirty_value = true;
         c.user_edited = true;
+        c.edited_since_focus = true;
         c.selection = (caret, caret);
         c.selection_direction = original.direction.map(|_| (false, c.selection));
         c.selection_set = true;
