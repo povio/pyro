@@ -1173,7 +1173,7 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: pyro_
         return;
     };
     registration.updating.set(true);
-    let mut request = Request::get(script_url.clone(), Destination::Script);
+    let mut request = Request::get(script_url.clone(), Destination::ServiceWorker);
     request.mode = RequestMode::SameOrigin;
     request.credentials = pyro_net::Credentials::SameOrigin;
     request.origin = Some(registration.origin.clone());

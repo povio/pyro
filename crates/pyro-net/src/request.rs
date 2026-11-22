@@ -22,6 +22,12 @@ pub enum Destination {
     Document,
     Iframe,
     Script,
+    /// A dedicated worker's main script.
+    Worker,
+    /// A shared worker's main script.
+    SharedWorker,
+    /// A service worker's script (registration and update).
+    ServiceWorker,
     Style,
     /// A JSON module script (`import ... with { type: "json" }`).
     Json,
@@ -44,12 +50,26 @@ pub enum Destination {
 }
 
 impl Destination {
+    /// Fetch "script-like" (the destinations Pyro has of it): a response to
+    /// one is blocked by nosniff or an audio/image/video/CSV MIME type.
+    pub fn is_script_like(self) -> bool {
+        matches!(
+            self,
+            Destination::Script | Destination::Worker | Destination::SharedWorker | Destination::ServiceWorker
+        )
+    }
+
     /// CDP `Network.ResourceType` name.
     pub fn cdp_type(self) -> &'static str {
         match self {
             Destination::Document | Destination::Iframe => "Document",
             // A JSON module script is still a script resource.
-            Destination::Script | Destination::Json | Destination::Text => "Script",
+            Destination::Script
+            | Destination::Worker
+            | Destination::SharedWorker
+            | Destination::ServiceWorker
+            | Destination::Json
+            | Destination::Text => "Script",
             Destination::Style => "Stylesheet",
             Destination::Image => "Image",
             Destination::Audio | Destination::Video => "Media",

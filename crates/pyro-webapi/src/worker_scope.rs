@@ -763,7 +763,14 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
                 &start.shared,
                 &start.origin,
                 start.url.clone(),
-                Destination::Script,
+                // Sec-Fetch-Dest: the global's kind.
+                if start.service.is_some() {
+                    Destination::ServiceWorker
+                } else if start.shared_worker {
+                    Destination::SharedWorker
+                } else {
+                    Destination::Worker
+                },
                 RequestMode::SameOrigin,
                 script_credentials(start),
                 true,
@@ -1092,7 +1099,7 @@ fn fetch_script(
                 }
                 // Fetch: a script-like response is blocked by nosniff or an
                 // audio/image/video/CSV MIME type (a worker's script, importScripts).
-                if destination == Destination::Script
+                if destination.is_script_like()
                     && pyro_net::script_response_blocked(&head.mime, pyro_net::is_nosniff(&head.headers))
                 {
                     net.cancel(id);
