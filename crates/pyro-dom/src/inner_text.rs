@@ -51,6 +51,9 @@ fn inner_text_display(tag: &str) -> TextDisplay {
         "option" | "optgroup" => Block,
         // Replaced / embedded content whose subtree is not part of innerText.
         "img" | "canvas" | "iframe" | "embed" | "object" | "audio" | "video" | "input" | "textarea" => Replaced,
+        // Permission elements (WICG PEPC, tentative) draw their own label, not their children
+        // (WPT html/semantics/permission-element no-children-rendered).
+        "geolocation" | "install" | "usermedia" | "camera" | "microphone" => Replaced,
         // Never-rendered elements (UA display:none / not parsed as content).
         "script" | "style" | "template" | "head" | "base" | "link" | "meta" | "title" | "source" | "track"
         | "param" | "area" | "datalist" | "noscript" => Skip,
