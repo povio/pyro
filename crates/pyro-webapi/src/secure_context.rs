@@ -23,6 +23,7 @@ const GLOBALS: &[&str] = &[
     "StorageBucketManager",
     "StorageBucket",
     "AudioPlaybackStats",
+    "FetchLaterResult",
 ];
 /// `Navigator` members that exist only in a secure context.
 const NAVIGATOR: &[&str] = &["locks", "storageBuckets", "mediaDevices", "registerProtocolHandler", "unregisterProtocolHandler"];

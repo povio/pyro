@@ -65,6 +65,8 @@ pub(crate) struct FetchState {
     context: RefCell<RequestContext>,
     jobs: RefCell<FxHashMap<RequestId, Rc<Job>>>,
     bodies: RefCell<FxHashMap<RequestId, Weak<Body>>>,
+    /// The document's `fetchLater` requests not yet sent.
+    pub(crate) deferred: crate::fetch_later::DeferredFetches,
 }
 impl Default for FetchState {
     fn default() -> Self {
@@ -75,6 +77,7 @@ impl Default for FetchState {
             context: RefCell::new(RequestContext::default()),
             jobs: RefCell::new(FxHashMap::default()),
             bodies: RefCell::new(FxHashMap::default()),
+            deferred: Default::default(),
         }
     }
 }
@@ -355,7 +358,7 @@ impl PageDom {
     }
 }
 
-fn option<'s>(s: &Scope<'s>, init: Value<'s>, key: &str) -> JsResult<Value<'s>> {
+pub(crate) fn option<'s>(s: &Scope<'s>, init: Value<'s>, key: &str) -> JsResult<Value<'s>> {
     match init.as_object() {
         Some(o) => o.get(key),
         None if init.is_null() || init.is_undefined() => Ok(s.undefined()),
@@ -509,13 +512,13 @@ pub(crate) fn attach_blob(page: &PageDom, request: &mut Request) {
     }
 }
 /// What a fetch does beyond its `pyro_net::Request`.
-struct FetchExtras {
+pub(crate) struct FetchExtras {
     integrity: Option<crate::integrity::Integrity>,
     /// Keepalive: the reserved body bytes, held until the request ends.
     keepalive: Option<KeepaliveGuard>,
 }
 
-fn parse_request<'s>(
+pub(crate) fn parse_request<'s>(
     s: &Scope<'s>,
     page: &PageDom,
     input: Value<'s>,
@@ -1550,6 +1553,8 @@ pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
     }
 }
 pub(crate) fn dispose(page: &PageDom) {
+    // A discarded document sends its deferred fetches (Fetch "process deferred fetches").
+    crate::fetch_later::flush(page);
     crate::event_source::dispose(page);
     PAGES.with(|pages| pages.borrow_mut().remove(&page.id()));
     let bodies: Vec<_> = page.fetch_state.bodies.borrow().values().filter_map(Weak::upgrade).collect();

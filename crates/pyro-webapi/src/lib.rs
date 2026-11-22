@@ -49,6 +49,7 @@ pub mod encoding;
 pub mod event;
 mod event_source;
 pub mod fetch;
+pub mod fetch_later;
 pub mod file;
 pub mod file_reader;
 pub mod font_loading;
@@ -209,6 +210,7 @@ pub fn register(engine: &pyro_js::Engine) {
     audio_data::register(engine);
     encoded_chunks::register(engine);
     validity::register(engine);
+    fetch_later::register(engine);
     window::register(engine);
     engine.register::<origin::Origin>();
     mutation_observer::register(engine);
@@ -422,6 +424,7 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     }
     if secure_context::secure(scope, &page) {
         cookie_store::exposure::install(scope, false)?;
+        fetch_later::install(scope)?;
     }
     if page.max_touch_points() > 0 {
         handlers::define_touch_handlers(scope)?;

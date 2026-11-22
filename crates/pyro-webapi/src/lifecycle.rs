@@ -169,6 +169,9 @@ fn unload_document(page: &Rc<PageDom>, fire_unload: bool) {
         let ev = EventCore::trusted(page, EventInterface::Event, "unload", false, false);
         fire_for_document(page, window, doc, &ev);
     }
+    // The document is no longer fully active: its deferred fetches go out now, those its
+    // `pagehide` and `unload` listeners queued included (Fetch "process deferred fetches").
+    crate::fetch_later::flush(page);
 }
 
 fn window_key(page: &PageDom, _doc: NodeId) -> Option<pyro_dom::events::TargetKey> {
