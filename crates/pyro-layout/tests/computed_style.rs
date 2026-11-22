@@ -470,6 +470,21 @@ fn intrinsic_size_and_container_percentage_are_independent() {
 }
 
 #[test]
+fn sampled_auto_basis_is_not_the_live_any_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="width:calc-size(any,50px);height:calc-size(any,50px)"><div style="height:100px"></div></div></div><div id=sample style="width:calc-size(auto,size * 0.25 + 37.5px);height:calc-size(auto,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, expected) in [("width", "87.5px"), ("height", "62.5px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), expected);
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
 fn percentage_endpoint_interpolates_with_intrinsic_size() {
     use ::style::values::animated::{Animate, Procedure};
     use ::style::values::computed::{length::CSSPixelLength, Size};
