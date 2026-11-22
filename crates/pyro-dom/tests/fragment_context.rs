@@ -80,7 +80,7 @@ fn sibling_patches_preserve_the_template_contents_scope() {
 }
 
 #[test]
-fn range_editing_and_external_fragment_templates_keep_their_contents() {
+fn range_patches_its_output_while_editing_and_external_templates_keep_their_contents() {
     use pyro_dom::parse::{parse_contextual_fragment, parse_fragment};
 
     let mut dom = Dom::new();
@@ -89,7 +89,12 @@ fn range_editing_and_external_fragment_templates_keep_their_contents() {
     let fragment =
         parse_contextual_fragment(&mut dom, context, "<p><?marker name='a'></p><template for=a>range</template>")
             .unwrap();
-    assert!(dom.query_selector(fragment, &parse_selectors("template[for]").unwrap()).unwrap().is_some());
+    assert_eq!(dom.inner_html(fragment).unwrap(), "<p>range</p>");
+
+    set_inner_html(&mut dom, context, "<i><?marker name='outside'></i>").unwrap();
+    let unmatched = parse_contextual_fragment(&mut dom, context, "<template for=outside>leave alone</template>").unwrap();
+    assert_eq!(dom.inner_html(unmatched).unwrap(), "<template for=\"outside\">leave alone</template>");
+    assert_eq!(dom.text_content(context).unwrap().as_deref(), Some(""));
 
     let editing_fragment =
         parse_fragment(&mut dom, context, "<p><?marker name='a'></p><template for=a>editing</template>").unwrap();
