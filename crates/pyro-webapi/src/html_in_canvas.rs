@@ -12,11 +12,13 @@
 //! owes one without changes. Events fire in reverse tree order (descendant
 //! canvases before their ancestors), as Chrome does.
 //!
-//! Everything is gated on a document that has a canvas: pages without a
-//! `<canvas content=drawable>` fire nothing and change nothing. Gaps:
+//! Everything is gated on `Dom::drawable_canvas_seen`: a document that never
+//! had an element given `content=drawable` returns after one flag test, and
+//! pages without a `<canvas content=drawable>` fire nothing and change nothing. Gaps:
 //! changes the journal does not record (hover, scrolling, animations
 //! without a DOM write) fire no `paint`; shadow trees are not searched for
-//! canvases on a full rescan.
+//! canvases on a full rescan; a drawable canvas made only by `cloneNode` is
+//! not noticed until some element is given `content=drawable`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -124,8 +126,10 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
-    // A document that never had a canvas, and no requestPaint() owed: nothing to do.
-    if !page.dom.borrow().canvas_seen() && page.html_in_canvas.borrow().pending.is_empty() {
+    // A document that never had a drawable canvas (none created by the parser or given
+    // content=drawable by setAttribute) has nothing to do: one flag test per frame. (A
+    // requestPaint() is only owed by a drawable canvas, so it sets the flag first.)
+    if !page.dom.borrow().drawable_canvas_seen() {
         return;
     }
     let events = {

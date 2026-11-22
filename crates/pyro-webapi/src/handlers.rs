@@ -111,6 +111,8 @@ pub(crate) const DOCUMENT: &[&str] = document_events!(event_list!());
 /// element has which is [`element_handler`].
 pub(crate) const PERMISSION_ELEMENT: &[&str] =
     &["stream", "track", "location", "promptaction", "promptdismiss", "validationstatuschange"];
+/// HTML-in-Canvas: `HTMLCanvasElement.onpaint` (see [`element_handler`]).
+pub(crate) const CANVAS_ELEMENT: &[&str] = &["paint"];
 
 /// Whether the HTML element named `local` has its own event handler for `ty` beyond
 /// GlobalEventHandlers: the permission elements' (`HTMLUserMediaElement.onstream`, ...).
@@ -120,6 +122,7 @@ pub(crate) fn element_handler(local: &str, ty: &str) -> bool {
         "camera" | "microphone" => ty == "track",
         "geolocation" => matches!(ty, "location" | "promptaction" | "promptdismiss" | "validationstatuschange"),
         "install" => ty == "validationstatuschange",
+        "canvas" => ty == "paint",
         _ => false,
     }
 }
@@ -138,6 +141,7 @@ pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
         .chain(DOCUMENT)
         .chain(FULLSCREEN)
         .chain(PERMISSION_ELEMENT)
+        .chain(CANVAS_ELEMENT)
         .find(|t| t.eq_ignore_ascii_case(ty))
         .copied()
 }

@@ -181,6 +181,15 @@ impl Dom {
         if name.ns == markup5ever::ns!() && &*name.local == "popover" {
             self.popover_attribute_changed(i, old, new);
         }
+        // HTML-in-Canvas: a canvas may now be drawable (`Dom::drawable_canvas_seen`).
+        if self.canvas_seen
+            && !self.drawable_canvas_seen
+            && name.ns == markup5ever::ns!()
+            && &*name.local == "content"
+            && new.is_some_and(|v| v.eq_ignore_ascii_case("drawable"))
+        {
+            self.drawable_canvas_seen = true;
+        }
         let observes = self.n(i).element().is_some_and(|e| e.flags & element_flags::OBSERVES_ATTRIBUTES != 0);
         if observes {
             self.observed_attribute_changed(i, name, old, new);

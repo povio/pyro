@@ -242,6 +242,9 @@ pub struct Dom {
     /// A `<canvas>` element was created: loaded images keep their bytes
     /// for canvas drawing (`Dom::canvas_seen`).
     pub(crate) canvas_seen: bool,
+    /// HTML-in-Canvas: a `content` attribute of `drawable` was given to an element of a DOM with
+    /// a canvas, by the parser or `setAttribute` (`Dom::drawable_canvas_seen`).
+    pub(crate) drawable_canvas_seen: bool,
     /// An SVG `<animate>` element was created: until then the page has no
     /// SMIL animations to look for (`Dom::smil_seen`).
     pub(crate) smil_seen: bool,
@@ -420,6 +423,7 @@ impl Dom {
             viewport_meta_version: 0,
             media_seen: false,
             canvas_seen: false,
+            drawable_canvas_seen: false,
             smil_seen: false,
             inline_transitions_seen: false,
             media: Default::default(),
@@ -530,6 +534,12 @@ impl Dom {
     /// Whether a `<canvas>` element was ever created in this DOM.
     pub fn canvas_seen(&self) -> bool {
         self.canvas_seen
+    }
+    /// HTML-in-Canvas: whether a `<canvas content=drawable>` may exist: an element was ever given
+    /// `content=drawable` (ASCII case-insensitive) by the parser or `setAttribute` in this DOM.
+    /// Until then a document has no drawable canvas to fire `paint` events at.
+    pub fn drawable_canvas_seen(&self) -> bool {
+        self.drawable_canvas_seen
     }
     /// Whether an SVG `<animate>` element was ever created in this DOM.
     pub fn smil_seen(&self) -> bool {
