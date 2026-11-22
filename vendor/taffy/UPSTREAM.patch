@@ -2060,7 +2060,7 @@ index 86f630aa..45e5cc51 100644
      let keyword_width = if known_dimensions.width.is_none() {
          resolve_sizing_keyword(size_style.width, Some(stretch_size.width), Some(area_size.width), |val, basis| {
 diff --git a/src/compute/flexbox.rs b/src/compute/flexbox.rs
-index a8dbbcf2..ec9eb3c5 100644
+index a8dbbcf2..c53a3833 100644
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
 @@ -3,6 +3,7 @@ use crate::compute::common::alignment::{
@@ -3375,7 +3375,7 @@ index a8dbbcf2..ec9eb3c5 100644
                      // For some reason this particular usage of max_width is an exception to the rule that max_width's transfer
                      // using the aspect_ratio (if set). Both Chrome and Firefox agree on this. And reading the spec, it seems like
                      // a reasonable interpretation. Although it seems to me that the spec *should* apply aspect_ratio here.
-@@ -2309,13 +2951,55 @@ fn determine_used_cross_size(
+@@ -2309,13 +2951,64 @@ fn determine_used_cross_size(
                          .max_size()
                          .maybe_resolve(constants.node_inner_size, |val, basis| tree.calc(val, basis))
                          .maybe_add(box_sizing_adjustment);
@@ -3429,14 +3429,23 @@ index a8dbbcf2..ec9eb3c5 100644
 +                    if child.min_size_keyword.cross(constants.dir).is_stretch() {
 +                        hypothetical.max(stretch)
 +                    } else if child.max_size_keyword.cross(constants.dir).is_stretch() {
-+                        hypothetical.min(stretch).maybe_max(child.min_size.cross(constants.dir))
++                        // pyro: `max-*: stretch` clamped the hypothetical cross size against the container
++                        // (`determine_flex_base_size`); against the line, a definite preferred size is clamped
++                        // anew, so a line a sibling of a wrapping container made larger lets the item grow
++                        // back to it (Blink; WPT css-sizing stretch/stretch-max-{block,inline}-size-001)
++                        child
++                            .size
++                            .cross(constants.dir)
++                            .unwrap_or(hypothetical)
++                            .min(stretch)
++                            .maybe_max(child.min_size.cross(constants.dir))
 +                    } else {
 +                        hypothetical
 +                    }
                  },
              );
  
-@@ -2382,7 +3066,16 @@ fn distribute_remaining_free_space(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2382,7 +3075,16 @@ fn distribute_remaining_free_space(flex_lines: &mut [FlexLine], constants: &Algo
          let num_items = line.items.len();
          let layout_reverse = constants.dir.is_reverse();
          let gap = constants.gap.main(constants.dir);
@@ -3454,7 +3463,7 @@ index a8dbbcf2..ec9eb3c5 100644
  
          let justify_item = |(i, child): (usize, &mut FlexItem)| {
              child.offset_main =
-@@ -2420,6 +3113,27 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2420,6 +3122,27 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
              .filter(|child| child.participates_in_baseline_alignment(constants.dir))
              .map(|child| child.outer_target_size.cross(constants.dir) - child.baseline)
              .fold(0.0, |acc, x| acc.max(x));
@@ -3482,7 +3491,7 @@ index a8dbbcf2..ec9eb3c5 100644
  
          for child in line.items.iter_mut() {
              let free_space = line_cross_size - child.outer_target_size.cross(constants.dir);
-@@ -2451,6 +3165,9 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2451,6 +3174,9 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                      free_space,
                      max_baseline,
                      max_baseline_to_bottom_distance,
@@ -3492,7 +3501,7 @@ index a8dbbcf2..ec9eb3c5 100644
                      constants,
                  );
              }
-@@ -2470,6 +3187,9 @@ fn align_flex_items_along_cross_axis(
+@@ -2470,6 +3196,9 @@ fn align_flex_items_along_cross_axis(
      free_space: f32,
      max_baseline: f32,
      max_baseline_to_bottom_distance: f32,
@@ -3502,7 +3511,7 @@ index a8dbbcf2..ec9eb3c5 100644
      constants: &AlgoConstants,
  ) -> f32 {
      let cross_axis_should_reverse = constants.is_column && matches!(constants.layout_direction, Direction::Rtl);
-@@ -2528,13 +3248,36 @@ fn align_flex_items_along_cross_axis(
+@@ -2528,13 +3257,36 @@ fn align_flex_items_along_cross_axis(
                  // Until we support vertical writing modes, baseline alignment only makes sense if
                  // the constants.direction is row, so we treat it as flex-start alignment in columns.
                  let baseline_column_should_reverse = cross_axis_should_reverse && !constants.is_wrap;
@@ -3540,7 +3549,7 @@ index a8dbbcf2..ec9eb3c5 100644
          AlignItemsKeyword::Stretch => {
              if constants.is_wrap_reverse ^ cross_axis_should_reverse {
                  free_space
-@@ -2562,6 +3305,7 @@ fn align_flex_items_along_cross_axis(
+@@ -2562,6 +3314,7 @@ fn align_flex_items_along_cross_axis(
  fn determine_container_cross_size(
      flex_lines: &[FlexLine],
      node_size: Size<Option<f32>>,
@@ -3548,7 +3557,7 @@ index a8dbbcf2..ec9eb3c5 100644
      constants: &mut AlgoConstants,
  ) -> f32 {
      let total_cross_axis_gap = sum_axis_gaps(constants.gap.cross(constants.dir), flex_lines.len());
-@@ -2571,9 +3315,20 @@ fn determine_container_cross_size(
+@@ -2571,9 +3324,20 @@ fn determine_container_cross_size(
      let cross_scrollbar_gutter = constants.scrollbar_gutter.cross(constants.dir);
      let min_cross_size = constants.min_size.cross(constants.dir);
      let max_cross_size = constants.max_size.cross(constants.dir);
@@ -3570,7 +3579,7 @@ index a8dbbcf2..ec9eb3c5 100644
          .maybe_clamp(min_cross_size, max_cross_size)
          .max(padding_border_sum - cross_scrollbar_gutter);
      let inner_container_size = f32_max(outer_container_size - padding_border_sum, 0.0);
-@@ -2672,6 +3427,12 @@ fn calculate_flex_item(
+@@ -2672,6 +3436,12 @@ fn calculate_flex_item(
          let baseline_offset_cross =
              total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction);
          item.baseline = baseline_offset_cross + inner_baseline;
@@ -3583,7 +3592,7 @@ index a8dbbcf2..ec9eb3c5 100644
      } else {
          let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
          item.baseline = baseline_offset_main + inner_baseline;
-@@ -2683,8 +3444,8 @@ fn calculate_flex_item(
+@@ -2683,8 +3453,8 @@ fn calculate_flex_item(
          Point { x: offset_cross, y: offset_main }
      };
      let scrollbar_size = Size {
@@ -3594,7 +3603,7 @@ index a8dbbcf2..ec9eb3c5 100644
      };
  
      tree.set_unrounded_layout(
-@@ -2863,20 +3624,10 @@ fn final_layout_pass(
+@@ -2863,20 +3633,10 @@ fn final_layout_pass(
              (constants.container_size.width - constants.border.horizontal_axis_sum() - constants.scrollbar_gutter.x)
                  .max(0.0);
          overflow_rect = overflow_rect.union(Rect {
@@ -3618,7 +3627,7 @@ index a8dbbcf2..ec9eb3c5 100644
          });
      }
      overflow_rect
-@@ -2994,14 +3745,20 @@ fn collect_oof_candidates(
+@@ -2994,14 +3754,20 @@ fn collect_oof_candidates(
          let cross_edge_for = |keyword: AlignItemsKeyword| {
              let start_position = match keyword {
                  AlignItemsKeyword::Start | AlignItemsKeyword::Baseline => !cross_is_rtl,
@@ -3641,7 +3650,7 @@ index a8dbbcf2..ec9eb3c5 100644
                      if start_position {
                          AxisStaticEdge::Start
                      } else {
-@@ -3032,7 +3789,7 @@ fn collect_oof_candidates(
+@@ -3032,7 +3798,7 @@ fn collect_oof_candidates(
          let main = AxisStaticPosition { area: main_area, align: AxisStaticAlign::from_keyword(main_edge) };
  
          let static_position = if constants.is_row { Point { x: main, y: cross } } else { Point { x: cross, y: main } };
@@ -3650,7 +3659,7 @@ index a8dbbcf2..ec9eb3c5 100644
      }
  }
  
-@@ -3588,3 +4345,17 @@ impl AlgoConstants {
+@@ -3588,3 +4354,17 @@ impl AlgoConstants {
          Point { x: x ^ self.layout_direction.is_rtl(), y }
      }
  }
@@ -4148,7 +4157,7 @@ index 82d0bd0a..1c9b0a89 100644
  }
 +
 diff --git a/src/compute/grid/alignment.rs b/src/compute/grid/alignment.rs
-index b84e8751..5b59ba62 100644
+index b84e8751..cc1da21c 100644
 --- a/src/compute/grid/alignment.rs
 +++ b/src/compute/grid/alignment.rs
 @@ -5,9 +5,10 @@ use crate::compute::common::alignment::{
@@ -4224,7 +4233,7 @@ index b84e8751..5b59ba62 100644
      let is_replaced = style.is_replaced();
      // Fall back to the container's justify-items/align-items if unset (`None`), and then resolve
      // writing-mode-relative self-start/self-end keywords against the item's own direction.
-@@ -147,20 +175,34 @@ pub(super) fn align_and_position_item(
+@@ -147,20 +175,44 @@ pub(super) fn align_and_position_item(
      let box_sizing_adjustment =
          if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
  
@@ -4239,6 +4248,16 @@ index b84e8751..5b59ba62 100644
 +    if subgrid.height {
 +        (size_style.height, min_size_style.height, max_size_style.height) =
 +            (Dimension::AUTO, LengthPercentageAuto::AUTO, LengthPercentageAuto::AUTO);
++    }
++    // pyro: `min-*`/`max-*` sizing keywords, which `min_size`/`max_size` read as `auto` (a `stretch`
++    // one is applied once the grid area is known, below)
++    let mut min_keyword = style.grid_min_size_keyword();
++    let mut max_keyword = style.grid_max_size_keyword();
++    if subgrid.width {
++        (min_keyword.width, max_keyword.width) = (Dimension::AUTO, Dimension::AUTO);
++    }
++    if subgrid.height {
++        (min_keyword.height, max_keyword.height) = (Dimension::AUTO, Dimension::AUTO);
 +    }
      let inherent_size = size_style
          .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
@@ -4260,11 +4279,11 @@ index b84e8751..5b59ba62 100644
 +    if let Some(width) = keyword_min_width {
 +        min_size.width = min_size.width.maybe_max(Some(width)).or(Some(width));
 +    }
-+    let max_size = max_size_style
++    let mut max_size = max_size_style
          .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
          .maybe_apply_aspect_ratio(aspect_ratio)
          .maybe_add(box_sizing_adjustment);
-@@ -170,6 +212,8 @@ pub(super) fn align_and_position_item(
+@@ -170,6 +222,8 @@ pub(super) fn align_and_position_item(
      // and the then height is calculated from the width according the aspect ratio
      // Replaced elements are not stretched: they are sized as for `start`.
      // See: https://www.w3.org/TR/css-grid-1/#grid-item-sizing
@@ -4273,7 +4292,7 @@ index b84e8751..5b59ba62 100644
      let alignment_styles = InBothAbsAxis {
          horizontal: match justify_self.keyword {
              AlignItemsKeyword::Normal => {
-@@ -196,18 +240,74 @@ pub(super) fn align_and_position_item(
+@@ -196,18 +250,96 @@ pub(super) fn align_and_position_item(
              _ => align_self,
          },
      };
@@ -4316,6 +4335,28 @@ index b84e8751..5b59ba62 100644
 +            .max(0.0),
 +    };
 +
++    // pyro: a `min-*`/`max-*` of `stretch` (or `-webkit-fill-available`) is the stretch-fit size: the grid
++    // area less the item's margins, a border-box size whatever `box-sizing` says (css-sizing-4 §3.1). It is
++    // not resolved during track sizing (`CoreStyle::min_size`/`max_size` say `auto` for it), so a
++    // `max-*: stretch` in an auto track resolves to the size the item gave that track. An absolutely
++    // positioned item resolves its own (`oof.rs`). (WPT css-sizing
++    // stretch/stretch-{min,max}-{block,inline}-size-001)
++    if !position.is_out_of_flow() {
++        let stretch = grid_area_minus_item_margins_size;
++        if min_keyword.width.is_stretch() {
++            min_size.width = min_size.width.maybe_max(Some(stretch.width)).or(Some(stretch.width));
++        }
++        if min_keyword.height.is_stretch() {
++            min_size.height = min_size.height.maybe_max(Some(stretch.height)).or(Some(stretch.height));
++        }
++        if max_keyword.width.is_stretch() {
++            max_size.width = Some(stretch.width.max(padding_border_size.width));
++        }
++        if max_keyword.height.is_stretch() {
++            max_size.height = Some(stretch.height.max(padding_border_size.height));
++        }
++    }
++
 +    // pyro: an item with a preferred aspect ratio and an explicit `stretch` alignment. In an axis
 +    // with an `auto` size, `stretch` fills the grid area whatever the ratio would give that axis
 +    // (both axes stretched: the ratio is not kept); the other axis, if `auto` and not stretched,
@@ -4351,7 +4392,7 @@ index b84e8751..5b59ba62 100644
      };
  
      // A size that is a sizing keyword (min-content, max-content, fit-content,
-@@ -375,35 +475,33 @@ pub(super) fn align_and_position_item(
+@@ -375,35 +507,33 @@ pub(super) fn align_and_position_item(
      // Resolve final size
      let Size { width, height } = size.unwrap_or(layout_output.size).maybe_clamp(min_size, max_size);
  
@@ -4394,7 +4435,7 @@ index b84e8751..5b59ba62 100644
  
      let resolved_margin = Rect { left: x_margin.start, right: x_margin.end, top: y_margin.start, bottom: y_margin.end };
  
-@@ -415,40 +513,108 @@ pub(super) fn align_and_position_item(
+@@ -415,40 +545,108 @@ pub(super) fn align_and_position_item(
          bubbled_candidates.append(&mut item_candidates);
      }
  
@@ -4531,7 +4572,7 @@ index b84e8751..5b59ba62 100644
  }
  
  /// Align and size a grid item along a single axis
-@@ -460,11 +626,14 @@ pub(super) fn align_item_within_area(
+@@ -460,11 +658,14 @@ pub(super) fn align_item_within_area(
      position: Position,
      inset: Line<Option<f32>>,
      margin: Line<Option<f32>>,
@@ -4549,7 +4590,7 @@ index b84e8751..5b59ba62 100644
      let grid_area_size = f32_max(grid_area.end - grid_area.start, 0.0);
      let free_space = f32_max(grid_area_size - resolved_size - non_auto_margin.sum(), 0.0);
  
-@@ -472,8 +641,8 @@ pub(super) fn align_item_within_area(
+@@ -472,8 +673,8 @@ pub(super) fn align_item_within_area(
      let auto_margin_count = margin.start.is_none() as u8 + margin.end.is_none() as u8;
      let auto_margin_size = if auto_margin_count > 0 { free_space / auto_margin_count as f32 } else { 0.0 };
      let resolved_margin = Line {
@@ -4560,7 +4601,7 @@ index b84e8751..5b59ba62 100644
      };
  
      let overflows = resolved_size + non_auto_margin.sum() > grid_area_size;
-@@ -481,7 +650,8 @@ pub(super) fn align_item_within_area(
+@@ -481,7 +682,8 @@ pub(super) fn align_item_within_area(
  
      // Compute offset in the axis
      let alignment_based_offset = match alignment_keyword {
@@ -4570,7 +4611,7 @@ index b84e8751..5b59ba62 100644
          AlignItemsKeyword::Start
          | AlignItemsKeyword::FlexStart
          | AlignItemsKeyword::Baseline
-@@ -492,7 +662,7 @@ pub(super) fn align_item_within_area(
+@@ -492,7 +694,7 @@ pub(super) fn align_item_within_area(
                  resolved_margin.start
              }
          }
@@ -4579,7 +4620,7 @@ index b84e8751..5b59ba62 100644
              if direction.is_rtl() {
                  resolved_margin.start
              } else {
-@@ -524,7 +694,7 @@ pub(super) fn align_item_within_area(
+@@ -524,7 +726,7 @@ pub(super) fn align_item_within_area(
          alignment_based_offset
      };
  
@@ -10384,7 +10425,7 @@ index bc9488b3..ba37be2c 100644
  
  use crate::geometry::AbsoluteAxis;
 diff --git a/src/style/grid.rs b/src/style/grid.rs
-index a3f746b1..2e173ac2 100644
+index a3f746b1..7f52ed2f 100644
 --- a/src/style/grid.rs
 +++ b/src/style/grid.rs
 @@ -215,6 +215,16 @@ pub trait GridContainerStyle: CoreStyle {
@@ -10404,7 +10445,7 @@ index a3f746b1..2e173ac2 100644
      /// Controls how items get placed into the grid for auto-placed items
      #[inline(always)]
      fn grid_auto_flow(&self) -> GridAutoFlow {
-@@ -272,10 +282,79 @@ pub trait GridContainerStyle: CoreStyle {
+@@ -272,10 +282,85 @@ pub trait GridContainerStyle: CoreStyle {
              _ => alignment,
          }
      }
@@ -10476,15 +10517,21 @@ index a3f746b1..2e173ac2 100644
  /// The set of styles required for a CSS Grid item (child of a CSS Grid container)
  pub trait GridItemStyle: CoreStyle {
 +    /// pyro: `min-width`/`min-height` when they are sizing keywords (`min-content`, `max-content`,
-+    /// `fit-content`), which [`CoreStyle::min_size`] reads as `auto`.
++    /// `fit-content`, `stretch`), which [`CoreStyle::min_size`] reads as `auto`.
 +    #[inline(always)]
 +    fn grid_min_size_keyword(&self) -> Size<Dimension> {
++        Size { width: Dimension::auto(), height: Dimension::auto() }
++    }
++    /// pyro: `max-width`/`max-height` when they are sizing keywords (see [`Self::grid_min_size_keyword`]),
++    /// which [`CoreStyle::max_size`] reads as `auto`.
++    #[inline(always)]
++    fn grid_max_size_keyword(&self) -> Size<Dimension> {
 +        Size { width: Dimension::auto(), height: Dimension::auto() }
 +    }
      /// Defines which row in the grid the item should start and end at
      #[inline(always)]
      fn grid_row(&self) -> Line<GridPlacement<Self::CustomIdent>> {
-@@ -308,6 +387,28 @@ pub trait GridItemStyle: CoreStyle {
+@@ -308,6 +393,28 @@ pub trait GridItemStyle: CoreStyle {
              AbsoluteAxis::Vertical => self.grid_row(),
          }
      }
@@ -10513,7 +10560,7 @@ index a3f746b1..2e173ac2 100644
  }
  
  /// Controls whether grid items are placed row-wise or column-wise. And whether the sparse or dense packing algorithm is used.
-@@ -1025,7 +1126,7 @@ impl MaxTrackSizingFunction {
+@@ -1025,7 +1132,7 @@ impl MaxTrackSizingFunction {
      ) -> Option<f32> {
          match self.0.tag() {
              CompactLength::LENGTH_TAG => Some(self.0.value()),
@@ -10522,7 +10569,7 @@ index a3f746b1..2e173ac2 100644
              #[cfg(feature = "calc")]
              _ if self.0.is_plain_calc() => parent_size.map(|size| calc_resolver(self.0.calc_value(), size)),
              _ => None,
-@@ -1395,7 +1496,7 @@ impl MinTrackSizingFunction {
+@@ -1395,7 +1502,7 @@ impl MinTrackSizingFunction {
      ) -> Option<f32> {
          match self.0.tag() {
              CompactLength::LENGTH_TAG => Some(self.0.value()),
@@ -10531,7 +10578,7 @@ index a3f746b1..2e173ac2 100644
              #[cfg(feature = "calc")]
              _ if self.0.is_plain_calc() => parent_size.map(|size| calc_resolver(self.0.calc_value(), size)),
              _ => None,
-@@ -1907,6 +2008,18 @@ mod tests {
+@@ -1907,6 +2014,18 @@ mod tests {
  mod expand_tests {
      use super::*;
  
@@ -10550,7 +10597,7 @@ index a3f746b1..2e173ac2 100644
      #[test]
      fn max_track_sizing_function_round_trips() {
          let cases = [
-@@ -1980,3 +2093,18 @@ mod expand_tests {
+@@ -1980,3 +2099,18 @@ mod expand_tests {
          assert_eq!(MinTrackSizingFunction::calc(handle).expand(), ExpandedMinTrackSizingFunction::Calc(handle));
      }
  }
@@ -10570,7 +10617,7 @@ index a3f746b1..2e173ac2 100644
 +    }
 +}
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index a9e57f33..d2d2ea91 100644
+index a9e57f33..7c80776d 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -41,7 +41,7 @@ pub use self::grid::{
@@ -10866,7 +10913,22 @@ index a9e57f33..d2d2ea91 100644
      fn grid_auto_flow(&self) -> GridAutoFlow {
          (*self).grid_auto_flow()
      }
-@@ -1636,6 +1796,10 @@ mod tests {
+@@ -1601,6 +1761,14 @@ impl<S: CheapCloneStr> GridItemStyle for Style<S> {
+ 
+ #[cfg(feature = "grid")]
+ impl<T: GridItemStyle> GridItemStyle for &'_ T {
++    #[inline(always)]
++    fn grid_min_size_keyword(&self) -> Size<Dimension> {
++        (*self).grid_min_size_keyword()
++    }
++    #[inline(always)]
++    fn grid_max_size_keyword(&self) -> Size<Dimension> {
++        (*self).grid_max_size_keyword()
++    }
+     #[inline(always)]
+     fn grid_row(&self) -> Line<GridPlacement<Self::CustomIdent>> {
+         (*self).grid_row()
+@@ -1636,6 +1804,10 @@ mod tests {
              dummy: core::marker::PhantomData,
              display: Default::default(),
              item_is_table: false,

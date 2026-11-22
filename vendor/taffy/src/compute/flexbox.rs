@@ -2996,7 +2996,16 @@ fn determine_used_cross_size(
                     if child.min_size_keyword.cross(constants.dir).is_stretch() {
                         hypothetical.max(stretch)
                     } else if child.max_size_keyword.cross(constants.dir).is_stretch() {
-                        hypothetical.min(stretch).maybe_max(child.min_size.cross(constants.dir))
+                        // pyro: `max-*: stretch` clamped the hypothetical cross size against the container
+                        // (`determine_flex_base_size`); against the line, a definite preferred size is clamped
+                        // anew, so a line a sibling of a wrapping container made larger lets the item grow
+                        // back to it (Blink; WPT css-sizing stretch/stretch-max-{block,inline}-size-001)
+                        child
+                            .size
+                            .cross(constants.dir)
+                            .unwrap_or(hypothetical)
+                            .min(stretch)
+                            .maybe_max(child.min_size.cross(constants.dir))
                     } else {
                         hypothetical
                     }

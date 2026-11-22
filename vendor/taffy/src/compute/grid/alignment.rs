@@ -186,6 +186,16 @@ pub(super) fn align_and_position_item(
         (size_style.height, min_size_style.height, max_size_style.height) =
             (Dimension::AUTO, LengthPercentageAuto::AUTO, LengthPercentageAuto::AUTO);
     }
+    // pyro: `min-*`/`max-*` sizing keywords, which `min_size`/`max_size` read as `auto` (a `stretch`
+    // one is applied once the grid area is known, below)
+    let mut min_keyword = style.grid_min_size_keyword();
+    let mut max_keyword = style.grid_max_size_keyword();
+    if subgrid.width {
+        (min_keyword.width, max_keyword.width) = (Dimension::AUTO, Dimension::AUTO);
+    }
+    if subgrid.height {
+        (min_keyword.height, max_keyword.height) = (Dimension::AUTO, Dimension::AUTO);
+    }
     let inherent_size = size_style
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
@@ -202,7 +212,7 @@ pub(super) fn align_and_position_item(
     if let Some(width) = keyword_min_width {
         min_size.width = min_size.width.maybe_max(Some(width)).or(Some(width));
     }
-    let max_size = max_size_style
+    let mut max_size = max_size_style
         .maybe_resolve(containing_block_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
@@ -275,6 +285,28 @@ pub(super) fn align_and_position_item(
             - baseline.shim.bottom)
             .max(0.0),
     };
+
+    // pyro: a `min-*`/`max-*` of `stretch` (or `-webkit-fill-available`) is the stretch-fit size: the grid
+    // area less the item's margins, a border-box size whatever `box-sizing` says (css-sizing-4 §3.1). It is
+    // not resolved during track sizing (`CoreStyle::min_size`/`max_size` say `auto` for it), so a
+    // `max-*: stretch` in an auto track resolves to the size the item gave that track. An absolutely
+    // positioned item resolves its own (`oof.rs`). (WPT css-sizing
+    // stretch/stretch-{min,max}-{block,inline}-size-001)
+    if !position.is_out_of_flow() {
+        let stretch = grid_area_minus_item_margins_size;
+        if min_keyword.width.is_stretch() {
+            min_size.width = min_size.width.maybe_max(Some(stretch.width)).or(Some(stretch.width));
+        }
+        if min_keyword.height.is_stretch() {
+            min_size.height = min_size.height.maybe_max(Some(stretch.height)).or(Some(stretch.height));
+        }
+        if max_keyword.width.is_stretch() {
+            max_size.width = Some(stretch.width.max(padding_border_size.width));
+        }
+        if max_keyword.height.is_stretch() {
+            max_size.height = Some(stretch.height.max(padding_border_size.height));
+        }
+    }
 
     // pyro: an item with a preferred aspect ratio and an explicit `stretch` alignment. In an axis
     // with an `auto` size, `stretch` fills the grid area whatever the ratio would give that axis
