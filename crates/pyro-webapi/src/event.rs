@@ -186,6 +186,8 @@ pub struct EventFields {
     pub message_source_window: Option<MessageSource>,
     /// `ports`: the transferred MessagePorts' new ports, in the receiver's realm.
     pub message_ports: Option<Persistent>,
+    /// `MessageEvent.userActivation` (a `UserActivation`, or null).
+    pub message_user_activation: Option<Persistent>,
     pub origin: String,
     /// The origin object supplied by message delivery. An author-provided
     /// MessageEventInit.origin is only a string, even if it spells a valid URL.
@@ -990,6 +992,18 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.origin = get_str(init, "origin")?;
     let last_event_id = get_str(init, "lastEventId")?;
     f.last_event_id = (!last_event_id.is_empty()).then(|| last_event_id.into());
+    // `userActivation` (a UserActivation or null; null by default).
+    if let Some(o) = init {
+        let activation = o.get_atom("userActivation")?;
+        if !activation.is_nullish() {
+            if s.unwrap::<crate::user_activation::UserActivation>(activation).is_none() {
+                return Err(JsError::Type(
+                    "Failed to construct 'MessageEvent': Failed to read the 'userActivation' property from 'MessageEventInit': Failed to convert value to 'UserActivation'.".into(),
+                ));
+            }
+            f.message_user_activation = Some(Persistent::new(s, activation));
+        }
+    }
     // `source` (a WindowProxy, MessagePort or ServiceWorker; null by default): given back as is.
     if let Some(o) = init {
         let source = o.get_atom("source")?;
@@ -2330,6 +2344,9 @@ impl JsClass for MessageEvent {
             }
             let source = e.fields.borrow().message_source;
             crate::target::target_value(s, &e.page, source)
+        });
+        def.getter("userActivation", |s, e| {
+            Ok(e.fields.borrow().message_user_activation.as_ref().map_or(s.null(), |p| s.rehome(p.get(s))))
         });
         def.getter("ports", |s, e| match e.fields.borrow().message_ports.as_ref() {
             Some(ports) => Ok(s.rehome(ports.get(s))),
