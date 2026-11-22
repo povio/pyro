@@ -7135,7 +7135,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
          !self.transform.0.is_empty()
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-22 21:24:33
++++ b/servo/selector_parser.rs	2026-11-22 22:49:21
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -7796,7 +7796,18 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +1055,12 @@
+@@ -621,7 +1030,9 @@
+         let pseudo_class = match_ignore_ascii_case! { &name,
+             "active" => NonTSPseudoClass::Active,
+             "any-link" => NonTSPseudoClass::AnyLink,
+-            "autofill" => NonTSPseudoClass::Autofill,
++            // pyro: the legacy alias Chromium and WebKit keep (WPT html/semantics/selectors
++            // pseudo-classes/autofill.html); it serializes as `:autofill`.
++            "autofill" | "-webkit-autofill" => NonTSPseudoClass::Autofill,
+             "checked" => NonTSPseudoClass::Checked,
+             "default" => NonTSPseudoClass::Default,
+             "defined" => NonTSPseudoClass::Defined,
+@@ -646,6 +1057,12 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
@@ -7809,7 +7820,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -669,6 +1084,14 @@
+@@ -669,6 +1086,14 @@
                  }
                  NonTSPseudoClass::MozTopmostModal
              },
@@ -7824,7 +7835,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "-servo-nonzero-border" => {
                  if !self.in_user_agent_stylesheet() {
                      return Err(ParseError::custom(
-@@ -687,16 +1110,39 @@
+@@ -687,15 +1112,38 @@
          &self,
          name: &str,
          parser: &mut CssParser<'i>,
@@ -7841,7 +7852,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-             },
++            },
 +            "dir" => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
 +            },
@@ -7862,11 +7873,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
 +                }
 +                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
-+            },
+             },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
- 
-@@ -714,8 +1160,26 @@
+@@ -714,8 +1162,26 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -7893,7 +7903,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "placeholder" => Placeholder,
              "-servo-text-control-inner-container" => {
                  if !self.in_user_agent_stylesheet() {
-@@ -774,6 +1238,43 @@
+@@ -774,6 +1240,43 @@
          };
  
          Ok(pseudo_element)

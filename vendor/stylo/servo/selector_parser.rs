@@ -1030,7 +1030,9 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
         let pseudo_class = match_ignore_ascii_case! { &name,
             "active" => NonTSPseudoClass::Active,
             "any-link" => NonTSPseudoClass::AnyLink,
-            "autofill" => NonTSPseudoClass::Autofill,
+            // pyro: the legacy alias Chromium and WebKit keep (WPT html/semantics/selectors
+            // pseudo-classes/autofill.html); it serializes as `:autofill`.
+            "autofill" | "-webkit-autofill" => NonTSPseudoClass::Autofill,
             "checked" => NonTSPseudoClass::Checked,
             "default" => NonTSPseudoClass::Default,
             "defined" => NonTSPseudoClass::Defined,
