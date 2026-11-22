@@ -394,6 +394,15 @@ impl JsClass for Window {
             },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "parent", v),
         );
+        // HTML `closed`: true once the window's browsing context is gone (its container, or an
+        // ancestor's, was removed and the frame detached; or its document was detached).
+        def.getter("closed", |s, w| {
+            let gone = match (w.frames.upgrade(), w.frame) {
+                (Some(host), Some(key)) => host.with_frame(key, |_| ()).is_none(),
+                _ => false,
+            };
+            Ok(s.boolean(gone || w.target.page.is_detached() || w.target.page.is_disposed()))
+        });
         def.getter("frameElement", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.frame_element(s, key),
             _ => Ok(s.null()),
