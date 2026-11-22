@@ -202,6 +202,9 @@ pub(crate) struct State {
     /// root removed and inserted again has no before-change styles, and a
     /// removed root does not keep its content's styles until navigation.
     hidden_roots_removals: Cell<u64>,
+    /// `Dom::removal_count` when [`cancel_orphaned_transitions`] last looked for running
+    /// transitions whose element left its place in the tree.
+    transitions_removals: Cell<u64>,
 }
 
 /// A CSS animation or transition `getAnimations()` lists.
@@ -1057,6 +1060,7 @@ fn transitions_from_changes(
     planned: &mut Vec<Planned>,
 ) {
     drop_removed_hidden_roots(state, dom);
+    cancel_orphaned_transitions(state, dom, style, now_ms, planned);
     let changes = style.take_style_changes(dom);
     if changes.is_empty() {
         return;
@@ -1128,18 +1132,80 @@ fn transitions_from_changes(
             if !hidden.iter().any(|&root| root == transition.el || is_ancestor(dom, root, transition.el)) {
                 return true;
             }
-            if transition.live.replace(false) && !transition.ended.get() {
-                let local = state.scripted.borrow().values().find(|effect| effect.css_id() == Some(transition.id))
-                    .and_then(|effect| effect.current(now_ms)).unwrap_or(now_ms - transition.start_ms);
-                let mut event = cancel_event(transition.el, transition.pseudo, &transition.name);
-                event.elapsed_s = (local - transition.delay_ms).clamp(0.0, transition.duration_ms) / 1000.0;
-                planned.push(event);
-            }
+            cancel_running(state, transition, now_ms, planned);
             false
         });
         if running.len() != previous {
             state.bump();
         }
+    }
+}
+
+/// Cancels running transition `transition` (unless it ended or was canceled already): its
+/// `transitioncancel`, whose `elapsedTime` is how far its active phase got.
+fn cancel_running(state: &State, transition: &Timeline, now_ms: f64, planned: &mut Vec<Planned>) {
+    if transition.live.replace(false) && !transition.ended.get() {
+        let local = state.scripted.borrow().values().find(|effect| effect.css_id() == Some(transition.id))
+            .and_then(|effect| effect.current(now_ms)).unwrap_or(now_ms - transition.start_ms);
+        let mut event = cancel_event(transition.el, transition.pseudo, &transition.name);
+        event.elapsed_s = (local - transition.delay_ms).clamp(0.0, transition.duration_ms) / 1000.0;
+        planned.push(event);
+    }
+}
+
+/// The running transitions whose target is no longer rendered where it started are canceled
+/// (css-transitions-1 §3: "if an element is no longer in the document, implementations must
+/// cancel any running transitions on it"; Chrome cancels them too when the element is moved, even
+/// back under the same parent, and when its `::before`/`::after` stops generating a box):
+/// - those of the elements removed from the tree (a subtree's) since the last style change
+///   event, whether or not they were inserted again since;
+/// - those of a pseudo-element its element no longer generates (`content: none`).
+///
+/// One counter check while nothing was removed and no pseudo-element transitions.
+fn cancel_orphaned_transitions(
+    state: &State,
+    dom: &pyro_dom::Dom,
+    style: &pyro_dom::style::StyleEngine,
+    now_ms: f64,
+    planned: &mut Vec<Planned>,
+) {
+    let removals = dom.removal_count();
+    let since = state.transitions_removals.replace(removals);
+    let Ok(mut running) = state.transitions.try_borrow_mut() else { return };
+    if running.is_empty() {
+        return;
+    }
+    // `None`: the log does not go back far enough; every element out of the document then.
+    let removed: Option<Option<FxHashSet<NodeId>>> =
+        (since != removals).then(|| dom.nodes_removed_since(since).map(|nodes| nodes.into_iter().collect()));
+    let has_pseudo = running.iter().any(|t| t.pseudo.is_some() && t.live.get());
+    if removed.is_none() && !has_pseudo {
+        return;
+    }
+    let previous = running.len();
+    running.retain(|transition| {
+        let gone = match &removed {
+            Some(Some(nodes)) => nodes.contains(&transition.el),
+            Some(None) => !dom.is_connected(transition.el).unwrap_or(false),
+            None => false,
+        };
+        let pseudo_gone = !gone
+            && transition.live.get()
+            && !transition.ended.get()
+            && transition.pseudo.is_some_and(|pseudo| {
+                dom.is_alive(transition.el)
+                    && style
+                        .pseudo_style(dom, transition.el, pseudo, false)
+                        .is_none_or(|s| !pyro_dom::timing::generates_pseudo_box(&s))
+            });
+        if !gone && !pseudo_gone {
+            return true;
+        }
+        cancel_running(state, transition, now_ms, planned);
+        false
+    });
+    if running.len() != previous {
+        state.bump();
     }
 }
 
@@ -1569,14 +1635,16 @@ fn schedule(page: &Rc<PageDom>, planned: Vec<Planned>, defer: bool) {
 }
 
 /// Dispatches one event at its element, unless its timeline was canceled or
-/// the element left the document meanwhile.
+/// the element left the document meanwhile (a `transitioncancel` still reaches it: removing an
+/// element is what cancels its transitions, and Chrome fires that event at it).
 fn fire(page: &Rc<PageDom>, event: &Planned) {
     if !event.live.get() || event.epoch.as_ref().is_some_and(|e| !e.get()) || page.is_disposed() {
         return;
     }
     {
         let dom = page.dom.borrow();
-        if !dom.is_alive(event.el) || !dom.is_connected(event.el).unwrap_or(false) {
+        let detached_cancel = event.ty == "transitioncancel";
+        if !dom.is_alive(event.el) || !(detached_cancel || dom.is_connected(event.el).unwrap_or(false)) {
             return;
         }
     }
