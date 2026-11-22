@@ -544,12 +544,15 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
             }
         }
         MediaChange::Removed => {
-            // HTML: removed from a document (and not put back in this
-            // task), the element pauses.
-            let connected = page.dom.borrow().is_connected(node).unwrap_or(false);
-            if !connected && !peek(page, node, |st| st.paused) {
-                internal_pause(page, node);
-            }
+            // HTML removing steps: after a stable state (not synchronously: `paused` stays false
+            // in the removing script), an element still not in a document pauses.
+            let generation = peek(page, node, |st| st.generation);
+            queue(page, node, generation, move |page| {
+                let connected = page.dom.borrow().is_connected(node).unwrap_or(false);
+                if !connected && !peek(page, node, |st| st.paused) {
+                    internal_pause(page, node);
+                }
+            });
         }
         MediaChange::SourceRemoved { source, previous } => source_removed(page, node, source, previous),
         MediaChange::SourceInserted(_) => {
