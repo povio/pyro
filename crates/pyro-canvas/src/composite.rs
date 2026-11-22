@@ -16,6 +16,8 @@ fn byte(v: f32) -> u8 {
 }
 
 /// Whether a transparent source pixel leaves the destination as it is.
+/// `clear` is bounded by the source's shape, as Chromium does: the bitmap
+/// outside what is drawn keeps its pixels.
 fn bounded(op: Composite) -> bool {
     !matches!(
         op,
@@ -83,6 +85,7 @@ fn pixel(s: [f32; 4], d: [f32; 4], op: Composite) -> [f32; 4] {
         Composite::DestinationOut => porter_duff(0.0, 1.0 - sa),
         Composite::DestinationAtop => porter_duff(1.0 - da, sa),
         Composite::Copy => s,
+        Composite::Clear => [0.0; 4],
         Composite::Xor => porter_duff(1.0 - da, 1.0 - sa),
         Composite::Lighter => {
             [(s[0] + d[0]).min(1.0), (s[1] + d[1]).min(1.0), (s[2] + d[2]).min(1.0), (sa + da).min(1.0)]

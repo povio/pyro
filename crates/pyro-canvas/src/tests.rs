@@ -255,3 +255,35 @@ fn snapshots_keep_their_pixels_and_count() {
     assert_eq!(px(&mut s, 0, 0)[3], 0);
     assert_eq!(&snap2.data_as_u8_slice()[..4], &[0, 0, 255, 255]);
 }
+
+#[test]
+fn clear_operator() {
+    assert_eq!(Composite::from_name("clear"), Some(Composite::Clear));
+    assert_eq!(Composite::Clear.name(), "clear");
+    let mut s = Surface::new(10, 10);
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &Paint::Color(Color::from_rgba8(0, 255, 0, 128)), &state(&[]));
+    let mut st = state(&[]);
+    st.composite = Composite::Clear;
+    // The paint's colour and alpha do not matter: where it is drawn becomes
+    // transparent black.
+    s.fill(&rect(0.0, 0.0, 5.0, 10.0), false, &Paint::Color(Color::from_rgba8(0, 0, 255, 191)), &st);
+    assert_eq!(px(&mut s, 2, 2), [0, 0, 0, 0]);
+    assert_eq!(px(&mut s, 7, 2), [0, 255, 0, 128], "outside the shape is kept");
+}
+
+#[test]
+fn clear_operator_within_the_clip() {
+    let mut s = Surface::new(10, 10);
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &rgb(0, 255, 0), &state(&[]));
+    let clip = [ClipPath { path: rect(-20.0, -20.0, 10.0, 10.0), evenodd: false }];
+    let mut st = state(&clip);
+    st.composite = Composite::Clear;
+    s.fill(&rect(0.0, 0.0, 5.0, 10.0), false, &rgb(255, 0, 0), &st);
+    assert_eq!(px(&mut s, 2, 2), [0, 255, 0, 255], "outside the clip is kept");
+    let clip = [ClipPath { path: rect(0.0, 0.0, 3.0, 10.0), evenodd: false }];
+    let mut st = state(&clip);
+    st.composite = Composite::Clear;
+    s.fill(&rect(0.0, 0.0, 5.0, 10.0), false, &rgb(255, 0, 0), &st);
+    assert_eq!(px(&mut s, 1, 1), [0, 0, 0, 0]);
+    assert_eq!(px(&mut s, 4, 1), [0, 255, 0, 255]);
+}

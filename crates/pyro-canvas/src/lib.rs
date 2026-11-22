@@ -84,10 +84,12 @@ pub enum Composite {
     Saturation,
     Color,
     Luminosity,
+    /// Porter-Duff clear (Fa = 0, Fb = 0).
+    Clear,
 }
 
 impl Composite {
-    pub const ALL: [(&'static str, Composite); 26] = [
+    pub const ALL: [(&'static str, Composite); 27] = [
         ("source-over", Composite::SourceOver),
         ("source-in", Composite::SourceIn),
         ("source-out", Composite::SourceOut),
@@ -114,6 +116,7 @@ impl Composite {
         ("saturation", Composite::Saturation),
         ("color", Composite::Color),
         ("luminosity", Composite::Luminosity),
+        ("clear", Composite::Clear),
     ];
 
     pub fn from_name(name: &str) -> Option<Composite> {
