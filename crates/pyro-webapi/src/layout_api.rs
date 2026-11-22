@@ -1028,7 +1028,14 @@ pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -
     }
     // Retargeted against the document: a hit inside a shadow tree is its
     // outermost host (CDP's `hit_test` stays un-retargeted, as Chrome's).
-    let hit = hit_test(page, x, y).and_then(|h| page.dom.borrow().retarget_node(h, n.id));
+    let hit = if page.dom.borrow().drawable_canvas_seen() {
+        // HTML-in-Canvas: the first of the hits a drawable canvas's drawn elements adjust.
+        let hits = page.layout().elements_from_point(&page.dom.borrow(), x, y);
+        crate::html_in_canvas::adjust_hits(page, x, y, hits).into_iter().next()
+    } else {
+        hit_test(page, x, y)
+    };
+    let hit = hit.and_then(|h| page.dom.borrow().retarget_node(h, n.id));
     opt_node(s, page, hit)
 }
 
@@ -1072,6 +1079,8 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     let page = n.page();
     let mut ids =
         if n.id == page.document() { page.layout().elements_from_point(&page.dom.borrow(), x, y) } else { Vec::new() };
+    // HTML-in-Canvas: a drawable canvas's drawn elements, where they were drawn.
+    let mut ids = crate::html_in_canvas::adjust_hits(page, x, y, std::mem::take(&mut ids));
     {
         // Retarget each hit against the document, dropping the repeats a
         // shadow tree's nodes collapse to (its host, once).

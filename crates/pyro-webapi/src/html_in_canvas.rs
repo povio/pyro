@@ -47,6 +47,9 @@ pub(crate) struct State {
     /// `updateElementGeometry` transforms: (canvas, element, the matrix's 6
     /// (2D) or 16 values).
     transforms: Vec<(NodeId, NodeId, Vec<f64>)>,
+    /// The elements hit testing finds in their canvas, oldest first: drawn
+    /// (or given a transform) since; a later draw puts one last (on top).
+    hittable: Vec<(NodeId, NodeId)>,
 }
 
 pub(crate) type Shared = RefCell<State>;
@@ -492,6 +495,7 @@ pub(crate) fn update_geometry(s: &Scope<'_>, page: &Rc<PageDom>, canvas: NodeId,
         Some(o) => o.get_atom("canvasTransform")?,
         None => s.undefined(),
     };
+    note_drawn(page, canvas, element);
     let ctor = dom_matrix(s)?;
     let from = ctor.get_atom("fromMatrix")?.as_object().ok_or_else(|| JsError::Type("DOMMatrix.fromMatrix is not available.".into()))?;
     let matrix = from.call(Some(ctor), &[init])?;
@@ -522,6 +526,14 @@ pub(crate) fn clear_geometry(page: &Rc<PageDom>, canvas: NodeId, element: NodeId
 /// canvas's box, as `updateElementGeometry` transforms are (WPT
 /// canvas-transform-get-bounding-client-rect maps those unscaled on a canvas
 /// whose bitmap is not its CSS size), so the grid's scale is taken out.
+/// `drawElementImage` drew `element` into `canvas`: hit testing finds it
+/// there, above what was drawn before.
+pub(crate) fn note_drawn(page: &PageDom, canvas: NodeId, element: NodeId) {
+    let mut state = page.html_in_canvas.borrow_mut();
+    state.hittable.retain(|&(c, e)| !(c == canvas && e == element));
+    state.hittable.push((canvas, element));
+}
+
 pub(crate) fn set_drawn_transform(page: &Rc<PageDom>, canvas: NodeId, element: NodeId, values: Vec<f64>) {
     let (sx, sy) = {
         let layout = page.layout();
@@ -586,4 +598,49 @@ pub(crate) fn transformed_rect(page: &PageDom, el: NodeId, rect: pyro_dom::layou
     let max_x = corners.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
     let max_y = corners.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
     pyro_dom::layout::Rect { x: origin.0 + min_x, y: origin.1 + min_y, width: max_x - min_x, height: max_y - min_y }
+}
+
+/// HTML-in-Canvas hit testing over `hits` (topmost first) at client point
+/// (`x`, `y`): a canvas's children are not hit where they are laid out; the
+/// elements drawn into a drawable canvas (or given a canvas transform) are hit
+/// where their canvas transform places them, the last drawn on top, just
+/// above their canvas, unless `pointer-events: none` or inert. `hits` as they
+/// are on a page without a drawable canvas.
+pub(crate) fn adjust_hits(page: &PageDom, x: f64, y: f64, hits: Vec<NodeId>) -> Vec<NodeId> {
+    if !page.dom.borrow().drawable_canvas_seen() {
+        return hits;
+    }
+    let candidates: Vec<(NodeId, NodeId)> = page.html_in_canvas.borrow().hittable.iter().rev().copied().collect();
+    let mut placed: Vec<(NodeId, NodeId)> = Vec::new();
+    for (canvas, element) in candidates {
+        let rect = {
+            let layout = page.layout();
+            let dom = page.dom.borrow();
+            if !dom.is_connected(element).unwrap_or(false)
+                || owner_canvas(&dom, element) != Some(canvas)
+                || layout.style().is_inert(&dom, element)
+                || layout.style().computed_value(&dom, element, "pointer-events").as_deref() == Some("none")
+            {
+                continue;
+            }
+            layout.bounding_client_rect(&dom, element)
+        };
+        let rect = transformed_rect(page, element, rect);
+        if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
+            placed.push((canvas, element));
+        }
+    }
+    let dom = page.dom.borrow();
+    let mut out = Vec::with_capacity(hits.len() + placed.len());
+    for hit in hits {
+        // A canvas's child laid out under the point is not hit there.
+        if owner_canvas(&dom, hit).is_some() {
+            continue;
+        }
+        if is_drawable_canvas(&dom, hit) {
+            out.extend(placed.iter().filter(|(c, _)| *c == hit).map(|(_, e)| *e));
+        }
+        out.push(hit);
+    }
+    out
 }

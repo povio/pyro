@@ -1814,9 +1814,13 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
         * Affine::scale_non_uniform(scale(dst.width(), src.width()), scale(dst.height(), src.height()))
         * Affine::translate((-src.x0, -src.y0));
     let [ma, mb, mc, md, me, mf] = (state.transform * place).as_coeffs();
-    // The element's geometry follows where it was drawn, unless asked to keep it.
-    if let (Some(element), false) = (element, preserve) {
-        crate::html_in_canvas::set_drawn_transform(&c.page, canvas, element, vec![ma, mb, mc, md, me, mf]);
+    // The element's geometry follows where it was drawn, unless asked to keep it; it is hit
+    // testable there, on top of what was drawn before.
+    if let Some(element) = element {
+        if !preserve {
+            crate::html_in_canvas::set_drawn_transform(&c.page, canvas, element, vec![ma, mb, mc, md, me, mf]);
+        }
+        crate::html_in_canvas::note_drawn(&c.page, canvas, element);
     }
     let args = [ma, mb, mc, md, me, mf].map(|v| s.number(v));
     module_helper(s, c, "matrix", &args)
