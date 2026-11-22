@@ -814,11 +814,12 @@
       pump(x);
     }
   }
-  function finish(x) {
+  function finish(x, committed) {
     x.state = 'finished';
     const i = txs.indexOf(x);
     if (i >= 0) txs.splice(i, 1);
     x.conn.txs.delete(x);
+    post(() => finishedEvent(x, committed ? 'complete' : 'abort', committed));
     tryStart();
     if (!x.upgrade) maybeClose(x.conn);
   }
@@ -880,8 +881,7 @@
   function commitTx(x) {
     x.state = 'committing';
     N.commit(x.conn.name, x.id);
-    finish(x);
-    post(() => finishedEvent(x, 'complete', true));
+    finish(x, true);
   }
   function abortTx(x, error) {
     if (x.state === 'finished') return;
@@ -893,8 +893,7 @@
       failed(requestState(r.request), fail('AbortError', 'The transaction was aborted, so the request cannot be fulfilled.'));
       post(() => ({ t: r.request, e: plainEvent('error', true, true) }));
     }
-    finish(x);
-    post(() => finishedEvent(x, 'abort', false));
+    finish(x, false);
   }
   // `complete` or `abort`. An upgrade no longer runs while its listeners do
   // (the open request keeps its transaction until after them).
