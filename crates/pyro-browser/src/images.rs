@@ -312,6 +312,32 @@ impl Browser {
         self.image_event_with(page, node, false);
     }
 
+    /// An `<img>`'s insertion alone (no other mutation queued it): insertion is no relevant
+    /// mutation, so an image that already has a request for its `src` keeps it, even when the
+    /// document's base URL changed since (it is not resolved again; WPT
+    /// html/semantics/embedded-content/the-img-element/image-base-url.html). `srcset`,
+    /// `<picture>` and lazy images select again as before.
+    pub(crate) fn image_inserted(&mut self, page: FrameKey, node: NodeId) {
+        let keeps = self.doc(page).is_some_and(|state| {
+            let Some(bindings) = state.main_frame.page_dom.clone() else { return false };
+            let Some(entry) = state.images.entries.get(&node) else { return false };
+            let dom = bindings.dom.borrow();
+            let attr = |name: &str| dom.get_attribute(node, name).ok().flatten().map(str::to_owned);
+            let in_picture = dom
+                .parent(node)
+                .ok()
+                .flatten()
+                .is_some_and(|p| dom.element(p).is_ok_and(|e| &*e.name.local == "picture"));
+            attr("src").is_some_and(|src| src == entry.src)
+                && attr("srcset").is_none()
+                && attr("loading").is_none_or(|l| !l.eq_ignore_ascii_case("lazy"))
+                && !in_picture
+        });
+        if !keeps {
+            self.image_event_with(page, node, false);
+        }
+    }
+
     /// [`Browser::image_event`]; `restart`: a relevant mutation, which starts a new request (and
     /// fires `load` again) even when the URL is the one already loaded.
     pub(crate) fn image_event_with(&mut self, page: FrameKey, node: NodeId, restart: bool) {

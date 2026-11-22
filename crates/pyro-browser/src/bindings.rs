@@ -1003,6 +1003,17 @@ impl Browser {
             .collect();
         let mut stylesheet_nodes = std::collections::HashSet::new();
         let mut image_nodes = std::collections::HashSet::new();
+        // `<img>`s this drain has only insertion events for (`Browser::image_inserted`).
+        let image_inserted_only: std::collections::HashSet<pyro_dom::NodeId> = {
+            let img = |event: &&pyro_dom::script::ResourceEvent| event.kind == pyro_dom::script::ResourceKind::Img;
+            let other: std::collections::HashSet<_> = events
+                .iter()
+                .filter(img)
+                .filter(|event| event.reason != pyro_dom::script::ResourceReason::Connected)
+                .map(|event| event.node)
+                .collect();
+            events.iter().filter(img).map(|event| event.node).filter(|node| !other.contains(node)).collect()
+        };
         let mut preload_nodes = std::collections::HashSet::new();
         // `<style>` elements processed by this drain (a parsed one's
         // insertion and pop come together): once each, until removed.
@@ -1043,7 +1054,11 @@ impl Browser {
                     // (a relevant mutation; a CORS or referrer policy state change is found by
                     // `image_event_with` itself).
                     let restart = event.reason == pyro_dom::script::ResourceReason::SourceChanged;
-                    self.image_event_with(target, event.node, restart);
+                    if image_inserted_only.contains(&event.node) {
+                        self.image_inserted(target, event.node);
+                    } else {
+                        self.image_event_with(target, event.node, restart);
+                    }
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Object {
                 if image_nodes.insert(event.node) {
