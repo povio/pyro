@@ -1607,6 +1607,40 @@ fn selected_blocks(dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<Nod
     out
 }
 
+/// Resolve an element boundary to the text or leaf under its caret. Do not
+/// walk outside the editing host when a boundary lies directly in the host.
+fn format_block_endpoint(dom: &Dom, point: Point, host: NodeId) -> NodeId {
+    if editing::is_text(dom, point.0) {
+        return point.0;
+    }
+    let next = editing::deep_forward(dom, point);
+    if next != point && editing::editing_host(dom, next.0) == Some(host) {
+        return next.0;
+    }
+    let previous = editing::deep_backward(dom, point);
+    if editing::editing_host(dom, previous.0) == Some(host) { previous.0 } else { point.0 }
+}
+
+fn format_block_value(page: &PageDom) -> Option<String> {
+    let (start, end) = editing::selection_range(page)?;
+    let dom = page.dom.borrow();
+    let host = editing::editing_host(&dom, start.0)?;
+    if editing::editing_host(&dom, end.0) != Some(host) {
+        return None;
+    }
+    let a = format_block_endpoint(&dom, start, host);
+    let b = if start == end { a } else { format_block_endpoint(&dom, end, host) };
+    let mut node = crate::range::common_ancestor(&dom, a, b).ok()?;
+    while node != host {
+        let tag = editing::local(&dom, node);
+        if FORMAT_BLOCKS.contains(&tag.as_str()) && dom.element(node).is_ok_and(|el| el.is_html()) {
+            return Some(tag);
+        }
+        node = dom.parent(node).ok()??;
+    }
+    None
+}
+
 /// formatBlock: the selected blocks become `tag` elements (content of a
 /// host without blocks is wrapped in one).
 fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
@@ -1831,16 +1865,7 @@ pub(crate) fn query_value(page: &PageDom, doc: NodeId, command: &str) -> String 
             if editing::selection_range(page).is_none() { return String::new(); }
             alignment::selected_values(page).first().copied().unwrap_or("left").to_owned()
         }
-        "formatblock" => {
-            let Some((start, _)) = editing::selection_range(page) else {
-                return String::new();
-            };
-            let dom = page.dom.borrow();
-            let Some(host) = editing::editing_host(&dom, start.0) else {
-                return String::new();
-            };
-            ancestor_named(&dom, start.0, host, FORMAT_BLOCKS).map(|b| editing::local(&dom, b)).unwrap_or_default()
-        }
+        "formatblock" => format_block_value(page).unwrap_or_default(),
         "defaultparagraphseparator" => {
             page.dom.borrow().document_data(doc).map(|d| d.default_paragraph_separator.to_owned()).unwrap_or_default()
         }
