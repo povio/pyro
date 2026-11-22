@@ -1046,25 +1046,29 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
     }
     remove_watcher(page, el);
     let previous = page.popover.previously_focused.borrow_mut().remove(&el);
+    // The focused element, when it is in the dialog in the flat tree (a shadow tree inside it, an
+    // element slotted into it).
+    let focused_inside = focused(page).filter(|&f| {
+        let dom = page.dom.borrow();
+        let mut node = Some(f);
+        while let Some(n) = node {
+            if n == el {
+                return true;
+            }
+            node = crate::input::flat_parent_element(&dom, n);
+        }
+        false
+    });
     if let Some(prev) = previous {
-        // HTML "close the dialog": focus goes back when the focused area is in the dialog in the
-        // flat tree (a shadow tree inside it, an element slotted into it), or always for a
-        // dialog that was modal.
-        let inside = was_modal
-            || focused(page).is_none_or(|f| {
-                let dom = page.dom.borrow();
-                let mut node = Some(f);
-                while let Some(n) = node {
-                    if n == el {
-                        return true;
-                    }
-                    node = crate::input::flat_parent_element(&dom, n);
-                }
-                false
-            });
-        if inside {
+        // HTML "close the dialog": focus goes back when the focused area is in the dialog, or
+        // always for a dialog that was modal.
+        if was_modal || focused(page).is_none() || focused_inside.is_some() {
             crate::input::focus_element_with_options(page, prev, true);
         }
+    } else if let Some(f) = focused_inside {
+        // No previously focused element: focus does not stay inside the closed dialog (the focus
+        // fixup of its now unrendered element), it goes back to the body, as in Chrome.
+        crate::input::blur_element(page, f);
     }
     crate::input::queue_simple(page, el, "close", false, false);
 }
