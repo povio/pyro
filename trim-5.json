@@ -1,0 +1,7 @@
+[
+  "css/css-box/margin-trim/block-container-block-end-nested-last-child-with-border.html",
+  "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-nested-at-bottom.html",
+  "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-nested-margin-trim.html",
+  "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-offsets-nested-multiple-times.html",
+  "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-offsets-nested-once.html"
+]
