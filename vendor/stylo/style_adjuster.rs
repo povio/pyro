@@ -1014,7 +1014,7 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         E: TElement,
     {
         use crate::values::computed::font::{FontStyle, FontWeight};
-        use crate::values::computed::text::LetterSpacing;
+        use crate::values::computed::text::GenericLetterSpacing;
         use crate::values::computed::{Length, LengthPercentage, OutlineOffset, Size};
         if self.style.pseudo.is_some() {
             return;
@@ -1054,7 +1054,7 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         if let Some(px) = letter_spacing {
             let clamped = px.max(-0.05 * em).min(0.2 * em);
             if clamped != px {
-                self.style.set_letter_spacing(LetterSpacing(LengthPercentage::new_length(Length::new(clamped))));
+                self.style.set_letter_spacing(GenericLetterSpacing(LengthPercentage::new_length(Length::new(clamped))));
             }
         }
         let initial = self.style.default_style();

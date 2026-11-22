@@ -7966,7 +7966,7 @@ diff -ruN a/sharing/checks.rs b/sharing/checks.rs
  }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-22 21:28:53
++++ b/style_adjuster.rs	2026-11-22 21:42:41
 @@ -186,6 +186,84 @@
              .set_adjusted_display(new_display, false);
      }
@@ -8200,7 +8200,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        E: TElement,
 +    {
 +        use crate::values::computed::font::{FontStyle, FontWeight};
-+        use crate::values::computed::text::LetterSpacing;
++        use crate::values::computed::text::GenericLetterSpacing;
 +        use crate::values::computed::{Length, LengthPercentage, OutlineOffset, Size};
 +        if self.style.pseudo.is_some() {
 +            return;
@@ -8240,7 +8240,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        if let Some(px) = letter_spacing {
 +            let clamped = px.max(-0.05 * em).min(0.2 * em);
 +            if clamped != px {
-+                self.style.set_letter_spacing(LetterSpacing(LengthPercentage::new_length(Length::new(clamped))));
++                self.style.set_letter_spacing(GenericLetterSpacing(LengthPercentage::new_length(Length::new(clamped))));
 +            }
 +        }
 +        let initial = self.style.default_style();
