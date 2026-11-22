@@ -1510,6 +1510,11 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 /// its script in this document.
 /// `s`: the calling realm, whose document is the navigation's initiator.
 fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
+    // HTML: a Location whose relevant Document is gone (its browsing context removed) does
+    // nothing, before the URL is even parsed.
+    if !nav.fully_active() {
+        return Ok(());
+    }
     let target = parse_location(nav, input)?;
     if target.scheme() == "javascript" {
         // Located at the calling script, for a blocked URL's violation.
@@ -1587,6 +1592,9 @@ fn url_part(nav: &PageNav, f: impl Fn(&Url) -> String) -> String {
 /// A Location setter: `change` edits a copy of the URL and says whether to
 /// navigate to it (HTML "Location-object navigate").
 fn set_url_part(s: &Scope<'_>, nav: &PageNav, change: impl FnOnce(&mut Url) -> JsResult<bool>) -> JsResult<()> {
+    if !nav.fully_active() {
+        return Ok(());
+    }
     let mut url = Url::parse(&nav.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
     if change(&mut url)? {
         assign(s, nav, s.string(url.as_str()), false)?;
@@ -1652,6 +1660,9 @@ impl JsClass for Location {
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
+            if !n.fully_active() {
+                return Ok(s.undefined());
+            }
             let url = n.url();
             match n.navigate_event("reload", &url, true) {
                 NavigateDecision::Cancel => {}
@@ -1767,8 +1778,11 @@ impl JsClass for Location {
                 })))
             },
             |s, n, v| {
-                let mut u = Url::parse(&n.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
                 let h = v.to_string()?;
+                if !n.fully_active() {
+                    return Ok(());
+                }
+                let mut u = Url::parse(&n.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
                 let current = u.fragment().unwrap_or("").to_owned();
                 u.set_fragment(Some(h.strip_prefix('#').unwrap_or(&h)));
                 // The same fragment (no fragment counts as an empty one, as
