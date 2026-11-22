@@ -1078,6 +1078,9 @@ impl Writer<'_> {
                     let value = match (id, value.as_str()) {
                         (LonghandId::ColorInterpolationFilters, "srgb") => "sRGB".to_string(),
                         (LonghandId::ColorInterpolationFilters, "linearrgb") => "linearRGB".to_string(),
+                        (LonghandId::ShapeRendering, "optimizespeed") => "optimizeSpeed".to_string(),
+                        (LonghandId::ShapeRendering, "crispedges") => "crispEdges".to_string(),
+                        (LonghandId::ShapeRendering, "geometricprecision") => "geometricPrecision".to_string(),
                         _ => value,
                     };
                     let _ = write!(declarations, "{name}:{value};");

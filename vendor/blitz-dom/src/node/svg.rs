@@ -694,11 +694,14 @@ pub(crate) fn reference_candidates<'a>(
     if let (ClipPath::Url(ComputedUrl::Valid(url, modifiers)), false) = (style.get_clip_path(), clip_path_attr) {
         out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
     }
-    // So is its `filter` attribute's.
-    let filter_attr =
-        svg && element.attr(markup5ever::local_name!("filter")).is_some_and(|value| value.trim_start().starts_with("url("));
-    for filter in style.get_effects().filter.0.iter().filter(|_| !filter_attr) {
+    // pyro: so is its `filter` attribute's: a URL the hint resolved against the placeholder base
+    // it is parsed with (`DocumentUrl::default`, only a fragment resolves there) is not loaded.
+    // Page CSS's are.
+    for filter in style.get_effects().filter.0.iter() {
         if let GenericFilter::Url(ComputedUrl::Valid(url, modifiers)) = filter {
+            if url.as_str().starts_with("data:text/css;charset=utf-8;base64,") {
+                continue;
+            }
             out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
         }
     }

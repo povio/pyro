@@ -46493,7 +46493,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +512,317 @@
+@@ -263,3 +512,320 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }
@@ -46679,11 +46679,14 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +    if let (ClipPath::Url(ComputedUrl::Valid(url, modifiers)), false) = (style.get_clip_path(), clip_path_attr) {
 +        out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
 +    }
-+    // So is its `filter` attribute's.
-+    let filter_attr =
-+        svg && element.attr(markup5ever::local_name!("filter")).is_some_and(|value| value.trim_start().starts_with("url("));
-+    for filter in style.get_effects().filter.0.iter().filter(|_| !filter_attr) {
++    // pyro: so is its `filter` attribute's: a URL the hint resolved against the placeholder base
++    // it is parsed with (`DocumentUrl::default`, only a fragment resolves there) is not loaded.
++    // Page CSS's are.
++    for filter in style.get_effects().filter.0.iter() {
 +        if let GenericFilter::Url(ComputedUrl::Valid(url, modifiers)) = filter {
++            if url.as_str().starts_with("data:text/css;charset=utf-8;base64,") {
++                continue;
++            }
 +            out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
 +        }
 +    }
@@ -46815,7 +46818,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2944 @@
+@@ -0,0 +1,2947 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -47896,6 +47899,9 @@ new file mode 100644
 +                    let value = match (id, value.as_str()) {
 +                        (LonghandId::ColorInterpolationFilters, "srgb") => "sRGB".to_string(),
 +                        (LonghandId::ColorInterpolationFilters, "linearrgb") => "linearRGB".to_string(),
++                        (LonghandId::ShapeRendering, "optimizespeed") => "optimizeSpeed".to_string(),
++                        (LonghandId::ShapeRendering, "crispedges") => "crispEdges".to_string(),
++                        (LonghandId::ShapeRendering, "geometricprecision") => "geometricPrecision".to_string(),
 +                        _ => value,
 +                    };
 +                    let _ = write!(declarations, "{name}:{value};");
