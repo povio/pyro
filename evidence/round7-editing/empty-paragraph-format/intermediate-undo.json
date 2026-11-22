@@ -1,0 +1,9202 @@
+[
+  {
+    "fixture": {
+      "shape": "full",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><br></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><br></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><strike><br></strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><strike><br></strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: line-through;\">foo</span></p><p><span style=\"text-decoration-line: line-through;\"><br></span></p><p><span style=\"text-decoration-line: line-through;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\"><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "partial",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p>f<strike>oo</strike></p><p><br></p><p><strike>ba</strike>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<strike>oo</strike></p><p><br></p><p><strike>ba</strike>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p>f<strike>oo</strike></p><p><strike><br></strike></p><p><strike>ba</strike>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<strike>oo</strike></p><p><strike><br></strike></p><p><strike>ba</strike>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p>f<span style=\"text-decoration-line: line-through;\">oo</span></p><p><span style=\"text-decoration-line: line-through;\"><br></span></p><p><span style=\"text-decoration-line: line-through;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<span style=\"\">oo</span></p><p><span style=\"\"><br></span></p><p><span style=\"\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "two",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><br><br></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><br><br></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><strike><br><br></strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><strike><br><br></strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: line-through;\">foo</span></p><p><span style=\"text-decoration-line: line-through;\"><br><br></span></p><p><span style=\"text-decoration-line: line-through;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\"><br><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "styled",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><span style=\"color:brown\"><br></span></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><span style=\"color:brown\"><br></span></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><span style=\"color:brown\"><strike><br></strike></span></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><span style=\"color:brown\"><strike><br></strike></span></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: line-through;\">foo</span></p><p><span style=\"color: brown; text-decoration-line: line-through;\"><br></span></p><p><span style=\"text-decoration-line: line-through;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color: brown;\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"color: brown;\"><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "br-text",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><strike>x</strike><br><strike>y</strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><strike>x</strike><br><strike>y</strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><strike>x<br>y</strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><strike>x<br>y</strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: line-through;\">foo</span></p><p><span style=\"text-decoration-line: line-through;\">x<br>y</span></p><p><span style=\"text-decoration-line: line-through;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\">x<br>y</span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "full",
+      "cmd": "underline",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><br></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><br></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\"><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\"><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: underline;\">foo</span></p><p><span style=\"text-decoration-line: underline;\"><br></span></p><p><span style=\"text-decoration-line: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\"><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "partial",
+      "cmd": "underline",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p>f<span style=\"text-decoration: underline;\">oo</span></p><p><br></p><p><span style=\"text-decoration: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<span style=\"text-decoration: underline;\">oo</span></p><p><br></p><p><span style=\"text-decoration: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p>f<span style=\"text-decoration: underline;\">oo</span></p><p><span style=\"text-decoration: underline;\"><br></span></p><p><span style=\"text-decoration: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<span style=\"text-decoration: underline;\">oo</span></p><p><span style=\"text-decoration: underline;\"><br></span></p><p><span style=\"text-decoration: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p>f<span style=\"text-decoration-line: underline;\">oo</span></p><p><span style=\"text-decoration-line: underline;\"><br></span></p><p><span style=\"text-decoration-line: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<span style=\"\">oo</span></p><p><span style=\"\"><br></span></p><p><span style=\"\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "two",
+      "cmd": "underline",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><br><br></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><br><br></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\"><br><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\"><br><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: underline;\">foo</span></p><p><span style=\"text-decoration-line: underline;\"><br><br></span></p><p><span style=\"text-decoration-line: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\"><br><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "styled",
+      "cmd": "underline",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"color:brown\"><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"color:brown\"><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"color:brown\"><span style=\"text-decoration: underline;\"><br></span></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"color:brown\"><span style=\"text-decoration: underline;\"><br></span></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: underline;\">foo</span></p><p><span style=\"color: brown; text-decoration-line: underline;\"><br></span></p><p><span style=\"text-decoration-line: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color: brown;\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"color: brown;\"><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "br-text",
+      "cmd": "underline",
+      "css": true,
+      "reverse": false
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\">x</span><br><span style=\"text-decoration: underline;\">y</span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\">x</span><br><span style=\"text-decoration: underline;\">y</span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\">x<br>y</span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\">x<br>y</span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: underline;\">foo</span></p><p><span style=\"text-decoration-line: underline;\">x<br>y</span></p><p><span style=\"text-decoration-line: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\">x<br>y</span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "focus": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "full",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><br></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><br></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><strike><br></strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><strike><br></strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: line-through;\">foo</span></p><p><span style=\"text-decoration-line: line-through;\"><br></span></p><p><span style=\"text-decoration-line: line-through;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\"><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "partial",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p>f<strike>oo</strike></p><p><br></p><p><strike>ba</strike>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<strike>oo</strike></p><p><br></p><p><strike>ba</strike>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p>f<strike>oo</strike></p><p><strike><br></strike></p><p><strike>ba</strike>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<strike>oo</strike></p><p><strike><br></strike></p><p><strike>ba</strike>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p>f<span style=\"text-decoration-line: line-through;\">oo</span></p><p><span style=\"text-decoration-line: line-through;\"><br></span></p><p><span style=\"text-decoration-line: line-through;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<span style=\"\">oo</span></p><p><span style=\"\"><br></span></p><p><span style=\"\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "two",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><br><br></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><br><br></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><strike><br><br></strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><strike><br><br></strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: line-through;\">foo</span></p><p><span style=\"text-decoration-line: line-through;\"><br><br></span></p><p><span style=\"text-decoration-line: line-through;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\"><br><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "styled",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><span style=\"color:brown\"><br></span></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><span style=\"color:brown\"><br></span></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><span style=\"color:brown\"><strike><br></strike></span></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><span style=\"color:brown\"><strike><br></strike></span></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: line-through;\">foo</span></p><p><span style=\"color: brown; text-decoration-line: line-through;\"><br></span></p><p><span style=\"text-decoration-line: line-through;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color: brown;\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"color: brown;\"><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "br-text",
+      "cmd": "strikethrough",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><strike>x</strike><br><strike>y</strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><strike>x</strike><br><strike>y</strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><strike>foo</strike></p><p><strike>x<br>y</strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><strike>foo</strike></p><p><strike>x<br>y</strike></p><p><strike>bar</strike></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: line-through;\">foo</span></p><p><span style=\"text-decoration-line: line-through;\">x<br>y</span></p><p><span style=\"text-decoration-line: line-through;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "line-through"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\">x<br>y</span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "full",
+      "cmd": "underline",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><br></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><br></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\"><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\"><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: underline;\">foo</span></p><p><span style=\"text-decoration-line: underline;\"><br></span></p><p><span style=\"text-decoration-line: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\"><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "partial",
+      "cmd": "underline",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p>f<span style=\"text-decoration: underline;\">oo</span></p><p><br></p><p><span style=\"text-decoration: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<span style=\"text-decoration: underline;\">oo</span></p><p><br></p><p><span style=\"text-decoration: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p>f<span style=\"text-decoration: underline;\">oo</span></p><p><span style=\"text-decoration: underline;\"><br></span></p><p><span style=\"text-decoration: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<span style=\"text-decoration: underline;\">oo</span></p><p><span style=\"text-decoration: underline;\"><br></span></p><p><span style=\"text-decoration: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p>f<span style=\"text-decoration-line: underline;\">oo</span></p><p><span style=\"text-decoration-line: underline;\"><br></span></p><p><span style=\"text-decoration-line: underline;\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p>f<span style=\"\">oo</span></p><p><span style=\"\"><br></span></p><p><span style=\"\">ba</span>r</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            2
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            1
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "two",
+      "cmd": "underline",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><br><br></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><br><br></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\"><br><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\"><br><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: underline;\">foo</span></p><p><span style=\"text-decoration-line: underline;\"><br><br></span></p><p><span style=\"text-decoration-line: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\"><br><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><br><br></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ],
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "styled",
+      "cmd": "underline",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"color:brown\"><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"color:brown\"><br></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"color:brown\"><span style=\"text-decoration: underline;\"><br></span></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"color:brown\"><span style=\"text-decoration: underline;\"><br></span></span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: underline;\">foo</span></p><p><span style=\"color: brown; text-decoration-line: underline;\"><br></span></p><p><span style=\"text-decoration-line: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p><span style=\"color: brown;\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"color: brown;\"><br></span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p><span style=\"color:brown\"><br></span></p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "br-text",
+      "cmd": "underline",
+      "css": true,
+      "reverse": true
+    },
+    "arms": {
+      "parent": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\">x</span><br><span style=\"text-decoration: underline;\">y</span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\">x</span><br><span style=\"text-decoration: underline;\">y</span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "independentCandidate": {
+        "after": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\">x<br>y</span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"text-decoration: underline;\">foo</span></p><p><span style=\"text-decoration: underline;\">x<br>y</span></p><p><span style=\"text-decoration: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+          ]
+        }
+      },
+      "signed": {
+        "after": {
+          "html": "<p><span style=\"text-decoration-line: underline;\">foo</span></p><p><span style=\"text-decoration-line: underline;\">x<br>y</span></p><p><span style=\"text-decoration-line: underline;\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [
+                "underline"
+              ],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "twice": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "onceUndo": {
+          "html": "<p><span style=\"\">foo</span></p><p><span style=\"\">x<br>y</span></p><p><span style=\"\">bar</span></p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "restored": {
+          "html": "<p>foo</p><p>x<br>y</p><p>bar</p>",
+          "breaks": [
+            [
+              "400",
+              "normal",
+              "",
+              [],
+              null
+            ]
+          ],
+          "anchor": [
+            [
+              2,
+              0
+            ],
+            3
+          ],
+          "focus": [
+            [
+              0,
+              0
+            ],
+            0
+          ],
+          "connected": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  }
+]

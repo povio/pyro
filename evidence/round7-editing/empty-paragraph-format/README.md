@@ -1,0 +1,13 @@
+# Inline formatting across a paragraph containing a line break
+
+Tested source `3ed45405381eb2ffa426b5e4e2e32c9729baa1b6`, tree `fe87e9debc19d419f612eeeb64215a91c1e828cb`, executable SHA-256 `fbdc9cb9f001671a2f63fbbe33ea61ef148d2edd87d848bd3cc0f340698cce27`. Exact parent `1f23378fbe5a6b2c06fb6f5885335fd3f8c68c62` required a serial build because shipped Web Audio code differed from the preceding editing binary. The signed WPT comparator retains the archived Chrome 158.0.8127.37 results. Direct signed, parent and candidate snapshots are included.
+
+A selection extending across paragraphs now includes each visible, editable BR in an intervening P when applying or removing inline formatting. The original text nodes still determine the selection endpoints. Independent QA compared 44 pages and 33,316 matched assertions. All nine frozen signed targets recovered. Three additional pinned markup assertions passed for subscript, superscript and underline, each of which fails in signed Chrome. No previously passing assertion was lost and membership was identical. [All twelve changed occurrences](changed-names.json)
+
+In 196 core cases the first and repeated commands match Chrome on both endpoints, direction, tracked connectivity and observed BR formatting (weight, italic, effective script, decoration lines and enclosing link). Markup matches in 136 after the first command and 184 after repeat. In 168 neighboring cases, including hidden breaks, locked children and authored BR styles, markup matches in 104 and 144; both endpoints and connectivity match throughout both commands. Selection string serialization still omits paragraph separators in these suites, as it did on the parent.
+
+## Undo
+
+Independent candidate output restores its own recorded first-command markup and observed BR formatting in 196/196 intermediate undos. Chrome restores its own first-command markup in 168/196 and BR formatting in 176/196. Twenty previous parent matches differ on intermediate-undo BR decoration. Ten occur for CSS underline and ten for CSS strike-through, spanning both directions. The candidate restores the first-command decoration and Chrome clears it. The [twenty individual fixtures](intermediate-undo.json) record all three arms, including markup, BR formatting, endpoints and original connectivity before and after undo. The coordinator accepted atomic restoration of the actual first-command appearance.
+
+Final undo matches signed markup and endpoints in all 364 core and neighboring cases. The original node connectivity vector differs in all 364, as on the parent. The native locked-block selection guard passed and both exact-parent comparisons kept identical statuses for 10,092 command multitest and 13,060 static guard rows.
