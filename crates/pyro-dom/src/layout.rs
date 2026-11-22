@@ -4421,6 +4421,20 @@ impl Layout {
                 return value;
             }
         }
+        // pyro: a grid container with no explicit template (`grid-template: none`) reports the shorthand from
+        // its longhands' used tracks, `rows / columns`, as Chromium does; a template that is set keeps its
+        // computed value (WPT css-grid grid-layout-properties `grid-template.initial`)
+        if name == "grid-template"
+            && declared.as_deref() == Some("none")
+            && !self.style.style_overridden()
+            && self.style.computed_display(dom, el).is_some_and(|display| display.ends_with("grid"))
+        {
+            let rows = self.computed_style_value(dom, el, "grid-template-rows");
+            let columns = self.computed_style_value(dom, el, "grid-template-columns");
+            if rows != "none" || columns != "none" {
+                return format!("{rows} / {columns}");
+            }
+        }
         if name == "width" || name == "height" {
             if !self.is_visible(dom, el) {
                 // No box (display: none, or inside one): the computed value,
