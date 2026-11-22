@@ -629,10 +629,23 @@
     return s;
   }
   const COLOR_SPACES = ['srgb', 'srgb-linear', 'display-p3', 'display-p3-linear'];
+  // CanvasRenderingContext2DSettings converted member by member in
+  // dictionary order (alpha, colorSpace, desynchronized, willReadFrequently);
+  // the color space. A DOMString conversion of a Symbol throws TypeError.
+  function contextSettings(options) {
+    const d = dict(options);
+    void !!d.alpha;
+    const raw = d.colorSpace;
+    const space = raw === undefined ? 'srgb' : `${raw}`;
+    if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
+    void !!d.desynchronized;
+    void !!d.willReadFrequently;
+    return space;
+  }
   function colorSpace(settings) {
     const o = dict(settings);
     if (o.colorSpace === undefined) return 'srgb';
-    const space = String(o.colorSpace);
+    const space = `${o.colorSpace}`;
     if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
     return space;
   }
@@ -646,10 +659,10 @@
   function imageSettings(settings) {
     const o = dict(settings);
     const rawSpace = o.colorSpace;
-    const space = rawSpace === undefined ? 'srgb' : String(rawSpace);
+    const space = rawSpace === undefined ? 'srgb' : `${rawSpace}`;
     if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
     const rawFormat = o.pixelFormat;
-    const format = rawFormat === undefined ? 'rgba-unorm8' : String(rawFormat);
+    const format = rawFormat === undefined ? 'rgba-unorm8' : `${rawFormat}`;
     if (!PIXEL_FORMATS.includes(format)) throw new TypeErrorC(`The provided value '${format}' is not a valid enum value of type ImageDataPixelFormat.`);
     if (format === 'rgba-float16' && !Float16ArrayC) throw new TypeErrorC('Float16Array is not supported.');
     return { space, format };
@@ -871,17 +884,10 @@
       }
       if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
       if (type !== '2d') return null;
+      // CanvasRenderingContext2DSettings, converted on every call (the
+      // argument of a cached context is converted and then ignored).
+      const space = contextSettings(options);
       if (!o.context) {
-        // CanvasRenderingContext2DSettings, converted member by member in
-        // dictionary order when the context is made (a cached context
-        // ignores its argument).
-        const d = dict(options);
-        void !!d.alpha;
-        const raw = d.colorSpace;
-        const space = raw === undefined ? 'srgb' : String(raw);
-        if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
-        void !!d.desynchronized;
-        void !!d.willReadFrequently;
         o.context = natives.offscreenContext(this, o.width, o.height, o.placeholder, space);
       }
       return o.context;
@@ -980,7 +986,7 @@
     unorm8Of,
     pixelFormatOf(settings) {
       const raw = dict(settings).pixelFormat;
-      const format = raw === undefined ? 'rgba-unorm8' : String(raw);
+      const format = raw === undefined ? 'rgba-unorm8' : `${raw}`;
       if (!PIXEL_FORMATS.includes(format)) throw new TypeErrorC(`The provided value '${format}' is not a valid enum value of type ImageDataPixelFormat.`);
       if (format === 'rgba-float16' && !Float16ArrayC) throw new TypeErrorC('Float16Array is not supported.');
       return format;
@@ -1037,6 +1043,7 @@
     paintRecord(value) { return gradients.get(value) || patterns.get(value) || null; },
     frameCanvasSource(image) { return bitmaps.has(image) || offscreens.has(image); },
     sourceOf,
+    contextSettings,
     // [a, b, c, d, e, f] of a DOMMatrix2DInit (validated), for setTransform.
     matrix2D(init) {
       const m = matrixState.has(init) ? matrixState.get(init).m : fixup(init, true).m;

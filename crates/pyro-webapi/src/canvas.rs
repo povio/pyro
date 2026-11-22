@@ -610,8 +610,11 @@ pub fn get_context<'s>(
     if kind != "2d" {
         return Ok(s.null());
     }
-    // CanvasRenderingContext2DSettings: converted on every call.
-    let space = space_member(settings, Space::Srgb)?;
+    // CanvasRenderingContext2DSettings, converted member by member in
+    // dictionary order on every call (canvas2d.js `contextSettings`); a cached
+    // context ignores the result.
+    let space = MODULE.helper(s, page, "contextSettings", &[settings])?.to_string()?;
+    let space = Space::parse(&space).unwrap_or_default();
     let element = node_value(s, page, Some(canvas))?;
     let element = element.as_object().ok_or(JsError::ContextDestroyed)?;
     if let Some(existing) = s.get_hidden(element, CONTEXT_2D)? {
