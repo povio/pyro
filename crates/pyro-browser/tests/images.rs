@@ -34,6 +34,19 @@ fn setup(html: &str) -> (BrowserThread, PageId, Rc<StaticLoader>) {
 }
 
 #[test]
+fn image_coordinates_use_the_untransformed_border_edge() {
+    let (mut thread, page, _) = setup(
+        "<!doctype html><div id=outer style='position:absolute;left:10px;top:40px;transform:translateX(80px)'><img id=pic style='position:absolute;left:-20.75px;top:7px;border:3px solid;padding:4px;transform:translateY(30px)'></div>",
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "[pic.x,pic.y].join()"), "-10,47");
+    assert_eq!(eval(&thread, page, "outer.style.visibility='hidden'; [pic.x,pic.y].join()"), "-10,47");
+    assert_eq!(eval(&thread, page, "outer.style.display='none'; [pic.x,pic.y].join()"), "0,0");
+    assert_eq!(eval(&thread, page, "const detached = new Image(); [detached.x,detached.y].join()"), "0,0");
+}
+
+#[test]
 fn parsed_images_report_natural_size_and_delay_window_load() {
     let (mut thread, page, loader) = setup(
         "<img id=a src=/a.png><img id=b src=/missing.png><img id=c src=/page.html><img id=d src=/logo.svg><img id=e><img id=f src=''>",

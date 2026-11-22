@@ -1327,6 +1327,19 @@ impl Layout {
 
     // ----- rects -------------------------------------------------------------
 
+    pub fn image_position(&self, dom: &Dom, el: NodeId) -> (i32, i32) {
+        self.sync_before_rect_query(dom);
+        let Some(bounds) = self.layout_box(dom, el) else { return (0, 0) };
+        if !self.is_visible(dom, el) {
+            return (0, 0);
+        }
+        let [left, top] = bounds.layout_origin.unwrap_or([bounds.rect.x, bounds.rect.y]);
+        let (scroll_x, scroll_y) = self.ancestor_scroll_offset(dom, el);
+        let (sticky_x, sticky_y) = self.sticky_shift_lazy(dom, el);
+        let (fixed_x, fixed_y) = if bounds.fixed { self.window_scroll } else { (0, 0) };
+        ((left - scroll_x + sticky_x + f64::from(fixed_x)) as i32, (top - scroll_y + sticky_y + f64::from(fixed_y)) as i32)
+    }
+
     /// `getBoundingClientRect` values (Element.zig:1724-1742): all zero when
     /// the element isn't rendered.
     pub fn bounding_client_rect(&self, dom: &Dom, el: NodeId) -> Rect {
