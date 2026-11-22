@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 1099,
-    "studio_in_scope": 481,
+    "studio_in_scope": 504,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -14,7 +14,7 @@
    "selector_union": 1686,
    "owner_estimate_reduction": 239,
    "of_which_tentative": 208,
-   "studio_css_reported_pages_not_deduped": 332,
+   "studio_css_reported_pages_not_deduped": 355,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 460,
@@ -37,22 +37,22 @@
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
+    "fetch/range": 6,
     "fetch/corb": 6,
     "fetch/data-urls": 6,
-    "fetch/range": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
     "xhr": 2,
     "fetch/orb": 2,
-    "IndexedDB": 1,
-    "fetch/redirect-navigate": 1,
     "quirks": 1,
-    "fetch/redirects": 1,
+    "fetch/redirect-navigate": 1,
+    "IndexedDB": 1,
     "fetch/images": 1,
-    "fetch/security": 1,
-    "svg/styling": 1
+    "fetch/redirects": 1,
+    "svg/styling": 1,
+    "fetch/security": 1
    }
   },
   "in_progress": {
@@ -79,16 +79,16 @@
     "html/infrastructure": 23,
     "html/dom": 16,
     "fetch/compression-dictionary": 8,
-    "html/interaction": 5,
     "fetch/api": 5,
+    "html/interaction": 5,
     "html/obsolete": 5,
     "fetch/security": 4,
     "html/user-activation": 3,
     "fetch/http-cache": 1,
-    "html/the-xhtml-syntax": 1,
+    "html/scripting": 1,
     "fetch/content-type": 1,
-    "html/select": 1,
-    "html/scripting": 1
+    "html/the-xhtml-syntax": 1,
+    "html/select": 1
    }
   },
   "queued": {
@@ -2530,6 +2530,13 @@
    "pages": null,
    "tentative": null
   },
+  "SC-CSP-style-src": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
   "SC-CSP-paintworklet-eval": {
    "state": "implemented-unbuilt",
    "in_scope_pages": null,
@@ -2916,7 +2923,7 @@
    "tentative": null
   }
  },
- "implemented_total_estimate": 1833,
+ "implemented_total_estimate": 1856,
  "milestones_reached": [
   250,
   500,
