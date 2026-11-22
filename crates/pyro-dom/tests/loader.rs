@@ -6,6 +6,29 @@ use pyro_dom::script::{ResourceKind, ResourceReason, ScriptKind};
 use pyro_dom::*;
 
 #[test]
+fn parser_scripts_start_at_their_start_tags_line() {
+    // An inline script's text starts on the line of its start tag's end (a tag across lines:
+    // the line of its `>`), as Chrome numbers inline script lines in the document; a script
+    // created by script has none (1).
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = dom.borrow_mut().create_document(DocumentKind::Html, "http://t/");
+    dom.borrow_mut().set_document_active(doc, true).unwrap();
+    let mut p = DocumentParser::new(dom.clone(), doc, true).unwrap();
+    let html = "<!doctype html>\n<p>a\n\n<script>\nx()\n</script>\n<script\n  nonce=abc>y()</script>";
+    let mut lines = Vec::new();
+    let mut step = p.feed(html);
+    while let ParseStep::Script(s) = step {
+        lines.push(dom.borrow().script_info(s).unwrap().start_line);
+        step = p.resume();
+    }
+    p.end();
+    assert_eq!(lines, [4, 8]);
+    let mut d = dom.borrow_mut();
+    let script = d.create_element(doc, "script").unwrap();
+    assert_eq!(d.script_info(script).unwrap().start_line, 1);
+}
+
+#[test]
 fn parser_yields_scripts_and_reports_resources() {
     let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
     dom.borrow_mut().set_resource_tracking(true);

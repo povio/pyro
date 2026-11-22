@@ -46,6 +46,11 @@ pub struct ScriptInfo {
     /// The element (the target of its CSP violations; its cryptographic nonce is read from
     /// it by the bindings, which hold the slot).
     pub node: NodeId,
+    /// The source line its inline text starts at in its document (the line of the start tag's
+    /// end, for a script the document's parser created), 1 otherwise: the starting line its
+    /// inline classic script is evaluated with, so error and CSP violation line numbers are the
+    /// document's.
+    pub start_line: u32,
 }
 
 const JS_MIME: &[&str] = &[
@@ -637,6 +642,7 @@ impl Dom {
             referrerpolicy: e.attr_local(&markup5ever::LocalName::from("referrerpolicy")).map(str::to_owned),
             charset: if svg { None } else { e.attr_local(&local_name!("charset")).map(str::to_owned) },
             node: script,
+            start_line: e.script_start_line.max(1),
         })
     }
 

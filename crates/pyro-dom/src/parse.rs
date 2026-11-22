@@ -79,6 +79,8 @@ struct Sink<A: DomAccess> {
     /// This parser created a `<selectedcontent>`: until then a popped option
     /// has none to fill, and the per-option select walk is skipped.
     selectedcontent: Cell<bool>,
+    /// The tokenizer's line of the token being processed (`TreeSink::set_current_line`).
+    current_line: Cell<u64>,
 }
 
 impl<A: DomAccess> Sink<A> {
@@ -102,6 +104,7 @@ impl<A: DomAccess> Sink<A> {
             pins: RefCell::new(vec![id]),
             declarative: RefCell::new(Vec::new()),
             selectedcontent: Cell::new(false),
+            current_line: Cell::new(1),
         }
     }
 
@@ -242,6 +245,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
 
     fn finish(self) {}
     fn parse_error(&self, _msg: Cow<'static, str>) {}
+    fn set_current_line(&self, line_number: u64) {
+        self.current_line.set(line_number);
+    }
     fn get_document(&self) -> u32 {
         self.doc
     }
@@ -643,6 +649,11 @@ impl<A: DomAccess> Sink<A> {
         // run as soon as possible (`createContextualFragment`, as Chrome).
         if self.elem_flags & element_flags::FRAGMENT_PARSED == 0 {
             el.script_force_async = false;
+            // The line of the start tag's end, where its inline text starts: the line its classic
+            // script is evaluated from (as Chrome numbers inline script lines in the document).
+            if el.name.local == local_name!("script") {
+                el.script_start_line = u32::try_from(self.current_line.get()).unwrap_or(u32::MAX);
+            }
         }
         if is_style {
             // Until `pop` (`Dom::resources_element_popped`).

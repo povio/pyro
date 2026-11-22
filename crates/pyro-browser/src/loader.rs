@@ -2461,7 +2461,7 @@ impl Browser {
         match (ty, src_url) {
             (ScriptType::Classic, None) => {
                 self.note_inline_script_nonce(page, node, nonce.as_deref());
-                self.execute_at_insertion_point(page, &info.inline_text, &base, &element)
+                self.execute_at_insertion_point(page, &info.inline_text, &base, info.start_line, &element)
             }
             (ScriptType::Classic, Some(url)) if info.async_ => {
                 self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
@@ -2490,7 +2490,7 @@ impl Browser {
                     match res {
                         _ if b.script_moved(page, &element) => {}
                         Ok(text) => b.at_insertion_point(page, |b| {
-                            b.execute_classic(page, &text, &u, &element);
+                            b.execute_classic(page, &text, &u, 1, &element);
                             b.script_loaded(page, &element, true);
                         }),
                         Err(e) => {
@@ -3119,9 +3119,9 @@ impl Browser {
                 self.note_inline_script_nonce(page, node, None);
                 let parsing = self.load_mut(page).is_some_and(|l| l.parser.is_some() && !l.blocked);
                 if parsing {
-                    self.execute_at_insertion_point(page, &info.inline_text, &base, &element);
+                    self.execute_at_insertion_point(page, &info.inline_text, &base, info.start_line, &element);
                 } else {
-                    self.execute_classic(page, &info.inline_text, &base, &element);
+                    self.execute_classic(page, &info.inline_text, &base, info.start_line, &element);
                 }
                 // Scripts it inserted are prepared before the drain returns.
                 self.drain_dom_resources(page);
@@ -3453,7 +3453,9 @@ impl Browser {
         self.doc(page)?.main_frame.main_realm().cloned()
     }
 
-    fn execute_classic(&mut self, page: FrameKey, text: &str, url: &str, element: &ResourceNode) {
+    /// `line`: the line `text` starts at in its resource (an inline script's start line in its
+    /// document, `ScriptInfo::start_line`; 1 for an external script).
+    fn execute_classic(&mut self, page: FrameKey, text: &str, url: &str, line: u32, element: &ResourceNode) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
         let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
@@ -3469,7 +3471,7 @@ impl Browser {
             dom.set_executing_classic_script(element.node);
             pyro_webapi::trusted_types::sync_compile_strings(&scope, dom);
         }
-        if let Err(e) = scope.eval(text, Some(url), 1) {
+        if let Err(e) = scope.eval(text, Some(url), i32::try_from(line).unwrap_or(i32::MAX)) {
             scope.report_exception(&e);
         }
         if let Some(dom) = &bindings {
@@ -3499,8 +3501,8 @@ impl Browser {
     /// Runs a script the network parser reached with the parser lent to the
     /// page, so `document.write` parses at the insertion point, then prepares
     /// the external and module scripts that markup contained.
-    fn execute_at_insertion_point(&mut self, page: FrameKey, text: &str, url: &str, element: &ResourceNode) {
-        self.at_insertion_point(page, |b| b.execute_classic(page, text, url, element));
+    fn execute_at_insertion_point(&mut self, page: FrameKey, text: &str, url: &str, line: u32, element: &ResourceNode) {
+        self.at_insertion_point(page, |b| b.execute_classic(page, text, url, line, element));
     }
 
     /// Runs `run` (a parser script's execution, or its `load`/`error`
@@ -3537,9 +3539,9 @@ impl Browser {
     fn execute_external(&mut self, page: FrameKey, text: &str, url: &str, element: &ResourceNode) {
         match self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
             Some(bindings) => {
-                bindings.with_destructive_writes_ignored(|| self.execute_classic(page, text, url, element))
+                bindings.with_destructive_writes_ignored(|| self.execute_classic(page, text, url, 1, element))
             }
-            None => self.execute_classic(page, text, url, element),
+            None => self.execute_classic(page, text, url, 1, element),
         }
     }
 
@@ -4028,7 +4030,7 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
         return;
     }
     let (Some(bindings), Some(realm)) = (frame.page_dom.clone(), frame.main_realm().cloned()) else { return };
-    let text = {
+    let (text, line) = {
         // Script never runs under a DOM borrow: a held one defers to the drain.
         let Ok(mut dom) = bindings.dom.try_borrow_mut() else { return };
         let Ok(info) = dom.script_info(node) else { return };
@@ -4044,14 +4046,14 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
             let _ = dom.stash_prepared_script(node, info, document);
             return;
         }
-        info.inline_text
+        (info.inline_text, i32::try_from(info.start_line).unwrap_or(i32::MAX))
     };
     let Ok(scope) = realm.scope() else { return };
     let outer = bindings.current_script();
     bindings.set_executing_classic_script(node);
     pyro_webapi::trusted_types::sync_compile_strings(&scope, &bindings);
     realm.reenter_native_callback_hook(|| {
-        if let Err(e) = scope.eval(&text, Some(&frame.base_url), 1) {
+        if let Err(e) = scope.eval(&text, Some(&frame.base_url), line) {
             scope.report_exception(&e);
         }
     });
