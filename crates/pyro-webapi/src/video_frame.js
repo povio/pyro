@@ -368,9 +368,9 @@
     const alpha = init.alpha;
     const result = {__proto__: null, alpha: alpha === undefined ? 'keep' : enumValue(alpha, ['keep', 'discard'])};
     const displayHeight = init.displayHeight;
-    if (displayHeight !== undefined) result.displayHeight = displayHeight >>> 0;
+    if (displayHeight !== undefined) result.displayHeight = integer(displayHeight);
     const displayWidth = init.displayWidth;
-    if (displayWidth !== undefined) result.displayWidth = displayWidth >>> 0;
+    if (displayWidth !== undefined) result.displayWidth = integer(displayWidth);
     const duration = init.duration;
     if (duration !== undefined) result.duration = to64(duration, false);
     result.flip = !!init.flip;
@@ -411,9 +411,6 @@
     const turn = Math.floor(((((angle % 360) + 360) % 360) + 45) / 90) * 90;
     s.rotation = (s.rotation + (s.flip ? -turn : turn) + 360) % 360;
     s.flip = s.flip !== Boolean(init.flip);
-    if (init.displayWidth !== undefined && s.rotation % 180) {
-      [s.displayW, s.displayH] = [s.displayH, s.displayW];
-    }
   }
 
   function fromCanvas(target, source, init) {
@@ -497,6 +494,9 @@
         s.duration = integer(init.duration, 0, Number.MAX_SAFE_INTEGER);
       }
       applyGeometry(s, init);
+      if (init.displayWidth !== undefined && s.rotation % 180) {
+        [s.displayW, s.displayH] = [s.displayH, s.displayW];
+      }
       if (!frames.has(source) && init.transfer !== undefined) {
         const transfers = Array.from(init.transfer);
         for (const entry of transfers) bufferGetters[0].call(entry);

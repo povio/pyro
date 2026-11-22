@@ -47,6 +47,7 @@ test('canvas overload snapshots after dictionary conversion and shares its charg
   const source = {pixels: new Uint8Array([20, 40, 60, 128, 5, 10, 15, 255])};
   const realm = vm.createContext({DOMException, DOMRectReadOnly: class {}});
   const factory = vm.runInContext(readFileSync(resolve(__dirname, '../../src/video_frame.js'), 'utf8'), realm);
+  let snapshots = 0;
   let leases = 0;
   function lease() {
     leases++;
@@ -60,9 +61,32 @@ test('canvas overload snapshots after dictionary conversion and shares its charg
   }
   const {VideoFrame} = factory({
     maxSide: 64, maxArea: 4096, isCanvasSource: candidate => candidate === source,
-    canvasSnapshot: () => ({width: 2, height: 1, data: source.pixels.slice(),
-                            opaque: false, colorSpace: 'srgb', lease: lease()})
+    canvasSnapshot: () => {
+      snapshots++;
+      return {width: 2, height: 1, data: source.pixels.slice(),
+              opaque: false, colorSpace: 'srgb', lease: lease()};
+    }
   });
+  const failure = new Error('member conversion failed');
+  for (const [key, value, error] of [
+    ['displayHeight', 4294967297, null],
+    ['displayWidth', 4294967297, null],
+    ['displayWidth', -1, null],
+    ['displayWidth', {valueOf() { throw failure; }}, failure],
+  ]) {
+    const reads = [];
+    const init = new Proxy({displayHeight: 1, [key]: value, timestamp: 0}, {
+      get(target, member) { reads.push(member); return target[member]; }
+    });
+    assert.throws(() => new VideoFrame(source, init), e => error ? e === error : e.name === 'TypeError');
+    assert.deepEqual(reads, key === 'displayHeight' ? ['alpha', key] : ['alpha', 'displayHeight', key]);
+    assert.equal(snapshots, 0);
+  }
+  const rotated = new VideoFrame(source, {
+    displayWidth: 6.9, displayHeight: 4.9, timestamp: 0, rotation: 90, flip: true
+  });
+  assert.deepEqual([rotated.displayWidth, rotated.displayHeight], [4, 6]);
+  rotated.close();
   const reads = [];
   const init = new Proxy({timestamp: -4, duration: 9, rotation: 90}, {
     get(target, key) {
