@@ -1088,6 +1088,19 @@ pub(crate) fn create(
     // The origin's identity, which an opaque origin needs (`PageDom::origin_key`).
     bindings.set_opaque_origin_token(frame.opaque_origin);
     bindings.set_window_agent_cluster(host.cluster_group.get(), crate::frames::frame_origin_key(&frame));
+    // Fetch deferred-fetch quota: a frame of its parent's origin shares the parent's control
+    // document's; any other (a sandboxed one without allow-same-origin included) has its own
+    // minimal one.
+    // Origins compare as the frames hold them (`frame_origin_key`: sandboxing and the origin an
+    // about:blank or srcdoc document inherits are already applied), not by the new document's URL.
+    if page.child.is_some() {
+        let parent_key = host.parent_key(page);
+        let parent = host.page_dom(parent_key);
+        let same_origin = host
+            .frame(parent_key)
+            .is_some_and(|parent| crate::frames::frame_origin_key(&parent) == crate::frames::frame_origin_key(&frame));
+        pyro_webapi::fetch_later::join_quota(&bindings, parent.as_deref(), same_origin);
+    }
     // Permissions Policy for `fullscreen`, inherited through the container when the document is made.
     if page.child.is_some() {
         bindings.set_fullscreen_allowed(fullscreen_allowed_in(host, page, url, frame.sandbox.opaque));

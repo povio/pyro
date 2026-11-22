@@ -3,10 +3,12 @@
 //! timeout passes or when the document goes away (unloaded, its frame removed, discarded),
 //! whichever comes first. An aborted signal drops it unsent.
 //!
-//! Queued requests count against the deferred-fetch quota: [`QUOTA_TOP_LEVEL`] for all of a
-//! top-level document's records and [`QUOTA_PER_ORIGIN`] for the records to one reporting
-//! origin (the request URL's origin), by each request's total length (URL, body, header names
-//! and values). Pyro keeps no back/forward cache, so "deactivated" is "unloaded" here.
+//! Queued requests count against the deferred-fetch quota of the document's control document (the
+//! document itself, or for a frame of the same origin as its parent, the parent's control
+//! document): [`QUOTA_TOP_LEVEL`] for a top-level control document, [`QUOTA_MINIMAL`] for a frame
+//! of another origin than its parent, and at most [`QUOTA_PER_ORIGIN`] for the records to one
+//! reporting origin (the request URL's origin), by each request's total length (URL, body, header
+//! names and values). Pyro keeps no back/forward cache, so "deactivated" is "unloaded" here.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -22,6 +24,9 @@ use crate::page::PageDom;
 pub(crate) const QUOTA_TOP_LEVEL: usize = 512 * 1024;
 /// The quota of the deferred fetches to one reporting origin (Fetch's `quotaForRequestOrigin`).
 pub(crate) const QUOTA_PER_ORIGIN: usize = 64 * 1024;
+/// The quota of a frame whose origin is not its parent's: Fetch's minimal quota, which its
+/// permissions policy (`deferred-fetch-minimal`, allowed everywhere by default) grants.
+pub(crate) const QUOTA_MINIMAL: usize = 8 * 1024;
 
 pub struct FetchLaterResult;
 
@@ -45,6 +50,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 
 /// A deferred fetch record: its request until it is sent or aborted.
 pub(crate) struct DeferredRecord {
+    /// The document that queued it ([`PageDom::id`]).
+    owner: u64,
     request: RefCell<Option<Request>>,
     /// Fetch's "total request length".
     length: usize,
@@ -60,19 +67,54 @@ impl DeferredRecord {
     }
 }
 
-/// Deferred fetch records of a document, in the order they were queued.
-#[derive(Default)]
-pub(crate) struct DeferredFetches {
+/// The pending deferred fetches of a control document and the documents that share its quota, in
+/// the order they were queued, and that quota.
+struct Pool {
+    quota: usize,
     records: RefCell<Vec<Rc<DeferredRecord>>>,
 }
 
-impl DeferredFetches {
+impl Pool {
+    fn new(quota: usize) -> Rc<Pool> {
+        Rc::new(Pool { quota, records: RefCell::new(Vec::new()) })
+    }
     /// Total length of the pending records, and of those to `origin`.
     fn used(&self, origin: &str) -> (usize, usize) {
         self.records.borrow().iter().filter(|r| r.pending()).fold((0, 0), |(all, same), r| {
             (all + r.length, same + if r.origin == origin { r.length } else { 0 })
         })
     }
+    fn prune(&self) {
+        self.records.borrow_mut().retain(|r| r.pending());
+    }
+}
+
+/// A document's share of the deferred-fetch quota.
+pub(crate) struct DeferredFetches {
+    pool: RefCell<Rc<Pool>>,
+}
+
+impl Default for DeferredFetches {
+    fn default() -> Self {
+        DeferredFetches { pool: RefCell::new(Pool::new(QUOTA_TOP_LEVEL)) }
+    }
+}
+
+impl DeferredFetches {
+    fn pool(&self) -> Rc<Pool> {
+        self.pool.borrow().clone()
+    }
+}
+
+/// Sets the quota of `child`, a new document in a frame of `parent`'s document: `parent`'s
+/// control document's when their origins are the same, else (or with no parent document) a minimal
+/// quota of its own. Called by the embedder before the document runs script.
+pub fn join_quota(child: &PageDom, parent: Option<&PageDom>, same_origin: bool) {
+    let pool = match parent {
+        Some(parent) if same_origin => parent.fetch_state.deferred.pool(),
+        _ => Pool::new(QUOTA_MINIMAL),
+    };
+    *child.fetch_state.deferred.pool.borrow_mut() = pool;
 }
 
 /// Fetch "total request length": the URL's serialization, the body's length, and each header's
@@ -85,8 +127,9 @@ fn total_request_length(request: &Request) -> usize {
 
 /// Fetch "available deferred-fetch quota" for a request to `origin` from `page`'s document.
 fn available_quota(page: &PageDom, origin: &str) -> usize {
-    let (all, same) = page.fetch_state.deferred.used(origin);
-    QUOTA_TOP_LEVEL.saturating_sub(all).min(QUOTA_PER_ORIGIN.saturating_sub(same))
+    let pool = page.fetch_state.deferred.pool();
+    let (all, same) = pool.used(origin);
+    pool.quota.saturating_sub(all).min(QUOTA_PER_ORIGIN.saturating_sub(same))
 }
 
 /// Fetch "process a deferred fetch": sends the record's request, once, outside the document's
@@ -95,7 +138,7 @@ fn process(page: &PageDom, record: &DeferredRecord) {
     let Some(mut request) = record.request.borrow_mut().take() else { return };
     record.abort.borrow_mut().take();
     record.activated.set(true);
-    page.fetch_state.deferred.records.borrow_mut().retain(|r| r.pending());
+    page.fetch_state.deferred.pool().prune();
     let Some(net) = page.net.borrow().clone() else { return };
     page.apply_request_defaults(&mut request);
     net.fetch(request, Box::new(|_| {}));
@@ -104,7 +147,9 @@ fn process(page: &PageDom, record: &DeferredRecord) {
 /// Sends every pending deferred fetch of `page`'s document: it was unloaded, its frame was
 /// removed, or it is being discarded.
 pub(crate) fn flush(page: &PageDom) {
-    let records: Vec<_> = page.fetch_state.deferred.records.borrow().clone();
+    let id = page.id();
+    let records: Vec<_> =
+        page.fetch_state.deferred.pool().records.borrow().iter().filter(|r| r.owner == id).cloned().collect();
     for record in records {
         process(page, &record);
     }
@@ -160,20 +205,21 @@ fn fetch_later<'s>(s: &Scope<'s>, input: Value<'s>, init: Value<'s>) -> JsResult
     }
     let activated = Rc::new(Cell::new(false));
     let record = Rc::new(DeferredRecord {
+        owner: page.id(),
         request: RefCell::new(Some(request)),
         length,
         origin,
         activated: activated.clone(),
         abort: RefCell::new(None),
     });
-    page.fetch_state.deferred.records.borrow_mut().push(record.clone());
+    page.fetch_state.deferred.pool().records.borrow_mut().push(record.clone());
     if let Some(signal) = &signal {
         let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
         let weak = Rc::downgrade(&record);
         let registration = signal.register_native(Box::new(move |page: &PageDom| {
             if let Some(record) = weak.upgrade() {
                 record.request.borrow_mut().take();
-                page.fetch_state.deferred.records.borrow_mut().retain(|r| r.pending());
+                page.fetch_state.deferred.pool().prune();
             }
         }));
         *record.abort.borrow_mut() = registration;
