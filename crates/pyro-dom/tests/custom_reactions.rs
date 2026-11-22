@@ -176,7 +176,9 @@ fn created_upgrade_keeps_its_definition_when_a_sibling_is_adopted() {
     for document in [source, target] {
         dom.note_registry_definition(document, RegistryAssociation::Default, &name, &name, vec![]);
     }
-    let parent = dom.document_element(source).unwrap().unwrap();
+    // Parse in a normal element context so the two custom elements are
+    // the fragment's immediate children, as in a detached div.innerHTML.
+    let parent = dom.create_element(source, "div").unwrap();
     let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, parent, "<x-movable></x-movable><x-movable></x-movable>").unwrap();
     let first = dom.first_child(frag).unwrap().unwrap();
     let later = dom.next_sibling(first).unwrap().unwrap();
