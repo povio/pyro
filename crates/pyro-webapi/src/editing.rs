@@ -600,6 +600,18 @@ fn delete_range_with_merging(
     placeholder: bool,
     merge_blocks: bool,
 ) -> Point {
+    if start.0 == end.0 && end.1.checked_sub(start.1) == Some(1)
+        && let Some(child) = dom.child_at(start.0, start.1).ok().flatten()
+        && html_select(dom, child) && editing_host(dom, child) == Some(host)
+    {
+        let _ = dom.remove_child(start.0, child);
+        let next = deep_forward(dom, start);
+        return if editing_host(dom, next.0) == Some(host) && is_text(dom, next.0) {
+            next
+        } else {
+            start
+        };
+    }
     let start = deep_forward(dom, start);
     let end = deep_backward(dom, end);
     if crate::range::compare_boundary_points_dom(dom, start, end) >= 0 {
@@ -828,9 +840,34 @@ fn link_typing_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) -> P
     (parent, index + u32::from(last))
 }
 
+/// DOM selections can reach option text that has no caret position in the
+/// rendered editor. Keep edits outside the control, and treat a selection
+/// of its entire contents as a selection of the atomic box.
+fn select_edit_range(dom: &Dom, host: NodeId, start: Point, end: Point) -> Option<(Point, Point)> {
+    let in_control = |mut node| loop {
+        if dom.element(node).is_ok_and(|el| el.is_html()
+            && matches!(el.local_name().as_ref(), "option" | "optgroup" | "select")) {
+            return true;
+        }
+        if node == host { return false; }
+        let Some(parent) = dom.parent(node).ok().flatten() else { return false };
+        node = parent;
+    };
+    if start.0 == end.0 && html_select(dom, start.0) && start.0 != host
+        && start.1 == 0 && end.1 != 0 && end.1 == len(dom, start.0)
+    {
+        let parent = dom.parent(start.0).ok()??;
+        let index = dom.index_in_parent(start.0).ok()?;
+        return Some(((parent, index), (parent, index + 1)));
+    }
+    if in_control(start.0) { return None; }
+    Some((start, if in_control(end.0) { start } else { end }))
+}
+
 /// insertText (typing, `Input.insertText`): replaces the selection.
 pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
     let (start, end) = host_range(page, host);
+    let Some((start, end)) = select_edit_range(&page.dom.borrow(), host, start, end) else { return };
     // Replacement and continued typing form one edit. Keep typing inside
     // the link when that edit began on selected link text.
     let keep_link = if start == end {
@@ -924,6 +961,7 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
         let Some(host) = current_owner else { return };
         (host, start, end)
     };
+    let Some((start, end)) = select_edit_range(&page.dom.borrow(), host, start, end) else { return };
     let child_line = child_line::Deletion::plan(page, &page.dom.borrow(), host, start, end, backward);
     let (start, end, span) = if let Some(plan) = &child_line {
         (start, end, Some(plan.range))
