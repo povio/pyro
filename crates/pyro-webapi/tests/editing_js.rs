@@ -320,6 +320,16 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn numeric_bold_removal_preserves_the_unselected_text() {
+    let e = env("<body><div id=ed contenteditable><span style='font-weight:700'>abcd</span></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, t=ed.firstChild.firstChild; getSelection().setBaseAndExtent(t,3,t,1)");
+    assert_eq!(eval(r, "document.queryCommandState('bold')"), "true");
+    assert_eq!(eval(r, "document.execCommand('bold'); [getSelection().toString(),document.queryCommandState('bold'),getComputedStyle(ed.firstChild).fontWeight,getComputedStyle(ed.lastChild).fontWeight].join()"), "bc,false,700,700");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn collapsed_decoration_commands_share_the_typed_run() {
     let e = env("<body><div id=ed contenteditable>abc</div></body>");
     let r = &e.main;
