@@ -2121,14 +2121,17 @@ impl Browser {
                 cdp_request_id: opts.cdp_request_id,
             },
         );
-        if opts.url != "about:blank" && self.loader_for(page).is_some() {
+        // HTML "matches about:blank": `about:blank` with any query or fragment commits a blank
+        // document of that URL (`about:blank?foo`), as `about:blank` does.
+        let blank = matches_about_blank(&opts.url);
+        if !blank && self.loader_for(page).is_some() {
             self.start_document_fetch(page, opts, loader_id.clone(), history)?;
             // The response arrives on a later task: build the realm the commit
             // will need while this thread would otherwise wait for it.
             let _ = self.prepare_spare_realm();
             return Ok(loader_id);
         }
-        if opts.url != "about:blank" {
+        if !blank {
             let error = "net::ERR_NOT_IMPLEMENTED (no resource loader configured)".to_string();
             self.navigation_failed(page, &opts, loader_id, error);
             return Err(JsError::Unsupported(&"navigation to non-blank URLs"));
@@ -2266,7 +2269,7 @@ impl Browser {
             flags
         };
         self.doc_mut(page).ok_or(JsError::ContextDestroyed)?.main_frame.sandbox = sandbox;
-        let inherit_url = matches!(opts.url.as_str(), "about:blank" | "about:srcdoc") && inherit_from.is_some();
+        let inherit_url = (matches_about_blank(&opts.url) || opts.url == "about:srcdoc") && inherit_from.is_some();
         let actual_origin = if sandbox.opaque {
             "null".to_string()
         } else if inherit_url {
@@ -2557,4 +2560,16 @@ impl Drop for Browser {
             *slot.borrow_mut() = Some(engine);
         }
     }
+}
+
+/// HTML "matches about:blank": an `about:` URL whose path is `blank`, with no credentials or
+/// host, whatever its query and fragment.
+pub(crate) fn matches_about_blank(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|u| {
+        u.scheme() == "about"
+            && u.path() == "blank"
+            && u.username().is_empty()
+            && u.password().is_none()
+            && u.host().is_none()
+    })
 }
