@@ -1,0 +1,749 @@
+{
+  "status": "scope confirmed; candidate QA reserved pending immutable handoff",
+  "probe": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/hashless-color/probe.cjs",
+  "sha256": "7d112791836d4652eabded856b323baf7c3c63f5247468af15f7fd92003b3dbf",
+  "fixtures": [
+    {
+      "css": false,
+      "shape": "range",
+      "value": "000000fff"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "000fff"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "fff"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "FFF"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "abc"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "ab"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "abcd"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "abcdef"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "abcdef00"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "0"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "1"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "01"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "12"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "123"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "00123"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "123456"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "1234567"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "0000001"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "0af"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "1abc"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "12ab"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "00000abc"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "000000AA"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "+123"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "-1"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "1.0"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "1e2"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "00ff00"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "#000000fff"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "#123"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "rgb(0, 15, 255)"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "red"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "currentColor"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "inherit"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "initial"
+    },
+    {
+      "css": false,
+      "shape": "range",
+      "value": "potato quiche"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "000000fff"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "000fff"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "fff"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "FFF"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "abc"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "ab"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "abcd"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "abcdef"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "abcdef00"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "0"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "1"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "01"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "12"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "123"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "00123"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "123456"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "1234567"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "0000001"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "0af"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "1abc"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "12ab"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "00000abc"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "000000AA"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "+123"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "-1"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "1.0"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "1e2"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "00ff00"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "#000000fff"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "#123"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "rgb(0, 15, 255)"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "red"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "currentColor"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "inherit"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "initial"
+    },
+    {
+      "css": false,
+      "shape": "caret",
+      "value": "potato quiche"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "000000fff"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "000fff"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "fff"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "FFF"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "abc"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "ab"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "abcd"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "abcdef"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "abcdef00"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "0"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "1"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "01"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "12"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "123"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "00123"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "123456"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "1234567"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "0000001"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "0af"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "1abc"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "12ab"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "00000abc"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "000000AA"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "+123"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "-1"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "1.0"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "1e2"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "00ff00"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "#000000fff"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "#123"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "rgb(0, 15, 255)"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "red"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "currentColor"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "inherit"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "initial"
+    },
+    {
+      "css": true,
+      "shape": "range",
+      "value": "potato quiche"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "000000fff"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "000fff"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "fff"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "FFF"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "abc"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "ab"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "abcd"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "abcdef"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "abcdef00"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "0"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "1"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "01"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "12"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "123"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "00123"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "123456"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "1234567"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "0000001"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "0af"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "1abc"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "12ab"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "00000abc"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "000000AA"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "+123"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "-1"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "1.0"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "1e2"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "00ff00"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "#000000fff"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "#123"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "rgb(0, 15, 255)"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "red"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "currentColor"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "inherit"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "initial"
+    },
+    {
+      "css": true,
+      "shape": "caret",
+      "value": "potato quiche"
+    }
+  ],
+  "keyword_guards": [
+    "currentColor",
+    "inherit",
+    "initial"
+  ],
+  "compare": [
+    "pinned named WPT return",
+    "direct returned",
+    "after.html and per-character computed color",
+    "afterTyping inserted Q and neighboring glyphs",
+    "events and undo return, restored DOM, selection and connectivity"
+  ],
+  "document_modes": {
+    "standards": "144 existing probe cases use an HTML doctype",
+    "quirks": "required for selected ranges and collapsed typing; await matching comparator fixtures and verify BackCompat"
+  },
+  "attribution": [
+    "computed color of selected, typed and neighboring text",
+    "direct returns, events and undo",
+    "CSS keyword guards",
+    "pinned WPT assertions"
+  ]
+}

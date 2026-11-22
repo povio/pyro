@@ -10,6 +10,10 @@ use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
 /// `raw` parsed as a CSS color: `None` when it is not one. `currentcolor`
 /// is black; colors that need a style context (system colors) do not parse.
 fn parse(raw: &str) -> Option<AbsoluteColor> {
+    parse_color(raw, false)
+}
+
+fn parse_color(raw: &str, hashless: bool) -> Option<AbsoluteColor> {
     crate::stylo::enable_features();
     let url = UrlExtraData(Arc::new(url::Url::parse("about:blank").ok()?));
     let context = style::parser::ParserContext::new(
@@ -24,7 +28,22 @@ fn parse(raw: &str) -> Option<AbsoluteColor> {
         Default::default(),
     );
     let mut parser = cssparser::Parser::new(raw.trim_matches(|c: char| c.is_ascii_whitespace()));
-    let computed = style::values::specified::Color::parse_and_compute(&context, &mut parser, None).ok()?;
+    use style::values::specified::{AllowQuirks, Color};
+    let computed = if hashless {
+        // The editing command accepts numeric CSS tokens as quirky colors in
+        // both document modes. Keep CSS-wide keywords on the ordinary path.
+        let start = parser.state();
+        match parser.next().ok()? {
+            cssparser::Token::Number { .. } | cssparser::Token::Dimension { .. } => {}
+            cssparser::Token::Ident(name) if matches!(name.len(), 3 | 6) && name.bytes().all(|b| b.is_ascii_hexdigit()) => {}
+            _ => return None,
+        }
+        parser.reset(&start);
+        parser.parse_entirely(|p| Color::parse_quirky(&context, p, AllowQuirks::Always)).ok()?
+            .to_computed_color(None).ok()?
+    } else {
+        Color::parse_and_compute(&context, &mut parser, None).ok()?
+    };
     Some(computed.resolve_to_absolute(&AbsoluteColor::BLACK))
 }
 
@@ -35,11 +54,23 @@ pub fn is_fully_transparent(raw: &str) -> bool {
 /// The resolved CSS color string and its opaque legacy HTML color (when one
 /// exists). Editing commands reject currentColor and invalid inputs.
 pub fn editing_color(raw: &str) -> Option<(String, Option<String>)> {
-    use style_traits::ToCss;
     if raw.trim().eq_ignore_ascii_case("currentcolor") {
         return None;
     }
-    let color = parse(raw)?;
+    Some(editing_components(parse(raw)?))
+}
+
+/// Hashless editing colors use ordinary three- and six-digit hex first.
+/// Otherwise Stylo handles CSS number/dimension tokenization and padding.
+pub fn hashless_foreground(raw: &str) -> Option<(String, Option<String>)> {
+    if matches!(raw.len(), 3 | 6) && raw.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return editing_color(&format!("#{raw}"));
+    }
+    Some(editing_components(parse_color(raw, true)?))
+}
+
+fn editing_components(color: AbsoluteColor) -> (String, Option<String>) {
+    use style_traits::ToCss;
     let legacy = if color.alpha() == Some(1.0) && color.is_legacy_syntax() {
         let rgb = color.to_color_space(ColorSpace::Srgb);
         let [r, g, b] =
@@ -48,7 +79,7 @@ pub fn editing_color(raw: &str) -> Option<(String, Option<String>)> {
     } else {
         None
     };
-    Some((color.to_css_string(), legacy))
+    (color.to_css_string(), legacy)
 }
 
 /// A component as CSS color serialization prints it: at most six decimals,

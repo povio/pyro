@@ -1,0 +1,18 @@
+[
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" queryCommandValue(\"forecolor\") after",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ]
+]
