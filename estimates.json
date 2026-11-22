@@ -3,24 +3,24 @@
  "tiers": {
   "implemented": {
    "distinct_census_pages": 338,
-   "owner_reported_unlisted": 103,
-   "selector_union": 241,
+   "owner_reported_unlisted": 45,
+   "selector_union": 299,
    "owner_estimate_reduction": 6,
    "of_which_tentative": 4,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
-    "html/canvas": 205,
+    "html/canvas": 263,
     "html/syntax": 12,
     "html/semantics": 5,
-    "FileAPI": 4,
     "fetch/api": 4,
+    "FileAPI": 4,
     "fetch/data-urls": 3,
-    "encoding": 2,
     "xhr": 2,
+    "encoding": 2,
+    "svg/styling": 1,
     "html/rendering": 1,
     "dom/collections": 1,
-    "svg/styling": 1,
     "quirks": 1
    }
   },
@@ -47,24 +47,24 @@
     "shadow-dom": 7,
     "navigation-api": 6,
     "uievents": 5,
-    "intersection-observer": 5,
     "html/editing": 5,
+    "intersection-observer": 5,
     "svg/types": 4,
-    "close-watcher": 3,
-    "mathml": 3,
     "event-timing": 3,
     "inert": 3,
+    "close-watcher": 3,
+    "mathml": 3,
     "soft-navigation-heuristics": 2,
-    "fetch/fetch-later": 2,
     "dom/nodes": 2,
     "svg/animations": 2,
-    "html/rendering": 2,
+    "fetch/fetch-later": 2,
     "resource-timing": 2,
-    "pointerlock": 1,
-    "editing": 1,
+    "html/rendering": 2,
+    "html/browsers": 1,
     "document-picture-in-picture": 1,
     "custom-elements": 1,
-    "html/browsers": 1
+    "editing": 1,
+    "pointerlock": 1
    }
   },
   "queued": {
@@ -633,48 +633,48 @@
   },
   "C06": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 6,
+   "tentative": 0
   },
   "C07": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 3,
+   "tentative": 0
   },
   "C08": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 3,
+   "tentative": 0
   },
   "C09": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 9,
+   "tentative": 0
   },
   "C10": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 18,
+   "tentative": 0
   },
   "C11": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 3,
+   "tentative": 0
   },
   "C12": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 3,
+   "tentative": 0
   },
   "C13": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 3,
+   "tentative": 0
   },
   "C14": {
    "state": "implemented-unbuilt",
-   "pages": null,
-   "tentative": null
+   "pages": 10,
+   "tentative": 0
   },
   "C15": {
    "state": "proposed",
