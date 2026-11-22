@@ -1,0 +1,10 @@
+[
+  "css/css-ui/interactivity-inert-all.html",
+  "css/css-ui/interactivity-inert-animated.html",
+  "css/css-ui/interactivity-inert-click.html",
+  "css/css-ui/interactivity-inert-find.html",
+  "css/css-ui/interactivity-inert-focus.html",
+  "css/css-ui/interactivity-inert-fullscreen-ua.html",
+  "css/css-ui/interactivity-inert-html-attribute-ua.html",
+  "css/css-ui/interactivity-inert-modal-dialog-ua.html"
+]
