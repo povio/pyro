@@ -651,8 +651,12 @@ pub struct ComputedStyle {
     pub inert: bool,
     /// Host-language inertness propagated independently of CSS inheritance.
     host_inert: bool,
-    /// This element or a flat-tree ancestor has display:none.
+    /// This element or a flat-tree ancestor has display:none, or an ancestor has
+    /// `content-visibility: hidden` (its contents are skipped: not rendered, not focusable,
+    /// not visible to checkVisibility; `[hidden=until-found]` is one).
     pub in_display_none: bool,
+    /// Own `content-visibility: hidden`: the descendants are skipped content.
+    content_hidden: bool,
     /// This element or a flat-tree ancestor has opacity:0.
     pub in_opacity_zero: bool,
     pub overflow_x_scrolls: bool,
@@ -2377,7 +2381,8 @@ fn derive_computed(
             == style::values::specified::ui::PointerEvents::None,
         inert: style.get_inherited_ui().interactivity == style::values::specified::ui::Interactivity::Inert,
         host_inert: above.host_inert || (e.is_html() && e.attr("inert").is_some()),
-        in_display_none: display == Display::None || above.in_display_none,
+        in_display_none: display == Display::None || above.in_display_none || above.content_hidden,
+        content_hidden: b.slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden,
         in_opacity_zero: above.in_opacity_zero || effects.opacity == 0.0,
         overflow_x_scrolls: ox == Overflow::Scroll,
         overflow_x_clips: ox != Overflow::Visible,
