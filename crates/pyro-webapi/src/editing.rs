@@ -12,6 +12,7 @@
 mod character;
 mod paragraph_join;
 mod target_range;
+pub(crate) use target_range::rendered;
 mod whitespace;
 
 use std::rc::Rc;
@@ -31,6 +32,9 @@ pub(crate) struct DocSelection {
     pub(crate) range: Rc<crate::range::RangeOwner>,
     /// The focus is the range's start.
     backward: bool,
+    /// An edit can project both ends of a directed range onto one visible
+    /// caret. Explicit collapse starts a fresh, directionless selection.
+    pub(crate) retained_backward: Option<bool>,
     /// The Range object each realm sees as `getRangeAt(0)`.
     pub(crate) wrappers: Vec<(pyro_js::RealmId, pyro_js::Persistent)>,
     /// The nodes a selection made by a gesture, by typing or by
@@ -121,6 +125,14 @@ pub fn selection_range(page: &PageDom) -> Option<(Point, Point)> {
 /// Selects from `anchor` to `focus` with a new range (as `collapse()` and
 /// `extend()` do).
 pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
+    set_selection_points(page, anchor, focus, None);
+}
+
+pub(crate) fn set_adjusted_caret(page: &Rc<PageDom>, caret: Point, backward: bool) {
+    set_selection_points(page, caret, caret, Some(backward));
+}
+
+fn set_selection_points(page: &Rc<PageDom>, anchor: Point, focus: Point, retained_backward: Option<bool>) {
     let changed = selection(page) != Some((anchor, focus));
     let same_tree = {
         let dom = page.dom.borrow();
@@ -152,7 +164,7 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
             (Ok(a), Ok(f)) => Some((a, f)),
             _ => None,
         };
-    let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, composed, cross_tree }));
+    let old = page.selection.replace(Some(DocSelection { range, backward, retained_backward, wrappers: Vec::new(), origin, composed, cross_tree }));
     drop(old);
     if changed {
         page.typing_values.take();
@@ -170,6 +182,7 @@ pub(crate) fn retarget_selection(page:&Rc<PageDom>, anchor:Point, focus:Point) {
     let Some(current)=slot.as_mut() else{return};
     if page.dom.borrow_mut().set_live_range(&current.range.live,start,end).is_err(){return;}
     current.backward=backward;
+    current.retained_backward=None;
     current.cross_tree=false;
     current.composed=None;
     if current.origin.is_some() {
@@ -190,6 +203,7 @@ pub(crate) fn set_selection_range(
     let selection = DocSelection {
         range,
         backward: false,
+        retained_backward: None,
         wrappers: wrapper.into_iter().collect(),
         origin: None,
         cross_tree: false,

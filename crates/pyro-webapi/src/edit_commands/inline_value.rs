@@ -131,17 +131,17 @@ pub(super) fn toggle_state(page: &PageDom, range: (Point, Point), tag: &str) -> 
     slot.as_ref().filter(|v| v.range == range)?.toggles.iter().find(|(t, _)| *t == tag).map(|(_, on)| *on)
 }
 
-pub(super) fn decoration_state(page: &PageDom, point: Point, tag: &str) -> Option<bool> {
+pub(super) fn decoration_state(page: &PageDom, range: (Point, Point), tag: &str) -> Option<bool> {
     let slot = page.typing_values.borrow();
-    let pending = slot.as_ref().filter(|p| p.range == (point, point))?.decoration?;
-    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), point.0);
+    let pending = slot.as_ref().filter(|p| p.range == range)?.decoration?;
+    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), range.0.0);
     Some(pending.reported(authored).has(tag))
 }
 
-pub(super) fn toggle_decoration(page: &PageDom, point: Point, tag: &str) {
-    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), point.0);
+pub(super) fn toggle_decoration(page: &PageDom, range: (Point, Point), tag: &str) {
+    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), range.0.0);
     let mut slot = page.typing_values.borrow_mut();
-    let pending = pending_at(&mut slot, (point, point));
+    let pending = pending_at(&mut slot, range);
     let mut lines = pending.decoration.map_or(authored, |d| d.reported(authored));
     lines.toggle(tag);
     pending.decoration = Some(lines);

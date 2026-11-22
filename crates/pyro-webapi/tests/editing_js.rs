@@ -320,6 +320,36 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn formatting_svg_text_restores_a_visible_caret() {
+    let e = env("<body><div id=ed contenteditable>left<svg><text id=label>abcd</text></svg>right</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, t=label.firstChild, s=getSelection(); s.setBaseAndExtent(t,3,t,1); document.execCommand('strikeThrough')");
+    assert_eq!(eval(r, "[label.innerHTML,s.isCollapsed,s.direction,s.anchorNode===t,s.anchorOffset,document.queryCommandState('strikeThrough')].join('|')"), "a<strike>bc</strike>d|true|backward|true|1|false");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+    assert_eq!(eval(r, "s.collapse(label.firstChild,0); s.direction"), "none");
+}
+
+#[test]
+fn remove_format_keeps_foreign_elements_and_the_original_suffix() {
+    let e = env("<body><div id=ed contenteditable><cite id=book>abcd</cite></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const cite=ed.firstChild, text=cite.firstChild; getSelection().setBaseAndExtent(text,0,text,3);document.execCommand('removeFormat')");
+    assert_eq!(eval(r, "[ed.lastChild===cite,cite.textContent,cite.hasAttribute('id'),getSelection().toString()].join()"), "true,d,false,abc");
+    eval(r, "const foreign=document.createElementNS('urn:example','cite');foreign.textContent='abcd';ed.replaceChildren(foreign);getSelection().selectAllChildren(foreign);document.execCommand('removeFormat')");
+    assert_eq!(eval(r, "[ed.firstChild===foreign,foreign.textContent].join()"), "true,abcd");
+}
+
+#[test]
+fn remove_format_preserves_deletions_and_splits_ids_only_once() {
+    let e = env("<body><div id=ed contenteditable><del>deleted</del><cite id=work>abcd</cite></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, deletion=ed.firstChild, text=ed.lastChild.firstChild; getSelection().setBaseAndExtent(text,3,text,1)");
+    assert_eq!(eval(r, "document.execCommand('removeFormat'); [ed.querySelectorAll('#work').length,getSelection().toString(),getSelection().direction,ed.firstChild===deletion].join()"), "1,bc,backward,true");
+    assert_eq!(eval(r, "ed.innerHTML"), "<del>deleted</del><cite id=\"work\">a</cite>bc<cite>d</cite>");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn removing_italic_preserves_a_semantic_element_and_backward_selection() {
     let e = env("<body><div id=ed contenteditable>left<cite style='color:red'>abcd</cite>right</div></body>");
     let r = &e.main;

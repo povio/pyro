@@ -1027,7 +1027,7 @@ fn format_of(command: &str) -> Option<(&'static str, &'static [&'static str], &'
         "bold" => ("b", &["b", "strong"], "formatBold"),
         "italic" => ("i", &["i", "em"], "formatItalic"),
         "underline" => ("u", &["u"], "formatUnderline"),
-        "strikethrough" => ("strike", &["strike", "s", "del"], "formatStrikeThrough"),
+        "strikethrough" => ("strike", &["strike", "s"], "formatStrikeThrough"),
         "superscript" => ("sup", &["sup"], "formatSuperscript"),
         "subscript" => ("sub", &["sub"], "formatSubscript"),
         _ => return None,
@@ -1256,8 +1256,8 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
             page,
             host,
             &[
-                "b", "strong", "i", "em", "u", "s", "strike", "del", "sub", "sup", "font", "span", "code", "small",
-                "big", "mark",
+                "acronym", "b", "bdo", "big", "cite", "code", "dfn", "em", "font", "i", "ins", "kbd", "mark",
+                "nobr", "q", "s", "samp", "small", "span", "strike", "strong", "sub", "sup", "tt", "u", "var",
             ],
             "formatRemove",
         ),
@@ -1273,9 +1273,17 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         _ => {
             let Some((tag, carriers, input_type)) = format_of(&cmd) else { return false };
             let (start, end) = editing::host_range(page, host);
-            if start == end && matches!(tag, "u" | "strike") {
-                inline_value::toggle_decoration(page, start, tag);
-                return true;
+            if matches!(tag, "u" | "strike") {
+                let pending = start == end || {
+                    let dom = page.dom.borrow();
+                    !accepts_html_formatting(&dom, start.0) && !accepts_html_formatting(&dom, end.0)
+                        && (start.0 == end.0 || texts_in(&dom, host, start, end).into_iter()
+                            .all(|t| !accepts_html_formatting(&dom, t)))
+                };
+                if pending {
+                    inline_value::toggle_decoration(page, (start, end), tag);
+                    return true;
+                }
             }
             if start == end && matches!(tag, "b" | "i" | "sub" | "sup") {
                 let enabled = !format_state(page, &cmd).1;
@@ -1366,17 +1374,79 @@ fn inline_css(tag: &str) -> Option<(&'static str, &'static str)> {
     })
 }
 
+/// SVG renders character data under text and its inline text elements.
+/// A foreignObject's HTML descendants use ordinary HTML editing.
+fn accepts_html_formatting(dom: &Dom, text: NodeId) -> bool {
+    let mut parent = dom.parent_element(text).ok().flatten();
+    while let Some(node) = parent {
+        let Ok(el) = dom.element(node) else { return false };
+        if el.namespace() != &markup5ever::ns!(svg) { return true; }
+        match el.local_name().as_ref() {
+            "text" => return true,
+            "tspan" | "textPath" | "a" => parent = dom.parent_element(node).ok().flatten(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Once HTML formatting wraps SVG text, that text no longer paints in the
+/// SVG text run. Restore the range to a visible caret in the same text
+/// element, or to the next editable text when its whole run disappeared.
+fn restored_format_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) -> Point {
+    let Some(wrapper) = dom.parent_element(point.0).ok().flatten() else { return point };
+    if !dom.element(wrapper).is_ok_and(|el| el.is_html()) { return point; }
+    let mut root = wrapper;
+    loop {
+        let Some(parent) = dom.parent_element(root).ok().flatten() else { return point };
+        let Ok(el) = dom.element(parent) else { return point };
+        if el.namespace() != &markup5ever::ns!(svg) { return point; }
+        root = parent;
+        match el.local_name().as_ref() {
+            "text" => break,
+            "tspan" | "textPath" | "a" => {}
+            _ => return point,
+        }
+    }
+    let Ok(nodes) = dom.descendants(host) else { return point };
+    let mut previous = None;
+    let mut previous_in_run = None;
+    let mut past = false;
+    for n in nodes {
+        if n == point.0 { past = true; continue; }
+        if !editing::is_text(dom, n) || editing::len(dom, n) == 0 || editing::editing_host(dom, n) != Some(host) {
+            continue;
+        }
+        let in_run = dom.contains(root, n).unwrap_or(false);
+        if in_run && !dom.parent_element(n).ok().flatten().is_some_and(|p|
+            dom.element(p).is_ok_and(|el| el.namespace() == &markup5ever::ns!(svg)))
+        { continue; }
+        if !accepts_html_formatting(dom, n) || !editing::rendered(page, dom, n) { continue; }
+        if past { return previous_in_run.unwrap_or((n, 0)); }
+        previous = Some((n, editing::len(dom, n)));
+        if in_run { previous_in_run = previous; }
+    }
+    previous.or_else(|| dom.parent(root).ok().flatten().zip(dom.index_in_parent(root).ok()).map(|(p, i)| (p, i+1)))
+        .unwrap_or(point)
+}
+
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
     let (start, end) = editing::host_range(page, host);
     let reversed = start != end && editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
     let collapsed = start == end;
-    let selected = inline_texts(&page.dom.borrow(), host, start, end);
+    let selected = {
+        let dom = page.dom.borrow();
+        let mut texts = inline_texts(&dom, host, start, end);
+        texts.retain(|&text| accepts_html_formatting(&dom, text));
+        texts
+    };
     if !collapsed && selected.is_empty() {
         return;
     }
     editing::apply_edit(page, host, input_type, href, None, |page| {
+        let mut wrapped_svg = false;
         let texts = {
             let mut dom = page.dom.borrow_mut();
             let texts = if collapsed {
@@ -1435,13 +1505,26 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 if let Some(href) = href {
                     let _ = dom.set_attribute(w, "href", href);
                 }
+                wrapped_svg |= dom.element(parent).is_ok_and(|el| el.namespace() == &markup5ever::ns!(svg));
                 let _ = dom.insert_before(parent, w, Some(t));
                 let _ = dom.append_child(w, t);
                 last_wrapper = Some(w);
             }
             texts
         };
-        select_texts(page, &texts, reversed);
+        if wrapped_svg {
+            let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else { return };
+            let (start, end) = {
+                let dom = page.dom.borrow();
+                (restored_format_point(page, &dom, host, (first, 0)),
+                 restored_format_point(page, &dom, host, (last, editing::len(&dom, last))))
+            };
+            if start == end && !collapsed { editing::set_adjusted_caret(page, start, reversed); }
+            else if reversed { editing::set_selection(page, end, start); }
+            else { editing::set_selection(page, start, end); }
+        } else {
+            select_texts(page, &texts, reversed);
+        }
     });
 }
 
@@ -1458,6 +1541,11 @@ fn ancestor_format(dom: &Dom, node: NodeId, host: NodeId, names: &[&str], removi
     while let Some(c) = cur {
         if c == host {
             return None;
+        }
+        let el = dom.element(c).ok()?;
+        if !el.is_html() {
+            cur = dom.parent_element(c).ok().flatten();
+            continue;
         }
         let tag = editing::local(dom, c);
         let css_carrier = tag == "span"
@@ -1489,7 +1577,24 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
     loop {
         let Ok(Some(p)) = dom.parent(cur) else { return };
         let Ok(Some(gp)) = dom.parent(p) else { return };
+        if dom.prev_sibling(cur).ok().flatten().is_none() && dom.next_sibling(cur).ok().flatten().is_some() {
+            // Keep the original right-hand wrapper (including listeners).
+            // The ID belongs to the first fragment, not to both fragments.
+            let moved = if p == anc {
+                cur
+            } else {
+                let Ok(prefix) = dom.clone_node(p, false, None) else { return };
+                if dom.append_child(prefix, cur).is_err() { return; }
+                prefix
+            };
+            if dom.insert_before(gp, moved, Some(p)).is_err() { return; }
+            let _ = dom.remove_attribute(p, "id");
+            if p == anc { return; }
+            cur = moved;
+            continue;
+        }
         let Ok(after) = dom.clone_node(p, false, None) else { return };
+        let _ = dom.remove_attribute(after, "id");
         let mut next = dom.next_sibling(cur).ok().flatten();
         while let Some(n) = next {
             next = dom.next_sibling(n).ok().flatten();
@@ -1500,6 +1605,7 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
             cur
         } else {
             let Ok(mid) = dom.clone_node(p, false, None) else { return };
+            let _ = dom.remove_attribute(mid, "id");
             let _ = dom.append_child(mid, cur);
             mid
         };
@@ -1688,7 +1794,7 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
         let dom = page.dom.borrow();
         let mut texts = texts_in(&dom, host, start, end);
         texts.retain(|&node| {
-            if !editing::is_editable(&dom, node) { return false; }
+            if !editing::is_editable(&dom, node) || !accepts_html_formatting(&dom, node) { return false; }
             // Clearing formatting across a fully enclosed plaintext island
             // can remove an existing carrier inside it. Keep the island itself.
             let Some(island) = editing::plaintext_root(&dom, node) else { return true };
@@ -1731,7 +1837,15 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                         a = middle;
                         whole = true;
                     }
-                    if whole {
+                    // Toggling strike removes the presentation but preserves
+                    // independent attributes on the selected fragment.
+                    let keep_attrs = input_type == "formatStrikeThrough"
+                        && matches!(editing::local(&dom, a).as_str(), "s" | "strike")
+                        && dom.attributes(a).is_ok_and(|attrs| !attrs.is_empty());
+                    if whole && keep_attrs {
+                        let mut points = [first, last];
+                        if indentation::rename(&mut dom, a, "span", &mut points).is_none() { break; }
+                    } else if whole {
                         let Some(parent) = dom.parent(a).ok().flatten() else { break };
                         while let Ok(Some(child)) = dom.first_child(a) {
                             if dom.insert_before(parent, child, Some(a)).is_err() { break; }
@@ -1740,7 +1854,24 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                             let _ = dom.remove_child(parent, a);
                         }
                     } else {
+                        let neutral = if keep_attrs {
+                            let Ok(doc) = dom.node_document(a) else { break };
+                            let Ok(span) = dom.create_element(doc, "span") else { break };
+                            let at_start = editing::deep_forward(&dom, (a, 0)) == (t, 0);
+                            for attr in dom.attributes(a).unwrap_or(&[]).to_vec() {
+                                if attr.name.ns.is_empty() && attr.name.local == markup5ever::local_name!("id") && !at_start { continue; }
+                                let ns = (!attr.name.ns.is_empty()).then_some(&*attr.name.ns);
+                                let _ = dom.set_attribute_ns(span, ns, &attr.qualified_name(), &attr.value);
+                            }
+                            dom.attributes(span).is_ok_and(|attrs| !attrs.is_empty()).then_some(span)
+                        } else { None };
                         hoist(&mut dom, t, a);
+                        if let Some(span) = neutral {
+                            if let Ok(Some(parent)) = dom.parent(t) {
+                                let _ = dom.insert_before(parent, span, Some(t));
+                                let _ = dom.append_child(span, t);
+                            }
+                        }
                     }
                     if ancestor_format(&dom, t, owner, names, true) == Some(a) {
                         break;
@@ -2025,13 +2156,13 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
 /// inline style of `command`, by computed style as Chromium reads it.
 fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
     let Some((start, end)) = editing::selection_range(page) else { return (false, false) };
+    if let Some((tag @ ("u" | "strike"), _, _)) = format_of(command) {
+        if let Some(active) = inline_value::decoration_state(page, (start, end), tag) {
+            return (active, active);
+        }
+    }
     if start == end {
         if let Some((tag, _, _)) = format_of(command) {
-            if matches!(tag, "u" | "strike") {
-                if let Some(active) = inline_value::decoration_state(page, start, tag) {
-                    return (active, active);
-                }
-            }
             if matches!(tag, "sub" | "sup") {
                 if let Some(active) = inline_value::caret_script_state(page, start, tag) {
                     return (active, active);
