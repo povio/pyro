@@ -768,7 +768,14 @@
       mode,
       durability,
       upgrade,
-      state: 'active',
+      phase: 'active',
+      creationTurn: upgrade ? undefined : N.scriptTurn(),
+      get state() {
+        return this.phase === 'active' && this.creationTurn !== undefined && this.creationTurn !== N.scriptTurn() ? 'inactive' : this.phase;
+      },
+      set state(value) {
+        this.phase = value;
+      },
       started: false,
       inflight: false,
       queue: [],
@@ -786,6 +793,7 @@
     if (!upgrade) {
       // Inactive once the creating task is over.
       post(() => {
+        x.creationTurn = undefined;
         if (x.state === 'active') x.state = 'inactive';
         pump(x);
       });
