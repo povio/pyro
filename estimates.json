@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 1004,
-    "studio_in_scope": 322,
+    "studio_in_scope": 330,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -14,7 +14,7 @@
    "selector_union": 1577,
    "owner_estimate_reduction": 225,
    "of_which_tentative": 198,
-   "studio_css_reported_pages_not_deduped": 173,
+   "studio_css_reported_pages_not_deduped": 181,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 460,
@@ -33,12 +33,12 @@
     "imagebitmap-renderingcontext": 14,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
-    "workers": 9,
     "html/infrastructure": 9,
+    "workers": 9,
     "encoding": 7,
+    "fetch/data-urls": 6,
     "fetch/corb": 6,
     "fetch/range": 6,
-    "fetch/data-urls": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "html/rendering": 3,
@@ -46,12 +46,12 @@
     "fetch/nosniff": 3,
     "xhr": 2,
     "fetch/orb": 2,
-    "svg/styling": 1,
+    "fetch/redirect-navigate": 1,
     "fetch/security": 1,
-    "IndexedDB": 1,
-    "fetch/redirects": 1,
+    "svg/styling": 1,
     "quirks": 1,
-    "fetch/redirect-navigate": 1
+    "IndexedDB": 1,
+    "fetch/redirects": 1
    }
   },
   "in_progress": {
@@ -85,12 +85,12 @@
     "html/interaction": 5,
     "fetch/security": 4,
     "html/user-activation": 3,
+    "html/scripting": 1,
+    "html/select": 1,
+    "fetch/content-type": 1,
     "fetch/http-cache": 1,
     "fetch/images": 1,
-    "html/scripting": 1,
-    "html/the-xhtml-syntax": 1,
-    "html/select": 1,
-    "fetch/content-type": 1
+    "html/the-xhtml-syntax": 1
    }
   },
   "queued": {
@@ -112,8 +112,8 @@
     "webidl": 19,
     "fetch/compression-dictionary": 8,
     "html/interaction": 5,
-    "html/semantics": 4,
     "svg/path": 4,
+    "html/semantics": 4,
     "workers": 3,
     "dom/nodes": 1
    }
@@ -2681,9 +2681,16 @@
    "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
+  },
+  "SC-anchor-interpolation": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
   }
  },
- "implemented_total_estimate": 1579,
+ "implemented_total_estimate": 1587,
  "milestones_reached": [
   250,
   500,
