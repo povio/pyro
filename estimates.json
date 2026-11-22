@@ -18,9 +18,9 @@
     "mathml": 2,
     "encoding": 2,
     "xhr": 2,
-    "svg/styling": 1,
+    "html/rendering": 1,
     "quirks": 1,
-    "html/rendering": 1
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -37,31 +37,31 @@
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
     "shadow-dom": 7,
     "selection": 7,
     "navigation-api": 6,
-    "html/editing": 5,
-    "intersection-observer": 5,
     "uievents": 5,
+    "intersection-observer": 5,
+    "html/editing": 5,
     "svg/types": 4,
-    "close-watcher": 3,
-    "mathml": 3,
-    "inert": 3,
     "event-timing": 3,
-    "resource-timing": 2,
-    "dom/nodes": 2,
+    "inert": 3,
+    "mathml": 3,
+    "close-watcher": 3,
+    "svg/animations": 2,
+    "html/rendering": 2,
     "fetch/fetch-later": 2,
     "soft-navigation-heuristics": 2,
-    "html/rendering": 2,
-    "svg/animations": 2,
-    "editing": 1,
-    "html/browsers": 1,
+    "dom/nodes": 2,
+    "resource-timing": 2,
+    "document-picture-in-picture": 1,
     "pointerlock": 1,
-    "document-picture-in-picture": 1
+    "html/browsers": 1,
+    "editing": 1
    }
   },
   "queued": {
@@ -82,8 +82,8 @@
     "fetch/api": 5,
     "svg/path": 4,
     "html/browsers": 2,
-    "custom-elements": 1,
-    "dom/nodes": 1
+    "dom/nodes": 1,
+    "custom-elements": 1
    }
   }
  },
@@ -567,6 +567,11 @@
    "state": "proposed",
    "pages": 31,
    "tentative": 0
+  },
+  "F08a": {
+   "state": "active",
+   "pages": null,
+   "tentative": null
   },
   "F09": {
    "state": "claimed",
