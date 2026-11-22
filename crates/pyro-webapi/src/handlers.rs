@@ -306,17 +306,19 @@ pub(crate) fn compile_handler<'s>(
     // The body alone must parse as a function body (a body that closes the function early does
     // not); it passed the Trusted Types attribute check already.
     s.compile_exempt(|| ctor.construct(&args))?;
-    let source = format!("function on{ty}({}) {{\n{body}\n}}", params.join(", "));
+    // An anonymous function expression named `on<type>` by its property (HTML creates it with
+    // OrdinaryFunctionCreate: no binding of its own name, so `onclick = null` in the body still
+    // reaches the element's property).
+    let source = format!("({{\"on{ty}\": function ({}) {{\n{body}\n}}}})[\"on{ty}\"]", params.join(", "));
     let Some(element) = element else {
         let outer = s.compile_exempt(|| ctor.construct(&[s.string(&format!("return {source}"))]))?;
         return outer.call(None, &[]);
     };
-    // The scopes are the outer function's: `with` on its arguments (an empty object for no form
-    // owner), so the handler's own parameters and locals come first.
+    // The scopes are the outer function's: `with` on the document, the form owner (an empty object
+    // for none) and the element, read from `this` (not an identifier, so no scope can shadow it,
+    // as `arguments` could: a form control or image named "arguments").
     let outer = s.compile_exempt(|| {
-        ctor.construct(&[s.string(&format!(
-            "with(arguments[0]){{with(arguments[1]){{with(arguments[2]){{return {source}}}}}}}"
-        ))])
+        ctor.construct(&[s.string(&format!("with(this[0]){{with(this[1]){{with(this[2]){{return {source}}}}}}}"))])
     })?;
     let wrap = |id: Option<pyro_dom::NodeId>| -> JsResult<Value<'s>> {
         match id {
@@ -325,7 +327,8 @@ pub(crate) fn compile_handler<'s>(
         }
     };
     let element = wrap(Some(element))?;
-    outer.call(None, &[wrap(document)?, wrap(form)?, element])
+    let scopes = s.array(&[wrap(document)?, wrap(form)?, element])?;
+    outer.call(Some(scopes), &[])
 }
 
 /// Whether `ty` on `<body>`/`<frameset>` targets the Window (HTML "Window-
