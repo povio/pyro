@@ -1,0 +1,18 @@
+{
+  "surface": {
+    "secure": true,
+    "storageKeys": [
+      "estimate",
+      "persisted",
+      "persist"
+    ],
+    "getDirectory": "undefined",
+    "handles": [
+      "undefined",
+      "undefined",
+      "undefined",
+      "undefined",
+      "undefined"
+    ]
+  }
+}

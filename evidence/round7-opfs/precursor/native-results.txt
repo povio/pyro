@@ -1,0 +1,22 @@
+native-store.log
+running 3 tests
+test opfs::store::tests::sync_modes_and_cursors_are_per_handle ... ok
+test opfs::store::tests::siloed_streams_commit_atomically_and_abandonment_releases_locks ... ok
+test opfs::store::tests::origin_roots_and_locators_follow_context_lifetime ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 92 filtered out; finished in 0.00s
+native-stream.log
+running 1 test
+test crypto_js::file_stream_writes_observe_queued_bytes_and_abort_preserves_the_file ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 686 filtered out; finished in 0.03s
+native-worker.log
+running 1 test
+test crypto_js::dedicated_workers_expose_streams_file_reader_crypto_keys_and_storage ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 686 filtered out; finished in 0.02s
+native-manager.log
+running 1 test
+test crypto_js::navigator_storage_reports_usage_and_no_persistence ... FAILED
+assertion `left == right` failed
+  left: "true|true|quota,usage,usageDetails|8|true|false|false|TypeError|TypeError|estimate,persisted,getDirectory,persist|0"
+ right: "true|true|quota,usage,usageDetails|8|true|false|false|TypeError|TypeError|estimate,persisted,persist|0"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 686 filtered out; finished in 0.01s
+error: test failed, to rerun pass `-p pyro-webapi --test integration`
