@@ -2213,6 +2213,11 @@
     const c = rcSetup(st, true, undefined, () => pull(c), cancel, 0, () => 1);
     return st.wrapper;
   };
+  const textFrom = (stream) => {
+    const t = TextDecoderStream$t.get(new TextDecoderStream());
+    handled(rsPipe(rsOf(stream), t.writable, false, false, false, undefined));
+    return t.readable.wrapper;
+  };
   const bytesBody = (bytes) => byteBody((c) => {
     if (bytes.length > 0) bcEnqueue(c, bytes);
     if (rcCanClose(c)) bcClose(c);
@@ -2241,13 +2246,12 @@
     },
     // A byte stream of bytes already in memory (Blob.stream()).
     fromBytes: bytesBody,
-    // Blob.textStream(): the bytes piped through a UTF-8 TextDecoderStream,
-    // with the module's own pipe (no script-visible pipeThrough lookup).
-    textFromBytes(bytes) {
-      const t = TextDecoderStream$t.get(new TextDecoderStream());
-      handled(rsPipe(rsOf(bytesBody(bytes)), t.writable, false, false, false, undefined));
-      return t.readable.wrapper;
-    },
+    // Blob.textStream() and the Body mixin's textStream(): bytes, or a usable
+    // byte stream (which the pipe locks and disturbs at once), piped through a
+    // UTF-8 TextDecoderStream with the module's own pipe (no script-visible
+    // pipeThrough lookup).
+    textFromBytes: (bytes) => textFrom(bytesBody(bytes)),
+    textFromStream: textFrom,
     // Response consumption for a body that is a script's stream.
     consume(stream, kind, packageBody) {
       const st = rsOf(stream);

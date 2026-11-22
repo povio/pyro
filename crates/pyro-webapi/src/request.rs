@@ -165,26 +165,7 @@ impl JsClass for Request {
         def.getter("isHistoryNavigation", |s, _d| Ok(s.boolean(false)));
         def.getter("signal", |s, d| hidden(s, d, SIGNAL));
         def.getter("duplex", |s, _d| Ok(s.string("half")));
-        def.getter("body", |s, d| {
-            if d.body.is_null() {
-                return Ok(s.null());
-            }
-            let existing = hidden(s, d, STREAM)?;
-            if !existing.is_undefined() {
-                return Ok(existing);
-            }
-            let page = crate::target::page_of(s)?;
-            let source = s.wrap::<BodySource>(StreamData::new(d.body.clone(), d.used.clone()), None)?;
-            d.source_made.set(true);
-            let read = source.get_atom("read")?;
-            let cancel = source.get_atom("cancel")?;
-            let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
-            let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
-            let owner = realm.scope()?;
-            let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
-            s.set_hidden(wrapper, STREAM, stream)?;
-            Ok(stream)
-        });
+        def.getter("body", |s, d| body_stream(s, d));
         def.getter("bodyUsed", |s, d| Ok(s.boolean(d.used.get() || stream_state(s, d)?.1)));
         def.method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
         def.method("json", 0, |s, d, _| consume(s, d, ReadKind::Json));
@@ -192,6 +173,14 @@ impl JsClass for Request {
         def.method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
         def.method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
         def.method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
+        def.method("textStream", 0, |s, d, _| {
+            let (locked, disturbed) = stream_state(s, d)?;
+            if d.used.get() || locked || disturbed {
+                return Err(JsError::Type("Request body is already used".into()));
+            }
+            let stream = body_stream(s, d)?;
+            crate::fetch::text_stream(s, stream)
+        });
         def.method("clone", 0, |s, d, _| {
             let (locked, disturbed) = stream_state(s, d)?;
             if d.used.get() || locked || disturbed {
@@ -523,6 +512,29 @@ fn hidden<'s>(s: &Scope<'s>, data: &RequestData, key: &'static str) -> JsResult<
     let owner = realm.scope()?;
     let wrapper = owner.lookup_identity(data.id).ok_or(JsError::ContextDestroyed)?;
     Ok(s.get_hidden(wrapper, key)?.unwrap_or(s.undefined()))
+}
+
+/// `request.body`: null, or the one stream this Request hands out (made on
+/// first use over the native body).
+fn body_stream<'s>(s: &Scope<'s>, d: &RequestData) -> JsResult<Value<'s>> {
+    if d.body.is_null() {
+        return Ok(s.null());
+    }
+    let existing = hidden(s, d, STREAM)?;
+    if !existing.is_undefined() {
+        return Ok(existing);
+    }
+    let page = crate::target::page_of(s)?;
+    let source = s.wrap::<BodySource>(StreamData::new(d.body.clone(), d.used.clone()), None)?;
+    d.source_made.set(true);
+    let read = source.get_atom("read")?;
+    let cancel = source.get_atom("cancel")?;
+    let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
+    let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+    let owner = realm.scope()?;
+    let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
+    s.set_hidden(wrapper, STREAM, stream)?;
+    Ok(stream)
 }
 
 fn stream_state(s: &Scope<'_>, data: &RequestData) -> JsResult<(bool, bool)> {

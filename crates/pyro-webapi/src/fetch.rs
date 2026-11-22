@@ -721,6 +721,18 @@ fn parse_request<'s>(
 /// type sets none). ReadableStream bodies are handled by the callers, which
 /// drain them first (`Response` constructor, `fetch`); other objects are
 /// stringified as the Web IDL union's last member, USVString.
+/// Body mixin `textStream()` once the body is known usable: `body` (the
+/// object's body stream, or null) piped through a UTF-8 TextDecoderStream.
+/// A null body gives a fresh empty stream on each call and stays unused.
+pub(crate) fn text_stream<'s>(s: &Scope<'s>, body: Value<'s>) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    if body.is_null() {
+        let empty = crate::encoding::uint8_array(s, &[])?;
+        return crate::streams::helper(s, &page, "textFromBytes", &[empty]);
+    }
+    crate::streams::helper(s, &page, "textFromStream", &[body])
+}
+
 pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, String)> {
     if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body)? {
         return Ok((bytes, mime));

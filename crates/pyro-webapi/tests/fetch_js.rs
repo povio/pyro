@@ -940,6 +940,39 @@ fn blob_text_stream_decodes_utf8_and_ignores_type() {
 }
 
 #[test]
+fn body_text_stream_decodes_utf8_and_checks_usability() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.state='pending';
+        (async()=>{
+          const all=async(st)=>{const r=st.getReader(),c=[];for(;;){const {done,value}=await r.read();if(done)return c;c.push(value)}};
+          const throws=(f)=>{try{f();return 'none'}catch(e){return e.name}};
+          const out=[typeof Response.prototype.textStream+typeof Request.prototype.textStream];
+          const r=new Response('h€'); const t=r.textStream();
+          out.push((t instanceof ReadableStream)+':'+r.bodyUsed+':'+(await all(t)).join(''));
+          const q=new Request('https://example.com',{method:'POST',body:new Uint8Array([0x68,0,0xe2,0x82,0xac])});
+          out.push(JSON.stringify((await all(q.textStream())).join(''))+':'+q.bodyUsed);
+          const enc=new TextEncoder().encode('€');
+          const split=new Response(new ReadableStream({start(c){c.enqueue(enc.slice(0,1));c.enqueue(enc.slice(1));c.close()}}));
+          out.push((await all(split.textStream())).join(''));
+          const n=new Response(); const a=n.textStream(), b=n.textStream();
+          out.push((a!==b)+':'+n.bodyUsed+':'+(await all(a)).length+(await all(b)).length);
+          const used=new Response('x'); used.text(); const locked=new Request('https://example.com',{method:'POST',body:'x'}); locked.body.getReader();
+          out.push(throws(()=>used.textStream())+':'+throws(()=>locked.textStream()));
+          const net=await fetch('/json'); out.push((await all(net.textStream())).join('').length+':'+net.bodyUsed);
+          state=out.join('|');
+        })().catch(e=>state='ERROR '+e+' '+e.stack);"#,
+    );
+    env.until("state!=='pending'");
+    assert_eq!(
+        env.eval("state"),
+        "functionfunction|true:true:h\u{20ac}|\"h\\u0000\u{20ac}\":true|\u{20ac}|true:false:00|TypeError:TypeError|13:true"
+    );
+    env.finish_network_tasks();
+}
+
+#[test]
 fn fetch_body_stream_abort_rejects_pending_read_with_reason() {
     // Own server: the test server serves one connection at a time.
     let server = Server::new();

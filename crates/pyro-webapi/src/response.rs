@@ -133,29 +133,7 @@ impl JsClass for Response {
                 (Origin::Network, ResponseKind::OpaqueRedirect) => "opaqueredirect",
             }))
         });
-        def.getter("body", |s, d| {
-            if d.body.is_null() {
-                return Ok(s.null());
-            }
-            let existing = hidden(s, d, STREAM)?;
-            if !existing.is_undefined() {
-                return Ok(existing);
-            }
-            let page = crate::target::page_of(s)?;
-            let source = s.wrap::<BodySource>(
-                StreamData { body: d.body.clone(), used: d.used.clone(), opened: Cell::new(false) },
-                None,
-            )?;
-            d.source_made.set(true);
-            let read = source.get_atom("read")?;
-            let cancel = source.get_atom("cancel")?;
-            let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
-            let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
-            let owner = realm.scope()?;
-            let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
-            s.set_hidden(wrapper, STREAM, stream)?;
-            Ok(stream)
-        });
+        def.getter("body", |s, d| body_stream(s, d));
         def.getter("headers", |s, d| hidden(s, d, HEADERS));
         def.getter("bodyUsed", |s, d| Ok(s.boolean(d.used.get() || stream_state(s, d)?.1)));
         def.method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
@@ -164,6 +142,14 @@ impl JsClass for Response {
         def.method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
         def.method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
         def.method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
+        def.method("textStream", 0, |s, d, _| {
+            let (locked, disturbed) = stream_state(s, d)?;
+            if d.used.get() || locked || disturbed {
+                return Err(JsError::Type("Response body has already been consumed".into()));
+            }
+            let stream = body_stream(s, d)?;
+            crate::fetch::text_stream(s, stream)
+        });
         def.method("clone", 0, |s, d, _| {
             let (locked, disturbed) = stream_state(s, d)?;
             if d.used.get() || locked || disturbed {
@@ -196,6 +182,32 @@ impl JsClass for Response {
         });
     }
 }
+/// `response.body`: null, or the one stream this Response hands out (made on
+/// first use over the native body).
+fn body_stream<'s>(s: &Scope<'s>, d: &ResponseData) -> JsResult<Value<'s>> {
+    if d.body.is_null() {
+        return Ok(s.null());
+    }
+    let existing = hidden(s, d, STREAM)?;
+    if !existing.is_undefined() {
+        return Ok(existing);
+    }
+    let page = crate::target::page_of(s)?;
+    let source = s.wrap::<BodySource>(
+        StreamData { body: d.body.clone(), used: d.used.clone(), opened: Cell::new(false) },
+        None,
+    )?;
+    d.source_made.set(true);
+    let read = source.get_atom("read")?;
+    let cancel = source.get_atom("cancel")?;
+    let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
+    let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+    let owner = realm.scope()?;
+    let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
+    s.set_hidden(wrapper, STREAM, stream)?;
+    Ok(stream)
+}
+
 fn status_of(d: &ResponseData) -> u16 {
     if d.origin == Origin::Error || (d.origin == Origin::Network && opaque(d.head.kind)) {
         0
