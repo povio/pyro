@@ -562,7 +562,16 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -996,7 +1322,9 @@
+@@ -992,11 +1318,18 @@
+     height: -moz-fit-content;
+ }
+ 
++/* HTML inertness applies to the attribute owner even with author declarations.
++ * A modal dialog can escape an inherited inert state. */
++[inert] { interactivity: inert !important; }
++dialog:modal { interactivity: auto; }
++
+ dialog:not([open]) {
      display: none;
  }
  
@@ -573,7 +582,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1456,48 @@
+@@ -1128,37 +1461,48 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */

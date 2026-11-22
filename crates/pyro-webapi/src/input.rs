@@ -344,7 +344,7 @@ fn takes_typed_text(dom: &Dom, el: NodeId) -> bool {
 /// a `display: none` subtree nor `visibility: hidden`, as Chrome's
 /// focusable-style check). An `<area>` is rendered through its image map.
 pub(crate) fn is_focusable_area(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
-    if !dom.is_focusable(el).unwrap_or(false) || dom.is_inert(el) {
+    if !dom.is_focusable(el).unwrap_or(false) || layout.style().computed(dom, el).map_or_else(|| dom.is_inert(el), |c| c.inert) {
         return false;
     }
     if dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "area") {

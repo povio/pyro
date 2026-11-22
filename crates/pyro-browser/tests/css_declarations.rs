@@ -1377,3 +1377,22 @@ fn grid_focus_interleaves_boxless_slot_assignments_and_shadow_siblings() {
     assert_eq!([tab(false), tab(false), tab(false), tab(false)], ["b","c","a","end"]);
     assert_eq!([tab(true), tab(true), tab(true), tab(true)], ["a","c","b","start"]);
 }
+
+#[test]
+fn css_inert_inherits_and_explicit_auto_restores_author_inert_descendants() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML='<button id=start>start</button><section id=scope><button id=child>NeedleWord</button></section>';
+        start.focus();
+        scope.style.interactivity='inert';
+        child.focus();
+        const values=[getComputedStyle(child).interactivity,document.activeElement.id,window.find('NeedleWord')];
+        child.style.interactivity='auto';child.focus();
+        values.push(getComputedStyle(child).interactivity,document.activeElement.id,window.find('NeedleWord'));
+        scope.inert=true;scope.style.interactivity='auto';
+        start.focus();child.focus();
+        values.push(getComputedStyle(scope).interactivity,document.activeElement.id);
+        values.join('|')
+    "#);
+    assert_eq!(actual, "inert|start|false|auto|child|true|inert|start");
+}
