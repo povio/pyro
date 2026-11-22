@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8"><title>Infix operator spacing</title><style>math{font-size:36px}</style>
+<div><math><mrow><mi>x</mi><mo>+</mo><mi>y</mi></mrow></math></div>
+<div><math><mrow><mi>x</mi><mo>=</mo><mi>y</mi></mrow></math></div>
+<div><math><mrow><mi>x</mi><mo>,</mo><mi>y</mi></mrow></math></div>
+<div><math><mrow><mi>x</mi><mo lspace="0px" rspace="0px">+</mo><mi>y</mi></mrow></math></div>
+<div><math><mrow><mi>x</mi><mo lspace="12px" rspace="4px">+</mo><mi>y</mi></mrow></math></div>
+<div><math><mrow><mi>x</mi><mo lspace="4px" rspace="12px">+</mo><mi>y</mi></mrow></math></div>
+<pre id="result"></pre><script>
+const marker = '<span style="display:inline-block;width:3px;height:3px"></span>';
+const rows = Array.from(document.querySelectorAll('div'));
+const control = document.createElement('div');
+control.innerHTML = '<span style="display:inline-block;width:42px;height:8px"></span>';
+document.body.appendChild(control);
+rows.push(control);
+const distances = rows.map(row => {
+  row.innerHTML = marker + row.innerHTML + marker;
+  const before = row.firstElementChild.getBoundingClientRect();
+  const after = row.lastElementChild.getBoundingClientRect();
+  return [after.left - before.right, before.width, after.width];
+});
+document.getElementById('result').textContent = JSON.stringify(distances);
+</script>
