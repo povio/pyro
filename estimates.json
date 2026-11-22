@@ -3,32 +3,33 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 568,
+    "macbook_in_scope": 777,
     "studio_in_scope": 111,
     "other_dirs_out_of_scope": 21,
-    "macbook_worker_variants_if_enabled": 184,
+    "macbook_worker_variants_if_enabled": 189,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 857,
+   "distinct_census_pages": 1071,
    "owner_reported_unlisted": 5,
-   "selector_union": 968,
-   "owner_estimate_reduction": 116,
-   "of_which_tentative": 128,
+   "selector_union": 1236,
+   "owner_estimate_reduction": 170,
+   "of_which_tentative": 186,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
     "html/canvas": 345,
-    "html/semantics": 176,
-    "html/interaction": 100,
+    "html/semantics": 337,
+    "html/interaction": 115,
     "referrer-policy": 78,
-    "fetch/api": 54,
+    "html/browsers": 63,
+    "fetch/api": 62,
     "content-security-policy": 52,
     "fetch/fetch-later": 29,
+    "html/webappapis": 23,
+    "html/dom": 22,
     "fetch/content-encoding": 21,
     "scheduler": 19,
-    "html/dom": 13,
     "html/syntax": 12,
-    "html/browsers": 11,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
@@ -39,60 +40,58 @@
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
     "xhr": 2,
+    "html/rendering": 1,
     "IndexedDB": 1,
     "quirks": 1,
-    "html/rendering": 1,
     "svg/styling": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 224,
+    "macbook_in_scope": 146,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 39,
+    "macbook_worker_variants_if_enabled": 34,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 247,
+   "distinct_census_pages": 164,
    "owner_reported_unlisted": 0,
-   "selector_union": 493,
-   "owner_estimate_reduction": 246,
-   "of_which_tentative": 205,
+   "selector_union": 407,
+   "owner_estimate_reduction": 243,
+   "of_which_tentative": 202,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 220,
-    "html/semantics": 112,
-    "html/browsers": 78,
+    "html/semantics": 109,
     "html/syntax": 30,
-    "fetch/api": 23,
-    "html/webappapis": 23,
+    "html/browsers": 26,
+    "fetch/api": 15,
     "html/dom": 7
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 166,
+    "macbook_in_scope": 46,
     "studio_in_scope": 178,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 8,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 249,
+   "distinct_census_pages": 129,
    "owner_reported_unlisted": 0,
-   "selector_union": 332,
-   "owner_estimate_reduction": 83,
-   "of_which_tentative": 89,
+   "selector_union": 161,
+   "owner_estimate_reduction": 32,
+   "of_which_tentative": 34,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 215,
+    "html/semantics": 68,
     "referrer-policy": 36,
-    "html/interaction": 20,
     "content-security-policy": 20,
     "webidl": 19,
-    "html/dom": 9,
     "html/browsers": 5,
+    "html/interaction": 5,
     "svg/path": 4,
     "workers": 3,
     "dom/nodes": 1
@@ -1207,7 +1206,7 @@
    "tentative": 0
   },
   "R-FETCH-8": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
@@ -1277,7 +1276,7 @@
    "tentative": 0
   },
   "R-FETCH-9c": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
@@ -1319,7 +1318,7 @@
    "tentative": 0
   },
   "R-FETCH-15": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 2,
    "out_of_scope_pages": 0,
    "pages": 2,
@@ -1396,28 +1395,28 @@
    "tentative": 0
   },
   "R-HTML-B-1": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 7,
    "out_of_scope_pages": 0,
    "pages": 7,
    "tentative": 0
   },
   "R-HTML-B-2": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
    "tentative": 0
   },
   "R-HTML-B-3": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
    "tentative": 0
   },
   "R-HTML-B-4": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
@@ -1445,7 +1444,7 @@
    "tentative": 0
   },
   "R-HTML-8": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
@@ -1459,14 +1458,14 @@
    "tentative": 0
   },
   "R-HTML-B-7": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 31,
    "out_of_scope_pages": 0,
    "pages": 31,
    "tentative": 0
   },
   "R-HTML-B-8": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
@@ -1501,35 +1500,35 @@
    "tentative": 0
   },
   "R-HTML-B-9": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 6,
    "out_of_scope_pages": 0,
    "pages": 6,
    "tentative": 0
   },
   "R-HTML-B-10": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
    "tentative": 0
   },
   "R-HTML-B-11": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
    "tentative": 0
   },
   "R-HTML-B-12": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 2,
    "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 0
   },
   "R-HTML-B-13": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
@@ -1543,7 +1542,7 @@
    "tentative": 0
   },
   "R-HTML-10": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 59,
    "out_of_scope_pages": 0,
    "pages": 59,
@@ -1564,7 +1563,7 @@
    "tentative": 28
   },
   "R-HTML-13": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 16,
    "out_of_scope_pages": 0,
    "pages": 16,
@@ -1599,56 +1598,56 @@
    "tentative": 0
   },
   "R-HTML-14": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 45,
    "out_of_scope_pages": 0,
    "pages": 45,
    "tentative": 27
   },
   "R-HTML-15": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 28,
    "out_of_scope_pages": 0,
    "pages": 28,
    "tentative": 28
   },
   "R-HTML-16": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 6,
    "out_of_scope_pages": 0,
    "pages": 6,
    "tentative": 0
   },
   "R-HTML-17": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
    "tentative": 0
   },
   "R-HTML-18": {
-   "state": "decision-pending (coordinator)",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 11,
    "out_of_scope_pages": 0,
    "pages": 11,
    "tentative": 0
   },
   "R-HTML-19": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 7,
    "out_of_scope_pages": 0,
    "pages": 7,
    "tentative": 0
   },
   "R-HTML-20": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 2,
    "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 0
   },
   "R-HTML-21": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
@@ -1669,18 +1668,21 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 895,
+ "implemented_total_estimate": 1109,
  "milestones_reached": [
   250,
   500,
-  750
+  750,
+  1000
  ],
- "macbook_in_scope_implemented": 568,
+ "macbook_in_scope_implemented": 777,
  "macbook_in_scope_milestones": [
   100,
   200,
   300,
   400,
-  500
+  500,
+  600,
+  700
  ]
 }
