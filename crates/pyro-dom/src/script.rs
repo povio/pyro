@@ -615,7 +615,9 @@ impl Dom {
         }
         Ok(ScriptInfo {
             kind,
-            src: src.map(str::to_owned),
+            // The URL parser strips surrounding ASCII whitespace: `src="   "` is an empty
+            // source (HTML prepare: `error`), never the document's own URL.
+            src: src.map(|s| s.trim_matches(|c: char| c.is_ascii_whitespace()).to_owned()),
             async_: !svg && e.attr_local(&local_name!("async")).is_some(),
             defer: !svg && e.attr_local(&local_name!("defer")).is_some(),
             nomodule: !svg && (e.attr_local(&local_name!("nomodule")).is_some() || !for_window_onload(e)),
