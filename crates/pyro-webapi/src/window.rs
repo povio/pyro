@@ -267,6 +267,7 @@ where
         |s, w, value| css_namespace_property(s, w.page(), value),
     );
     crate::animations::define_globals(def);
+    crate::reporting::define(def);
     crate::audio_decoder::define(def);
     crate::audio_encoder::define(def);
     crate::video_encoder::define(def);

@@ -235,11 +235,13 @@ pub fn report(page: &Rc<PageDom>, violations: Vec<Violation>, target: Option<Nod
                 s.report_exception(&e);
             }
             // CSP3 "report a violation": the reports follow the event in the same task. A
-            // worker's reports belong with the worker hooks.
+            // worker sends none to endpoints yet (that belongs with the worker hooks), but its
+            // observers get theirs.
+            let (report, targets) = report_parts(&violation);
             if !crate::worker_scope::is_worker(&s) {
-                let (report, targets) = report_parts(&violation);
                 crate::csp_report::report_violation(&page, &report, &targets);
             }
+            crate::reporting::queue_csp_violation(&s, &page, &report);
         }));
     }
 }
