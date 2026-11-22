@@ -40,6 +40,8 @@ pub enum FeatureType {
     Media,
     /// We're parsing a container feature.
     Container,
+    /// pyro: we're parsing a feature of a container query's `scroll-state()` function.
+    ScrollState,
 }
 
 impl FeatureType {
@@ -49,11 +51,12 @@ impl FeatureType {
         #[cfg(feature = "servo")]
         use crate::servo::media_features::MEDIA_FEATURES;
 
-        use crate::stylesheets::container_rule::CONTAINER_FEATURES;
+        use crate::stylesheets::container_rule::{CONTAINER_FEATURES, SCROLL_STATE_FEATURES};
 
         match *self {
             FeatureType::Media => &*MEDIA_FEATURES,
             FeatureType::Container => &CONTAINER_FEATURES,
+            FeatureType::ScrollState => &SCROLL_STATE_FEATURES,
         }
     }
 
@@ -277,7 +280,25 @@ impl ToCss for QueryFeatureExpression {
         W: fmt::Write,
     {
         dest.write_char('(')?;
+        self.write_body(dest)?;
+        dest.write_char(')')
+    }
+}
 
+impl QueryFeatureExpression {
+    /// pyro: the expression without its parentheses, as a bare `<scroll-state-feature>` in
+    /// `scroll-state()` serializes (`scroll-state(scrollable: left)`).
+    pub fn to_css_unparenthesized<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
+        self.write_body(dest)
+    }
+
+    fn write_body<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
         match self.kind {
             QueryFeatureExpressionKind::Empty => self.write_name(dest)?,
             QueryFeatureExpressionKind::Single(ref v)
@@ -305,7 +326,7 @@ impl ToCss for QueryFeatureExpression {
                 }
             },
         }
-        dest.write_char(')')
+        Ok(())
     }
 }
 

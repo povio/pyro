@@ -46,6 +46,9 @@ pub struct NodeTree {
     // workers can ask about the same container concurrently.
     pub(crate) container_query_sizes: Mutex<HashMap<NodeId, ContainerQuerySize>>,
     pub(crate) anchor_query_choices: Mutex<HashMap<NodeId, Option<style::values::specified::position::PositionTryFallbacksItem>>>,
+    /// pyro: the scroll-state query containers Stylo queried, with the edges each could be
+    /// scrolled towards when it last styled (`resolve::refresh_scroll_state_queries`).
+    pub(crate) scroll_state_queries: Mutex<HashMap<NodeId, style::stylesheets::container_rule::ScrollableEdges>>,
     pub(crate) anchor_query_samples: AtomicU64,
     /// Bumped whenever box geometry may have moved (layout ran or a scroll
     /// offset changed). Values derived from `final_layout()` (e.g. hoisted
@@ -86,6 +89,7 @@ impl NodeTree {
             map: SlotMap::with_key(),
             container_query_sizes: Mutex::new(HashMap::new()),
             anchor_query_choices: Default::default(),
+            scroll_state_queries: Default::default(),
             anchor_query_samples: Default::default(),
             geometry_generation: AtomicU64::new(1),
             anchor_clip_steps: AtomicU64::new(0),
@@ -167,6 +171,7 @@ impl NodeTree {
     pub(crate) fn remove(&mut self, id: NodeId) -> Option<Node> {
         self.container_query_sizes.get_mut().unwrap().remove(&id);
         self.anchor_query_choices.get_mut().unwrap().remove(&id);
+        self.scroll_state_queries.get_mut().unwrap().remove(&id);
         self.map.remove(to_key(id))
     }
 

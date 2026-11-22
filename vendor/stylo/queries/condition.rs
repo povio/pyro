@@ -717,6 +717,10 @@ pub enum QueryCondition {
     Style(StyleQuery),
     /// A fallback query, optionally comparing against none or a descriptor.
     Anchored(Option<Option<PositionTryFallbacksItem>>),
+    /// pyro: a `scroll-state()` query: its condition, and whether that is a bare
+    /// `<scroll-state-feature>` (`scroll-state(scrollable: top)`), which serializes without
+    /// parentheses.
+    ScrollState(Box<QueryCondition>, bool),
     /// A -moz-pref() query.
     MozPref(MozPrefFeature),
     /// [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
@@ -759,6 +763,14 @@ impl ToCss for QueryCondition {
                         Some(item) => item.to_css(dest)?,
                         None => dest.write_str("none")?,
                     }
+                }
+                dest.write_char(')')
+            },
+            Self::ScrollState(ref c, bare) => {
+                dest.write_str("scroll-state(")?;
+                match **c {
+                    Self::Feature(ref f) if bare => f.to_css_unparenthesized(dest)?,
+                    ref c => c.to_css(dest)?,
                 }
                 dest.write_char(')')
             },
@@ -809,6 +821,7 @@ impl QueryCondition {
             | Self::GeneralEnclosed(..)
             | Self::Style(..)
             | Self::Anchored(..)
+            | Self::ScrollState(..)
             | Self::MozPref(..) => {},
             Self::Not(ref cond) => cond.visit(visitor),
             Self::Operation(ref conds, _op) => {
@@ -827,6 +840,7 @@ impl QueryCondition {
         self.visit(&mut |condition| match condition {
             Self::Style(..) => result.insert(FeatureFlags::STYLE),
             Self::Anchored(..) => result.insert(FeatureFlags::ANCHORED),
+            Self::ScrollState(..) => result.insert(FeatureFlags::SCROLL_STATE),
             Self::Feature(f) => result.insert(f.feature_flags()),
             Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
             _ => {},
@@ -892,6 +906,8 @@ impl QueryCondition {
             Self::Anchored(ref query) => context.container_info.as_ref().map_or(KleeneValue::Unknown, |info| {
                 query.as_ref().map_or_else(|| info.fallback.is_some(), |value| value == &info.fallback).into()
             }),
+            // pyro: its features read the container's scroll state (`ContainerInfo::scrollable`).
+            Self::ScrollState(ref c, _) => c.matches(context, custom, attribute_tracker),
             Self::MozPref(ref c) => c.matches(context),
             Self::Operation(ref conditions, op) => {
                 debug_assert!(!conditions.is_empty(), "We never create an empty op");
@@ -1029,6 +1045,29 @@ impl OperationParser for QueryCondition {
                             PositionTryFallbacksItem::parse(context, input).map(|item| Some(Some(item)))
                         }) { return Ok(Self::Anchored(query)); }
                         flags.insert(FeatureFlags::ANCHORED);
+                    },
+                    // pyro: CSS Conditional 5 § 7.3: `scroll-state( <scroll-state-query> )`, a
+                    // condition of scroll-state features or a bare one.
+                    "scroll-state" if feature_type == FeatureType::Container
+                        && crate::pref!("layout.css.scroll-state.enabled") =>
+                    {
+                        let query = try_parse_block(context, input, start, start_location, |input| {
+                            if let Ok(feature) = input.try_parse(|input| {
+                                QueryFeatureExpression::parse_in_parenthesis_block(
+                                    context,
+                                    input,
+                                    FeatureType::ScrollState,
+                                )
+                            }) {
+                                return Ok(Self::ScrollState(Box::new(Self::Feature(feature)), true));
+                            }
+                            let condition = Self::parse(context, input, FeatureType::ScrollState)?;
+                            Ok(Self::ScrollState(Box::new(condition), false))
+                        });
+                        if let Some(query) = query {
+                            return Ok(query);
+                        }
+                        flags.insert(FeatureFlags::SCROLL_STATE);
                     },
                     "style" if StyleQuery::enabled(feature_type) => {
                         let query = try_parse_block(context, input, start, start_location, |input| {

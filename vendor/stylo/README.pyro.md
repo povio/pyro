@@ -470,3 +470,14 @@ without a style context (custom properties left as they are): pyro serializes a 
   that resolves at computed-value time gets the NaN adjustment absolute colors get (it was only done for colors the
   parser had resolved), and a NaN hue of `lch()`/`oklch()` computes to 0. WPT css-color `parsing/color-valid-*`,
   `color-computed-lab`; test `color_functions_keep_calc_in_their_specified_value` (pyro-webapi).
+- Round 7 (scroll-state container queries, `scrollable`): `queries/condition.rs` parses
+  `scroll-state( <scroll-state-query> )` in `@container` (`QueryCondition::ScrollState`: a condition of
+  scroll-state features, or a bare feature, which serializes without parentheses, as Chrome) behind
+  `layout.css.scroll-state.enabled` (blitz-dom and pyro-dom turn it on, which also enables
+  `container-type: scroll-state`). Its features come from `FeatureType::ScrollState`
+  (`container_rule.rs` `SCROLL_STATE_FEATURES`: `scrollable`, keyword `queries/values.rs` `Scrollable`). It
+  needs a `scroll-state` container (`FeatureFlags::SCROLL_STATE`) and evaluates against the edges
+  `TElement::query_scrollable_edges` gives (`ScrollableEdges`), logical values by the container's writing mode;
+  blitz-dom records them per container after layout. `scrolled`, `snapped` and `stuck` stay
+  `<general-enclosed>`. `queries/feature_expression.rs` `to_css_unparenthesized`. WPT css-conditional
+  `container-queries/scroll-state/*scrollable*`, `container-type-scroll-state-*`.

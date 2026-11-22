@@ -71,6 +71,7 @@ impl BaseDocument {
         let has_queries = self.stylist.has_container_queries();
         if !has_queries {
             self.nodes.anchor_query_choices.lock().unwrap().clear();
+            self.nodes.scroll_state_queries.lock().unwrap().clear();
         }
         if has_queries || self.has_queried_container_units() {
             // Style-only queries also call the size adapter, including on normal
@@ -96,7 +97,10 @@ impl BaseDocument {
             // New registrations need their first content-box sample. Known
             // hidden containers have enabled axes with None sizes, so clean
             // reads of them must not keep requesting layout.
-            if needs_layout || (geometry_dirty && !self.nodes.anchor_query_choices.lock().unwrap().is_empty()) {
+            // pyro: as do scroll-state queries (their containers' scroll ranges follow layout).
+            let follows_layout = !self.nodes.anchor_query_choices.lock().unwrap().is_empty()
+                || !self.nodes.scroll_state_queries.lock().unwrap().is_empty();
+            if needs_layout || (geometry_dirty && follows_layout) {
                 self.resolve(current_time_for_animations);
             }
         } else {
@@ -241,6 +245,8 @@ impl BaseDocument {
             phase_profile::mark(4, &mut phase_t);
             let changed_containers = self.refresh_container_query_sizes();
             let choices_changed = pass == 0 && self.refresh_anchored_query_choices();
+            // pyro: `scroll-state(scrollable)` follows the scroll ranges of this layout.
+            let scrollable_changed = !container_sizes_changed && pass < 8 && self.refresh_scroll_state_queries();
             let container_sizes_changed = !changed_containers.is_empty();
             // pyro: the active scroll markers and the scroll buttons' states follow the layout
             // and the scroll positions (`layout::scroll_markers`): a change styles them again.
@@ -253,7 +259,7 @@ impl BaseDocument {
             // pyro: `content-visibility: auto` elements skip or render their contents as they are
             // relevant to the user at this layout; a change lays out again.
             let visibility_changed = !container_sizes_changed && pass < 8 && self.update_content_visibility();
-            if (!choices_changed && !container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed && !visibility_changed)
+            if (!choices_changed && !scrollable_changed && !container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed && !visibility_changed)
                 || pass == 31
             {
                 break;
@@ -1044,6 +1050,58 @@ impl BaseDocument {
         });
         drop(choices);
         for id in &changed { self.nodes[*id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree()); }
+        !changed.is_empty()
+    }
+
+    /// pyro: the edges each queried scroll-state container can be scrolled towards at this
+    /// layout (CSS Conditional 5 § 7.3.1: the directions its user-scrollable axes have room to
+    /// scroll from the current position; none for an element that is not a scroll container,
+    /// so `overflow: visible | clip | hidden` never match). A container whose edges changed has
+    /// its subtree styled again; ones that stopped being scroll-state containers are dropped.
+    /// Whether any changed.
+    fn refresh_scroll_state_queries(&mut self) -> bool {
+        use style::stylesheets::container_rule::ScrollableEdges;
+        use style::values::specified::ContainerType;
+        let ids: Vec<NodeId> = self.nodes.scroll_state_queries.lock().unwrap().keys().copied().collect();
+        if ids.is_empty() {
+            return false;
+        }
+        let mut changed = Vec::new();
+        let mut dropped = Vec::new();
+        for id in ids {
+            let container = self.nodes.get(id).filter(|node| node.flags.is_in_document()).and_then(|node| {
+                let style = node.primary_styles()?;
+                style.get_box().slow_clone_container_type().contains(ContainerType::SCROLL_STATE).then_some(())
+            });
+            if container.is_none() {
+                dropped.push(id);
+                continue;
+            }
+            // Within a hundredth of a pixel of an end is at it (fractional scroll ranges).
+            const EPSILON: f64 = 0.01;
+            let (offset, min, max) = self.scroll_state(crate::scrolling::ScrollTarget::Node(id), false);
+            let mut edges = ScrollableEdges::empty();
+            edges.set(ScrollableEdges::LEFT, offset.x > min.x + EPSILON);
+            edges.set(ScrollableEdges::RIGHT, offset.x < max.x - EPSILON);
+            edges.set(ScrollableEdges::TOP, offset.y > min.y + EPSILON);
+            edges.set(ScrollableEdges::BOTTOM, offset.y < max.y - EPSILON);
+            let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
+            if let Some(previous) = queries.get_mut(&id)
+                && *previous != edges
+            {
+                *previous = edges;
+                changed.push(id);
+            }
+        }
+        {
+            let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
+            for id in &dropped {
+                queries.remove(id);
+            }
+        }
+        for id in &changed {
+            self.nodes[*id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
+        }
         !changed.is_empty()
     }
 

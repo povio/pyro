@@ -8,11 +8,11 @@
 
 use crate::computed_value_flags::ComputedValueFlags;
 use crate::dom::{AttributeTracker, TElement};
-use crate::logical_geometry::{LogicalSize, WritingMode};
+use crate::logical_geometry::{LogicalSize, PhysicalSide, WritingMode};
 use crate::parser::ParserContext;
 use crate::properties::ComputedValues;
 use crate::queries::feature::{AllowsRanges, Evaluator, FeatureFlags, QueryFeatureDescription};
-use crate::queries::values::Orientation;
+use crate::queries::values::{Orientation, Scrollable};
 use crate::queries::{FeatureType, QueryCondition};
 use crate::selector_map::{PrecomputedHashMap, PrecomputedHashSet};
 use crate::shared_lock::{
@@ -275,6 +275,11 @@ impl ContainerCondition {
         let available_axes = container_type_axes(container_type, wm);
         let anchored = self.flags.contains(FeatureFlags::ANCHORED);
         if anchored && !container_type.contains(ContainerType::ANCHORED) { return TraversalResult::InProgress; }
+        // pyro: a `scroll-state()` query needs a scroll-state query container.
+        let scroll_state = self.flags.contains(FeatureFlags::SCROLL_STATE);
+        if scroll_state && !container_type.contains(ContainerType::SCROLL_STATE) {
+            return TraversalResult::InProgress;
+        }
         if !available_axes.contains(self.flags.container_axes()) {
             return TraversalResult::InProgress;
         }
@@ -293,6 +298,7 @@ impl ContainerCondition {
             element: potential_container,
             info: ContainerInfo {
                 fallback: if anchored { potential_container.query_anchored_fallback() } else { None },
+                scrollable: if scroll_state { potential_container.query_scrollable_edges() } else { ScrollableEdges::empty() },
                 size,
                 wm,
                 inherited_style: {
@@ -446,6 +452,8 @@ impl ContainerCondition {
 #[derive(Clone)]
 pub struct ContainerInfo {
     pub(crate) fallback: Option<crate::values::specified::position::PositionTryFallbacksItem>,
+    /// pyro: the edges a scroll-state container can be scrolled towards (`scrollable`).
+    pub(crate) scrollable: ScrollableEdges,
     size: Size2D<Option<Au>>,
     wm: WritingMode,
     inherited_style: Option<Arc<ComputedValues>>,
@@ -505,6 +513,72 @@ fn eval_orientation(context: &Context, value: Option<Orientation>) -> KleeneValu
     };
     KleeneValue::from(Orientation::eval(size, value))
 }
+
+/// pyro: the physical edges a scroll container can be scrolled towards from its current scroll
+/// position, which the `scrollable` scroll-state feature queries (CSS Conditional 5 § 7.3.1). An
+/// element that is not a user-scrollable scroll container has none.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ScrollableEdges(u8);
+bitflags! {
+    impl ScrollableEdges: u8 {
+        /// Scrolls towards the top: the vertical offset is past its minimum.
+        const TOP = 1 << (PhysicalSide::Top as u8);
+        /// Scrolls towards the right: the horizontal offset is short of its maximum.
+        const RIGHT = 1 << (PhysicalSide::Right as u8);
+        /// Scrolls towards the bottom: the vertical offset is short of its maximum.
+        const BOTTOM = 1 << (PhysicalSide::Bottom as u8);
+        /// Scrolls towards the left: the horizontal offset is past its minimum.
+        const LEFT = 1 << (PhysicalSide::Left as u8);
+    }
+}
+
+impl ScrollableEdges {
+    fn side(side: PhysicalSide) -> Self {
+        Self::from_bits_truncate(1 << (side as u8))
+    }
+}
+
+/// pyro: `scroll-state(scrollable[: <value>])`, against the container's writing mode for the
+/// logical values. In a boolean context, any edge.
+fn eval_scrollable(context: &Context, value: Option<Scrollable>) -> KleeneValue {
+    let Some(info) = context.container_info.as_ref() else {
+        return KleeneValue::Unknown;
+    };
+    let (edges, wm) = (info.scrollable, info.wm);
+    let block = ScrollableEdges::side(wm.block_start_physical_side())
+        | ScrollableEdges::side(wm.block_end_physical_side());
+    let inline = ScrollableEdges::side(wm.inline_start_physical_side())
+        | ScrollableEdges::side(wm.inline_end_physical_side());
+    let wanted = match value {
+        None => return KleeneValue::from(!edges.is_empty()),
+        Some(Scrollable::None) => return KleeneValue::from(edges.is_empty()),
+        Some(Scrollable::Top) => ScrollableEdges::TOP,
+        Some(Scrollable::Right) => ScrollableEdges::RIGHT,
+        Some(Scrollable::Bottom) => ScrollableEdges::BOTTOM,
+        Some(Scrollable::Left) => ScrollableEdges::LEFT,
+        Some(Scrollable::BlockStart) => ScrollableEdges::side(wm.block_start_physical_side()),
+        Some(Scrollable::BlockEnd) => ScrollableEdges::side(wm.block_end_physical_side()),
+        Some(Scrollable::InlineStart) => ScrollableEdges::side(wm.inline_start_physical_side()),
+        Some(Scrollable::InlineEnd) => ScrollableEdges::side(wm.inline_end_physical_side()),
+        Some(Scrollable::X) => ScrollableEdges::LEFT | ScrollableEdges::RIGHT,
+        Some(Scrollable::Y) => ScrollableEdges::TOP | ScrollableEdges::BOTTOM,
+        Some(Scrollable::Block) => block,
+        Some(Scrollable::Inline) => inline,
+    };
+    KleeneValue::from(edges.intersects(wanted))
+}
+
+/// pyro: the features of a container query's `scroll-state()` function.
+/// https://drafts.csswg.org/css-conditional-5/#scroll-state-container
+pub static SCROLL_STATE_FEATURES: std::sync::LazyLock<[QueryFeatureDescription; 1]> =
+    std::sync::LazyLock::new(|| {
+        [feature!(
+            crate::Atom::from("scrollable"),
+            AllowsRanges::No,
+            keyword_evaluator!(eval_scrollable, Scrollable),
+            FeatureFlags::SCROLL_STATE,
+        )]
+    });
 
 /// https://drafts.csswg.org/css-contain-3/#container-features
 ///
