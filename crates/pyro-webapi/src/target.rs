@@ -972,7 +972,9 @@ pub(crate) fn set_event_handler(
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
     let value_key = format!("__lpHandler_{ty}");
     let slot_key = format!("__lpHandlerSlot_{ty}");
-    let value = if value.as_object().is_some_and(|o| o.is_function()) { value } else { s.null() };
+    // EventHandler is [LegacyTreatNonObjectAsNull]: any object is kept
+    // (and registers the listener), a non-callable one is never called.
+    let value = if value.as_object().is_some() { value } else { s.null() };
     let slot = handler_slot(s, target, object, ty)?;
     handler_set(s, object, &value_key, value)?;
     if let Some(slot) = slot {
@@ -995,7 +997,7 @@ pub(crate) fn set_event_handler(
     let window_error = ty == "error" && target.page.is_window_key(target.key);
     let callback = s.function("eventHandler", move |s, this, args| {
         if let Some(object) = this.as_object() {
-            if let Some(handler) = handler_get(s, object, &value_key)?.and_then(|v| v.as_object()) {
+            if let Some(handler) = handler_get(s, object, &value_key)?.and_then(|v| v.as_object()).filter(|h| h.is_function()) {
                 let event = args.get(0);
                 // HTML "special error event handling" (OnErrorEventHandler):
                 // the Window's `onerror` gets an ErrorEvent's fields as five
