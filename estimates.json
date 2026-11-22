@@ -46,17 +46,17 @@
     "html/obsolete": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "fetch/orb": 2,
     "html/user-activation": 2,
+    "fetch/orb": 2,
     "xhr": 2,
     "fetch/redirect-navigate": 1,
     "quirks": 1,
-    "fetch/redirects": 1,
     "fetch/content-type": 1,
     "svg/styling": 1,
-    "IndexedDB": 1,
+    "fetch/redirects": 1,
+    "fetch/security": 1,
     "html/select": 1,
-    "fetch/security": 1
+    "IndexedDB": 1
    }
   },
   "in_progress": {
@@ -164,7 +164,7 @@
    "tentative": 0
   },
   "Q03b": {
-   "state": "deferred",
+   "state": "implemented-unbuilt",
    "in_scope_pages": null,
    "out_of_scope_pages": null,
    "pages": null,
