@@ -1306,9 +1306,21 @@ impl Dom {
         }
         Ok(self.option_text_idx(o))
     }
+    /// HTML `option.text`: the option's descendant text, leaving out the contents of HTML and
+    /// SVG `script` elements, with ASCII whitespace stripped and collapsed.
     fn option_text_idx(&self, o: u32) -> String {
         let mut s = String::new();
-        self.collect_text(o, &mut s);
+        let mut cur = self.n(o).first_child;
+        while cur != NIL {
+            let node = self.n(cur);
+            if let NodeKind::Text(t) | NodeKind::CData(t) = &node.kind {
+                s.push_str(t);
+            }
+            let script = node.element().is_some_and(|e| {
+                &*e.name.local == "script" && (e.is_html() || e.name.ns == markup5ever::ns!(svg))
+            });
+            cur = if script { self.following_skipping(cur, o) } else { self.following_in(cur, o) };
+        }
         s.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
     }
     pub fn option_text(&self, opt: NodeId) -> DomResult<String> {
