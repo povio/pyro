@@ -186,6 +186,72 @@ fn before_after(r: &RangeData, s: &Scope<'_>, a: &Args<'_>, start: bool, after: 
     set_point(r, parent, if after { idx + 1 } else { idx }, start)
 }
 
+/// Render just the selected cells, retaining empty column positions. Lists
+/// and other block content provide line breaks in place of a cell separator.
+fn selected_table_text(page: &PageDom, dom: &Dom, start: Point, end: Point) -> Option<String> {
+    let whole = (start.0 == end.0 && end.1.checked_sub(start.1) == Some(1))
+        .then(|| dom.child_at(start.0, start.1).ok().flatten()).flatten()
+        .filter(|&n| dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "table"));
+    let table = if let Some(table) = whole { table } else {
+        let first = editing::enclosing_html(dom, start.0, &["table"])?;
+        if editing::enclosing_html(dom, end.0, &["table"]) != Some(first)
+            || editing::enclosing_html(dom, start.0, &["td", "th"]) == editing::enclosing_html(dom, end.0, &["td", "th"]) {
+            return None;
+        }
+        first
+    };
+    let layout = page.layout();
+    if !matches!(layout.computed_style_value(dom, table, "display").as_str(), "table" | "inline-table") { return None; }
+    let mut out = String::new();
+    if whole.is_some() && dom.prev_sibling(table).ok()?.is_some() { out.push('\n'); }
+    let mut previous = None;
+    for cell in dom.descendants(table).ok()? {
+        if !dom.element(cell).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "td" | "th")) { continue; }
+        if editing::enclosing_html(dom, cell, &["table"]) != Some(table) { continue; }
+        if compare_boundary_points_dom(dom, (cell, editing::len(dom, cell)), start) < 0
+            || compare_boundary_points_dom(dom, (cell, 0), end) > 0 { continue; }
+        let row = dom.parent_element(cell).ok()??;
+        if layout.computed_style_value(dom, cell, "display") != "table-cell"
+            || !editing::rendered(page, dom, row) { continue; }
+        let visible = editing::rendered(page, dom, cell);
+        let first = dom.first_child(cell).ok()?;
+        let last = dom.last_child(cell).ok()?;
+        let block_child = |n| dom.element(n).is_ok() &&
+            matches!(layout.computed_style_value(dom, n, "display").as_str(), "block" | "table" | "list-item");
+        if let Some((prior_row, breaks)) = previous {
+            if prior_row != row || breaks > 0 {
+                if !out.ends_with('\n') { out.push('\n'); }
+                if breaks == 2 { out.push('\n'); }
+            } else {
+                out.push('\t');
+                if visible && first.is_some_and(block_child) { out.push('\n'); }
+            }
+        }
+        if visible {
+            // Interior cells use the same rendered contents as innerText.
+            if !dom.contains(cell, start.0).ok()? && !dom.contains(cell, end.0).ok()? {
+                out.push_str(&dom.inner_text(layout.style(), cell).ok()?);
+            } else {
+                for node in dom.descendants(cell).ok()? {
+                    if !editing::is_text(dom, node) || !editing::rendered(page, dom, node) { continue; }
+                    let len = editing::len(dom, node);
+                    if compare_boundary_points_dom(dom, (node, len), start) <= 0
+                        || compare_boundary_points_dom(dom, (node, 0), end) >= 0 { continue; }
+                    let from = if node == start.0 { start.1 } else { 0 };
+                    let to = if node == end.0 { end.1 } else { len };
+                    out.push_str(&dom.substring_data(node, from, to.saturating_sub(from)).ok()?);
+                }
+            }
+        }
+        let breaks = if visible && last.is_some_and(block_child) {
+            if last.is_some_and(|n| editing::local(dom, n) == "p") { 2 } else { 1 }
+        } else if visible && last.is_some_and(|n| editing::local(dom, n) == "br") { 1 } else { 0 };
+        previous = Some((row, breaks));
+    }
+    if whole.is_some() { out.push('\n'); }
+    Some(out)
+}
+
 /// Text content of the range (Range.toString()).
 fn range_text(r: &RangeData, rendered: bool) -> JsResult<String> {
     let page = r.page();
@@ -194,6 +260,9 @@ fn range_text(r: &RangeData, rendered: bool) -> JsResult<String> {
     let root = dom.root_node(sn, false).js()?;
     if root != dom.root_node(en, false).js()? {
         return Ok(String::new());
+    }
+    if rendered {
+        if let Some(text) = selected_table_text(&page, &dom, (sn, so), (en, eo)) { return Ok(text); }
     }
     let mut out = String::new();
     for n in std::iter::once(root).chain(dom.descendants(root).js()?) {

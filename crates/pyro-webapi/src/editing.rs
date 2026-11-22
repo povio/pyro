@@ -372,6 +372,13 @@ pub(crate) fn is_block(dom: &Dom, n: NodeId) -> bool {
     BLOCKS.contains(&local(dom, n).as_str())
 }
 
+pub(crate) fn enclosing_html(dom: &Dom, mut node: NodeId, names: &[&str]) -> Option<NodeId> {
+    loop {
+        if dom.element(node).is_ok_and(|e| e.is_html() && names.contains(&&**e.local_name())) { return Some(node); }
+        node = dom.parent_element(node).ok()??;
+    }
+}
+
 /// The block containing `node` inside `host` (the host itself when none).
 pub(crate) fn block_of(dom: &Dom, node: NodeId, host: NodeId) -> NodeId {
     let mut cur = if is_text(dom, node) { dom.parent(node).ok().flatten() } else { Some(node) };

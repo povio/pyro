@@ -2443,15 +2443,30 @@ fn listify_bare_text(
     Some(((content, from), (content, to)))
 }
 
+fn local_html(dom: &Dom, node: NodeId, name: &str) -> bool {
+    dom.element(node).is_ok_and(|el| el.is_html() && &**el.local_name() == name)
+}
+
 /// A table selected by its outer boundaries is a single list item.
 /// A selection inside the cells formats their contents independently:
 /// the row must keep its cells even when the selection spans rows.
-fn listify_table_selection(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<(Point, Point)> {
+fn listify_table_selection(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<(Point, Point)> {
     let doc = dom.node_document(host).ok()?;
     if start.0 == end.0 && end.1.checked_sub(start.1) == Some(1) {
         if let Some(table) = dom.child_at(start.0, start.1).ok()?.filter(|&n|
             dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "table")
                 && editing::editing_host(dom, n) == Some(host)) {
+            let item = start.0;
+            if local_html(dom, item, "li") && dom.child_count(item).ok()? == 1 {
+                let list = dom.parent_element(item).ok()??;
+                if local_html(dom, list, tag) && list != host && dom.child_count(list).ok()? == 1 {
+                    let mut points = [start, end];
+                    indentation::unwrap(dom, item, &mut points)?;
+                    indentation::unwrap(dom, list, &mut points)?;
+                    return Some((points[0], points[1]));
+                }
+                return None;
+            }
             let list = dom.create_element(doc, tag).ok()?;
             let item = dom.create_element(doc, "li").ok()?;
             dom.insert_before(start.0, list, Some(table)).ok()?;
@@ -2463,23 +2478,56 @@ fn listify_table_selection(dom: &mut Dom, host: NodeId, tag: &str, start: Point,
 
     let first = editing::deep_forward(dom, start);
     let last = if start == end { first } else { editing::deep_backward(dom, end) };
-    let is_cell = |n| dom.element(n).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "td" | "th"));
-    if !is_cell(editing::block_of(dom, first.0, host)) || !is_cell(editing::block_of(dom, last.0, host)) {
-        return None;
+    let first_cell = editing::enclosing_html(dom, first.0, &["td", "th"])?;
+    let last_cell = editing::enclosing_html(dom, last.0, &["td", "th"])?;
+    let table = editing::enclosing_html(dom, first_cell, &["table"])?;
+    if editing::enclosing_html(dom, last_cell, &["table"])? != table || !dom.contains(host, table).ok()? { return None; }
+    // Include intervening cells even if they contain a BR or no text.
+    // A nested table is a single piece of content in its outer cell.
+    let mut containers = Vec::new();
+    let mut selected = false;
+    for cell in dom.descendants(table).ok()? {
+        if !local_html(dom, cell, "td") && !local_html(dom, cell, "th") { continue; }
+        if editing::enclosing_html(dom, cell, &["table"]) != Some(table) { continue; }
+        selected |= cell == first_cell;
+        if selected && editing::editing_host(dom, cell) == Some(host) && editing::rendered(page, dom, cell) {
+            let child = dom.first_child(cell).ok()?;
+            let container = child.filter(|&c| dom.child_count(cell).ok() == Some(1)
+                && (local_html(dom, c, "p") || local_html(dom, c, "div"))).unwrap_or(cell);
+            let list = dom.first_child(container).ok()?.filter(|&l| dom.child_count(container).ok() == Some(1)
+                && (local_html(dom, l, "ol") || local_html(dom, l, "ul")));
+            let list_item = list.and_then(|l| dom.first_child(l).ok().flatten().filter(|&item|
+                dom.child_count(l).ok() == Some(1) && local_html(dom, item, "li")).map(|item| (l, item)));
+            if list.is_some() && list_item.is_none() { return None; }
+            containers.push((container, list_item));
+        }
+        if cell == last_cell { break; }
     }
-    let cells = selected_blocks(dom, host, first, last);
-    if !cells.iter().all(|&n| is_cell(n)) { return None; }
-    for cell in cells {
-        if editing::editing_host(dom, cell) != Some(host) { continue; }
+    let remove = !containers.is_empty() && containers.iter().all(|(_, list)| list.is_some_and(|(l, _)| local_html(dom, l, tag)));
+    let mut points = [first, last];
+    for (container, existing) in containers {
+        if let Some((list, item)) = existing {
+            if remove {
+                indentation::unwrap(dom, item, &mut points)?;
+                indentation::unwrap(dom, list, &mut points)?;
+            } else if !local_html(dom, list, tag) {
+                indentation::rename(dom, list, tag, &mut points)?;
+            }
+            continue;
+        }
         let list = dom.create_element(doc, tag).ok()?;
         let item = dom.create_element(doc, "li").ok()?;
-        while let Some(child) = dom.first_child(cell).ok()? {
+        while let Some(child) = dom.first_child(container).ok()? {
             dom.append_child(item, child).ok()?;
         }
+        if dom.child_count(item).ok()? == 0 {
+            let br = dom.create_element(doc, "br").ok()?;
+            dom.append_child(item, br).ok()?;
+        }
         dom.append_child(list, item).ok()?;
-        dom.append_child(cell, list).ok()?;
+        dom.append_child(container, list).ok()?;
     }
-    Some((first, last))
+    Some((points[0], points[1]))
 }
 
 /// insertOrderedList / insertUnorderedList: the selected blocks become
@@ -2501,12 +2549,10 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
                 editing::set_selection(page, a, b);
                 return;
             }
-            if ancestor_named(&dom, start.0, host, &["ol", "ul"]).is_none() {
-                if let Some((a, b)) = listify_table_selection(&mut dom, host, tag, start, end) {
-                    drop(dom);
-                    editing::set_selection(page, a, b);
-                    return;
-                }
+            if let Some((a, b)) = listify_table_selection(page, &mut dom, host, tag, start, end) {
+                drop(dom);
+                editing::set_selection(page, a, b);
+                return;
             }
             let in_list = ancestor_named(&dom, start.0, host, &[tag]);
             if let Some(list) = in_list {
