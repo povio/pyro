@@ -539,6 +539,45 @@ impl Dom {
         Ok(sink.out)
     }
 
+    /// pyro: the `href` of an SVG `<image>`, `<feImage>` or `<use>` element `n` that names another
+    /// resource (not an element of the document, not a `data:` URL), resolved against its
+    /// document's base URL with the query in the document's encoding, as Chromium resolves it
+    /// (HTML "encoding-parse a URL"; an unmappable character becomes an escaped `&#...;`). `None`
+    /// when the document's output encoding is UTF-8: the renderer resolves the value as it is.
+    fn svg_reference_in_encoding(&self, n: u32, value: &str) -> Option<String> {
+        let value = value.trim();
+        if value.is_empty() || value.starts_with('#') || value.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("data:"))
+        {
+            return None;
+        }
+        let doc = self.id_of(self.n(n).owner_doc);
+        let enc = encoding_rs::Encoding::for_label(self.document_data(doc).ok()?.charset.as_bytes())?.output_encoding();
+        if enc == encoding_rs::UTF_8 {
+            return None;
+        }
+        let base = url::Url::parse(self.document_base_url(doc).ok()?).ok()?;
+        let encode: &dyn Fn(&str) -> Cow<'_, [u8]> = &|query| {
+            let mut encoder = enc.new_encoder();
+            let mut out = Vec::new();
+            let mut rest = query;
+            loop {
+                let needed =
+                    encoder.max_buffer_length_from_utf8_without_replacement(rest.len()).unwrap_or(rest.len() * 4 + 8);
+                out.reserve(needed);
+                let (result, read) = encoder.encode_from_utf8_to_vec_without_replacement(rest, &mut out, true);
+                rest = &rest[read..];
+                match result {
+                    encoding_rs::EncoderResult::InputEmpty => return Cow::Owned(out),
+                    encoding_rs::EncoderResult::OutputFull => {}
+                    encoding_rs::EncoderResult::Unmappable(c) => {
+                        out.extend_from_slice(format!("%26%23{}%3B", c as u32).as_bytes());
+                    }
+                }
+            }
+        };
+        url::Url::options().base_url(Some(&base)).encoding_override(Some(encode)).parse(value).ok().map(String::from)
+    }
+
     /// The nodes [`Dom::render_html`] would serialize, keyed (see
     /// [`RenderTree`]).
     pub fn render_tree(&self, doc: NodeId, opts: &RenderHtml<'_>) -> DomResult<RenderTree> {
@@ -722,9 +761,20 @@ impl Dom {
                                 continue;
                             }
                         }
+                        // pyro: an SVG reference to another resource the renderer fetches, resolved
+                        // with its query in the document's encoding (`svg_reference_in_encoding`).
+                        let encoded = (e.name.ns == ns!(svg)
+                            && matches!(local, "image" | "feImage" | "use")
+                            && name == "href"
+                            && (a.name.ns == ns!() || a.name.ns == ns!(xlink)))
+                        .then(|| self.svg_reference_in_encoding(n, &a.value))
+                        .flatten();
                         attrs.push(RAttr {
                             name: Cow::Borrowed(&a.name),
-                            value: Cow::Borrowed(&a.value),
+                            value: match encoded {
+                                Some(url) => Cow::Owned(url),
+                                None => Cow::Borrowed(&a.value),
+                            },
                             valueless: false,
                         });
                     }

@@ -1128,10 +1128,16 @@ impl Browser {
             Some(v) if v.trim().is_empty() => Source::None,
             Some(v) => {
                 let dom = bindings.dom.borrow();
-                url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
-                    .ok()
-                    .and_then(|b| b.join(v.trim()).ok())
-                    .map_or(Source::Invalid, |u| Source::Url(u.to_string()))
+                match crate::loader::node_base_url(&dom, node) {
+                    // HTML "encoding-parse a URL", as Chromium resolves SVG references: the query
+                    // in the document's encoding.
+                    Some(_) => url::Url::parse(&pyro_webapi::html::resolve_url(&dom, node, v.trim()))
+                        .map_or(Source::Invalid, |u| Source::Url(u.to_string())),
+                    None => url::Url::parse(&base)
+                        .ok()
+                        .and_then(|b| b.join(v.trim()).ok())
+                        .map_or(Source::Invalid, |u| Source::Url(u.to_string())),
+                }
             }
         };
         drop(state);
