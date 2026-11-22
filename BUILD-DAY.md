@@ -158,6 +158,7 @@ Build the JSC archive through patch **0041**:
 - 83e7fe8fe: noscript/template now appear in the render tree (display:none) — structural selectors (:nth-child, +, ~) count them in rendering (spec/Chrome); check reftests that relied on the old omission; render_html.rs expectations updated.
 - 8901cc5b4 regression guards (Studio 2026-11-23: none expected to flip, do not credit): html/semantics/embedded-content/the-iframe-element/sandbox-inherit-to-blank-document-unsandboxed.html (keep its 1 passing subtest; still needs MacBook CSP-sandbox-opaque-at-commit), html/browsers/origin/inheritance/about-blank-iframe.html and about-srcdoc.html (must stay unchanged; commit touches the initial about:blank/srcdoc commit path).
 - bb6043563: a dialog whose first focus candidate is a delegatesFocus shadow host now focuses inside the host (spec), not the dialog itself. Build-day: also check focus-after-close and top-layer-removal-invalidates-ua-styles (owner thinks already fixed; not credited).
+- e65964a0b (trusted mousedown/mouseup/click blocked at disabled form controls) must keep excluding fieldset/option/optgroup: d7a9963e6 (click() on disabled fieldset dispatches) and the native-click half of fieldset-event-propagation.tentative depend on it (…be6eb5a1).
 
 Additional watchlist notes:
 - 2026-11-22 coordinator: history navigation rate limit risk removed (cc806a11f adds an off switch used by the Playwright drop-in); R-HTML-25 now 7 (recorded on the row).
