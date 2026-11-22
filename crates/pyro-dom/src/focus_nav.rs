@@ -145,7 +145,7 @@ impl<'a> FocusNavigation<'a> {
             let container = self.id_of(owner);
             if let (Some(style), Some(source)) = (layout.style().stylo_style(self.dom, container), layout.synced_geometry_source(self.dom)) {
                 let position = style.get_position();
-                let reverse_line = position.flex_wrap == Wrap::WrapReverse;
+                let reverse_line = position.flex_wrap.contains(Wrap::WRAP_REVERSE);
                 let reverse_item = matches!(position.flex_direction, Direction::RowReverse | Direction::ColumnReverse);
                 for (key, line, item) in source.flex_reading_positions(crate::snapshot::render_key(container)) {
                     placements.insert(key, (if reverse_line { usize::MAX - line } else { line },
