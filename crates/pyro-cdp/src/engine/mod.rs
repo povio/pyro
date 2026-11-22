@@ -1164,12 +1164,13 @@ impl EngineHost {
     /// the native viewport controlled by Emulation device metrics.
     fn window_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<serde_json::Value>> {
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-        let viewport = self.thread.browser.page(state.id).ok_or_else(|| CdpError::server("page is gone"))?.viewport();
-        let (width, height) = (viewport.width, viewport.height);
+        let page = self.thread.browser.page(state.id).ok_or_else(|| CdpError::server("page is gone"))?;
+        let (width, height) = (page.viewport().width, page.viewport().height);
+        let (left, top) = page.main_frame.page_dom.as_ref().map_or((0, 0), |dom| dom.screen_position());
         match action {
             "getWindowForTarget" => {
                 let bounds = state.window_bounds.clone().unwrap_or_else(|| {
-                    serde_json::json!({ "left": 0, "top": 0, "width": width, "height": height, "windowState": "normal" })
+                    serde_json::json!({ "left": left, "top": top, "width": width, "height": height, "windowState": "normal" })
                 });
                 Ok(Some(serde_json::json!({ "windowId": cmd.page, "bounds": bounds })))
             }
@@ -1186,7 +1187,7 @@ impl EngineHost {
                 }
                 // Merge like Chrome: unspecified fields keep their values.
                 let mut bounds = state.window_bounds.clone().unwrap_or_else(|| {
-                    serde_json::json!({ "left": 0, "top": 0, "width": width, "height": height, "windowState": "normal" })
+                    serde_json::json!({ "left": left, "top": top, "width": width, "height": height, "windowState": "normal" })
                 });
                 for (k, v) in p.bounds {
                     if matches!(k.as_str(), "left" | "top" | "width" | "height" | "windowState") {

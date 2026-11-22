@@ -1135,7 +1135,7 @@ impl PageDom {
         self.window_chrome.set((is_popup, left, top));
     }
 
-    pub(crate) fn screen_position(&self) -> (i32, i32) {
+    pub fn screen_position(&self) -> (i32, i32) {
         let (_, left, top) = self.window_chrome.get();
         (left, top)
     }
