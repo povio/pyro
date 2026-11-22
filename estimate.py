@@ -95,11 +95,21 @@ def main(ledger,out):
     for i,(st,pg,r) in per.items():
       if st in states and pg is not None and isinstance(r.get('est_pages_owner'),int) and r['est_pages_owner']<len(pg): adj+=len(pg)-r['est_pages_owner']
     for p in u: byd['/'.join(p.split('/')[:2]) if p.split('/')[0] in('html','fetch','svg','dom') else p.split('/')[0]]+=1
-    res['tiers'][t]={'distinct_census_pages':len(u)-adj+unl,'owner_reported_unlisted':unl,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'studio_css_listed_distinct':len(cssu),'by_dir':dict(byd.most_common())}
+    MB=('html','fetch','IndexedDB','encoding'); SD=('css','referrer-policy','content-security-policy')
+    mb_list=sum(1 for x in u if x.split('/')[0] in MB); oth=len(u)-mb_list-sum(1 for x in u if x.split('/')[0] in SD); sd_list=len(u)-mb_list-oth
+    adj_mb=0; adj_oth=0
+    for i,(st,pg,r) in per.items():
+      if st in states and pg is not None and isinstance(r.get('est_pages_owner'),int) and r['est_pages_owner']<len(pg):
+        d=len(pg)-r['est_pages_owner']
+        if all(x.split('/')[0] in MB for x in pg): adj_mb+=d
+        else: adj_oth+=d
+    scope={'macbook_in_scope':mb_list-adj_mb+unl,'studio_in_scope':sd_list+len(cssu)+css,'other_dirs_out_of_scope':oth-adj_oth}
+    res['tiers'][t]={'scope':scope,'distinct_census_pages':len(u)-adj+unl,'owner_reported_unlisted':unl,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'studio_css_listed_distinct':len(cssu),'by_dir':dict(byd.most_common())}
   res['per_brief']={i:{'state':st,'pages':(len(pg) if pg is not None else None),'tentative':(sum(1 for x in pg if 'tentative' in x) if pg is not None else None)} for i,(st,pg,r) in per.items()}
   cum=res['tiers']['implemented']['distinct_census_pages']+res['tiers']['implemented']['studio_css_reported_pages_not_deduped']+res['tiers']['implemented']['studio_css_listed_distinct']
   res['implemented_total_estimate']=cum
   res['milestones_reached']=[m for m in (250,500,750,1000) if cum>=m]
+  mbi=res['tiers']['implemented']['scope']['macbook_in_scope']; res['macbook_in_scope_implemented']=mbi; res['macbook_in_scope_milestones']=[m for m in range(100,1100,100) if mbi>=m]
   json.dump(res,open(out,'w'),indent=1)
   print(json.dumps({k:v for k,v in res.items() if k!='per_brief'},indent=1)[:2500])
   print({i:v for i,v in res['per_brief'].items() if v['pages'] is not None})

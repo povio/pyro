@@ -2,6 +2,11 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
+   "scope": {
+    "macbook_in_scope": 354,
+    "studio_in_scope": 38,
+    "other_dirs_out_of_scope": 9
+   },
    "distinct_census_pages": 363,
    "owner_reported_unlisted": 0,
    "selector_union": 393,
@@ -17,72 +22,82 @@
     "FileAPI": 4,
     "fetch/api": 4,
     "fetch/data-urls": 3,
-    "encoding": 2,
     "xhr": 2,
-    "svg/styling": 1,
-    "html/rendering": 1,
+    "encoding": 2,
     "dom/collections": 1,
-    "quirks": 1
+    "svg/styling": 1,
+    "quirks": 1,
+    "html/rendering": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 511,
+   "scope": {
+    "macbook_in_scope": 454,
+    "studio_in_scope": 4,
+    "other_dirs_out_of_scope": 126
+   },
+   "distinct_census_pages": 580,
    "owner_reported_unlisted": 0,
-   "selector_union": 525,
-   "owner_estimate_reduction": 14,
-   "of_which_tentative": 102,
+   "selector_union": 638,
+   "owner_estimate_reduction": 58,
+   "of_which_tentative": 103,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 177,
+    "html/semantics": 248,
     "html/canvas": 138,
+    "fetch/fetch-later": 39,
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
-    "scroll-animations": 17,
     "html/dom": 17,
+    "scroll-animations": 17,
     "html/interaction": 14,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
     "selection": 7,
     "shadow-dom": 7,
     "navigation-api": 6,
-    "uievents": 5,
     "html/editing": 5,
+    "uievents": 5,
     "intersection-observer": 5,
+    "fetch/api": 5,
     "svg/types": 4,
     "event-timing": 3,
-    "mathml": 3,
     "inert": 3,
     "close-watcher": 3,
-    "dom/nodes": 2,
+    "mathml": 3,
     "resource-timing": 2,
-    "html/rendering": 2,
-    "soft-navigation-heuristics": 2,
-    "fetch/fetch-later": 2,
     "svg/animations": 2,
-    "pointerlock": 1,
+    "soft-navigation-heuristics": 2,
+    "dom/nodes": 2,
+    "html/rendering": 2,
     "custom-elements": 1,
     "html/browsers": 1,
-    "document-picture-in-picture": 1,
-    "editing": 1
+    "editing": 1,
+    "pointerlock": 1,
+    "document-picture-in-picture": 1
    }
   },
   "queued": {
-   "distinct_census_pages": 628,
+   "scope": {
+    "macbook_in_scope": 105,
+    "studio_in_scope": 308,
+    "other_dirs_out_of_scope": 301
+   },
+   "distinct_census_pages": 592,
    "owner_reported_unlisted": 75,
-   "selector_union": 593,
-   "owner_estimate_reduction": 40,
-   "of_which_tentative": 25,
+   "selector_union": 517,
+   "owner_estimate_reduction": 0,
+   "of_which_tentative": 24,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "svg/animations": 229,
     "referrer-policy": 114,
     "content-security-policy": 72,
-    "html/semantics": 71,
     "intersection-observer": 36,
-    "fetch/api": 27,
+    "fetch/api": 22,
     "webidl": 19,
     "workers": 12,
     "fetch/content-encoding": 6,
@@ -534,7 +549,7 @@
    "tentative": 0
   },
   "P13": {
-   "state": "proposed",
+   "state": "claimed",
    "pages": 5,
    "tentative": 0
   },
@@ -594,12 +609,12 @@
    "tentative": 0
   },
   "F07": {
-   "state": "proposed",
+   "state": "claimed",
    "pages": 40,
    "tentative": 1
   },
   "F08": {
-   "state": "proposed",
+   "state": "claimed",
    "pages": 31,
    "tentative": 0
   },
@@ -712,10 +727,21 @@
    "state": "proposed",
    "pages": 3,
    "tentative": 3
+  },
+  "R-FETCH-fetchLater": {
+   "state": "claimed",
+   "pages": 39,
+   "tentative": 0
   }
  },
  "implemented_total_estimate": 401,
  "milestones_reached": [
   250
+ ],
+ "macbook_in_scope_implemented": 354,
+ "macbook_in_scope_milestones": [
+  100,
+  200,
+  300
  ]
 }
