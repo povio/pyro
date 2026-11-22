@@ -697,6 +697,27 @@ fn removing_or_moving_an_element_cancels_its_transitions() {
 }
 
 #[test]
+fn a_later_list_item_decides_and_a_stale_running_transition_is_canceled() {
+    // WPT css-transitions zero-duration-multiple-transition, transition-behavior,
+    // CSSTransition-canceling, CSSTransition-ready: `color 1s, color 0s` starts nothing; a running
+    // transition whose property changes to a value it cannot interpolate to (no new transition)
+    // is canceled, and its object goes idle with `ready` rejected by an `AbortError`.
+    let (mut t, root) = transition_page("#z { color: red; transition-property: color, color; transition-duration: 1s, 0s }");
+    eval(&root, "globalThis.z = el('z'); getComputedStyle(z).color; z.style.color = 'green'; 0");
+    assert_eq!(eval(&root, "z.getAnimations().length + ' ' + getComputedStyle(z).color"), "0 rgb(0, 128, 0)");
+    eval(
+        &root,
+        "globalThis.m = el('m'); m.style.marginLeft = '0px'; getComputedStyle(m).marginLeft;
+         m.style.transition = 'margin-left 100s'; m.style.marginLeft = '100px'; getComputedStyle(m).marginLeft;
+         globalThis.anim = m.getAnimations()[0]; globalThis.why = '';
+         anim.ready.then(() => why = 'fulfilled', e => why = e.name);
+         m.style.marginLeft = 'auto'; getComputedStyle(m).marginLeft; 0",
+    );
+    run_until(&mut t, &root, "why != ''");
+    assert_eq!(eval(&root, "why + ' ' + anim.playState + ' ' + m.getAnimations().length"), "AbortError idle 0");
+}
+
+#[test]
 fn review_a_reversed_transition_cancels_and_runs_again() {
     let (mut t, root) = transition_page(".t { transition: width 300ms; width: 100px; height: 10px } .w { width: 200px }");
     eval(&root, "globalThis.a = el('a', 't'); a.offsetHeight; 0");
