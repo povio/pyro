@@ -318,6 +318,7 @@ impl PageHooks for Hooks {
                 }
             }
         }
+        let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
         // HTML "navigate": a GET of the document's own URL with a fragment is
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
@@ -326,12 +327,15 @@ impl PageHooks for Hooks {
         // the target names (`<a target>`, `<form target>`). Its `navigate`
         // event fires and its fragment navigations stay in its document, as
         // HTML "navigate" runs on the target navigable.
+        // With noopener, HTML skips named navigable lookup but still gives the
+        // newly created top-level traversable the requested target name.
+        let lookup_target = request.target.as_deref().filter(|_| !request.window_features.noopener);
         let mut cross_origin_target = false;
         let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| {
             let key = if own_frame {
                 Some(page)
             } else {
-                request.target.as_deref().and_then(|t| host.named_frame(page, t))
+                lookup_target.and_then(|t| host.named_frame(page, t))
             };
             cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
             key.and_then(|key| host.nav(key))
@@ -374,7 +378,8 @@ impl PageHooks for Hooks {
             }) {
                 return;
             }
-            let named = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
+            let named = request.target.as_deref().filter(|_| !request.window_features.noopener)
+                .and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
             // HTML "navigate to a javascript: URL": the script runs in the
             // target document, which stays (replacing it with a string result
             // is not supported).
@@ -405,6 +410,8 @@ impl PageHooks for Hooks {
                             opener: request.opener,
                             ticket: request.popup,
                             window_features: request.window_features,
+                            window_name: request.target.unwrap_or_default(),
+                            user_gesture,
                             referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
                             referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
                         },

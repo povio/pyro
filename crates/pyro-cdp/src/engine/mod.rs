@@ -360,6 +360,7 @@ pub(crate) struct Session {
 }
 
 struct PopupOpen {
+    window_name: String,
     ticket: Option<std::rc::Rc<pyro_webapi::PopupTicket>>,
     features: pyro_webapi::window_features::WindowFeatures,
     referrer: Option<String>,
@@ -1560,7 +1561,7 @@ impl Host for EngineHost {
             (self.pages.get(&opener).map(|s| s.id), self.pages.get(&page).map(|s| s.id))
         {
             if let Some(creation) = &creation {
-                self.thread.browser.configure_popup(id, opener_id, creation.features);
+                self.thread.browser.configure_popup(id, opener_id, &creation.window_name, creation.features);
             }
             self.thread.browser.adopt_popup(id, opener_id, ticket.clone());
         }

@@ -209,6 +209,32 @@ fn stand_in_storage_before_the_page_exists_is_the_popups_area() {
 }
 
 #[test]
+fn named_noopener_creates_a_fresh_context_with_the_requested_name() {
+    let (mut t, events) = setup();
+    let a = open_page(&mut t, "http://app.test/a");
+    eval(&t, a, "let frame = document.createElement('iframe'); frame.name = 'Report'; document.body.append(frame)");
+    settle(&mut t);
+    for (i, feature) in ["noopener", "noreferrer"].into_iter().enumerate() {
+        assert_eq!(eval(&t, a, &format!("String(window.open('b', 'Report', '{feature}'))")), "null");
+        settle(&mut t);
+        let requests: Vec<_> = events.0.borrow().iter().filter_map(|(_, event)| match event {
+            PageEvent::PopupRequested { window_name, window_features, opener, ticket, .. } => {
+                assert!(!*opener && ticket.is_none());
+                Some((window_name.clone(), *window_features))
+            }
+            _ => None,
+        }).collect();
+        assert_eq!(requests.len(), i + 1);
+        let (name, features) = &requests[i];
+        assert_eq!(name, "Report");
+        let child = t.browser.create_page_in(DEFAULT_CONTEXT).unwrap();
+        t.browser.configure_popup(child, a, name, *features);
+        t.browser.adopt_popup(child, a, None);
+        assert_eq!(eval(&t, child, "[name,opener].join()"), "Report,");
+    }
+}
+
+#[test]
 fn noopener_and_cross_origin_popups() {
     let (mut t, events) = setup();
     let a = open_page(&mut t, "http://app.test/a");

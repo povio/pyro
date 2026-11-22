@@ -7,6 +7,10 @@ pub struct WindowFeatures {
     pub noopener: bool,
     pub noreferrer: bool,
     pub is_popup: bool,
+    resizing_disabled: bool,
+    /// CDP distinguishes an explicitly requested zero size from an omitted feature.
+    width_specified: bool,
+    height_specified: bool,
     /// Requested viewport dimensions. An absent, invalid or zero size leaves it unchanged.
     pub width: Option<i32>,
     pub height: Option<i32>,
@@ -16,6 +20,32 @@ pub struct WindowFeatures {
 }
 
 impl WindowFeatures {
+    /// CDP Page.windowOpen describes the parsed features of the new window.
+    pub fn enabled_features(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        let geometry = [
+            ("left", self.left),
+            ("top", self.top),
+            ("width", self.width_specified.then_some(self.width.unwrap_or(0))),
+            ("height", self.height_specified.then_some(self.height.unwrap_or(0))),
+        ];
+        for (name, value) in geometry {
+            if let Some(value) = value {
+                names.push(format!("{name}={value}"));
+            }
+        }
+        if !self.is_popup {
+            names.extend(["menubar", "toolbar", "status", "scrollbars"].map(str::to_owned));
+        }
+        if !self.resizing_disabled {
+            names.push("resizable".into());
+        }
+        if self.noopener {
+            names.push("noopener".into());
+        }
+        names
+    }
+
     pub fn parse(input: &str) -> Self {
         let input = input.to_ascii_lowercase();
         let mut features = tokenize(&input);
@@ -38,6 +68,9 @@ impl WindowFeatures {
             noopener,
             noreferrer,
             is_popup,
+            resizing_disabled: !is_set("resizable", true),
+            width_specified: features.contains_key("width"),
+            height_specified: features.contains_key("height"),
             width: geometry("width").filter(|&n| n != 0),
             height: geometry("height").filter(|&n| n != 0),
             left: geometry("left"),
@@ -115,6 +148,15 @@ mod tests {
         assert_eq!(WindowFeatures::parse("width=,height=0").width, None);
         assert!(WindowFeatures::parse("popup\u{000b}=yes").is_popup); // unknown name requests a popup
         assert!(!WindowFeatures::parse("popup=\u{000b}yes").is_popup);
+    }
+
+    #[test]
+    fn protocol_reports_enabled_chrome_and_explicit_geometry() {
+        assert_eq!(WindowFeatures::parse("width=0,height=0").enabled_features(), ["width=0", "height=0", "resizable"]);
+        assert_eq!(WindowFeatures::parse("innerWidth=-404,innerHeight=405.5,left=12").enabled_features(),
+            ["left=12", "width=-404", "height=405", "resizable"]);
+        assert_eq!(WindowFeatures::parse("noreferrer").enabled_features(),
+            ["menubar", "toolbar", "status", "scrollbars", "resizable", "noopener"]);
     }
 
     #[test]

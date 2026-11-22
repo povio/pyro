@@ -912,7 +912,7 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
     let opener = ticket.is_some();
     page.navigate(crate::page::NavigationRequest {
         url,
-        target: Some(if named && no_opener { "_blank".into() } else { target.clone() }),
+        target: Some(target.clone()),
         method: "GET".into(),
         body: None,
         content_type: None,

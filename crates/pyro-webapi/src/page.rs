@@ -406,6 +406,7 @@ pub struct PageDom {
     completely_loaded: Cell<bool>,
     /// When trusted input last reached the document (transient activation).
     input_activation: Cell<Option<std::time::Instant>>,
+    debugger_gesture: Cell<bool>,
     /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
@@ -1001,6 +1002,7 @@ impl PageDom {
             web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
+            debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_allowed: Cell::new(true),
             paint_worklet: RefCell::new(None),
@@ -1340,6 +1342,24 @@ impl PageDom {
             peer.sticky_activation.set(true);
         }
     }
+    /// CDP reports an evaluation with userGesture as a gesture source when
+    /// that evaluation opens a window. Keep automation separate from trusted
+    /// input used by navigation and the DOM user-activation APIs.
+    pub fn with_debugger_gesture<R>(&self, run: impl FnOnce() -> R) -> R {
+        struct Restore<'a>(&'a Cell<bool>, bool);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) { self.0.set(self.1); }
+        }
+
+        self.notify_user_activation();
+        let _restore = Restore(&self.debugger_gesture, self.debugger_gesture.replace(true));
+        run()
+    }
+
+    pub fn window_open_user_gesture(&self) -> bool {
+        self.has_transient_activation() || self.debugger_gesture.get()
+    }
+
     /// HTML "sticky activation".
     pub fn has_sticky_activation(&self) -> bool {
         self.sticky_activation.get()

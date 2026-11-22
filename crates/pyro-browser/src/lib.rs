@@ -357,6 +357,8 @@ pub enum PageEvent {
         opener: bool,
         ticket: Option<std::rc::Rc<pyro_webapi::PopupTicket>>,
         window_features: pyro_webapi::window_features::WindowFeatures,
+        window_name: String,
+        user_gesture: bool,
         referrer: Option<String>,
         referrer_policy: Option<pyro_net::ReferrerPolicy>,
     },
@@ -632,6 +634,8 @@ pub struct Page {
     bypass_service_worker: bool,
     request_defaults: pyro_net::RequestDefaults,
     viewport: pyro_dom::media::Viewport,
+    /// Unemulated viewport selected when this desktop window was created.
+    native_viewport: pyro_dom::media::Viewport,
     pending_resize: Option<LoaderId>,
 }
 
@@ -1622,6 +1626,7 @@ impl Browser {
             cache_disabled: false,
             bypass_service_worker: false,
             request_defaults: Default::default(),
+            native_viewport: viewport.clone(),
             viewport,
             pending_resize: None,
         });
@@ -1673,17 +1678,24 @@ impl Browser {
 
     /// Initialize the browser chrome and viewport of a newly created top-level
     /// context even when the initiating script requested no opener handle.
-    pub fn configure_popup(&mut self, page: PageId, opener: PageId, features: pyro_webapi::window_features::WindowFeatures) {
+    pub fn configure_popup(&mut self, page: PageId, opener: PageId, window_name: &str, features: pyro_webapi::window_features::WindowFeatures) {
         let Some(mut viewport) = self.page(opener).map(|p| frames::popup_viewport(&p.viewport)) else { return };
         let chrome = frames::apply_window_features(&mut viewport, features);
         if let Some(p) = self.page_mut(page) {
+            // The target name belongs to the new navigable independently of
+            // whether it has an opener. Only "_blank" denotes an unnamed one.
+            if !window_name.eq_ignore_ascii_case("_blank") {
+                p.main_frame.name = window_name.to_owned();
+            }
             let mut settings = p.frames.settings.borrow_mut();
+            p.native_viewport = viewport.clone();
             settings.window_chrome = chrome;
             settings.viewport = viewport.clone();
             if let Some(dom) = &p.main_frame.page_dom {
                 dom.set_window_chrome(chrome.0, chrome.1, chrome.2);
             }
         }
+        self.sync_root(page);
         let _ = self.set_viewport(page, viewport);
     }
 

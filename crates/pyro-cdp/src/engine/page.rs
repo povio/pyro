@@ -784,12 +784,21 @@ impl EngineHost {
                     self.event("Page.frameDetached", &json!({ "frameId": frame_id.0, "reason": "remove" }), s);
                 }
             }
-            PageEvent::PopupRequested { url, opener, ticket, window_features, referrer, referrer_policy, .. } => {
+            PageEvent::PopupRequested { url, opener, ticket, window_features, window_name, user_gesture, referrer, referrer_policy, .. } => {
+                let params = json!({
+                    "url": url,
+                    "windowName": window_name,
+                    "windowFeatures": window_features.enabled_features(),
+                    "userGesture": user_gesture,
+                });
+                for session in &all {
+                    self.event("Page.windowOpen", &params, session);
+                }
                 self.popup_requests.push(crate::target::PopupRequest {
                     opener: page,
                     url,
                     opener_access: opener,
-                    handle: Some(std::rc::Rc::new(super::PopupOpen { ticket, features: window_features, referrer, referrer_policy })),
+                    handle: Some(std::rc::Rc::new(super::PopupOpen { window_name, ticket, features: window_features, referrer, referrer_policy })),
                 });
             }
             PageEvent::PopupCommand { popup, command } => {
