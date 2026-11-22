@@ -4569,7 +4569,16 @@ impl Layout {
                 let item =
                     parent.is_some_and(|p| matches!(self.computed(dom, p).display, Display::Flex | Display::Grid));
                 let out_of_flow = matches!(position(), Position::Absolute | Position::Fixed);
-                (!item || out_of_flow).then(|| "0px".into())
+                // A box that is not rendered (display:none, or inside a display:none subtree) is no flex or
+                // grid item either: Chromium reports `auto` only for a box that lays out as one (WPT css-grid
+                // grid-item-min-auto-size-001).
+                let mut unrendered = self.style.has_display_none(dom, el);
+                let mut ancestor = dom.check(el).ok().and_then(|child| crate::style::flat_tree_parent_element(dom, child));
+                while let Some(a) = ancestor.filter(|_| !unrendered) {
+                    unrendered = self.style.has_display_none(dom, dom.id_of(a));
+                    ancestor = crate::style::flat_tree_parent_element(dom, a);
+                }
+                (!item || out_of_flow || unrendered).then(|| "0px".into())
             }
             "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") => {
                 self.resolved_inset(dom, el, name, value, position()).or_else(|| clamp_layout_units(value))

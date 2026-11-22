@@ -725,3 +725,18 @@ fn svg_presentation_attributes_participate_in_the_cascade() {
     p.dom.borrow_mut().remove_attribute(literal, "font-weight").unwrap();
     assert_eq!(p.value("#literal", "font-weight"), "700");
 }
+
+#[test]
+fn auto_min_size_of_an_unrendered_grid_child_resolves_to_zero() {
+    // WPT css-grid grid-item-min-auto-size-001: only a box laid out as a grid item keeps `auto`.
+    let page = Page::new(r#"<!doctype html><style>.g{display:grid} .m{min-width:auto;min-height:auto}</style>
+        <div class=g><div id=item class=m></div></div>
+        <div style="display:none"><div class=g><div id=inside class=m></div></div></div>
+        <div class=g><div style="display:contents"><div id=contents class=m></div></div></div>
+        <div class=g><div id=none class=m style="display:none"></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    for (selector, expected) in [("#item", "auto"), ("#inside", "0px"), ("#contents", "auto"), ("#none", "0px")] {
+        assert_eq!(used(selector, "min-width"), expected, "{selector}");
+        assert_eq!(used(selector, "min-height"), expected, "{selector}");
+    }
+}
