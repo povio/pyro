@@ -814,6 +814,8 @@ impl FrameHost {
         let lid = LoaderId(format!("{:032X}", self.next()));
         let origin = if sandbox.opaque { "null".into() } else { ancestor.origin.clone() };
         let nav = PageNav::new_child(&self.root_nav, self.page, fid.clone(), self.sched.clone(), self.observer.clone());
+        // The container's referrer policy when the initial about:blank document's navigation began.
+        nav.snapshot_container_policy(crate::loader::element_referrer_policy(&self.dom.borrow(), node));
         let frame = Frame {
             id: fid.clone(),
             parent: Some(ancestor.id.clone()),
@@ -991,7 +993,14 @@ impl FrameHost {
         let mut children = self.children.borrow_mut();
         let Some(child) = children.get_mut(&id) else { return };
         child.pending_frame_attributes += 1;
+        // HTML "beginning navigation" snapshots the container's referrer policy now (its
+        // `location.ancestorOrigins` masking), not when the queued navigation runs.
+        let owner = child.main_frame.owner;
+        let nav = child.nav.clone();
         drop(children);
+        if let Some(owner) = owner {
+            nav.snapshot_container_policy(crate::loader::element_referrer_policy(&self.dom.borrow(), owner));
+        }
         self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
             if let Some(mut doc) = b.doc_mut(key) {
                 doc.pending_frame_attributes -= 1;
