@@ -128,10 +128,11 @@ pub fn record_transition_boxes(
 /// pyro: HTML-in-Canvas `drawElementImage`: the element `id` and its subtree alone (nothing under,
 /// around or above it, no canvas background), its own transform cancelled and its border box's top
 /// left at the origin, at `scale` device pixels per CSS px. Returns the scene with the border box's
-/// size in device pixels; `None` without such an element or with a transform that cannot be undone.
-/// It paints a child of a canvas with content=drawable, which is not painted in place
+/// size in device pixels, and whether the paint may hold what a page must not read back
+/// ([`subtree_may_taint`]); `None` without such an element or with a transform that cannot be
+/// undone. It paints a child of a canvas with content=drawable, which is not painted in place
 /// (`render_element_clipped`), as the root of the paint.
-pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> Option<(Scene, kurbo::Size)> {
+pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> Option<(Scene, kurbo::Size, bool)> {
     #[cfg(feature = "svg")]
     let _raster_scope = anyrender_svg::PageRasterScope::enter(&doc.raster_budget);
     doc.ensure_paint_tree();
@@ -147,7 +148,51 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
     painter.top_layer_root.set(Some(id));
     let mut scene = Scene::new();
     painter.render_element(&mut scene, id, parent, kurbo::Rect::new(-1e7, -1e7, 1e7, 1e7));
-    Some((scene, kurbo::Size::new(size.width as f64 * scale, size.height as f64 * scale)))
+    let taints = subtree_may_taint(doc, id, &scene);
+    Some((scene, kurbo::Size::new(size.width as f64 * scale, size.height as f64 * scale), taints))
+}
+
+/// pyro: HTML-in-Canvas privacy: whether the paint of `id`'s subtree (`scene`) may show content a
+/// page must not read back from a canvas: any image (an `<img>`, a CSS image, a video frame, a
+/// nested canvas, an SVG `<image>` or `feImage`), whose origin this cannot tell, or a nested
+/// document, an embedded plugin or media element, or a visited link (whose colours reveal
+/// history). The canvas drawn into is then no longer origin-clean.
+fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene) -> bool {
+    use anyrender::Paint;
+    use anyrender::filters::FilterEffect;
+    use anyrender::recording::RenderCommand;
+    let image = |paint: &Paint| !matches!(paint, Paint::Solid(_) | Paint::Gradient(_));
+    let filter_image = |filter: &Option<std::sync::Arc<anyrender::Filter>>| {
+        filter.as_ref().is_some_and(|f| f.nodes().iter().any(|node| matches!(node.effect, FilterEffect::Image(_))))
+    };
+    let in_scene = scene.commands.iter().any(|command| match command {
+        RenderCommand::Fill(fill) => image(&fill.brush),
+        RenderCommand::Stroke(stroke) => image(&stroke.brush),
+        RenderCommand::GlyphRun(run) => image(&run.brush),
+        RenderCommand::PushLayer(layer) => filter_image(&layer.filter) || filter_image(&layer.backdrop_filter),
+        _ => false,
+    });
+    if in_scene {
+        return true;
+    }
+    let mut stack = vec![id];
+    while let Some(n) = stack.pop() {
+        let Some(node) = doc.get_node(n) else { continue };
+        if doc.is_visited_link(n) {
+            return true;
+        }
+        if let Some(element) = node.element_data()
+            && (element.sub_doc_data().is_some()
+                || matches!(&*element.name.local, "iframe" | "frame" | "embed" | "object" | "video" | "audio"))
+        {
+            return true;
+        }
+        stack.extend(node.children.iter().copied());
+        if let Some(children) = node.layout_children.borrow().as_ref() {
+            stack.extend(children.iter().copied());
+        }
+    }
+    false
 }
 
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded

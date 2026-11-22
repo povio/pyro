@@ -241,6 +241,9 @@ pub(crate) struct ElementImage {
     pub height: f64,
     /// The pixels (`None`: nothing to paint, an empty box).
     pub pixels: Option<(u32, u32, Vec<u8>)>,
+    /// The paint may hold content the page must not read back (an image of unknown origin, a
+    /// nested document, a visited link): drawing it makes the canvas not origin-clean.
+    pub taints: bool,
 }
 
 fn invalid_state(message: &str) -> pyro_js::JsError {
@@ -288,6 +291,8 @@ pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId)
     }
     let rect = layout.bounding_client_rect(&dom, element);
     let key = pyro_dom::snapshot::render_key(element);
-    let pixels = layout.synced_geometry_source(&dom).and_then(|source| source.element_image(key, 1.0));
-    Ok(ElementImage { width: rect.width, height: rect.height, pixels })
+    let painted = layout.synced_geometry_source(&dom).and_then(|source| source.element_image(key, 1.0));
+    let taints = painted.as_ref().is_some_and(|p| p.3);
+    let pixels = painted.map(|(w, h, data, _)| (w, h, data));
+    Ok(ElementImage { width: rect.width, height: rect.height, pixels, taints })
 }

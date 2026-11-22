@@ -715,9 +715,11 @@ pub trait GeometrySource {
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// HTML-in-Canvas `drawElementImage`: the element `key` painted alone (its subtree only, its
     /// own transform cancelled, its border box's top left at the origin) as of the last sync, as
-    /// straight-alpha RGBA at `scale` device pixels per CSS px: (width, height, pixels). `None`
-    /// (the default): no renderer, or no such element with an area to paint.
-    fn element_image(&self, _key: u64, _scale: f64) -> Option<(u32, u32, Vec<u8>)> {
+    /// straight-alpha RGBA at `scale` device pixels per CSS px: (width, height, pixels, taints),
+    /// `taints` when it may hold content a page must not read back (an image of unknown origin, a
+    /// nested document, a visited link). `None` (the default): no renderer, or no such element
+    /// with an area to paint.
+    fn element_image(&self, _key: u64, _scale: f64) -> Option<(u32, u32, Vec<u8>, bool)> {
         None
     }
     fn anchor_scroll_shift(&self, _key: u64, _scroll: &dyn Fn(Option<u64>) -> (f64, f64), _sticky: &dyn Fn(u64) -> (f64, f64)) -> (f64, f64) { (0.0, 0.0) }

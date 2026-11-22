@@ -1653,6 +1653,11 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     };
     c.sync_size();
     let state = c.state.borrow().clone();
+    // Privacy: what the page must not read back (an image of unknown origin, a nested
+    // document, a visited link) leaves the canvas not origin-clean, as a cross-origin drawImage.
+    if image.taints {
+        c.clean.set(false);
+    }
     if let Some((pw, ph, rgba)) = image.pixels {
         // Painted in sRGB, converted to the canvas's color space; the source rectangle maps
         // onto the pixels (one per CSS px, rounded up).
