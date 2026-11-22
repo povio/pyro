@@ -989,6 +989,10 @@ pub(crate) struct DocumentLoad {
     /// child text content an inline one had at its end tag (HTML takes the
     /// source text there; later changes to the element do not count).
     stylesheet_blocked_script: Option<(Rc<ResourceNode>, Option<String>)>,
+    /// The frame's `PageNav::stop_count` when this load began: a different
+    /// count means `document.open()` aborted it (HTML "abort" stops "the end",
+    /// so no deferred script of it runs and it fires no DOMContentLoaded).
+    stops: u64,
     deferred: VecDeque<Rc<RefCell<PendingScript>>>,
     /// A deferred module is evaluating; wait for its promise.
     awaiting_module: bool,
@@ -1822,7 +1826,9 @@ impl Browser {
         p.main_frame.dom = Some(dom.clone());
         p.main_frame.document = Some(doc);
         p.nav.set_document(Some((dom.clone(), doc)));
+        let stops = p.nav.stop_count();
         p.load = Some(DocumentLoad {
+            stops,
             loader_id,
             url: p.main_frame.base_url.clone(),
             dom,
@@ -2627,7 +2633,14 @@ impl Browser {
         loop {
             self.drain_dom_resources(page);
             let css_blocked = self.stylesheets_block_scripts(page);
+            let opened = self.doc(page).is_some_and(|d| d.load.as_ref().is_some_and(|l| l.stops != d.nav.stop_count()));
             let Some(mut load) = self.load_mut(page) else { return };
+            // A script (a deferred one included) opened the document: "the end"
+            // of this load stops; close() fires the opened document's events.
+            if opened {
+                load.deferred.clear();
+                return;
+            }
             if !load.parsing_done || load.awaiting_module || load.dcl_fired {
                 return;
             }
