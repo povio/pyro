@@ -115,12 +115,13 @@ impl Format {
 pub(crate) struct TypingValues {
     range: (Point, Point),
     values: Vec<Format>,
+    decoration: Option<super::decoration::Lines>,
     toggles: Vec<(&'static str, bool)>,
 }
 
 fn pending_at(slot: &mut Option<TypingValues>, range: (Point, Point)) -> &mut TypingValues {
     if slot.as_ref().is_none_or(|v| v.range != range) {
-        *slot = Some(TypingValues { range, values: Vec::new(), toggles: Vec::new() });
+        *slot = Some(TypingValues { range, values: Vec::new(), decoration: None, toggles: Vec::new() });
     }
     slot.as_mut().unwrap()
 }
@@ -128,6 +129,22 @@ fn pending_at(slot: &mut Option<TypingValues>, range: (Point, Point)) -> &mut Ty
 pub(super) fn toggle_state(page: &PageDom, range: (Point, Point), tag: &str) -> Option<bool> {
     let slot = page.typing_values.borrow();
     slot.as_ref().filter(|v| v.range == range)?.toggles.iter().find(|(t, _)| *t == tag).map(|(_, on)| *on)
+}
+
+pub(super) fn decoration_state(page: &PageDom, point: Point, tag: &str) -> Option<bool> {
+    let slot = page.typing_values.borrow();
+    let pending = slot.as_ref().filter(|p| p.range == (point, point))?.decoration?;
+    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), point.0);
+    Some(pending.reported(authored).has(tag))
+}
+
+pub(super) fn toggle_decoration(page: &PageDom, point: Point, tag: &str) {
+    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), point.0);
+    let mut slot = page.typing_values.borrow_mut();
+    let pending = pending_at(&mut slot, (point, point));
+    let mut lines = pending.decoration.map_or(authored, |d| d.reported(authored));
+    lines.toggle(tag);
+    pending.decoration = Some(lines);
 }
 
 pub(super) fn set_toggle(page: &PageDom, range: (Point, Point), tag: &'static str, enabled: bool) {
@@ -532,7 +549,8 @@ pub(crate) fn format_typed(
         };
         enabled != active
     });
-    if pending.values.is_empty() && pending.toggles.is_empty() {
+    let decoration = pending.decoration.filter(|&lines| lines != super::decoration::Lines::at(page, dom, end.0));
+    if pending.values.is_empty() && pending.toggles.is_empty() && decoration.is_none() {
         *slot = None;
         return Some(end);
     }
@@ -551,6 +569,7 @@ pub(crate) fn format_typed(
             wrap(dom, typed, fmt)?;
         }
     }
+    if let Some(lines) = decoration { super::decoration::apply(page, dom, host, typed, lines)?; }
     for &(tag, enabled) in &pending.toggles {
         let (property, value) = match tag {
             "sub" => ("vertical-align", "sub"),

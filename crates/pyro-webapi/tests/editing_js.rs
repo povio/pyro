@@ -320,6 +320,16 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn collapsed_decoration_commands_share_the_typed_run() {
+    let e = env("<body><div id=ed contenteditable>abc</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); getSelection().collapse(ed.firstChild,1); document.execCommand('styleWithCSS',false,true)");
+    assert_eq!(eval(r, "[document.execCommand('underline'), document.execCommand('strikethrough'), document.queryCommandState('underline'), document.queryCommandState('strikethrough'), ed.innerHTML, document.queryCommandEnabled('undo')].join()"), "true,true,true,true,abc,false");
+    assert_eq!(eval(r, "document.execCommand('insertText',false,'X'); ed.innerHTML"), "a<span style=\"text-decoration-line: underline line-through;\">X</span>bc");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML"), "abc");
+}
+
+#[test]
 fn collapsed_script_commands_format_only_new_text() {
     let e = env("<body><div id=ed contenteditable>a<sup>bc</sup>d</div></body>");
     let r = &e.main;
