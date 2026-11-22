@@ -170,13 +170,13 @@ pub(super) fn change_selected(
     let Ok(Some(carrier)) = dom.parent_element(*text) else { return false };
     let name = editing::local(&dom, carrier);
     if carrier == host || !matches!(name.as_str(), "s" | "u" | "span") { return false; }
-    let style = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok().flatten().unwrap_or(""));
+    let Some(inline_style) = dom.get_attribute(carrier, "style").ok().flatten() else { return false };
+    let style = DeclarationBlock::parse(inline_style);
     let authored = style.value("text-decoration-line");
-    if authored.is_empty() { return false; }
-    // CSS-mode toggles produce a SPAN with an explicit line longhand. A
-    // repeated command must remove only its target from that same line list.
-    if name == "span" && (!dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
-        || !Lines::parse(&authored).has(tag)) { return false; }
+    // Removing an override can leave a semantic U or S with an empty style
+    // attribute. Its UA line then supplies the starting state for a repeat.
+    if authored.is_empty() && (name == "span" || !inline_style.trim().is_empty()) { return false; }
+    if name == "span" && !dom.document_data(page.document()).is_ok_and(|d| d.style_with_css) { return false; }
     let mut wanted = Lines::parse(&page.layout().computed_style_value(&dom, carrier, "text-decoration-line"));
     wanted.toggle(tag);
     let backward = editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
