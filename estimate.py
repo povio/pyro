@@ -45,7 +45,7 @@ SEL={
  'F08':[r'^html/semantics/scripting-1/the-script-element/moving-between-documents/'],
  'F09':[r'^html/semantics/scripting-1/the-script-element/execution-timing/'],
  'F10':[r'^html/syntax/speculative-parsing/generated/'],
- 'OWN-blob-textstream':[r'(?i)textstream'],
+ 'OWN-blob-textstream':[r'^FileAPI/.*[Tt]ext[Ss]tream'],
 }
 MACHINE_DIRS={'MacBook':('html/','fetch/','IndexedDB/','encoding/'),'Studio':('css/','referrer-policy/','content-security-policy/')}
 def load():
