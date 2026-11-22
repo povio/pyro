@@ -962,11 +962,11 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
     }
     // HTML "the rules for choosing a navigable": a document with the sandboxed auxiliary
     // navigation browsing context flag (a sandbox without `allow-popups`) gets no new window,
-    // and window.open returns null.
-    if !same_context && page.popups_sandboxed() {
-        return Ok(s.null());
-    }
-    let (ticket, popup) = if same_context || no_opener {
+    // and window.open returns null. A name that finds an existing frame still navigates it (the
+    // embedder looks the name up first and blocks only a new window), so the navigation is still
+    // asked for, without a popup ticket.
+    let sandboxed = !same_context && page.popups_sandboxed();
+    let (ticket, popup) = if same_context || no_opener || sandboxed {
         (None, None)
     } else {
         let name = if named { target.clone() } else { String::new() };
@@ -989,6 +989,9 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
         form_entries: None,
         replace: false,
     });
+    if sandboxed {
+        return Ok(s.null());
+    }
     match popup {
         Some(popup) => {
             if named {
