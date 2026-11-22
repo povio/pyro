@@ -2940,3 +2940,9 @@ Test `block_end_trims_self_collapsing_boxes_nested_at_the_bottom` (pyro-render).
   widest and at least the select; the select's scrollable overflow takes them in, so they are painted
   and hit with it. The select's boxes are built again when the state flips. A closed one is unchanged.
   WPT html `customizable-select/select-mouse-behavior` and the other picker pages.
+
+## `:empty` with comments and empty text
+
+`src/stylo.rs`, `is_empty`: an element whose children are all comments or empty text nodes (an empty CDATA
+section, a script's `createTextNode('')`) matches `:empty` (Selectors 4 § 14.2, as Chrome). Upstream counted any
+child. WPT css/selectors/old-tests `css3-modsel-153`, `css3-modsel-d1b`.
