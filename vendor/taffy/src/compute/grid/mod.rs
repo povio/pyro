@@ -2248,6 +2248,32 @@ mod rerun_tests {
         assert_eq!(alone, vec![50.0]);
         assert_eq!(beside, vec![50.0, 150.0]);
     }
+
+    #[test]
+    fn flexible_rows_fill_a_min_height_larger_than_the_max_height() {
+        // WPT css-grid flex-sizing-rows-min-max-height-002 `minHeightWinsOverMaxHeight`: the min-height wins
+        // over the smaller max-height, so the rows grow to 200px (120px + 80px) rather than shrink toward 100px.
+        let mut taffy: TaffyTree<()> = TaffyTree::new();
+        let tall = taffy.new_leaf(Style { size: Size { width: auto(), height: length(120.0) }, ..Default::default() }).unwrap();
+        let other = taffy.new_leaf(Style::default()).unwrap();
+        let grid = taffy
+            .new_with_children(
+                Style {
+                    display: Display::Grid,
+                    size: Size { width: length(50.0), height: auto() },
+                    min_size: Size { width: auto(), height: length(200.0) },
+                    max_size: Size { width: auto(), height: length(100.0) },
+                    grid_template_rows: vec![fr(1.0), fr(1.0)],
+                    ..Default::default()
+                },
+                &[tall, other],
+            )
+            .unwrap();
+        taffy.compute_layout(grid, Size::MAX_CONTENT).unwrap();
+        assert_eq!(taffy.layout(tall).unwrap().size.height, 120.0);
+        assert_eq!(taffy.layout(other).unwrap().size.height, 80.0);
+        assert_eq!(taffy.layout(grid).unwrap().size.height, 200.0);
+    }
 }
 
 /// pyro: what a scroll container's grid adds to its scrollable overflow: its tracks (the grid area,
