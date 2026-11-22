@@ -1,30 +1,118 @@
+sha	subject
+c6295b18e	fix(wasm): async WebAssembly promises settle in workers too
+0b9041595	fix(navigation): a link or form targeting an open popup's name navigates that popup
+ff95c542b	fix(load): a document's load waits for the messages it posted
+e5155faa2	document.title follows HTML's title element rules for SVG and XML documents
+8aa5ea888	Hide forms that are children of table parts again
+6beb7d638	Give marquee overflow: hidden !important in the UA style sheet
+968abf8a9	Reflect HTMLMarqueeElement.loop
+9dee8fd89	document.body = x throws unless x is a body or frameset element
+3f43b71e2	Add the obsolete no-op APIs: document.clear/captureEvents/releaseEvents, window.captureEvents/releaseEvents and window.external
+f7ecdff4c	Safelist Chromium's decentralized schemes for protocol handlers
+c84c31c6e	Add MessageEvent.initMessageEvent and MessageEventInit.source
+8a51aa133	CSP for inline <style> (style-src-elem) and style attributes (style-src-attr)
+32624f3b0	reportError() reads no properties of an object that is not an Error
+2a4c72a9c	fix(focus): an <object> showing a document is focusable
+581fecf5b	fix(focus): focusing a text field collapses the selection just before it
+a0915a1cd	Expose empty navigator.plugins and navigator.mimeTypes
+01573ca04	feat(focus): focus({focusVisible}) decides :focus-visible
+bf465986c	fix(focus): an SVG <a href> is focusable
+27bc62615	fix(focus): document.activeElement is null with nothing focused and no body
+64121cf0e	onbeforeunload returning false does not cancel a non-BeforeUnloadEvent
+f354df9fd	fix(focus): label.focus() passes focus to the labeled control
+b1d80ca9c	Media documents report their MIME type and are in standards mode
+b7ea8cdd0	fix(popover): a right press does not light-dismiss popovers
+1a3e3fcbe	fix(hit-test): an inert modal dialog is not hit through its ::backdrop
+ce0f948b1	fix(dialog): closing a dialog with no previously focused element moves focus out of it
+0ebcc4dd5	fix(nav): a Location javascript: URL with a string result replaces the document
+e4423f723	fix(input): a label without a labeled control has no activation behavior
+5187a2bb0	feat(script): inline classic scripts run from their start tag's line in the document
+6659fee08	feat(csp): violations carry the initiating script's source file, line and column
+cdc841eae	Give text/plain and JSON documents no doctype, still no-quirks
+be59669bd	fix(popover): popover methods act for the document the popover is in now
+aef057dde	fix(hit-test): outside a modal dialog whose ::backdrop is display:none the point hits nothing
+0130d72ef	fix(object): an <object> with an about: URL loads instead of failing
+942c26f23	feat(csp): CSP Embedded Enforcement for <iframe csp>, on the CSP core
+397705c25	Check fetchLater requests against CSP connect-src
+431086b1f	fix(dialog): closing restores focus when it is in the dialog's flat tree, always for a modal one
+e65964a0b	fix(input): no trusted mousedown, mouseup or click at a disabled form control
+97c41ae9a	fix(toggle): a coalesced toggle event is queued again after the tasks queued since
+4930d2f7d	Map width and height attributes to aspect-ratio for images, video and canvas
+e04f1cf16	Give a quirks-mode form its 1em block-end margin
+453f6c861	Keep hidden embeds inline at zero size, and source elements inline
+1edc5ece6	Hide a form that is a direct child of a table, row group or row
+9e742c7a6	Style multicol as the unknown element it is
+1f6d48002	Give image map areas and SVG links the link cursor
+0b7739df4	Map iframe frameborder to zero border widths as HTML specifies
+883e331bc	fix(popover): showPopover throws when beforetoggle moves the popover to another document
+2fecb1f3e	feat(reporting): ReportingObserver, csp-violation reports to observers, webkit rAF deprecation reports
+a75f14f71	fix(popover): a button that is its own popovertarget toggles itself
+efcb7144e	feat(csp): fetch <link rel=prefetch> under CSP (default-src or any fetch directive, as Chrome)
+f5c59ae72	fix(popover): a disabled command button does not keep its target popover open on light dismiss
+b37a0ddec	fix(dialog): a dialog's toggle events are coalesced apart from its popover's
+7809671fd	fix(popover): removing a showing popover hides the popovers nested above it
+92579f9cd	fix(window): the named properties object refuses define, delete and preventExtensions (JSC patch 0041)
+50d009e35	fix(popover): auto/hint hierarchy (auto inside a hint, nested hints of an auto, light dismiss on a hint)
+8514c1841	fix(csp): setTimeout/setInterval string handlers are checked when the timer is set
+3ddaa086c	fix(csp): object-src checks an <object>/<embed> with a type and no URL
+8901cc5b4	feat(csp): local-scheme documents inherit their creator's policies
+dfbe98f94	feat(csp): WebAssembly compile gate ('wasm-unsafe-eval' / script-src) for windows and workers
+a9747dfd3	fix(layout): a fieldset's rendered legend resolves a percentage block size
+6e97afb10	fix(popover): a reset button of a form does not toggle its popovertarget
+81d5ee241	fix(layout): a fieldset's legend spill comes out of a definite block size for percentages
+fbb0185a7	feat(html): HTMLElement.autocapitalize and autocorrect
+7103b9e09	Follow no hyperlink from a disconnected <area>
+6d12c0e4b	feat(csp): enforce frame-ancestors on child navigation responses
+a1c23e729	Make form.elements an HTMLFormControlsCollection
+1d7f94410	feat(csp): deliver the CSP core's violation reports after its event
+61148b585	feat(csp): serialize and deliver CSP violation reports (report-uri, report-to)
+799e94a4d	fix(layout): inline content on both sides of a fieldset's rendered legend is one run
+40f4d13e6	fix(popover): showPopover/togglePopover({source: null}) throw a TypeError
+0951eea26	Treat an empty DOCTYPE system identifier as missing for quirks
+2250fb12c	fix(window): BarProp.visible is false once the window has no browsing context
+ab8a664c4	Drop parser doctypes and elements a non-empty Document cannot take
+2f6487466	fix(selectors): :link and :any-link do not match <link> elements
+2a82174d0	feat(window): window.status
+32e2affad	fix(layout): a fieldset establishes a block formatting context
+7fb5399ef	fix(selectors): :indeterminate matches radio groups with nothing checked, not the radio IDL flag
+b7f7639f4	Keep the content-language pragma after its <meta> is removed
+ac2cd04f9	fix(frames): a container's later name change leaves its child window's name
+fe4cddc1f	textarea rows/cols: parse as HTML positive integers, invalid ones are 2 and 20
+b4045f24a	Hidden, file and image inputs have appearance: none
+ede700920	fix(selectors): :read-write and :read-only follow HTML
+e0b19309e	Parse a template's innerHTML with scripting disabled
+4155c5577	fix(window): closed is true once the window's browsing context is gone
+63f216941	Answer relList.supports() per element as Chromium does
+54925b537	fix(cssom): a declared px width/height that min/max sizing overrides reports the used size
+d755516a4	HTMLTitleElement.text is the child text content
+0192ae1f2	fix(location): a relative href resolves against the navigable's URL when the entry document has no base
+0f596a713	fix(custom-elements): ElementInternals.labels is a live NodeList
+ad0af0db1	DOMStringList.contains() requires its argument
+8c373d12f	fix(location): ancestorOrigins masks every occurrence of the embedder's origin
+e65293504	fix(sandbox): window.open without allow-popups still navigates a named existing frame
+491b3a3eb	feat(webaudio): BaseAudioContext.audioWorklet, CSP-checked as an audioworklet request
+e5c2cd131	fix(wright): scrollIntoViewIfNeeded scrolls instantly
+ffd49eb93	fix(img): an unparseable src rejects pending decode() calls
+ea7daf4c4	fix(iframe): compute the attribute navigation's history handling before the call
+62d42f366	fix(sandbox): popups take the sandbox of the document that opened them
 7a86b696e	Fall back to the minimal deferred-fetch quota when allow= does not enable it
-93cf2f04c	fix(net): an https document's fetch to an http URL is blocked as mixed content
-c73e9e3ff	fix(events): the embedder's listeners run in a document sandboxed without allow-scripts
 931311668	Drop a deferred lazy image adopted into another document
 7697f40b0	An img with a srcset is not complete before its request finishes
 4c9151ea3	fix(view-transitions): a skip only Pyro makes leaves ready handled
 c5fe0532b	Report a toBlob callback's exception in the callback's realm
-e449e43fd	fix(sandbox): localStorage and sessionStorage throw in sandboxed documents
 665f374a3	Start media at the #t= time of its URL's media fragment
-6b5540ca0	fix(events): content attribute handlers scope by this and bind no name of their own
 fe4f3cd1f	fix(transitions): getAnimations orders transitions by the style change event that started them
-917004324	fix(sandbox): no form submission without allow-forms
 4d224634b	Take pending play() promises before firing playing
 457992246	CSP enforcement for img/style/connect/font/media/frame/form-action/object/manifest/prefetch, inline scripts and eval
 a7e2f883e	CSP fetch check core: policy lists, source matching, request checks for scripts, workers and worklets
-0b6966d73	fix(sandbox): a sandboxed frame's Location navigation of other frames is checked
 8d0dc8a39	Show an img response that is an image whatever its status
 1215ead74	fix(navigation): beforeunload also fires in the documents of the navigated frame's descendants
 3db74cb02	An img whose src does not parse is complete once its steps ran
-f47805459	fix(window): window -> Window.prototype -> WindowProperties -> EventTarget.prototype (JSC patch 0041)
 be84ba523	Answer controlsList.supports() with Chromium's media tokens
 91f25aac4	fix(navigation): a javascript: URL into a new noopener window does not run
 8c117ae60	feat(cssom-view): smooth scrolling on the rendering-frame clock
 cd21430ab	An img with an empty selected source has an empty currentSrc
-165c3fa32	fix(sandbox): document.domain throws in sandboxed documents, CSP sandbox directive
 dd48f6082	fix(location): ancestorOrigins is stored when the document commits; only no-referrer and same-origin hide
-f0c162a8a	fix(style): permission elements clamp letter-spacing through GenericLetterSpacing
 9a244304e	fix(wright): scrollIntoViewIfNeeded resolves to undefined
 f07bf214a	fix(grid): a percentage track within float noise of a layout unit snaps to it
 012d066bd	Screenshots wait only on the lazy loads they started
@@ -41,89 +129,13 @@ d527b612e	fix(forms): labels is a live NodeList, null on a hidden input
 e78f7de78	fix(forms): setCustomValidity normalizes newlines
 a6706c23b	Place drawable elements by their canvas transform in getBoundingClientRect
 eb60ce3b2	feat(css): anchored(fallback ...) container queries with not/and/or, any and physical position-area matching
-227a9b4f3	fix(loader): a cross-origin blob: URL does not resolve for a subresource
 c0d6f0006	feat(css-contain): contentvisibilityautostatechange, and anchors keep content-visibility:auto relevant
 0206f4243	fix(history): an iframe navigated from its document's load or pageshow handler replaces its entry
-87f0ec899	fix(net): a redirect without a fragment keeps the request's fragment
-76e61d4e9	fix(media): a src with potentially dangling markup fails to load
-1694192a5	fix(fetch): Request.url keeps the URL's fragment
 1ccc4238d	fix(webapi): no window.caches outside a secure context
 bfe194f6c	fix(css-scroll-snap): an unsnapped mandatory snap container snaps after a style change
 7fb25f233	feat(css-scroll-snap): scrollsnapchanging and scrollsnapchange, and SnapEvent
-a8c9d7350	fix(wasm): async WebAssembly promises settle (JSC patch 0040, deferred work in our loop)
 193dc92e4	fix(view-transitions): element-scoped transitions mark their scope, hold its size and skip what Chrome skips (VT-3 scoped)
 f4cd4a657	feat(html): HTMLProgressElement.position
 5e371d9d4	fix(table): caption, tHead and tFoot setters; sectionRowIndex outside sections
 57023b90c	feat(css): scroll-initial-target (none | nearest) scrolls the nearest scroll container to its target
-75ae37859	fix(events): handler attributes compile with the spec's scopes and source text
-e2a672f65	fix(css-sizing): an embedder's script reads a responsive iframe at its content size
-60b40b21e	fix(canvas): an image loaded before any canvas use draws from the list of available images
-6f2c7a9ce	fix(paint-worklet): a module that throws synchronously, or threw before, fulfills addModule()
-ebe91c87e	fix(paint-worklet): addModule() rejects only when the graph fails to load or link; an evaluation error is reported
-d01495c1b	WebAssembly.compileStreaming and instantiateStreaming for windows and workers
-02e010b51	feat(css): scroll-state(scrollable) container queries
-1bdb367b5	fix(css): becoming a container or changing container-name restyles descendants
-877dfd082	fix(css): a table or internal table box is not a size query container
-bc1d28385	fix(css): a container query with an unknown feature selects no container
-f031dc059	fix(layout): min/max `stretch` on grid items and on flex items in wrapping lines
-eeb1ad1df	Taint drawElementImage for opaque external SVG filter, clip and mask documents
-d28cf3778	Classify drawElementImage images by the response's opaque flag
 5f1a92a62	feat(scroll-markers): a click on a ::scroll-button() scrolls its element by a page
-a320eb224	fix(cssom-view): elementsFromPoint lists every box holding the point, as Chrome's list hit test
-20aed722f	fix(cssom-view): Element and Window scroll methods return promises of a ScrollResult
-6086ada32	Snap scrollBy by its intended direction and honour scroll-snap-stop: always
-cbb4d1a73	Respect smaller snap areas inside oversized scroll targets
-235c4d421	Resolve logical scroll snap alignment and rank reachable signed offsets
-44120fbc2	fix(canvas): drawElementImage leaves out or taints SVG images
-e22e68a34	fix(taffy): the default overflow limit of a position-area box includes its original containing block
-b84cec3ac	fix(layout): a box empty in one axis still extends its scroller's scrollable overflow
-baf9d02be	fix(webapi): computedStyleMap() orders custom property names by UTF-16 code unit
-0e9ee2c56	fix(view-transitions): skip/abort sequencing for unobserved, detached and dead-realm transitions (VT-2)
-b3f272201	fix(view-transitions): ViewTransition IDL accessors and a ViewTransitionTypeSet setlike (VT-1)
-4b98e6a34	fix(focus): a focused text field matches :focus-visible however it was focused
-4c2782b4f	fix(focus): a label click focuses its control as a mouse focus
-aefd14747	fix(input): boundary events observe the new :hover state
-9b5cf3ec9	fix(style): a quirks-mode document matches ID and class selectors case-insensitively
-12c292733	fix(selectors): only the no-namespace class attribute gives an element classes
-23ca36d6d	fix(selectors): :lang() matches no range against a tag with a subtag over 8 characters
-64ae9c927	fix(selectors): comments and empty text nodes leave an element :empty
-c1ea139c5	fix(selectors): :lang() and :dir() may follow ::part()
-128060bcd	fix(input): any mouse button's press activates :active until its release
-ff3e834cd	fix(focus): a press that focuses nothing clears the pointer focus modality
-88528da0b	fix(focus): the rendering update blurs a focused element that is no longer rendered
-56915a791	fix(selectors): :hover, :active and :focus-within stop at the innermost top-layer element
-1d63703f3	Size drawElementImage from the border box and paint its text as screenshots do
-2c095884b	fix(transitions): a reversed transition is shortened by how far the one it reverses got
-b71b671ed	fix(transitions): only color transitions on a color change, and vertical-align keeps its name
-13625eebb	fix(transitions): getAnimations lists simultaneous transitions by property name
-d4e377163	fix(transitions): a later transition-property item decides, and stale running transitions cancel
-a7b148613	fix(transitions): removing or moving an element cancels its running transitions
-43e7fcf45	fix(grid): a subgrid keeps the space its parent's content distribution puts between tracks
-5ce7623dd	fix(layout): a fixed box's offset parent is the ancestor that establishes its containing block
-c8288f15a	fix(grid): percentage track sizes resolve to whole layout units
-3f3af5dee	fix(style): grid-template on an untemplated grid container resolves to its used tracks
-47aa9f2f6	fix(style): an unrendered child of a grid or flex container resolves min-width/height auto to 0px
-c85ec64b1	fix(grid): a min-width/height larger than the max still sets the flex fraction
-2cd3f80e0	Leave other-origin images out of drawElementImage instead of tainting
-f630e4c3d	One poll thread for captures and prints waiting on lazy loads
-d4afe87e2	Screenshots wait for the lazy content they start
-016c83b79	fix(canvas): drawElementImage taints by b8b222900's flag, not always
-e12a5fef8	fix(iframe): a lazy iframe's cancel marker is taken by the next attribute processing
-ec3524937	fix(canvas): a drawable canvas's inline children are not painted in place
-b8b222900	Taint the canvas when drawElementImage may show non-origin-clean content
-b14614c59	fix(stylo): overflow-clip-margin animates discretely
-05525cb9d	fix(css): computed animation-duration keeps auto unless animation-timeline is the initial auto
-5b02727aa	fix(navigation): a javascript: URL opened in a new window without a prebuilt popup runs there
-b35d4961e	fix(dom): DOMTokenList and focusGroupStart use the attribute in no namespace
-41920bbad	fix(contain): geometry queries lay out content-visibility: hidden contents
-50ab27bb1	fix(focusgroup): Tab out of an arrow-key control stays within its own group
-ac293e917	fix(focusgroup): Tab enters a segment at its focusgroupstart or first item in tree order
-7586d0400	fix(location): ancestorOrigins masks by the container's referrer policy snapshotted as the navigation began
-cd4ef7dea	fix(canvas): drawElementImage taints the canvas
-d5879729d	fix(focusgroup): arrows follow the focused item's direction; Home/End on an edge item stay
-45add0139	fix(location): ancestorOrigins masks a no-referrer container's document origin as null
-1d39a1d93	fix(select): a release whose mouseup is held back picks no picker option
-f8e7bb4eb	docs(page): image_complete's doc comment sits on image_complete again
-e6225cab3	fix(style): content under content-visibility: hidden is hidden to focus and checkVisibility
-ec3d24446	Drop stray backslashes from two streams.js comments
-1d432d2be	Review fixes: BOM flag and doc placement
