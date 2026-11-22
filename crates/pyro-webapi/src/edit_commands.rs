@@ -1462,6 +1462,52 @@ fn restored_format_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) 
         .unwrap_or(point)
 }
 
+/// Drop the semantic weight while retaining attributes, including the ID
+/// and unrelated presentation, on a neutral replacement.
+fn neutralize_bold(dom: &mut Dom, element: NodeId, points: &mut [Point; 2]) -> Option<()> {
+    if dom.attributes(element).ok()?.is_empty() {
+        indentation::unwrap(dom, element, points)
+    } else {
+        indentation::rename(dom, element, "span", points).map(|_| ())
+    }
+}
+
+/// A stylesheet reset can contain a selected bold run between ordinary text
+/// siblings. When removing the enclosing semantic weight, apply it directly
+/// to the unselected runs and keep the selected text in its reset span.
+fn remove_reset_child_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let inner = dom.parent_element(text).ok()??;
+    let reset = dom.parent_element(inner).ok()??;
+    let outer = dom.parent_element(reset).ok()??;
+    if outer == host || !matches!(editing::local(dom, outer).as_str(), "b" | "strong")
+        || dom.child_count(outer).ok()? != 1 || editing::local(dom, reset) != "span"
+        || !dom.has_attribute(reset, "class").ok()? || dom.child_count(inner).ok()? != 1
+    { return None; }
+    let inner_tag = editing::local(dom, inner);
+    let inner_style = DeclarationBlock::parse(dom.get_attribute(inner, "style").ok()?.unwrap_or(""));
+    let simple = inner_tag == "b" && dom.attributes(inner).ok()?.is_empty()
+        || inner_tag == "span" && dom.attributes(inner).ok()?.len() == 1
+            && inner_style.names().len() == 1 && inner_style.value("font-weight") == "bold";
+    if !simple || FontToggle::Bold.active(&page.layout().computed_style_value(dom, reset, "font-weight")) { return None; }
+    let siblings: Vec<_> = dom.children(reset).ok()?.filter(|&n| n != inner).collect();
+    if !siblings.iter().all(|&n| editing::is_text(dom, n)) { return None; }
+    let doc = dom.node_document(text).ok()?;
+    let css = dom.document_data(doc).ok()?.style_with_css;
+    let mut points = [(text, 0), (text, editing::len(dom, text))];
+    neutralize_bold(dom, outer, &mut points)?;
+    indentation::unwrap(dom, inner, &mut points)?;
+    let retained = DeclarationBlock::parse(dom.get_attribute(reset, "style").ok()?.unwrap_or(""));
+    dom.set_attribute(reset, "style", &retained.css_text()).ok()?;
+    for sibling in siblings {
+        let wrapper = dom.create_element(doc, if css { "span" } else { "b" }).ok()?;
+        if css { dom.set_attribute(wrapper, "style", "font-weight: bold;").ok()?; }
+        dom.insert_before(reset, wrapper, Some(sibling)).ok()?;
+        dom.append_child(wrapper, sibling).ok()?;
+    }
+    Some(())
+}
+
 /// A semantic bold ancestor may be overridden closer to the selected text.
 /// Remove the selected inline reset, or apply bold below a stylesheet reset.
 fn prepare_overridden_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, css: bool) -> Option<bool> {
@@ -1496,13 +1542,12 @@ fn prepare_overridden_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: No
             // If the selected text fills both elements, keep the reset span
             // and reapply bold inside it without retaining a redundant B.
             if let Some(outer) = dom.parent_element(span).ok().flatten().filter(|&outer|
-                outer != host && editing::local(dom, outer) == "b"
+                outer != host && matches!(editing::local(dom, outer).as_str(), "b" | "strong")
                 && dom.element(outer).is_ok_and(|el| el.is_html())
-                && dom.attributes(outer).is_ok_and(|attrs| attrs.is_empty())
                 && dom.child_count(outer).ok() == Some(1) && dom.child_count(span).ok() == Some(1))
             {
                 let mut points = [(text, 0), (text, editing::len(dom, text))];
-                indentation::unwrap(dom, outer, &mut points)?;
+                neutralize_bold(dom, outer, &mut points)?;
             }
             if css && dom.child_count(span).ok()? == 1 {
                 style.set("font-weight", "bold", false)?;
@@ -2155,6 +2200,9 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
             }
             for &t in &texts {
                 let Some(owner) = editing::plaintext_root(&dom, t).or_else(|| editing::editing_host(&dom, t)) else { continue };
+                if input_type == "formatBold" && texts.len() == 1
+                    && remove_reset_child_bold(page, &mut dom, owner, t).is_some()
+                { continue; }
                 let inner_bold = input_type == "formatBold" && dom.parent_element(t).ok().flatten()
                     .is_some_and(|el| matches!(editing::local(&dom, el).as_str(), "b" | "strong"));
                 while let Some(mut a) = ancestor_format(&dom, t, owner, names, true) {
