@@ -635,6 +635,12 @@ impl LoadRoute {
     /// Fires the `fetch` event; without `respondWith` (or when the worker is
     /// gone before it ran) the request goes on to `net` with `sink`.
     pub fn dispatch(self, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+        // CSP: the response, the worker's included (`respondWith` of another URL's response),
+        // is checked against the request's policy by its URL.
+        let sink = match &request.csp {
+            Some(csp) => pyro_net::csp::guard_sink(csp.clone(), sink),
+            None => sink,
+        };
         let job = FetchJob {
             id,
             request: Some(request),

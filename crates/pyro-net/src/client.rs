@@ -855,6 +855,11 @@ impl NetClient {
             Some(loader) => self.track(id, loader, sink),
             None => sink,
         };
+        // CSP: the response's URL (a cache's, an interceptor's) is checked as well as each hop.
+        let sink = match &req.csp {
+            Some(csp) => crate::csp::guard_sink(csp.clone(), sink),
+            None => sink,
+        };
         let start = Instant::now();
         let req = Box::new(req);
         match self.inner.local_interceptor(&req) {
@@ -2541,6 +2546,11 @@ impl Io {
                     redirects += 1;
                     if redirects > self.shared.config.max_redirects {
                         return Err(NetError::TooManyRedirects);
+                    }
+                    // CSP3 "main fetch" on a redirect: the next hop is checked before it is
+                    // requested (path parts no longer match once redirected).
+                    if req.csp.as_ref().is_some_and(|csp| !csp.allows_redirect(&target)) {
+                        return Err(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into()));
                     }
                     let cross_origin = !cors::same_origin(&url, &target);
                     crate::timing::note(|t| {

@@ -280,6 +280,9 @@ pub(crate) enum Up {
     Error { message: String, filename: String, line: u32, column: u32 },
     LoadFailed,
     Closed,
+    /// Violations of the owner document's CSP that the worker's thread found (a redirect of
+    /// its script, a static import of its module graph): reported at that document.
+    Violations(Vec<pyro_net::csp::Violation>),
 }
 
 enum State {
@@ -472,6 +475,7 @@ impl WorkerInner {
             }
             Up::LoadFailed => self.fail_to_load(),
             Up::Closed => self.finish(),
+            Up::Violations(violations) => crate::csp::report(&page, violations, None),
         }
     }
 }
@@ -511,6 +515,38 @@ pub(crate) fn dispose(page: &PageDom) {
 
 fn origin_of(url: &pyro_net::Url) -> String {
     url.origin().ascii_serialization()
+}
+
+/// CSP for a worker's script (`dest`: worker or shared worker, the `worker-src` directive and
+/// its fallbacks): the pre-request check against `page`'s policies, reported at its document.
+/// `Err` when an enforced policy blocks it (the worker then fails to load, as Chrome: an `error`
+/// event, no exception); else the owner's list and the guard for the script's redirects.
+pub(crate) fn csp_check(
+    page: &Rc<PageDom>,
+    url: &pyro_net::Url,
+    dest: pyro_net::csp::RequestDest,
+) -> Result<WorkerCsp, crate::csp::Blocked> {
+    let Some(list) = crate::csp::policy_list(page) else { return Ok(WorkerCsp { dest, ..WorkerCsp::default() }) };
+    let request = pyro_net::csp::CspRequest::new(url.clone(), dest);
+    let guard = crate::csp::check_request_with(page, list.clone(), request, None)?;
+    Ok(WorkerCsp { owner: Some(list), guard, dest, inherited: crate::csp::inherited_policies(page) })
+}
+
+/// What a worker's thread checks against its owner's CSP: its script's redirects (`guard`) and
+/// the static imports of its module graph (`owner`, for `dest`); and the owner's policies as
+/// delivered (enforced, report-only), which a `data:` or `blob:` worker inherits.
+#[derive(Clone)]
+pub(crate) struct WorkerCsp {
+    pub(crate) owner: Option<Arc<pyro_net::csp::PolicyList>>,
+    pub(crate) guard: Option<Arc<pyro_net::csp::RequestCsp>>,
+    pub(crate) dest: pyro_net::csp::RequestDest,
+    pub(crate) inherited: Vec<pyro_dom::CspPolicy>,
+}
+
+impl Default for WorkerCsp {
+    fn default() -> WorkerCsp {
+        WorkerCsp { owner: None, guard: None, dest: pyro_net::csp::RequestDest::Worker, inherited: Default::default() }
+    }
 }
 
 /// HTML "run a worker" fetches same-origin scripts only; `data:` runs with an
@@ -587,6 +623,8 @@ impl JsClass for Worker {
                 ));
             };
             check_script_url(&page, s, &input, &url)?;
+            // CSP `worker-src`: a blocked script fails to load (below), as a network error.
+            let csp = csp_check(&page, &url, pyro_net::csp::RequestDest::Worker);
             // Compiled before any message, with the intrinsics of this moment.
             crate::structured_clone::prepare_wire(s)?;
             let target = EventTargetData::new(&page);
@@ -613,10 +651,13 @@ impl JsClass for Worker {
             let nested = worker_scope::is_worker(s);
             let slot = if nested { NestedSlot::take() } else { None };
             let refused = nested && slot.is_none();
-            let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
+            // A script CSP blocked fails to load, as one that never arrived.
+            let blocked = csp.is_err();
+            let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).filter(|_| !blocked).map(|mut start| {
                 start.module = module;
                 start.referrer = referrer;
                 start.nested = slot;
+                start.csp = csp.unwrap_or_default();
                 start
             });
             let full = page.workers.borrow().len() >= MAX_WORKERS_PER_DOCUMENT

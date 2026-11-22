@@ -36,12 +36,18 @@ pub(crate) struct Preloads {
 }
 
 /// What a script hands the module fetches it starts (its static imports, `import()`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ModuleFetchOptions {
     /// `None`: the document's policy.
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// `None`: "same-origin".
     pub credentials: Option<pyro_net::Credentials>,
+    /// The cryptographic nonce of the script element the options came from (HTML "descendant
+    /// script fetch options"): CSP checks the imports with it. Only a script element's options
+    /// set it, read from the element; `None` for anything else (an event handler's or a
+    /// `javascript:` URL's `import()` has no script element), and when two elements registered
+    /// options under one key with different nonces.
+    pub nonce: Option<String>,
 }
 
 /// Scripts' fetch options kept per document, at most.
@@ -50,13 +56,19 @@ const MAX_MODULE_OPTIONS: usize = 4096;
 impl Preloads {
     /// The fetch options of the script `key` names, when known.
     pub(crate) fn module_options(&self, key: &str) -> Option<ModuleFetchOptions> {
-        self.module_options.get(key).copied()
+        self.module_options.get(key).cloned()
     }
 
     /// A script element's own options (its `crossorigin` and `referrerpolicy`).
-    pub(crate) fn set_module_options(&mut self, key: String, options: ModuleFetchOptions) {
+    pub(crate) fn set_module_options(&mut self, key: String, mut options: ModuleFetchOptions) {
         if options == ModuleFetchOptions::default() && !self.module_options.contains_key(&key) {
             return;
+        }
+        // Two elements of one URL with different nonces: neither is the imports' (fail closed).
+        if let Some(previous) = self.module_options.get(&key) {
+            if previous.nonce.is_some() && previous.nonce != options.nonce {
+                options.nonce = None;
+            }
         }
         if self.module_options.len() < MAX_MODULE_OPTIONS || self.module_options.contains_key(&key) {
             self.module_options.insert(key, options);
@@ -331,6 +343,7 @@ impl Browser {
             return;
         };
         let request = FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: None,
