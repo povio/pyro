@@ -1,0 +1,95 @@
+Pyro patch 0039: the module loader's fetch callback can read the fetch's referrer.
+
+HTML fetches a module's static imports with the importing module script's fetch options (credentials
+mode, referrer policy) and its URL as the referrer, and import() with the calling script's. JSModuleLoader
+hands moduleLoaderFetch that referrer (the referring module's key, or the import() caller's source
+URL), but JSAPIGlobalObject dropped it, so the embedder could not tell which script asked for a module.
+JSGlobalContextCopyModuleFetchReferrer (JSModuleLoaderRefPrivate.h) returns it while the fetch callback
+runs, without changing the callback's signature; NULL for a top-level load and outside a callback.
+
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+@@ -52,6 +52,7 @@
+ #include "SourceCode.h"
+ #include "SourceOrigin.h"
+ #include "TopExceptionScope.h"
++#include <wtf/SetForScope.h>
+ #include <wtf/URL.h>
+ #include <wtf/text/ExternalStringImpl.h>
+ #include <wtf/text/MakeString.h>
+@@ -318,7 +319,7 @@ static ASCIILiteral moduleTypeName(JSModuleType type)
+     return "unknown"_s;
+ }
+ 
+-JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModuleLoader*, JSValue key, const String&, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher>)
++JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModuleLoader*, JSValue key, const String& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher>)
+ {
+     VM& vm = globalObject->vm();
+     auto scope = DECLARE_THROW_SCOPE(vm);
+@@ -379,6 +380,8 @@ JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JS
+     }, promise);
+ 
+     auto identifier = OpaqueJSString::tryCreate(moduleKey.string());
++    // The callback may ask for the fetch's referrer (JSGlobalContextCopyModuleFetchReferrer).
++    SetForScope fetchReferrer { thisObject->m_moduleFetchReferrer, referrer };
+     if (thisObject->m_moduleLoaderTyped) {
+         auto callback = reinterpret_cast<JSModuleLoaderTypedFetchCallback>(thisObject->m_moduleLoaderCallback);
+         callback(toGlobalRef(globalObject), identifier.get(), type, toRef(resolve), toRef(reject), thisObject->m_moduleLoaderInfo);
+@@ -592,6 +595,19 @@ bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef iden
+     return true;
+ }
+ 
++JSStringRef JSGlobalContextCopyModuleFetchReferrer(JSContextRef ctx)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
++    if (!apiGlobalObject)
++        return nullptr;
++    const String& referrer = apiGlobalObject->moduleFetchReferrer();
++    if (referrer.isNull())
++        return nullptr;
++    return OpaqueJSString::tryCreate(referrer).leakRef();
++}
++
+ JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception)
+ {
+     return JSModuleSourceCreateWithType(ctx, source, url, kJSModuleTypeJavaScript, exception);
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.h
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+@@ -80,6 +80,8 @@ public:
+         auto base = m_inlineModuleBases.find(identifier);
+         return base != m_inlineModuleBases.end() && base->value == sourceURL;
+     }
++    // The referrer of the fetch the module loader callback is in (JSGlobalContextCopyModuleFetchReferrer).
++    const String& moduleFetchReferrer() const { return m_moduleFetchReferrer; }
+     // String compilation hooks (JSForkPrivate.h): a JSCodeForEvalCallback and a
+     // JSCanCompileStringsCallback.
+     void setCompileStringsCallbacks(void* codeForEval, void* canCompileStrings)
+@@ -121,6 +123,7 @@ private:
+     void* m_moduleBaseURLCallback { nullptr };
+     bool m_hasImportMap { false };
+     HashMap<String, String> m_inlineModuleBases;
++    String m_moduleFetchReferrer;
+     // m_moduleLoaderCallback is a JSModuleLoaderTypedFetchCallback.
+     bool m_moduleLoaderTyped { false };
+ #endif
+diff --git a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+--- a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
++++ b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+@@ -72,6 +72,13 @@ JS_EXPORT bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef s
+    cannot load modules. */
+ JS_EXPORT bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef identifier, JSStringRef baseURL);
+ 
++/* The referrer of the module fetch whose fetch callback is running (patch 0039): the key of the
++   module whose static import requested it (an inline module script's registered identity included),
++   or the source URL of the script whose import() did. NULL outside a fetch callback and for a fetch
++   without a referring script (JSLoadModuleGraph, JSLoadAndEvaluateModule, import() from a script
++   without a URL). The caller releases the string. */
++JS_EXPORT JSStringRef JSGlobalContextCopyModuleFetchReferrer(JSContextRef ctx);
++
+ /* Creates the module source value passed to a fetch `resolve` function. */
+ JS_EXPORT JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception);
+ 

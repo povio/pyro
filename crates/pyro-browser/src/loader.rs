@@ -1148,6 +1148,10 @@ impl ModuleFetcher for PageModuleFetcher {
         };
         // Called from inside JS: defer the network request to a task, where
         // `&mut Browser` is available.
+        // HTML "fetch the descendants of a module script" and HostLoadImportedModule: the request's
+        // referrer is the referring script's base URL, its options the referring script's.
+        let referrer_key = request.referrer_key().map(str::to_owned);
+        let referrer = request.referrer_url();
         let realm = realm.downgrade();
         let page = self.page;
         let worklet_credentials = self.worklet_credentials;
@@ -1222,17 +1226,29 @@ impl ModuleFetcher for PageModuleFetcher {
                 complete(b, result);
                 return;
             }
-            // A modulepreload of this URL already fetched (or is fetching) it
-            // as a JavaScript module.
+            let options = referrer_key.as_deref().and_then(|key| b.doc(page)?.preloads.module_options(key));
+            if let (Some(options), Some(mut doc)) = (options, b.doc_mut(page)) {
+                // Its own imports get the same, unless its response gives a referrer policy.
+                doc.preloads.inherit_module_options(url.clone(), options);
+            }
+            let options = options.unwrap_or_default();
+            let opts = ScriptFetch {
+                referrer,
+                referrer_policy: options.referrer_policy,
+                credentials: options.credentials,
+                ..ScriptFetch::default()
+            };
             if let Some(credentials) = worklet_credentials {
                 // A worklet graph's module: its own credentials mode and module map.
                 let opts = ScriptFetch { module: Some(ty), credentials: Some(credentials), ..ScriptFetch::default() };
                 b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
-            } else if ty != ModuleType::JavaScript {
-                let opts = ScriptFetch { module: Some(ty), ..ScriptFetch::default() };
+            } else if ty != ModuleType::JavaScript || opts.credentials.is_some() {
+                let opts = ScriptFetch { module: Some(ty), ..opts };
                 b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
             } else {
-                b.fetch_imported_module(page, url, Box::new(complete));
+                // A modulepreload of this URL already fetched (or is fetching) it
+                // as a JavaScript module.
+                b.fetch_imported_module(page, url, opts, Box::new(complete));
             }
         });
     }
@@ -1294,6 +1310,9 @@ pub(crate) struct ScriptFetch {
     pub credentials: Option<pyro_net::Credentials>,
     /// A script element's `charset` attribute, as prepare saw it.
     pub charset: Option<String>,
+    /// The request's referrer (`None`: the document's URL): an imported
+    /// module's importing script.
+    pub referrer: Option<String>,
 }
 
 impl ScriptFetch {
@@ -1306,6 +1325,18 @@ impl ScriptFetch {
             referrer_policy: pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref()),
             credentials: None,
             charset: info.charset.clone(),
+            referrer: None,
+        }
+    }
+
+    /// The options a script fetched (or inlined) with these hands the modules
+    /// it imports: its referrer policy, and "include" credentials for
+    /// `crossorigin=use-credentials` ("same-origin" otherwise).
+    fn module_options(&self) -> crate::preload::ModuleFetchOptions {
+        let include = self.crossorigin.as_deref().is_some_and(|c| c.eq_ignore_ascii_case("use-credentials"));
+        crate::preload::ModuleFetchOptions {
+            referrer_policy: self.referrer_policy,
+            credentials: include.then_some(pyro_net::Credentials::Include),
         }
     }
 }
@@ -2083,17 +2114,6 @@ impl Browser {
         }
     }
 
-    /// Fetches `url` and decodes it as text; non-2xx statuses are errors.
-    pub(crate) fn fetch_text(
-        &mut self,
-        page: FrameKey,
-        url: String,
-        kind: ResourceKind,
-        done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
-    ) {
-        self.fetch_script(page, url, kind, ScriptFetch::default(), done);
-    }
-
     /// A script element's fetch. A module script fetched as an import is
     /// (no integrity, referrer policy or credentials of its own, a CORS
     /// request without credentials across origins) shares the document's
@@ -2108,6 +2128,10 @@ impl Browser {
         opts: ScriptFetch,
         done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
     ) {
+        // What the script hands the modules it imports (both kinds: a classic script's `import()`).
+        if let Some(mut doc) = self.doc_mut(page) {
+            doc.preloads.set_module_options(url.clone(), opts.module_options());
+        }
         let shared = kind == ResourceKind::ModuleScript
             && opts.integrity.is_none()
             && opts.referrer_policy.is_none()
@@ -2115,14 +2139,15 @@ impl Browser {
             && opts.module.is_none_or(|ty| ty == ModuleType::JavaScript)
             && opts.crossorigin.as_deref().is_none_or(|c| !c.eq_ignore_ascii_case("use-credentials"));
         if shared {
-            self.fetch_imported_module(page, url, Box::new(done));
+            self.fetch_imported_module(page, url, ScriptFetch::default(), Box::new(done));
         } else {
             self.fetch_script(page, url, kind, opts, done);
         }
     }
 
-    /// [`Browser::fetch_text`] honouring a script's `crossorigin` (CORS
-    /// mode) and `integrity` (a mismatch is an error).
+    /// Fetches `url` and decodes it as text (non-2xx statuses are errors),
+    /// honouring a script's `crossorigin` (CORS mode) and `integrity` (a
+    /// mismatch is an error).
     pub(crate) fn fetch_script(
         &mut self,
         page: FrameKey,
@@ -2135,12 +2160,22 @@ impl Browser {
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
         };
-        let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let ScriptFetch { integrity, crossorigin, module, referrer_policy, credentials, parser_priority, charset } =
-            opts;
+        let ScriptFetch {
+            integrity,
+            crossorigin,
+            module,
+            referrer_policy,
+            credentials,
+            parser_priority,
+            charset,
+            referrer,
+        } = opts;
+        let referrer = referrer.or_else(|| self.doc(page).map(|p| p.main_frame.url.clone()));
+        // A module response's `Referrer-Policy` is its imports' (by its request URL).
+        let module_key = (kind == ResourceKind::ModuleScript).then(|| url.clone());
         // HTML "fetch a classic script": without a charset in the response, the
         // element's `charset` encoding, else the document's encoding.
         let document_charset = (kind == ResourceKind::Script)
@@ -2177,6 +2212,11 @@ impl Browser {
             &loader,
             req,
             Box::new(move |b, res| {
+                if let (Some(key), Ok(r)) = (module_key, &res) {
+                    if let (Some(policy), Some(mut doc)) = (r.referrer_policy, b.doc_mut(page)) {
+                        doc.preloads.note_module_referrer_policy(key, policy);
+                    }
+                }
                 let res = match res {
                     Ok(r) if (200..300).contains(&r.status) => {
                         let blocked = integrity
@@ -3113,6 +3153,14 @@ impl Browser {
         external: bool,
         after: Option<Rc<dyn Fn()>>,
     ) -> bool {
+        // The module script's `crossorigin` and `referrerpolicy` go to the modules it imports, by
+        // its registry key (`url`: its URL, or an inline module script's identity).
+        let options = element.as_ref().and_then(|e| {
+            e.dom.try_borrow().ok()?.script_info(e.node).ok().map(|info| ScriptFetch::of(&info).module_options())
+        });
+        if let (Some(options), Some(mut doc)) = (options, self.doc_mut(page)) {
+            doc.preloads.set_module_options(url.to_owned(), options);
+        }
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
         let loader_id = self.frame_loader(page);

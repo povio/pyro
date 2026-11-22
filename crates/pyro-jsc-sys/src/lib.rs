@@ -1335,6 +1335,12 @@ pub mod modules {
             base: *const c_char,
             base_len: usize,
         ) -> c_int;
+        /// The referrer of the module fetch whose fetch callback is running
+        /// (patch 0039): the referring module's registry key (an inline module
+        /// script's identity included) or the `import()` caller's source URL,
+        /// owned by the caller; null for a fetch without a referring script,
+        /// outside a fetch callback, and without the patch.
+        pub fn pyro_jsc_module_fetch_referrer(ctx: JSContextRef) -> JSStringRef;
         pub fn pyro_jsc_import_map_add(
             ctx: JSGlobalContextRef,
             src: *const c_char,

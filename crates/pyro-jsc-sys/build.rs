@@ -122,6 +122,10 @@ fn source_shim(lib: &Path) {
     if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0038-inline-module-bases.patch").is_file()) {
         build.define("PYRO_JSC_INLINE_MODULE_BASES", None);
     }
+    // Patch 0039: the referrer of a module fetch.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0039-module-fetch-referrer.patch").is_file()) {
+        build.define("PYRO_JSC_MODULE_FETCH_REFERRER", None);
+    }
     build.compile("pyro_jsc_shim");
 }
 

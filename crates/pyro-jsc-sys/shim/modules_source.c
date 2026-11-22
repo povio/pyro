@@ -37,6 +37,10 @@ bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSS
 // Patch 0038-inline-module-bases (build.rs defines this when the archive has it).
 bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef identifier, JSStringRef baseURL);
 #endif
+#ifdef PYRO_JSC_MODULE_FETCH_REFERRER
+// Patch 0039-module-fetch-referrer (build.rs defines this when the archive has it).
+JSStringRef JSGlobalContextCopyModuleFetchReferrer(JSContextRef ctx);
+#endif
 typedef JSStringRef (*pyro_module_base_url_cb)(JSGlobalContextRef ctx);
 bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, pyro_module_base_url_cb callback);
 
@@ -137,6 +141,18 @@ int pyro_jsc_inline_module_base_set(JSGlobalContextRef ctx, const char *id, size
     (void)base;
     (void)base_len;
     return 0;
+#endif
+}
+
+// The referrer of the module fetch whose callback is running (patch 0039): the
+// referring module's key or the import() caller's source URL, as an owned
+// string; NULL for a fetch without a referring script, and without the patch.
+JSStringRef pyro_jsc_module_fetch_referrer(JSContextRef ctx) {
+#ifdef PYRO_JSC_MODULE_FETCH_REFERRER
+    return JSGlobalContextCopyModuleFetchReferrer(ctx);
+#else
+    (void)ctx;
+    return NULL;
 #endif
 }
 

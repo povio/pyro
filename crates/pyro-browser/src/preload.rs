@@ -21,6 +21,7 @@ use pyro_dom::NodeId;
 use pyro_runtime::TaskSource;
 
 use crate::frames::FrameKey;
+use crate::loader::ScriptFetch;
 use crate::{Browser, FetchRequest, ResourceKind};
 
 /// Links fetched (or being fetched) per document: node → URL.
@@ -29,6 +30,53 @@ pub(crate) struct Preloads {
     entries: HashMap<NodeId, String>,
     /// Module sources fetched (or being fetched) by preload or import: URL → source.
     modules: HashMap<String, ModuleEntry>,
+    /// The fetch options of scripts for the modules they import (HTML "descendant script fetch
+    /// options"), by script URL or inline module script identity.
+    module_options: HashMap<String, ModuleFetchOptions>,
+}
+
+/// What a script hands the module fetches it starts (its static imports, `import()`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ModuleFetchOptions {
+    /// `None`: the document's policy.
+    pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// `None`: "same-origin".
+    pub credentials: Option<pyro_net::Credentials>,
+}
+
+/// Scripts' fetch options kept per document, at most.
+const MAX_MODULE_OPTIONS: usize = 4096;
+
+impl Preloads {
+    /// The fetch options of the script `key` names, when known.
+    pub(crate) fn module_options(&self, key: &str) -> Option<ModuleFetchOptions> {
+        self.module_options.get(key).copied()
+    }
+
+    /// A script element's own options (its `crossorigin` and `referrerpolicy`).
+    pub(crate) fn set_module_options(&mut self, key: String, options: ModuleFetchOptions) {
+        if options == ModuleFetchOptions::default() && !self.module_options.contains_key(&key) {
+            return;
+        }
+        if self.module_options.len() < MAX_MODULE_OPTIONS || self.module_options.contains_key(&key) {
+            self.module_options.insert(key, options);
+        }
+    }
+
+    /// An imported module's options: its importer's, unless it has its own already.
+    pub(crate) fn inherit_module_options(&mut self, key: String, options: ModuleFetchOptions) {
+        if self.module_options.len() < MAX_MODULE_OPTIONS {
+            self.module_options.entry(key).or_insert(options);
+        }
+    }
+
+    /// HTML "fetch a single module script": a module response's `Referrer-Policy` becomes the
+    /// referrer policy of the modules it imports.
+    pub(crate) fn note_module_referrer_policy(&mut self, key: String, policy: pyro_net::ReferrerPolicy) {
+        if self.module_options.len() < MAX_MODULE_OPTIONS || self.module_options.contains_key(&key) {
+            self.module_options.entry(key).or_default().referrer_policy = Some(policy);
+        }
+    }
 }
 
 /// Called with the preloaded module's source, or the fetch error.
@@ -52,10 +100,18 @@ const MAX_PRELOADS: usize = 2048;
 
 impl Browser {
     /// Imports and modulepreloads share one document fetch, regardless of which starts first.
-    pub(crate) fn fetch_imported_module(&mut self, page: FrameKey, url: String, waiter: ModuleWaiter) {
+    /// `opts`: the fetch's referrer and referrer policy (its importer's); the first request of a
+    /// URL fetches it with its own.
+    pub(crate) fn fetch_imported_module(
+        &mut self,
+        page: FrameKey,
+        url: String,
+        opts: ScriptFetch,
+        waiter: ModuleWaiter,
+    ) {
         let Some(waiter) = self.preloaded_module_for(page, &url, waiter, true) else { return };
         let Some(mut doc) = self.doc_mut(page) else {
-            self.fetch_text(page, url, ResourceKind::ModuleScript, waiter);
+            self.fetch_script(page, url, ResourceKind::ModuleScript, opts, waiter);
             return;
         };
         let bindings = doc.main_frame.page_dom.clone();
@@ -63,7 +119,7 @@ impl Browser {
         let loader = doc.main_frame.loader_id.clone();
         doc.preloads.modules.insert(url.clone(), ModuleEntry::Pending(Vec::new()));
         drop(doc);
-        self.fetch_text(page, url.clone(), ResourceKind::ModuleScript, move |browser, result| {
+        self.fetch_script(page, url.clone(), ResourceKind::ModuleScript, opts, move |browser, result| {
             if browser.doc(page).is_none_or(|doc| doc.main_frame.loader_id != loader)
                 || bindings
                     .as_ref()

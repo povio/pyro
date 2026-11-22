@@ -183,6 +183,10 @@ pub struct ModuleRequest {
     /// and dynamic `import()` referrer. `key`, except for an inline module
     /// script, whose identity is no URL ([`Scope::inline_module_identity`]).
     source_url: String,
+    /// The registry key of the module whose import requested this one, or
+    /// the source URL of the script whose `import()` did (patch 0039; `None`
+    /// without it and for a top-level load).
+    referrer: Option<String>,
     realm: std::rc::Weak<RealmInner>,
     resolve: Persistent,
     reject: Persistent,
@@ -214,6 +218,25 @@ impl ModuleRequest {
     /// The request's `type` import attribute.
     pub fn module_type(&self) -> ModuleType {
         self.ty
+    }
+
+    /// The referring script: the registry key of the module whose static
+    /// import requested this module (an inline module script's identity,
+    /// [`Scope::inline_module_identity`]), or the source URL of the script
+    /// whose `import()` did. `None` for a top-level load, and on an engine
+    /// that does not report it (patch 0039).
+    pub fn referrer_key(&self) -> Option<&str> {
+        self.referrer.as_deref()
+    }
+
+    /// The referring script's base URL, the fetch's referrer (HTML "fetch the
+    /// descendants of a module script", "HostLoadImportedModule"): an inline
+    /// module script's registered base URL, else [`ModuleRequest::referrer_key`].
+    pub fn referrer_url(&self) -> Option<String> {
+        let key = self.referrer.as_deref()?;
+        let realm = self.realm.upgrade()?;
+        let base = realm.inline_module_bases.borrow().get(key).cloned();
+        Some(base.unwrap_or_else(|| key.to_owned()))
     }
 
     /// Provides module source text (a [`ModuleType::JavaScript`] request).
@@ -3910,11 +3933,15 @@ unsafe extern "C" fn module_fetch(
             let origin = realm.origin.borrow().clone();
             let url = remap_module_url(&key, origin.as_deref());
             let source_url = realm.inline_module_bases.borrow().get(&key).cloned().unwrap_or_else(|| key.clone());
+            // Valid only inside this callback (patch 0039).
+            let referrer = sys::modules::pyro_jsc_module_fetch_referrer(ctx as sys::JSContextRef);
+            let referrer = (!referrer.is_null()).then(|| JsString::from_raw_owned(referrer).to_string());
             let request = ModuleRequest {
                 url: url.clone(),
                 ty: ModuleType::from_raw(module_type),
                 key,
                 source_url,
+                referrer,
                 realm: Rc::downgrade(realm),
                 resolve: Persistent::new(scope, Value::from_raw(scope.ctx, resolve as sys::JSValueRef)),
                 reject: Persistent::new(scope, Value::from_raw(scope.ctx, reject as sys::JSValueRef)),

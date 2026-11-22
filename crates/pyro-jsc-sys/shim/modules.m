@@ -215,6 +215,12 @@ int pyro_jsc_inline_module_base_set(JSGlobalContextRef ctx, const char *id, size
     return 0;
 }
 
+// A module fetch's referrer is the source-built JavaScriptCore's (patch 0039).
+JSStringRef pyro_jsc_module_fetch_referrer(JSContextRef ctx) {
+    (void)ctx;
+    return NULL;
+}
+
 // The module script phases are the source-built JavaScriptCore's (patch 0037).
 int pyro_jsc_module_phases_available(void) { return 0; }
 
