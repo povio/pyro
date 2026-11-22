@@ -1462,6 +1462,47 @@ fn restored_format_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) 
         .unwrap_or(point)
 }
 
+/// A semantic bold ancestor may be overridden closer to the selected text.
+/// Remove the selected inline reset, or apply bold below a stylesheet reset.
+fn prepare_overridden_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, css: bool) -> Option<bool> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let span = dom.parent_element(text).ok()??;
+    if span == host || !dom.element(span).is_ok_and(|e| e.is_html() && &**e.local_name() == "span") {
+        return None;
+    }
+    ancestor_named(dom, span, host, &["b", "strong"])?;
+    let layout = page.layout();
+    if FontToggle::Bold.active(&layout.computed_style_value(dom, span, "font-weight")) { return None; }
+    let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()?.unwrap_or(""));
+    match style.value("font-weight").as_str() {
+        "normal" => {
+            let parent = dom.parent_element(span).ok()??;
+            let middle = alignment::split_edge(dom, parent, text, false, &mut [])?;
+            alignment::split_edge(dom, parent, text, true, &mut [])?;
+            style.remove("font-weight");
+            if style.is_empty() {
+                dom.remove_attribute(middle, "style").ok()?;
+                if dom.attributes(middle).ok()?.is_empty() {
+                    indentation::unwrap(dom, middle, &mut [(text, 0), (text, editing::len(dom, text))])?;
+                }
+            } else {
+                dom.set_attribute(middle, "style", &style.css_text()).ok()?;
+            }
+            let current = dom.parent_element(text).ok()??;
+            Some(FontToggle::Bold.active(&layout.computed_style_value(dom, current, "font-weight")))
+        }
+        "" => {
+            if css && dom.child_count(span).ok()? == 1 {
+                style.set("font-weight", "bold", false)?;
+                dom.set_attribute(span, "style", &style.css_text()).ok()?;
+                return Some(true);
+            }
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
 /// Remove a conflicting numeric weight from the selected portion before
 /// applying bold. Other attributes and declarations stay on their span.
 fn prepare_numeric_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, use_css: bool) -> Option<bool> {
@@ -1708,7 +1749,10 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                     let Some(unit) = mixed_italic_unit(page, &mut dom, host, t, last_wrapper, texts.get(index + 1).copied()) else { continue };
                     unit
                 } else { t };
-                let prepared = if tag == "b" { prepare_numeric_bold(page, &mut dom, host, t, use_css) } else { None };
+                let prepared = if tag == "b" {
+                    prepare_overridden_bold(page, &mut dom, host, t, use_css)
+                        .or_else(|| prepare_numeric_bold(page, &mut dom, host, t, use_css))
+                } else { None };
                 let carried = prepared.unwrap_or_else(|| carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some()));
                 if carried && (!mixed_italic || dom.parent_element(t).ok().flatten().is_some_and(|el|
                     FontToggle::Italic.active(&page.layout().computed_style_value(&dom, el, "font-style")))) {
@@ -2099,6 +2143,8 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
             }
             for &t in &texts {
                 let Some(owner) = editing::plaintext_root(&dom, t).or_else(|| editing::editing_host(&dom, t)) else { continue };
+                let inner_bold = input_type == "formatBold" && dom.parent_element(t).ok().flatten()
+                    .is_some_and(|el| matches!(editing::local(&dom, el).as_str(), "b" | "strong"));
                 while let Some(mut a) = ancestor_format(&dom, t, owner, names, true) {
                     // Remove a completely selected carrier as a unit. Hoisting
                     // only its editable text would leave a formatting wrapper
@@ -2158,6 +2204,22 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                     }
                     if ancestor_format(&dom, t, owner, names, true) == Some(a) {
                         break;
+                    }
+                }
+                if inner_bold {
+                    // With the bold child gone, a fully selected normal-weight
+                    // wrapper is redundant when its parent already supplies 400.
+                    if let Some(span) = dom.parent_element(t).ok().flatten().filter(|&span| span != owner
+                        && editing::local(&dom, span) == "span" && dom.child_count(span).ok() == Some(1)
+                        && dom.attributes(span).is_ok_and(|attrs| attrs.len() == 1)
+                        && dom.get_attribute(span, "style").ok().flatten().is_some_and(|style| {
+                            let declarations = crate::css::parse_declarations(style);
+                            matches!(declarations.as_slice(), [d] if d.name == "font-weight" && d.value == "normal")
+                        })
+                        && dom.parent_element(span).ok().flatten().is_some_and(|outer|
+                            page.layout().computed_style_value(&dom, outer, "font-weight") == "400"))
+                    {
+                        indentation::unwrap(&mut dom, span, &mut [first, last]);
                     }
                 }
                 let font = match input_type {
