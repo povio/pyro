@@ -1293,7 +1293,9 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
     if !fire(page, node, generation, "loadedmetadata") {
         return;
     }
-    let start = with(page, node, |st| std::mem::take(&mut st.default_start));
+    let (start, url) = with(page, node, |st| (std::mem::take(&mut st.default_start), st.current_src.clone()));
+    // HTML: a start time the URL indicates (Media Fragments `#t=`) is the initial position.
+    let start = if start != 0.0 { start } else { media_fragment_start(&url).unwrap_or(0.0) };
     if start != 0.0 {
         seek(page, node, start);
     }
@@ -1305,6 +1307,30 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
             past_current_data(page, node, generation);
         }
     });
+}
+
+/// The start of a Media Fragments URI temporal dimension in `url`'s fragment (`t=[npt:]start[,end]`,
+/// name and value percent-decoded; seconds, `mm:ss` or `hh:mm:ss`, with a fraction), if any.
+fn media_fragment_start(url: &str) -> Option<f64> {
+    let (_, fragment) = url.split_once('#')?;
+    let decode = |s: &str| percent_encoding::percent_decode_str(s).decode_utf8().ok().map(|c| c.into_owned());
+    let value = fragment.split('&').rev().find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (decode(name)? == "t").then(|| decode(value)).flatten()
+    })?;
+    let value = value.strip_prefix("npt:").unwrap_or(&value);
+    let start = value.split(',').next()?;
+    if start.is_empty() {
+        return None;
+    }
+    let mut seconds = 0.0;
+    for part in start.split(':') {
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+            return None;
+        }
+        seconds = seconds * 60.0 + part.parse::<f64>().ok()?;
+    }
+    (seconds.is_finite() && seconds > 0.0).then_some(seconds)
 }
 
 /// After HAVE_CURRENT_DATA: the ready states that follow, one task each,
