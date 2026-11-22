@@ -885,7 +885,7 @@ impl Dom {
             }
             FocusVisible => {
                 let doc = self.n(idx).owner_doc;
-                self.focused_idx(doc) == idx && self.focus_visible_flag(doc)
+                self.focused_idx(doc) == idx && self.focus_visible_now(doc)
             }
             FocusWithin => {
                 let f = self.focused_idx(self.n(idx).owner_doc);

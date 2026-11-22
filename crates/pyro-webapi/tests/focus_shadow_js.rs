@@ -711,3 +711,17 @@ fn a_label_click_focuses_its_checkbox_without_focus_visible() {
         "true,true,false"
     );
 }
+
+/// A clicked button that becomes a text field while focused matches `:focus-visible`, as a
+/// clicked text field does (Chrome; WPT css/selectors `focus-visible-027`).
+#[test]
+fn a_focused_button_turned_text_field_matches_focus_visible() {
+    let e = env("<!DOCTYPE html><style>body{margin:0} input{position:absolute;left:0;top:0;width:50px;height:30px}</style>\
+         <body><input type=button id=i value=x></body>");
+    let r = &e.main;
+    mouse(&e.page, input::MouseKind::Pressed, 10.0, 10.0, 1);
+    mouse(&e.page, input::MouseKind::Released, 10.0, 10.0, 0);
+    assert_eq!(eval(r, "[document.activeElement === i, i.matches(':focus-visible')].join()"), "true,false");
+    assert_eq!(eval(r, "i.type = 'text'; i.matches(':focus-visible')"), "true");
+    assert_eq!(eval(r, "i.type = 'button'; i.matches(':focus-visible')"), "false");
+}
