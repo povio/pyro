@@ -79,6 +79,7 @@ mod input_placeholder;
 mod intrinsic_percentages;
 mod lang_pseudo_class;
 mod media_features;
+mod mathml_space;
 mod meta_color_scheme_fields;
 mod line_break_resume;
 mod line_clamp;
