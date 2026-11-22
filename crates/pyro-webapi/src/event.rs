@@ -167,6 +167,9 @@ pub struct EventFields {
     /// `CommandEvent` (one event never has both).
     pub submitter: Option<TargetKey>,
     pub state: Option<Persistent>,
+    /// `PopStateEvent.hasUAVisualTransition` (false for every popstate the browser fires: it
+    /// draws no visual transition).
+    pub has_ua_visual_transition: bool,
     /// `FormDataEvent.formData`.
     pub form_data: Option<Persistent>,
     pub old_url: String,
@@ -940,6 +943,8 @@ fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
 }
 
 fn fill_popstate<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    // PopStateEventInit members in lexicographic order.
+    f.has_ua_visual_transition = get_bool(init, "hasUAVisualTransition")?;
     if let Some(o) = init {
         f.state = Some(Persistent::new(s, o.get_atom("state")?));
     }
@@ -2101,6 +2106,7 @@ impl JsClass for PopStateEvent {
             construct::<PopStateEvent>(s, nt, a, EventInterface::PopStateEvent, fill_popstate)
         });
         def.getter("state", |s, e| Ok(e.fields.borrow().state.as_ref().map_or(s.null(), |p| p.get(s))));
+        def.getter("hasUAVisualTransition", |s, e| Ok(s.boolean(e.fields.borrow().has_ua_visual_transition)));
     }
 }
 
