@@ -26,8 +26,9 @@
 //! `frame-src` is checked against the parent's policies (a `javascript:` navigation against its
 //! initiator's, [`NavigationInitiator`]); `Page.setBypassCSP` applies from
 //! the next document committed; a blocked `sendBeacon` sends nothing and still returns true
-//! (as Chrome); inline `<style>` and `style` attributes (CSS code) and `setTimeout`
-//! strings are not checked.
+//! (as Chrome); inline `<style>` and `style` attributes (CSS code) are not checked.
+//! `setTimeout`/`setInterval` strings are checked when the timer is set
+//! (`trusted_types::timer_handler_source`), as Chrome.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -207,6 +208,21 @@ pub(crate) fn eval_level(page: &PageDom) -> u8 {
         level = level.max(if policy.disposition == Disposition::Report { 1 } else { 2 });
     }
     level
+}
+
+/// CSP3 `'trusted-types-eval'`: whether every policy of `page` whose `script-src` (or
+/// `default-src`) lacks `'unsafe-eval'` has `'trusted-types-eval'`, so that string compilation
+/// needs only enforced Trusted Types (which the caller checked).
+pub(crate) fn trusted_types_eval_allows(page: &PageDom) -> bool {
+    let Some(list) = policy_list(page) else { return true };
+    list.policies.iter().all(|policy| {
+        policy.directive_for("script-src").map_or(true, |directive| {
+            directive
+                .value
+                .iter()
+                .any(|v| v.eq_ignore_ascii_case("'unsafe-eval'") || v.eq_ignore_ascii_case("'trusted-types-eval'"))
+        })
+    })
 }
 
 /// After a request that carried `guard` ended (or failed): reports the violations its redirect

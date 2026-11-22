@@ -1333,7 +1333,12 @@ fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsR
     let callback = if handler.is_function() {
         Persistent::new(s, handler)
     } else {
-        let source = handler.to_string()?;
+        // Trusted Types, then CSP's string compilation check, when the timer is set (as Chrome):
+        // blocked, it returns 0 and sets nothing.
+        let sink = if repeat { "WorkerGlobalScope setInterval" } else { "WorkerGlobalScope setTimeout" };
+        let Some(source) = crate::trusted_types::timer_handler_source(s, &g.target.page, handler, sink)? else {
+            return Ok(s.number(0.0));
+        };
         Persistent::new(s, s.eval(&format!("(function () {{\n{source}\n}})"), Some(g.url.as_str()), 1)?)
     };
     let args: Vec<Persistent> = a.iter().skip(2).map(|v| Persistent::new(s, v)).collect();

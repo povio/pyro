@@ -572,12 +572,17 @@ fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> Js
     }
     let handler = a.get(0);
     // A string handler (`TimerHandler` is `(Function or TrustedScript or DOMString)`): converted
-    // now, compiled when the timer runs (HTML "timer initialization steps"), so a SyntaxError is
-    // reported then and does not throw from setTimeout.
+    // and checked now (Trusted Types, then CSP's string compilation check, as Chrome: blocked, it
+    // returns 0 and sets nothing), compiled when the timer runs (HTML "timer initialization
+    // steps"), so a SyntaxError is reported then and does not throw from setTimeout.
     let cb = if handler.is_function() {
         Persistent::new(s, handler)
     } else {
-        Persistent::new(s, s.string(&handler.to_string()?))
+        let sink = if repeat { "Window setInterval" } else { "Window setTimeout" };
+        match pyro_webapi::trusted_types::timer_handler_source(s, &w.target.page, handler, sink)? {
+            Some(source) => Persistent::new(s, s.string(&source)),
+            None => return Ok(s.number(0.0)),
+        }
     };
     // WebIDL `long timeout = 0`: conversion errors propagate.
     let delay = webidl_long(a.get(1).to_number()?);
