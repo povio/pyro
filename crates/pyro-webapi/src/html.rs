@@ -2256,7 +2256,19 @@ fn form_value<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 }
 
 fn define_labels<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    def.getter("labels", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::Labels)?.value()));
+    // HTML: a live NodeList of the element's labels; null for an input in the Hidden state,
+    // which is not labelable.
+    def.getter("labels", |s, n| {
+        let hidden = {
+            let dom = n.page().dom.borrow();
+            is_html(&dom, n.id, &["input"])
+                && dom.get_attribute(n.id, "type").js()?.is_some_and(|t| t.eq_ignore_ascii_case("hidden"))
+        };
+        if hidden {
+            return Ok(s.null());
+        }
+        Ok(collections::labels(s, n.page(), n.id)?.value())
+    });
 }
 
 fn define_validation<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {

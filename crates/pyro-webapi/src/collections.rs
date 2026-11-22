@@ -279,6 +279,20 @@ pub fn elements_by_name<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, name: S
     s.wrap::<NodeList>(data, None)
 }
 
+/// A labelable element's `labels`: a live `NodeList`, the same object on each access.
+pub fn labels<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, 10, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let page = page_rc(s)?;
+    let data = NodeListData {
+        source: NodeListSource::Members(NodeHold::new(&page, id)?, CollectionKind::Labels),
+        cache: RefCell::new((u64::MAX, Vec::new())),
+    };
+    s.wrap::<NodeList>(data, Some(key))
+}
+
 pub fn child_nodes<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
     let key = coll_identity(page, 1, id);
     if let Some(o) = s.lookup_identity(key) {
