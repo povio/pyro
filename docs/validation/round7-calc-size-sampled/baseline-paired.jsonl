@@ -1,0 +1,18 @@
+{"axis":"width","mode":"transition","fraction":0.5,"before":"200px","inline":"calc-size(any, 50px)","used":"50px","typed":"calc-size(auto, (0.5 * size) + 25px)"}
+{"axis":"width","mode":"transition","fraction":0.75,"before":"200px","inline":"calc-size(any, 50px)","used":"50px","typed":"calc-size(auto, (0.25 * size) + 37.5px)"}
+{"axis":"width","mode":"transition","fraction":1,"before":"200px","inline":"calc-size(any, 50px)","used":"50px","typed":"calc-size(auto, (0 * size) + 50px)"}
+{"axis":"width","mode":"css","fraction":0.5,"before":"200px","inline":"auto","used":"125px","typed":"calc-size(auto, (0.5 * size) + 25px)"}
+{"axis":"width","mode":"css","fraction":0.75,"before":"200px","inline":"auto","used":"87.5px","typed":"calc-size(auto, (0.25 * size) + 37.5px)"}
+{"axis":"width","mode":"css","fraction":1,"before":"200px","inline":"auto","used":"50px","typed":"calc-size(auto, (0 * size) + 50px)"}
+{"axis":"width","mode":"waapi","fraction":0.5,"before":"200px","inline":"auto","used":"125px","typed":"calc-size(auto, (0.5 * size) + 25px)"}
+{"axis":"width","mode":"waapi","fraction":0.75,"before":"200px","inline":"auto","used":"87.5px","typed":"calc-size(auto, (0.25 * size) + 37.5px)"}
+{"axis":"width","mode":"waapi","fraction":1,"before":"200px","inline":"auto","used":"50px","typed":"calc-size(auto, (0 * size) + 50px)"}
+{"axis":"height","mode":"transition","fraction":0.5,"before":"100px","inline":"calc-size(any, 50px)","used":"50px","typed":"calc-size(auto, (0.5 * size) + 25px)"}
+{"axis":"height","mode":"transition","fraction":0.75,"before":"100px","inline":"calc-size(any, 50px)","used":"50px","typed":"calc-size(auto, (0.25 * size) + 37.5px)"}
+{"axis":"height","mode":"transition","fraction":1,"before":"100px","inline":"calc-size(any, 50px)","used":"50px","typed":"calc-size(auto, (0 * size) + 50px)"}
+{"axis":"height","mode":"css","fraction":0.5,"before":"100px","inline":"auto","used":"75px","typed":"calc-size(auto, (0.5 * size) + 25px)"}
+{"axis":"height","mode":"css","fraction":0.75,"before":"100px","inline":"auto","used":"62.5px","typed":"calc-size(auto, (0.25 * size) + 37.5px)"}
+{"axis":"height","mode":"css","fraction":1,"before":"100px","inline":"auto","used":"50px","typed":"calc-size(auto, (0 * size) + 50px)"}
+{"axis":"height","mode":"waapi","fraction":0.5,"before":"100px","inline":"auto","used":"75px","typed":"calc-size(auto, (0.5 * size) + 25px)"}
+{"axis":"height","mode":"waapi","fraction":0.75,"before":"100px","inline":"auto","used":"62.5px","typed":"calc-size(auto, (0.25 * size) + 37.5px)"}
+{"axis":"height","mode":"waapi","fraction":1,"before":"100px","inline":"auto","used":"50px","typed":"calc-size(auto, (0 * size) + 50px)"}

@@ -1,0 +1,2 @@
+blitz-dom: UPSTREAM.patch written: 69 file(s), 68 section(s) kept as committed (68 from HEAD), 1 regenerated (src/resolved_style.rs)
+blitz-dom: patch verified: git apply on the upstream reconstructed at 0e6341d8 (HEAD) reproduces vendor/blitz-dom/src, vendor/blitz-dom/assets, and git apply -R gives it back

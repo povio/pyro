@@ -1,0 +1,289 @@
+{
+  "totals": {
+    "Pass->Pass": 2665,
+    "Fail->Pass": 32,
+    "Fail->Fail": 606
+  },
+  "pages": {
+    "css/css-values/calc-size/animation/calc-size-height-interpolation.html": {
+      "Pass->Pass": 988,
+      "Fail->Pass": 16,
+      "Fail->Fail": 152
+    },
+    "css/css-values/calc-size/animation/calc-size-width-interpolation.html": {
+      "Pass->Pass": 624,
+      "Fail->Pass": 16,
+      "Fail->Fail": 92
+    },
+    "css/css-values/calc-size/animation/calc-size-interpolation-expansion.html": {
+      "Fail->Fail": 6,
+      "Pass->Pass": 5
+    },
+    "css/css-values/calc-size/animation/interpolate-size-height-composition.html": {
+      "Pass->Pass": 19,
+      "Fail->Fail": 1
+    },
+    "css/css-values/calc-size/animation/interpolate-size-height-interpolation.html": {
+      "Fail->Fail": 88,
+      "Pass->Pass": 230
+    },
+    "css/css-values/calc-size/animation/interpolate-size-logical-properties-interpolation.html": {
+      "Fail->Fail": 62,
+      "Pass->Pass": 82
+    },
+    "css/css-values/calc-size/animation/interpolate-size-max-height-composition.html": {
+      "Fail->Fail": 16,
+      "Pass->Pass": 4
+    },
+    "css/css-values/calc-size/animation/interpolate-size-max-height-interpolation.html": {
+      "Pass->Pass": 234,
+      "Fail->Fail": 48
+    },
+    "css/css-values/calc-size/animation/interpolate-size-max-width-composition.html": {
+      "Fail->Fail": 24,
+      "Pass->Pass": 6
+    },
+    "css/css-values/calc-size/animation/interpolate-size-max-width-interpolation.html": {
+      "Pass->Pass": 234,
+      "Fail->Fail": 48
+    },
+    "css/css-values/calc-size/animation/interpolate-size-which-value.html": {
+      "Pass->Pass": 6,
+      "Fail->Fail": 2
+    },
+    "css/css-values/calc-size/animation/interpolate-size-width-composition.html": {
+      "Pass->Pass": 29,
+      "Fail->Fail": 1
+    },
+    "css/css-values/calc-size/animation/interpolate-size-width-interpolation.html": {
+      "Fail->Fail": 66,
+      "Pass->Pass": 204
+    }
+  },
+  "changes": [
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions: property <height> from [auto] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions: property <height> from [auto] to [calc-size(any, 50px)] at (0) should be [100px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions: property <height> from [auto] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions: property <height> from [auto] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(any, 50px)] at (0) should be [100px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions: property <height> from [auto] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions: property <height> from [auto] to [calc-size(50px, size)] at (0) should be [100px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions: property <height> from [auto] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions: property <height> from [auto] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(50px, size)] at (0) should be [100px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions: property <width> from [auto] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions: property <width> from [auto] to [calc-size(any, 50px)] at (0) should be [200px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions: property <width> from [auto] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions: property <width> from [auto] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(any, 50px)] at (0) should be [200px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions: property <width> from [auto] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions: property <width> from [auto] to [calc-size(50px, size)] at (0) should be [200px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions: property <width> from [auto] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions: property <width> from [auto] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(50px, size)] at (0) should be [200px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    },
+    {
+      "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+      "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+      "occurrence": 1,
+      "old": "Fail",
+      "new": "Pass"
+    }
+  ]
+}
