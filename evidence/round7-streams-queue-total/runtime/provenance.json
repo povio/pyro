@@ -1,0 +1,30 @@
+{
+  "chromeVersion": "Google Chrome 158.0.8127.37",
+  "chromeTeam": "EQHXZ8M8AV",
+  "chromeCodesign": "codesign --verify --deep --strict passed",
+  "chromeExecutableSHA256": "b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e",
+  "chromeFrameworkSHA256": "a04d264c815c317ba1ffa89d388144ec639ec0e4a1a114a2ba524ad4bdd130c8",
+  "runnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+  "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+  "profile": "cargo build --offline --locked -j1 --profile wptiter -p pyro --features render",
+  "profileOverrides": {
+    "inherits": "release-fast",
+    "lto": false,
+    "codegen-units": 16,
+    "incremental": true
+  },
+  "base-pyro": {
+    "commit": "531432aa9bd1aadc1d6f460574473722d15a234d",
+    "tree": "d45862f36a5279004722cee4706d9c49ca942d71",
+    "binarySHA256": "e4de03624898cca02fb83c0d40aa9e1d79e848095f5cd8258e34554c4e73b5f8",
+    "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+    "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)"
+  },
+  "pyro": {
+    "commit": "5ea0e3298adc09e1a386fd88445a812548e69ae0",
+    "tree": "66c99a13e3e126ea3603cb1ed7803d3926bc7789",
+    "binarySHA256": "b9cb2d6df2622e416cd3ce475feeeb19802254080cc2d4edf333f3710249f2db",
+    "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+    "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)"
+  }
+}

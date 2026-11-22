@@ -298,7 +298,7 @@
     if (c.queue.length > 0) {
       const { value, size } = c.queue.shift();
       c.queueSize -= size;
-      if (c.queue.length === 0) c.queueSize = 0;
+      if (c.queueSize < 0) c.queueSize = 0;
       if (c.closeRequested && c.queue.length === 0) {
         rcClear(c);
         rsClose(c.stream);
@@ -1212,7 +1212,7 @@
         st.inFlightWrite = undefined;
         const { size } = c.queue.shift();
         c.queueSize -= size;
-        if (c.queue.length === 0) c.queueSize = 0;
+        if (c.queueSize < 0) c.queueSize = 0;
         if (!wsCloseQueued(st) && st.state === 'writable') wsUpdateBackpressure(st, c.hwm - c.queueSize <= 0);
         wcAdvance(c);
       }, (e) => {
