@@ -11,13 +11,13 @@
    },
    "distinct_census_pages": 1284,
    "owner_reported_unlisted": 14,
-   "selector_union": 1486,
-   "owner_estimate_reduction": 216,
-   "of_which_tentative": 156,
+   "selector_union": 1487,
+   "owner_estimate_reduction": 217,
+   "of_which_tentative": 157,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 40,
    "by_dir": {
-    "html/canvas": 423,
+    "html/canvas": 424,
     "html/semantics": 356,
     "html/interaction": 115,
     "referrer-policy": 114,
@@ -32,22 +32,22 @@
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
-    "html/infrastructure": 9,
     "workers": 9,
+    "html/infrastructure": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "FileAPI": 4,
-    "html/rendering": 3,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "html/rendering": 3,
     "xhr": 2,
+    "svg/styling": 1,
     "fetch/security": 1,
-    "IndexedDB": 1,
-    "fetch/redirect-navigate": 1,
     "quirks": 1,
-    "svg/styling": 1
+    "fetch/redirect-navigate": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
@@ -60,13 +60,13 @@
    },
    "distinct_census_pages": 153,
    "owner_reported_unlisted": 0,
-   "selector_union": 378,
-   "owner_estimate_reduction": 225,
-   "of_which_tentative": 216,
+   "selector_union": 377,
+   "owner_estimate_reduction": 224,
+   "of_which_tentative": 215,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/canvas": 159,
+    "html/canvas": 158,
     "html/semantics": 73,
     "html/syntax": 30,
     "fetch/metadata": 27,
@@ -74,19 +74,19 @@
     "html/infrastructure": 11,
     "fetch/fetch-later": 10,
     "fetch/api": 7,
-    "IndexedDB": 6,
-    "fetch/corb": 6,
     "html/browsers": 6,
-    "html/webappapis": 5,
+    "fetch/corb": 6,
+    "IndexedDB": 6,
     "html/dom": 5,
+    "html/webappapis": 5,
     "fetch/security": 4,
-    "fetch/orb": 2,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/http-cache": 1,
-    "fetch/content-type": 1,
-    "fetch/redirects": 1,
+    "fetch/orb": 2,
+    "fetch/images": 1,
     "fetch/range": 1,
-    "fetch/images": 1
+    "fetch/redirects": 1,
+    "fetch/http-cache": 1,
+    "fetch/content-type": 1
    }
   },
   "queued": {
@@ -1632,10 +1632,10 @@
   },
   "R-HTML-9": {
    "state": "claimed",
-   "in_scope_pages": 153,
+   "in_scope_pages": 152,
    "out_of_scope_pages": 0,
-   "pages": 153,
-   "tentative": 153
+   "pages": 152,
+   "tentative": 152
   },
   "R-HTML-9a": {
    "state": "implemented-unbuilt",
@@ -1645,6 +1645,13 @@
    "tentative": 6
   },
   "R-HTML-9b": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
+   "tentative": 1
+  },
+  "R-HTML-9c": {
    "state": "implemented-unbuilt",
    "in_scope_pages": 1,
    "out_of_scope_pages": 0,
