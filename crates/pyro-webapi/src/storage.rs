@@ -169,6 +169,7 @@ struct Namespace {
     indexed_db: crate::indexeddb::Namespace,
     caches: crate::cache_storage::Namespace,
     opfs: crate::opfs::Namespace,
+    buckets: crate::storage_buckets::catalog::Catalog,
     origins: RefCell<FxHashMap<String, Rc<RefCell<Area>>>>,
     quota: usize,
     /// Pages attached to this namespace (`PageDom::set_storage_namespaces`):
@@ -194,6 +195,7 @@ impl StorageNamespace {
             indexed_db: Default::default(),
             caches: Default::default(),
             opfs: Default::default(),
+            buckets: Default::default(),
             origins: RefCell::new(FxHashMap::default()),
             quota: bytes,
             pages: RefCell::new(Vec::new()),
@@ -206,12 +208,14 @@ impl StorageNamespace {
         indexed_db: crate::indexeddb::Namespace,
         caches: crate::cache_storage::Namespace,
         opfs: crate::opfs::Namespace,
+        buckets: crate::storage_buckets::catalog::Catalog,
     ) -> Self {
         let namespace = Self::default();
         let mut inner = Rc::try_unwrap(namespace.0).ok().expect("fresh namespace");
         inner.indexed_db = indexed_db;
         inner.caches = caches;
         inner.opfs = opfs;
+        inner.buckets = buckets;
         Self(Rc::new(inner))
     }
 
@@ -284,6 +288,10 @@ impl StorageNamespace {
 
     pub(crate) fn opfs(&self) -> crate::opfs::Namespace {
         self.0.opfs.clone()
+    }
+
+    pub(crate) fn buckets(&self) -> crate::storage_buckets::catalog::Catalog {
+        self.0.buckets.clone()
     }
 
     pub(crate) fn opfs_usage(&self, origin: &str) -> u64 {

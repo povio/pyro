@@ -504,7 +504,7 @@
     let list = waiters.get(name);
     if (!list) {
       waiters.set(name, (list = []));
-      N.watch(name, true);
+      storage.watch(name, true);
     }
     list.push(fn);
   }
@@ -512,7 +512,7 @@
     const list = waiters.get(name);
     if (!list) return;
     waiters.delete(name);
-    N.watch(name, false);
+    storage.watch(name, false);
     for (const fn of list) fn();
   }
   const wakeLocal = (name) => post(() => runWaiters(name));
@@ -571,11 +571,33 @@
     s.error = error;
   };
 
+  // Default-factory database names are strings. A named bucket uses
+  // canonical address objects, so an author's name can never collide with
+  // another generation or the default factory's open queues and waiters.
+  // Both paths use this realm's single set of branded IDB interfaces.
+  let storage = N;
+  function enableBucketRouting() {
+    if (storage !== N) return;
+    storage = Object.create(null);
+    for (const operation of [
+      'watch', 'reserve', 'busy', 'release', 'version', 'schema', 'connect', 'disconnect', 'others', 'notify',
+      'lock', 'beginUpgrade', 'commit', 'abort', 'deleteDb', 'createStore', 'deleteStore', 'renameStore',
+      'createIndex', 'deleteIndex', 'renameIndex', 'records', 'indexAdd', 'nextKey', 'bumpKey', 'put',
+      'getRecord', 'getAll', 'count', 'deleteRange', 'clear', 'seek',
+    ]) {
+      storage[operation] = (address, ...args) => typeof address === 'string'
+        ? N[operation](address, ...args)
+        : address.backend[operation](address.name, ...args);
+    }
+  }
+  const live = address => typeof address === 'string' || address.backend.isLive();
+  const publicName = address => typeof address === 'string' ? address : address.name;
+
   // ---- Connections ----
   const conns = [];
   function loadMeta(name) {
     const meta = new Map();
-    for (const [store, kp, ai, indexes] of N.schema(name)) {
+    for (const [store, kp, ai, indexes] of storage.schema(name)) {
       const m = { name: store, backingName: store, backingIndexes: new Set(), keyPath: parse(kp), ai, indexes: new Map(), deleted: false };
       for (const [index, ikp, unique, multiEntry] of indexes) {
         m.indexes.set(index, { name: index, backingName: index, keyPath: parse(ikp), unique, multiEntry, deleted: false });
@@ -588,7 +610,7 @@
   function connect(name, version) {
     const c = {
       name,
-      id: N.connect(name),
+      id: storage.connect(name),
       version,
       meta: loadMeta(name),
       closePending: false,
@@ -606,10 +628,11 @@
     c.closed = true;
     const i = conns.indexOf(c);
     if (i >= 0) conns.splice(i, 1);
-    N.disconnect(c.name, c.id);
+    storage.disconnect(c.name, c.id);
     wakeLocal(c.name);
+    forgetAddress(c.name);
   }
-  const othersOpen = (name, self) => conns.some((o) => o.name === name && o !== self) || N.others(name) > 0;
+  const othersOpen = (name, self) => conns.some((o) => o.name === name && o !== self) || storage.others(name) > 0;
 
   let connection;
   class IDBDatabase extends ET {
@@ -624,7 +647,7 @@
       connection = (d) => d.#c;
     }
     get name() {
-      return this.#c.name;
+      return publicName(this.#c.name);
     }
     get version() {
       return this.#c.version;
@@ -646,7 +669,7 @@
       if (ai && (keyPath === '' || isArray(keyPath))) {
         throw fail('InvalidAccessError', 'The autoIncrement option was set but the keyPath option was empty or an array.');
       }
-      enqueueSchema(x, () => N.createStore(c.name, name, stringify(keyPath), ai));
+      enqueueSchema(x, () => storage.createStore(c.name, name, stringify(keyPath), ai));
       const m = { name, backingName: name, backingIndexes: new Set(), keyPath, ai, indexes: new Map(), deleted: false };
       c.meta.set(name, m);
       x.created.push(m);
@@ -660,7 +683,7 @@
       if (x.state !== 'active') throw fail('TransactionInactiveError', 'The transaction is not active.');
       const m = c.meta.get(name);
       if (!m) throw fail('NotFoundError', 'The specified object store was not found.');
-      enqueueSchema(x, () => N.deleteStore(c.name, name));
+      enqueueSchema(x, () => storage.deleteStore(c.name, name));
       c.meta.delete(name);
       markStoreDeleted(m);
     }
@@ -678,7 +701,7 @@
       }
       const c = this.#c;
       if (c.upgrade) throw fail('InvalidStateError', 'A version change transaction is running.');
-      if (c.closePending) throw fail('InvalidStateError', 'The database connection is closing.');
+      if (c.closePending || !live(c.name)) throw fail('InvalidStateError', 'The database connection is closing.');
       const scope = [...new Set(names)].sort();
       for (const n of scope) {
         if (!c.meta.has(n)) throw fail('NotFoundError', 'One of the specified object stores was not found.');
@@ -814,8 +837,18 @@
           (y.upgrade || ((y.mode !== 'readonly' || x.mode !== 'readonly') && overlaps(x, y)));
       }
       if (blocked) continue;
-      if (!N.lock(x.conn.name, x.id, x.scope, x.mode !== 'readonly')) {
-        waitFor(x.conn.name, tryStart);
+      if (!live(x.conn.name)) {
+        abortTx(x, fail('UnknownError', 'The storage bucket no longer exists.'));
+        continue;
+      }
+      try {
+        if (!storage.lock(x.conn.name, x.id, x.scope, x.mode !== 'readonly')) {
+          waitFor(x.conn.name, tryStart);
+          continue;
+        }
+      } catch (error) {
+        if (live(x.conn.name)) throw error;
+        abortTx(x, error);
         continue;
       }
       x.started = true;
@@ -890,12 +923,17 @@
   }
   function commitTx(x) {
     x.state = 'committing';
-    N.commit(x.conn.name, x.id);
+    try {
+      storage.commit(x.conn.name, x.id);
+    } catch (error) {
+      abortTx(x, error);
+      return;
+    }
     finish(x, true);
   }
   function abortTx(x, error) {
     if (x.state === 'finished') return;
-    if (x.started) N.abort(x.conn.name, x.id);
+    if (x.started) storage.abort(x.conn.name, x.id);
     x.error = error;
     if (x.upgrade) revertUpgrade(x);
     for (const r of x.queue.splice(0)) {
@@ -992,18 +1030,18 @@
   function storeRecord(h, value, key, noOverwrite) {
     const m = h.m, x = h.x, name = x.conn.name;
     if (key === undefined) {
-      const n = N.nextKey(name, m.backingName);
+      const n = storage.nextKey(name, m.backingName);
       if (n < 0) throw fail('ConstraintError', 'The key generator has reached its maximum value.');
       key = numberKey(n);
       if (m.keyPath !== null) inject(value, m.keyPath, n);
     }
     const idx = [];
     for (const im of m.backingIndexes) idx.push([im.backingName, indexKeys(im, value)]);
-    const code = N.put(name, m.backingName, x.id, key, value, idx, noOverwrite);
+    const code = storage.put(name, m.backingName, x.id, key, value, idx, noOverwrite);
     if (code === 1) throw fail('ConstraintError', 'Key already exists in the object store.');
     if (code === 2) throw fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.');
     const primaryKey = decodeKey(key);
-    if (m.ai && key[0] === '1') N.bumpKey(name, m.backingName, x.id, primaryKey);
+    if (m.ai && key[0] === '1') storage.bumpKey(name, m.backingName, x.id, primaryKey);
     return primaryKey;
   }
   function addOrPut(store, args, noOverwrite, what) {
@@ -1053,7 +1091,7 @@
     const range = toRange(a.query, false);
     return request(h.x, source, () => {
       const name = index ? index.im.backingName : null;
-      const flat = N.getAll(h.x.conn.name, h.m.backingName, name, ...range, a.count, a.dir, kind !== 1);
+      const flat = storage.getAll(h.x.conn.name, h.m.backingName, name, ...range, a.count, a.dir, kind !== 1);
       const out = [];
       for (let i = 0; i < flat.length; i += 3) {
         if (kind === 0) out.push(flat[i + 2]);
@@ -1097,7 +1135,7 @@
       if (h.m.name === name) return;
       if (c.meta.has(name)) throw fail('ConstraintError', 'An object store with the specified name already exists.');
       enqueueSchema(h.x, () => {
-        N.renameStore(c.name, h.m.backingName, name);
+        storage.renameStore(c.name, h.m.backingName, name);
         h.m.backingName = name;
       });
       c.meta.delete(h.m.name);
@@ -1130,7 +1168,7 @@
       check(h, true);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        N.deleteRange(h.x.conn.name, h.m.backingName, h.x.id, ...range);
+        storage.deleteRange(h.x.conn.name, h.m.backingName, h.x.id, ...range);
         return undefined;
       });
     }
@@ -1138,7 +1176,7 @@
       const h = this.#h;
       check(h, true);
       return request(h.x, this, () => {
-        N.clear(h.x.conn.name, h.m.backingName, h.x.id);
+        storage.clear(h.x.conn.name, h.m.backingName, h.x.id);
         return undefined;
       });
     }
@@ -1148,7 +1186,7 @@
       check(h, false);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        const r = N.getRecord(h.x.conn.name, h.m.backingName, null, ...range, true);
+        const r = storage.getRecord(h.x.conn.name, h.m.backingName, null, ...range, true);
         return r ? r[2] : undefined;
       });
     }
@@ -1158,7 +1196,7 @@
       check(h, false);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        const r = N.getRecord(h.x.conn.name, h.m.backingName, null, ...range, false);
+        const r = storage.getRecord(h.x.conn.name, h.m.backingName, null, ...range, false);
         return r ? decodeKey(r[1]) : undefined;
       });
     }
@@ -1175,7 +1213,7 @@
       const h = this.#h;
       check(h, false);
       const range = toRange(query, false);
-      return request(h.x, this, () => N.count(h.x.conn.name, h.m.backingName, null, ...range));
+      return request(h.x, this, () => storage.count(h.x.conn.name, h.m.backingName, null, ...range));
     }
     openCursor(query = undefined, dir = undefined) {
       return openCursor(this, this.#h, null, query, dir, false);
@@ -1210,10 +1248,10 @@
       h.m.indexes.set(name, im);
       (x.createdIndexes || (x.createdIndexes = [])).push(im);
       enqueueSchema(x, () => {
-        N.createIndex(c.name, h.m.backingName, name, stringify(keyPath), unique, multiEntry);
-        const rows = N.records(c.name, h.m.backingName);
+        storage.createIndex(c.name, h.m.backingName, name, stringify(keyPath), unique, multiEntry);
+        const rows = storage.records(c.name, h.m.backingName);
         for (let i = 0; i < rows.length; i += 2) {
-          if (!N.indexAdd(c.name, h.m.backingName, name, rows[i], indexKeys(im, rows[i + 1]))) {
+          if (!storage.indexAdd(c.name, h.m.backingName, name, rows[i], indexKeys(im, rows[i + 1]))) {
             throw fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.');
           }
         }
@@ -1229,7 +1267,7 @@
       const im = h.m.indexes.get(name);
       if (!im) throw fail('NotFoundError', 'The specified index was not found.');
       enqueueSchema(h.x, () => {
-        N.deleteIndex(h.x.conn.name, h.m.backingName, name);
+        storage.deleteIndex(h.x.conn.name, h.m.backingName, name);
         h.m.backingIndexes.delete(im);
       });
       h.m.indexes.delete(name);
@@ -1276,7 +1314,7 @@
       if (d.im.name === name) return;
       if (h.m.indexes.has(name)) throw fail('ConstraintError', 'An index with the specified name already exists.');
       enqueueSchema(h.x, () => {
-        N.renameIndex(h.x.conn.name, h.m.backingName, d.im.backingName, name);
+        storage.renameIndex(h.x.conn.name, h.m.backingName, d.im.backingName, name);
         d.im.backingName = name;
       });
       h.m.indexes.delete(d.im.name);
@@ -1303,7 +1341,7 @@
       indexCheck(d);
       const range = toRange(query, true);
       return request(d.h.x, this, () => {
-        const r = N.getRecord(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range, true);
+        const r = storage.getRecord(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range, true);
         return r ? r[2] : undefined;
       });
     }
@@ -1313,7 +1351,7 @@
       indexCheck(d);
       const range = toRange(query, true);
       return request(d.h.x, this, () => {
-        const r = N.getRecord(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range, false);
+        const r = storage.getRecord(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range, false);
         return r ? decodeKey(r[1]) : undefined;
       });
     }
@@ -1330,7 +1368,7 @@
       const d = this.#d;
       indexCheck(d);
       const range = toRange(query, false);
-      return request(d.h.x, this, () => N.count(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range));
+      return request(d.h.x, this, () => storage.count(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range));
     }
     openCursor(query = undefined, dir = undefined) {
       return openCursor(this, this.#d.h, this.#d, query, dir, false);
@@ -1373,7 +1411,7 @@
   }
   // "Iterate a cursor".
   function iterate(c, key, primaryKey, count) {
-    const r = N.seek(
+    const r = storage.seek(
       c.h.x.conn.name,
       c.h.m.backingName,
       c.im ? c.im.backingName : null,
@@ -1498,7 +1536,7 @@
       cursorWrite(c);
       const pk = c.pk;
       return request(c.h.x, this, () => {
-        N.deleteRange(c.h.x.conn.name, c.h.m.backingName, c.h.x.id, pk, pk, false, false);
+        storage.deleteRange(c.h.x.conn.name, c.h.m.backingName, c.h.x.id, pk, pk, false, false);
         return undefined;
       });
     }
@@ -1519,6 +1557,11 @@
 
   // ---- Opening and deleting databases ----
   const queues = new Map();
+  function forgetAddress(key) {
+    if (typeof key !== 'string' && !queues.has(key) && !waiters.has(key) && !conns.some(c => c.name === key)) {
+      key.owner.delete(key.name);
+    }
+  }
   function enqueue(item) {
     let q = queues.get(item.name);
     if (!q) queues.set(item.name, (q = []));
@@ -1529,9 +1572,19 @@
     const q = queues.get(name);
     q.shift();
     if (q.length) post(() => run(q[0]));
-    else queues.delete(name);
+    else {
+      queues.delete(name);
+      forgetAddress(name);
+    }
   }
-  const run = (item) => (item.kind === 'open' ? runOpen(item) : runDelete(item));
+  function run(item) {
+    try {
+      if (live(item.name)) return item.kind === 'open' ? runOpen(item) : runDelete(item);
+    } catch (error) {
+      if (live(item.name)) throw error;
+    }
+    return bucketOpenFailed(item);
+  }
   const retry = (item) => waitFor(item.name, () => post(() => run(item)));
   function settle(item, event) {
     return {
@@ -1542,8 +1595,8 @@
   }
   function runOpen(item) {
     const name = item.name;
-    if (N.busy(name)) return retry(item);
-    const current = N.version(name);
+    if (storage.busy(name)) return retry(item);
+    const current = storage.version(name);
     const version = item.version === undefined ? (current > 0 ? current : 1) : item.version;
     const s = requestState(item.request);
     if (current > version) {
@@ -1555,7 +1608,7 @@
       succeed(s, c.db);
       return settle(item, plainEvent('success', false, false));
     }
-    if (!N.reserve(name)) return retry(item);
+    if (!storage.reserve(name)) return retry(item);
     const old = current < 0 ? 0 : current;
     item.conn = connect(name, old);
     item.old = old;
@@ -1570,7 +1623,7 @@
         post(() => (o.closePending ? undefined : { t: o.db, e: versionEvent('versionchange', old, version) }));
       }
     }
-    N.notify(item.name, old, version);
+    storage.notify(item.name, old, version);
     post(() => {
       if (!othersOpen(item.name, item.conn)) return proceed(item);
       waitClosed(item);
@@ -1583,7 +1636,18 @@
       else post(() => proceed(item));
     });
   }
-  const proceed = (item) => (item.kind === 'open' ? upgrade(item) : deleteNow(item));
+  function bucketOpenFailed(item) {
+    failed(requestState(item.request), fail('AbortError', 'The storage bucket no longer exists.'));
+    return settle(item, plainEvent('error', true, true));
+  }
+  function proceed(item) {
+    try {
+      if (live(item.name)) return item.kind === 'open' ? upgrade(item) : deleteNow(item);
+    } catch (error) {
+      if (live(item.name)) throw error;
+    }
+    return bucketOpenFailed(item);
+  }
   // "Run an upgrade transaction".
   function upgrade(item) {
     const c = item.conn, name = item.name;
@@ -1594,7 +1658,7 @@
       stores: [...c.meta.values()].map((m) => [m, m.name, [...m.indexes.values()].map((im) => [im, im.name])]),
     };
     c.upgrade = x;
-    N.beginUpgrade(name, x.id, item.version);
+    storage.beginUpgrade(name, x.id, item.version);
     c.version = item.version;
     x.started = true;
     const s = requestState(item.request);
@@ -1615,7 +1679,7 @@
   // After the upgrade transaction's complete or abort event.
   function finishOpen(x, committed) {
     const item = x.openItem, c = x.conn, s = requestState(item.request);
-    N.release(item.name);
+    storage.release(item.name);
     if (committed && !c.closePending) {
       succeed(s, c.db);
       return settle(item, plainEvent('success', false, false));
@@ -1625,27 +1689,27 @@
   }
   function runDelete(item) {
     const name = item.name;
-    if (N.busy(name)) return retry(item);
-    const current = N.version(name);
+    if (storage.busy(name)) return retry(item);
+    const current = storage.version(name);
     const s = requestState(item.request);
     if (current < 0) {
       succeed(s, undefined);
       return settle(item, versionEvent('success', 0, null));
     }
-    if (!N.reserve(name)) return retry(item);
+    if (!storage.reserve(name)) return retry(item);
     item.old = current;
     versionChange(item, current, null);
   }
   function deleteNow(item) {
-    N.deleteDb(item.name);
-    N.release(item.name);
+    storage.deleteDb(item.name);
+    storage.release(item.name);
     succeed(requestState(item.request), undefined);
     return settle(item, versionEvent('success', item.old, null));
   }
   function databaseName(name) {
     return domString(name);
   }
-  function open(name, version, argc) {
+  function open(name, version, argc, address) {
     name = databaseName(name);
     let v;
     if (argc > 1 && version !== undefined) {
@@ -1653,12 +1717,13 @@
       if (v === 0) throw new TE("Failed to execute 'open' on 'IDBFactory': The version provided must not be 0.");
     }
     const r = new IDBOpenDBRequest(token);
-    enqueue({ kind: 'open', name, version: v, request: r });
+    enqueue({ kind: 'open', name: address ? address(name) : name, version: v, request: r });
     return r;
   }
-  function deleteDatabase(name) {
+  function deleteDatabase(name, address) {
+    name = databaseName(name);
     const r = new IDBOpenDBRequest(token);
-    enqueue({ kind: 'delete', name: databaseName(name), request: r });
+    enqueue({ kind: 'delete', name: address ? address(name) : name, request: r });
     return r;
   }
   function cmp(a, b) {
@@ -1672,7 +1737,38 @@
     if (c && !c.closePending) post(() => (c.closePending ? undefined : { t: c.db, e: versionEvent('versionchange', oldVersion, newVersion) }));
   }
 
+  function bucket(backend) {
+    enableBucketRouting();
+    const addresses = new Map();
+    const address = name => {
+      let value = addresses.get(name);
+      if (!value) {
+        value = {name, backend, owner: addresses};
+        addresses.set(name, value);
+      }
+      return value;
+    };
+    return {
+      open: (name, version, argc) => open(name, version, argc, address),
+      deleteDatabase: name => deleteDatabase(name, address),
+      cmp,
+      wake: (kind, name, conn, oldVersion, newVersion) =>
+        wake(kind, kind === 0 ? address(name) : undefined, conn, oldVersion, newVersion),
+      retire() {
+        for (const c of [...conns]) {
+          if (typeof c.name === 'string' || c.name.backend !== backend) continue;
+          c.closePending = true;
+          for (const x of [...c.txs]) abortTx(x, fail('UnknownError', 'The storage bucket was deleted.'));
+          maybeClose(c);
+          post(() => ({t: c.db, e: plainEvent('close', false, false)}));
+        }
+        for (const key of addresses.values()) runWaiters(key);
+        addresses.clear();
+      },
+    };
+  }
   return {
+    bucket,
     step,
     wake,
     open,

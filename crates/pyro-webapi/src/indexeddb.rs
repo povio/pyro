@@ -18,6 +18,7 @@
 //!
 //! New ordinary transactions remain active through the creating script's microtask checkpoint.
 use crate::page::{PageDom, RemotePoster};
+use crate::storage_buckets::catalog::{Bucket, Endpoint, Error as BucketError, Lease, Reservation};
 use crate::structured_clone::{decode_message, encode_message, WireMessage};
 use crate::util::arg_string;
 use pyro_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, RootedVec, Scope};
@@ -57,7 +58,7 @@ fn next_id() -> u64 {
 
 /// The context partition's databases, by origin. Clone to share.
 #[derive(Clone, Default)]
-pub(crate) struct Namespace(Arc<Mutex<Server>>);
+pub(crate) struct Namespace(Arc<Mutex<Server>>, Option<Lease>);
 
 #[derive(Default)]
 struct Server {
@@ -84,6 +85,9 @@ struct Db {
     watchers: Vec<u64>,
     undo: FxHashMap<u64, Vec<Undo>>,
     upgrade: Option<Upgrade>,
+    /// Committed serialized record bytes and the net change of each active write transaction.
+    committed_bytes: u64,
+    changes: FxHashMap<u64, (i128, Reservation)>,
 }
 
 struct Conn {
@@ -143,6 +147,29 @@ struct DatabaseInfo {
 }
 
 impl Namespace {
+    pub(crate) fn for_bucket(lease: Lease) -> Self {
+        Self(Default::default(), Some(lease))
+    }
+
+    fn check_live(&self) -> JsResult<()> {
+        if let Some(lease) = &self.1 {
+            lease.check().map_err(bucket_error)?;
+        }
+        Ok(())
+    }
+
+    /// Forget this generation and force-close its connections on their owner agents.
+    pub(crate) fn retire(&self) {
+        let targets = {
+            let mut server = self.lock();
+            server.origins.clear();
+            std::mem::take(&mut server.realms)
+        };
+        for (handle, remote) in targets {
+            deliver(&remote, handle, Message::Retire);
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, Server> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -177,6 +204,7 @@ impl Namespace {
                     }
                     if db.busy == Some(handle) {
                         if let Some(upgrade) = db.upgrade.take() {
+                            db.changes.remove(&upgrade.tx);
                             db.version = upgrade.old_version;
                             db.stores = upgrade.old_stores;
                         }
@@ -203,7 +231,52 @@ impl Namespace {
     }
 }
 
+fn bucket_error(error: BucketError) -> JsError {
+    match error {
+        BucketError::QuotaExceeded => JsError::dom("QuotaExceededError", "Bucket quota exceeded."),
+        _ => JsError::dom("UnknownError", "The storage bucket no longer exists."),
+    }
+}
+
+impl Record {
+    fn stored_bytes(&self, key: &str) -> u64 {
+        (key.len() + self.value.size()) as u64
+            + self.keys.iter().map(|(_, keys)| Self::index_bytes(key, keys)).sum::<u64>()
+    }
+
+    fn index_bytes(primary: &str, keys: &[String]) -> u64 {
+        keys.iter().map(|index_key| (primary.len() + index_key.len()) as u64).sum()
+    }
+}
+
 impl Db {
+    fn resize_reservation(&mut self, lease: &Lease, tx: u64, removed: u64, added: u64) -> JsResult<()> {
+        let delta = i128::from(added) - i128::from(removed);
+        if delta == 0 {
+            return Ok(());
+        }
+        if let Some((net, reservation)) = self.changes.get_mut(&tx) {
+            let next = *net + delta;
+            reservation.resize(next.max(0) as u64).map_err(bucket_error)?;
+            *net = next;
+        } else {
+            let reservation = lease.reserve(Endpoint::IndexedDb, delta.max(0) as u64).map_err(bucket_error)?;
+            self.changes.insert(tx, (delta, reservation));
+        }
+        Ok(())
+    }
+
+    fn commit_usage(&mut self, tx: u64) -> JsResult<()> {
+        if let Some((delta, reservation)) = self.changes.remove(&tx) {
+            let (removed, added) = ((-delta).max(0) as u64, delta.max(0) as u64);
+            let total = self.committed_bytes.checked_sub(removed).and_then(|n| n.checked_add(added))
+                .ok_or_else(|| bucket_error(BucketError::QuotaExceeded))?;
+            reservation.commit(removed, added).map_err(bucket_error)?;
+            self.committed_bytes = total;
+        }
+        Ok(())
+    }
+
     fn store(&mut self, name: &str) -> JsResult<&mut Store> {
         self.stores.get_mut(name).ok_or_else(|| JsError::dom("InvalidStateError", "The object store was deleted."))
     }
@@ -217,6 +290,7 @@ impl Db {
     }
 
     fn rollback(&mut self, tx: u64) {
+        self.changes.remove(&tx);
         self.locks.retain(|l| l.tx != tx);
         let Some(steps) = self.undo.remove(&tx) else { return };
         for step in steps.into_iter().rev() {
@@ -464,6 +538,7 @@ fn seek(
 
 /// A message to another realm, delivered in a task there.
 enum Message {
+    Retire,
     /// Something `name`'s waiters wait for may have changed.
     Wake(String),
     /// `versionchange` at connection `conn` (old, new; new is None for deletion).
@@ -505,6 +580,11 @@ fn receive(handle: u64, message: Message) {
         let module = module.get(&s).as_object().ok_or_else(unavailable)?;
         let wake = module.get_atom("wake")?.as_object().ok_or_else(unavailable)?;
         match message {
+            Message::Retire => {
+                module.get_atom("retire")?.as_object().ok_or_else(unavailable)?.call(None, &[])?;
+                REALMS.with(|entries| entries.borrow_mut().remove(&handle));
+                return Ok(());
+            }
             Message::Wake(name) => wake.call(None, &[s.number(0.0), s.string(&name)])?,
             Message::VersionChange { conn, old, new } => wake.call(
                 None,
@@ -609,19 +689,46 @@ fn factory_module<'s>(s: &Scope<'s>, factory: Object<'s>, data: &FactoryData) ->
     if let Some(module) = s.get_hidden(factory, MODULE)?.and_then(|v| v.as_object()) {
         return Ok(module);
     }
+    if data.namespace.1.is_some() {
+        // Separate opens of the same bucket generation in this realm share
+        // one open queue and one owner-thread notification route.
+        let existing = REALMS.with(|r| r.borrow().values().find(|e| {
+            Arc::ptr_eq(&e.namespace.0, &data.namespace.0)
+                && Weak::ptr_eq(&e.page, &data.page)
+                && e.realm.upgrade().is_some_and(|realm| realm.id() == s.realm_id())
+        }).map(|e| e.module.clone()));
+        if let Some(existing) = existing {
+            let value = existing.get(s);
+            s.set_hidden(factory, MODULE, value)?;
+            return value.as_object().ok_or_else(unavailable);
+        }
+    }
     let origin = data.origin()?.to_owned();
     let page = data.page.upgrade().ok_or(JsError::ContextDestroyed)?;
     let handle = next_id();
     let natives = natives(s, &page, data.namespace.clone(), origin, handle)?;
     let root = Persistent::new(s, natives.value());
-    let make = s.eval(include_str!("idb.js"), Some("pyro://internal/idb.js"), 1)?;
-    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[root.get(s)])?;
+    let module = if data.namespace.1.is_some() {
+        // Reuse this realm's request, transaction and database constructors.
+        let default = window_factory(s, &page)?.as_object().ok_or_else(unavailable)?;
+        let default_data = s.unwrap::<IdbFactory>(default.value()).ok_or_else(unavailable)?;
+        let shared = factory_module(s, default, &default_data)?;
+        call_module(s, shared, "bucket", &[root.get(s)])?
+    } else {
+        let make = s.eval(include_str!("idb.js"), Some("pyro://internal/idb.js"), 1)?;
+        make.as_object().ok_or_else(unavailable)?.call(None, &[root.get(s)])?
+    };
     let object = module.as_object().ok_or_else(unavailable)?;
     s.set_hidden(factory, MODULE, module)?;
-    data.namespace
-        .lock()
-        .realms
-        .insert(handle, Remote { thread: std::thread::current().id(), poster: page.remote_poster() });
+    {
+        let mut server = data.namespace.lock();
+        if data.namespace.check_live().is_err() {
+            // This module can still make an IDBOpenDBRequest which errors
+            // asynchronously. A dead generation cannot receive new events.
+            return Ok(object);
+        }
+        server.realms.insert(handle, Remote { thread: std::thread::current().id(), poster: page.remote_poster() });
+    }
     REALMS.with(|r| {
         r.borrow_mut().insert(
             handle,
@@ -648,7 +755,7 @@ impl JsClass for IdbFactory {
     fn define(def: &mut ClassDef<Self>) {
         def.promise_method("databases", 0, |s, data, _| {
             let promise = s.deferred()?;
-            match data.origin() {
+            match data.origin().and_then(|o| data.namespace.check_live().map(|()| o)) {
                 Ok(origin) => {
                     let mut rows = RootedVec::new();
                     // Snapshot native metadata before invoking JS setters or
@@ -703,6 +810,15 @@ pub(crate) fn window_factory<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<
         };
         s.wrap::<IdbFactory>(data, Some(key))
     })
+}
+
+pub(crate) fn bucket_factory<'s>(s: &Scope<'s>, page: &Rc<PageDom>, bucket: &Bucket) -> JsResult<Value<'s>> {
+    let data = FactoryData {
+        page: Rc::downgrade(page),
+        origin: Some(bucket.origin.clone()),
+        namespace: bucket.indexed_db.clone(),
+    };
+    Ok(s.wrap::<IdbFactory>(data, None)?.value())
 }
 
 /// A global's page (Window, worker scope).
@@ -851,6 +967,7 @@ impl Ctx {
     /// Runs `f` on database `name` of this origin (UnknownError when it is gone).
     fn db<R>(&self, name: &str, f: impl FnOnce(&mut Db) -> JsResult<R>) -> JsResult<R> {
         let mut server = self.namespace.lock();
+        self.namespace.check_live()?;
         let db = server.origins.get_mut(&self.origin).and_then(|dbs| dbs.get_mut(name)).ok_or_else(|| unknown(name))?;
         f(db)
     }
@@ -916,6 +1033,7 @@ fn natives<'s>(
     add(s, &natives, &ctx, "scriptTurn", |s, _, _| {
         Ok(pyro_js::script_entry_turn().map_or(s.undefined(), |turn| s.number(turn as f64)))
     })?;
+    add(s, &natives, &ctx, "isLive", |s, ctx, _| Ok(s.boolean(ctx.namespace.check_live().is_ok())))?;
     // One task of idb.js's queue.
     add(s, &natives, &ctx, "post", |s, ctx, _a| {
         if let Some(page) = ctx.page.upgrade() {
@@ -962,6 +1080,7 @@ fn natives<'s>(
     add(s, &natives, &ctx, "reserve", |s, ctx, a| {
         let name = a.get(0).to_string()?;
         let mut server = ctx.namespace.lock();
+        ctx.namespace.check_live()?;
         let db = server.origins.entry(ctx.origin.clone()).or_default().entry(name).or_default();
         if db.busy.is_some_and(|b| b != ctx.handle) {
             return Ok(s.boolean(false));
@@ -1122,6 +1241,7 @@ fn natives<'s>(
         let name = a.get(0).to_string()?;
         let tx = a.get(1).to_number()? as u64;
         ctx.db(&name, |db| {
+            db.commit_usage(tx)?;
             db.undo.remove(&tx);
             db.locks.retain(|l| l.tx != tx);
             if db.upgrade.as_ref().is_some_and(|u| u.tx == tx) {
@@ -1135,6 +1255,7 @@ fn natives<'s>(
     add(s, &natives, &ctx, "abort", |s, ctx, a| {
         let name = a.get(0).to_string()?;
         let tx = a.get(1).to_number()? as u64;
+        if ctx.namespace.check_live().is_err() { return Ok(s.undefined()) }
         ctx.db(&name, |db| {
             if db.upgrade.as_ref().is_some_and(|u| u.tx == tx) {
                 let upgrade = db.upgrade.take().expect("upgrade");
@@ -1151,6 +1272,11 @@ fn natives<'s>(
         let name = a.get(0).to_string()?;
         let mut server = ctx.namespace.lock();
         if let Some(db) = server.origins.get_mut(&ctx.origin).and_then(|d| d.get_mut(&name)) {
+            if let Some(lease) = &ctx.namespace.1 {
+                lease.charge(Endpoint::IndexedDb, db.committed_bytes, 0).map_err(bucket_error)?;
+            }
+            db.committed_bytes = 0;
+            db.changes.clear();
             db.version = 0;
             db.stores.clear();
             db.undo.clear();
@@ -1174,6 +1300,10 @@ fn natives<'s>(
     add(s, &natives, &ctx, "deleteStore", |s, ctx, a| {
         let (name, store) = (a.get(0).to_string()?, a.get(1).to_string()?);
         ctx.db(&name, |db| {
+            if let (Some(lease), Some(upgrade), Some(st)) = (&ctx.namespace.1, &db.upgrade, db.stores.get(&store)) {
+                let removed = st.records.iter().map(|(k, r)| r.stored_bytes(k)).sum();
+                db.resize_reservation(lease, upgrade.tx, removed, 0)?;
+            }
             db.stores.remove(&store);
             Ok(())
         })?;
@@ -1206,9 +1336,20 @@ fn natives<'s>(
         let (name, store, index) = (a.get(0).to_string()?, a.get(1).to_string()?, a.get(2).to_string()?);
         ctx.db(&name, |db| {
             let st = db.store(&store)?;
-            if let Some(ix) = st.indexes.remove(&index) {
+            if let Some(ix) = st.indexes.get(&index) {
+                let id = ix.id;
+                if let Some(lease) = &ctx.namespace.1 {
+                    let removed = st.records.iter().filter_map(|(key, record)| {
+                        record.keys.iter().find(|(index_id, _)| *index_id == id)
+                            .map(|(_, keys)| Record::index_bytes(key, keys))
+                    }).sum();
+                    let tx = db.upgrade.as_ref().ok_or_else(unavailable)?.tx;
+                    db.resize_reservation(lease, tx, removed, 0)?;
+                }
+                let st = db.store(&store)?;
+                st.indexes.remove(&index);
                 for record in st.records.values_mut() {
-                    record.keys.retain(|(id, _)| *id != ix.id);
+                    record.keys.retain(|(index_id, _)| *index_id != id);
                 }
             }
             Ok(())
@@ -1255,10 +1396,16 @@ fn natives<'s>(
             {
                 return Ok(false);
             }
+            let id = ix.id;
+            if let Some(lease) = &ctx.namespace.1 {
+                let tx = db.upgrade.as_ref().ok_or_else(unavailable)?.tx;
+                db.resize_reservation(lease, tx, 0, Record::index_bytes(&key, &keys))?;
+            }
+            let st = db.store(&store)?;
+            let ix = st.indexes.get_mut(&index).ok_or_else(unavailable)?;
             for k in &keys {
                 ix.entries.insert((k.clone(), key.clone()));
             }
-            let id = ix.id;
             if let Some(record) = st.records.get_mut(&key) {
                 record.keys.push((id, keys));
             }
@@ -1329,8 +1476,14 @@ fn natives<'s>(
                 }
                 keys.push((ix.id, list));
             }
+            let record = Record { value, keys };
+            if let Some(lease) = &ctx.namespace.1 {
+                let removed = st.records.get(&key).map_or(0, |r| r.stored_bytes(&key));
+                db.resize_reservation(lease, tx, removed, record.stored_bytes(&key))?;
+            }
+            let st = db.store(&store)?;
             let old = st.remove(&key);
-            st.insert(key.clone(), Record { value, keys });
+            st.insert(key.clone(), record);
             db.log(tx, || Undo::Record { store: store.clone(), key, old });
             Ok(0)
         })?;
@@ -1429,6 +1582,10 @@ fn natives<'s>(
                 .take_while(|k| range.contains(k))
                 .cloned()
                 .collect();
+            if let Some(lease) = &ctx.namespace.1 {
+                let removed = keys.iter().map(|k| st.records[k].stored_bytes(k)).sum();
+                db.resize_reservation(lease, tx, removed, 0)?;
+            }
             for key in keys {
                 let old = db.store(&store)?.remove(&key);
                 db.log(tx, || Undo::Record { store: store.clone(), key, old });
@@ -1456,7 +1613,11 @@ fn natives<'s>(
                 records: BTreeMap::new(),
                 indexes,
             };
-            let old = std::mem::replace(st, emptied);
+            if let Some(lease) = &ctx.namespace.1 {
+                let removed = st.records.iter().map(|(k, r)| r.stored_bytes(k)).sum();
+                db.resize_reservation(lease, tx, removed, 0)?;
+            }
+            let old = std::mem::replace(db.store(&store)?, emptied);
             db.log(tx, || Undo::Store { name: store.clone(), old: Box::new(old) });
             Ok(())
         })?;
@@ -1566,6 +1727,34 @@ mod tests {
             seek(&src, &all(), Direction::Next, None, Some(("2".into(), None)), 1).map(|p| p.0),
             Some("2".into())
         );
+    }
+
+    #[test]
+    fn named_bucket_idb_quota_tracks_transactions_and_generation_retirement() {
+        use crate::storage_buckets::catalog::{Catalog, Options, StorageKey};
+        let catalog = Catalog::default();
+        let key = StorageKey { origin: "https://idb.test".into(), top_level_site: None, cross_site_ancestor: false };
+        let bucket = catalog.open(&key, "mail", Options { quota: Some(100), ..Default::default() }).unwrap();
+        let mut db = Db::default();
+        db.resize_reservation(&bucket.lease, 1, 0, 60).unwrap();
+        assert_eq!(bucket.estimate().unwrap().usage, 0);
+        assert!(db.resize_reservation(&bucket.lease, 2, 0, 50).is_err());
+        assert!(db.resize_reservation(&bucket.lease, 1, 0, 41).is_err());
+        db.rollback(1);
+        db.resize_reservation(&bucket.lease, 2, 0, 100).unwrap();
+        db.commit_usage(2).unwrap();
+        assert_eq!(bucket.estimate().unwrap().usage, 100);
+        db.resize_reservation(&bucket.lease, 3, 80, 0).unwrap();
+        db.resize_reservation(&bucket.lease, 3, 0, 30).unwrap();
+        db.commit_usage(3).unwrap();
+        assert_eq!(bucket.estimate().unwrap().usage, 50);
+        db.resize_reservation(&bucket.lease, 4, 0, 40).unwrap();
+        catalog.delete(&key, "mail").unwrap();
+        assert!(db.commit_usage(4).is_err());
+        assert!(bucket.indexed_db.check_live().is_err());
+        let fresh = catalog.open(&key, "mail", Options::default()).unwrap();
+        assert_eq!(fresh.estimate().unwrap().usage, 0);
+        assert!(fresh.indexed_db.check_live().is_ok());
     }
 
     #[test]

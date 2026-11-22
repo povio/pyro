@@ -7,9 +7,9 @@ use pyro_js::{JsResult, Scope};
 use crate::page::PageDom;
 
 /// Interface objects on the global that exist only in a secure context.
-const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet", "VideoDecoder", "cookieStore"];
+const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet", "VideoDecoder", "cookieStore", "StorageBucketManager", "StorageBucket"];
 /// `Navigator` members that exist only in a secure context.
-const NAVIGATOR: &[&str] = &["locks", "mediaDevices", "registerProtocolHandler", "unregisterProtocolHandler"];
+const NAVIGATOR: &[&str] = &["locks", "storageBuckets", "mediaDevices", "registerProtocolHandler", "unregisterProtocolHandler"];
 
 /// A secure context (HTML): the document and every ancestor document are potentially trustworthy,
 /// as the embedder reports it (`PageHooks::is_secure_context`); without one, the realm's origin or the

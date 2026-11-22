@@ -16,7 +16,7 @@ use crate::window::WindowHost;
 const KEY: &str = "lpStorageManager";
 /// What `estimate()` reports as the quota: 10 GiB, the order of what Chrome
 /// grants an origin on a typical disk.
-const QUOTA: f64 = 10.0 * 1024.0 * 1024.0 * 1024.0;
+const QUOTA: f64 = crate::storage_buckets::catalog::DEFAULT_QUOTA as f64;
 
 const SCRIPT: &str = r#"((estimate, directory, directorySlot, window, secure) => {
   'use strict';
@@ -36,7 +36,10 @@ const SCRIPT: &str = r#"((estimate, directory, directorySlot, window, secure) =>
       try {
         if (!(#brand in this)) throw new TypeErrorC("Failed to execute 'estimate' on 'StorageManager': Illegal invocation");
         const result = estimate();
-        const usageDetails = result[2] ? {fileSystem: result[2]} : {};
+        const usageDetails = {};
+        if (result[2]) usageDetails.fileSystem = result[2];
+        if (result[3]) usageDetails.caches = result[3];
+        if (result[4]) usageDetails.indexedDB = result[4];
         return PromiseC.resolve({ quota: result[1], usage: result[0], usageDetails });
       } catch (e) {
         return PromiseC.reject(e);
@@ -92,12 +95,21 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     }
     let estimate = s.function("estimate", |s, _, _| {
         let page = crate::target::page_of(s)?;
-        let origin = crate::storage::tuple_origin(s, &page)
+        let key = crate::storage_buckets::storage_key(s, &page)
             .ok_or_else(|| JsError::Type("Storage is unavailable for an opaque origin.".into()))?;
         let storage = page.local_storage.borrow();
-        let file_usage = storage.opfs_usage(&origin) as f64;
-        let usage = storage.usage(&origin) as f64 + file_usage;
-        Ok(s.array(&[s.number(usage), s.number(QUOTA), s.number(file_usage)])?.value())
+        let catalog = storage.buckets();
+        let default_files = storage.opfs_usage(&key.origin);
+        let default_usage = storage.usage(&key.origin) as u64 + default_files;
+        drop(storage);
+        let named = catalog.usage(&key);
+        Ok(s.array(&[
+            s.number((default_usage + named.usage) as f64),
+            s.number(QUOTA),
+            s.number((default_files + named.file_system) as f64),
+            s.number(named.caches as f64),
+            s.number(named.indexed_db as f64),
+        ])?.value())
     })?;
     let estimate = Persistent::new(s, estimate.value());
     let directory = s.function("getDirectory", |s, _, _| {
