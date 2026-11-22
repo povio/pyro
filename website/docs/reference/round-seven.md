@@ -1,6 +1,6 @@
-# Pyro 0.0.50-rc.5 compatibility progress
+# Pyro 0.0.50-rc.6 compatibility progress
 
-Release candidate **0.0.50-rc.5** tags source commit `516dc3159`. The measurements below identify the executable and coverage for each run. [Tagged source](https://github.com/povio/pyro/tree/v0.0.50-rc.5) · [Build and publication workflow](https://github.com/povio/pyro/actions/runs/44998826328)
+Release candidate **0.0.50-rc.6** tags source commit `9fad5953f`. RC.5 stopped before npm publication when its package exceeded the 185 MiB budget. RC.6 raises that budget to 190 MiB and updates the release documentation. Both tags contain the same browser source. [RC.5 workflow failure](https://github.com/povio/pyro/actions/runs/44998826328) · [Changes between tags](https://github.com/povio/pyro/compare/v0.0.50-rc.5...v0.0.50-rc.6) · [RC.6 tagged source](https://github.com/povio/pyro/tree/v0.0.50-rc.6) · [RC.6 publication workflow](https://github.com/povio/pyro/actions/runs/45008736564)
 
 ## RC.5 standalone macOS arm64 executable
 
