@@ -1215,6 +1215,9 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 return;
             }
             let Some(target) = key_target(page) else { return };
+            if !(k.modifiers.ctrl || k.modifiers.meta || k.modifiers.alt) && select_picker_key(page, target, &k.key) {
+                return;
+            }
             if k.key == " " && space_clickable(&page.dom.borrow(), target) {
                 // Browsers mark the control active on Space keydown and click
                 // it on the matching keyup (Blink KeyboardClickableInputTypeView).
@@ -1554,6 +1557,114 @@ fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
         fire_control_change(page, el);
     }
     true
+}
+
+/// The keys of a customizable select (`appearance: base-select`, Chromium's behaviour) on a
+/// trusted keydown without Ctrl, Meta or Alt. Returns whether the key was handled (no keypress
+/// or other default action follows).
+/// - The select focused with its picker closed: Space and the arrows open the picker without
+///   changing the value; Enter opens it except on a Mac platform, and never submits the form.
+/// - An option of its open picker focused: the arrows of the select's block axis (Down/Up, and in
+///   a vertical writing mode Right/Left or Left/Right as its lines go; Down/Up stay secondary
+///   keys) move the focus to the next or previous option that is enabled and displayed, without
+///   wrapping; Home/PageUp and End/PageDown to the first or last; Enter and Space pick the
+///   focused option (`input` and `change` when the value changed), close the picker and focus
+///   the select. Escape is the close request (`popover::close_request`).
+fn select_picker_key(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool {
+    let (select, option) = {
+        let dom = page.dom.borrow();
+        match local(&dom, target).as_deref() {
+            Some("select") => (target, None),
+            Some("option") => match dom.option_nearest_select(target).ok().flatten() {
+                Some(select) if dom.is_select_picker_open(select) => (select, Some(target)),
+                _ => return false,
+            },
+            _ => return false,
+        }
+    };
+    let open = page.dom.borrow().is_select_picker_open(select);
+    // The select itself focused while its picker is open: the keys act as on its selected option.
+    let option = option.or_else(|| {
+        let dom = page.dom.borrow();
+        open.then(|| dom.selected_options(select).ok().and_then(|o| o.first().copied())).flatten()
+    });
+    let Some(option) = option else {
+        if open || !crate::popover::has_select_picker(page, select) {
+            return false;
+        }
+        match key {
+            " " | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" => {
+                crate::popover::show_select_picker(page, select)
+            }
+            "Enter" => {
+                if !crate::window::platform(page).starts_with("Mac") {
+                    crate::popover::show_select_picker(page, select);
+                }
+            }
+            _ => return false,
+        }
+        return true;
+    };
+    match key {
+        "Enter" | " " => {
+            let changed = {
+                let mut dom = page.dom.borrow_mut();
+                let before = dom.selected_index(select).ok();
+                let index = dom.select_options(select).ok().and_then(|o| o.iter().position(|&x| x == option));
+                if let Some(index) = index {
+                    let _ = dom.set_selected_index(select, index as i32);
+                }
+                dom.selected_index(select).ok() != before
+            };
+            crate::popover::hide_select_picker(page, select, true);
+            if changed {
+                fire_control_change(page, select);
+            }
+            true
+        }
+        "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End" | "PageUp" | "PageDown" => {
+            let mode = {
+                let dom = page.dom.borrow();
+                page.layout().computed_style_value(&dom, select, "writing-mode")
+            };
+            // +1: the next option, -1: the previous one, 2/-2: the last/first one.
+            let step: i32 = match (key, mode.as_str()) {
+                ("ArrowDown", _) => 1,
+                ("ArrowUp", _) => -1,
+                ("ArrowRight", "vertical-lr" | "sideways-lr") | ("ArrowLeft", "vertical-rl" | "sideways-rl") => 1,
+                ("ArrowLeft", "vertical-lr" | "sideways-lr") | ("ArrowRight", "vertical-rl" | "sideways-rl") => -1,
+                ("ArrowLeft" | "ArrowRight", _) => return true,
+                ("End" | "PageDown", _) => 2,
+                _ => -2,
+            };
+            let candidates: Vec<NodeId> = {
+                let dom = page.dom.borrow();
+                let layout = page.layout();
+                dom.select_options(select)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|&o| {
+                        o == option
+                            || (!dom.is_disabled(o).unwrap_or(true)
+                                && layout.computed_style_value(&dom, o, "display") != "none")
+                    })
+                    .collect()
+            };
+            let at = candidates.iter().position(|&o| o == option);
+            let next = match (step, at) {
+                (1, Some(i)) => candidates.get(i + 1).copied(),
+                (-1, Some(i)) => i.checked_sub(1).map(|i| candidates[i]),
+                (2, _) => candidates.last().copied(),
+                (-2, _) => candidates.first().copied(),
+                _ => None,
+            };
+            if let Some(next) = next.filter(|&n| n != option) {
+                crate::popover::focus_picker_option(page, next);
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// `input` and `change` for a value the user committed at once (a key

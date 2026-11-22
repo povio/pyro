@@ -596,6 +596,11 @@ pub(crate) fn show_select_picker(page: &Rc<PageDom>, select: NodeId) {
     }
 }
 
+/// Focuses an option of an open picker (one without a box of its own yet is focused too).
+pub(crate) fn focus_picker_option(page: &Rc<PageDom>, option: NodeId) {
+    focus_forced(page, option);
+}
+
 /// Closes a select's picker. With `focus_select`, focus inside the select goes back to it.
 pub(crate) fn hide_select_picker(page: &Rc<PageDom>, select: NodeId, focus_select: bool) {
     if !page.dom.borrow().is_select_picker_open(select) {
