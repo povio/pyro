@@ -551,6 +551,20 @@
     return null;
   }
   const sumValues = v => {
+    if (v instanceof CSSMathSum) {
+      // Most sums contain only scalar units convertible to one canonical unit.
+      // Read their current values directly; unit values remain mutable after construction.
+      let canonical, total = 0;
+      for (const item of v.values) {
+        if (!isUnit(item)) { canonical = undefined; break; }
+        const info = unitInfo(item.unit), absolute = info && info.f !== null;
+        const unit = absolute ? info.canonical : item.unit;
+        if (canonical !== undefined && canonical !== unit) { canonical = undefined; break; }
+        canonical = unit;
+        total += absolute ? item.value * info.f : item.value;
+      }
+      if (canonical !== undefined && Number.isFinite(total)) return [new CSSUnitValue(total, canonical)];
+    }
     const terms = sumTerms(v);
     if (!terms) return null;
     const values = [];
