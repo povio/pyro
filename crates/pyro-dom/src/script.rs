@@ -547,11 +547,12 @@ impl Dom {
             integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
             referrerpolicy: e.attr_local(&markup5ever::LocalName::from("referrerpolicy")).map(str::to_owned),
             node: script,
-            nonce: self
-                .hidden_nonce(script)
-                .or_else(|| e.attr_local(&local_name!("nonce")))
-                .unwrap_or_default()
-                .to_owned(),
+            // A non-nonceable element (CSP3 "Is element nonceable?") has no nonce to match.
+            nonce: if crate::nonce::is_nonceable(e) {
+                self.hidden_nonce(script).or_else(|| e.attr_local(&local_name!("nonce"))).unwrap_or_default().to_owned()
+            } else {
+                String::new()
+            },
         })
     }
 
@@ -608,5 +609,41 @@ mod language_attribute_tests {
         let kind = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().kind;
         assert_eq!(kind("h"), ScriptKind::Data);
         assert_eq!(kind("s"), ScriptKind::Classic);
+    }
+}
+
+#[cfg(test)]
+mod nonceable_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crate::parse::{parse_document, DomRef};
+    use crate::Dom;
+
+    /// CSP3 "Is element nonceable?": `<script`, `<style` and (Chrome) `<link` in any attribute
+    /// name or value, ASCII case-insensitively, drop the script's nonce
+    /// (content-security-policy/script-src/non-nonceable-elements{,-attr-name}.html).
+    #[test]
+    fn injected_markup_in_attributes_drops_the_nonce() {
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(
+            &dom_ref,
+            "http://test/",
+            "<!doctype html><script id=ok nonce=n></script>\
+             <script id=v1 nonce=n data=\"aaa<sCripTbb\"></script>\
+             <script id=v2 nonce=n data=\"<stYlE\"></script>\
+             <script id=v3 nonce=n data=\"cc<lInKddd\"></script>\
+             <script id=n1 <script nonce=n></script>\
+             <script id=n2 aa<sTylEbbb nonce=n></script>\
+             <script id=n3 <LinK nonce=n></script>\
+             <script id=lt nonce=n data=\"a < b <scrip\"></script>",
+        );
+        let dom = dom_ref.borrow();
+        let nonce = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().nonce;
+        assert_eq!(nonce("ok"), "n");
+        assert_eq!(nonce("lt"), "n");
+        for id in ["v1", "v2", "v3", "n1", "n2", "n3"] {
+            assert_eq!(nonce(id), "", "{id}");
+        }
     }
 }

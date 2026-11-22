@@ -9,7 +9,22 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dom::Dom;
 use crate::error::DomResult;
-use crate::node::NodeId;
+use crate::node::{ElementData, NodeId};
+
+/// CSP3 "Is element nonceable?" (Chrome's `ContentSecurityPolicy::IsNonceableElement`): an
+/// element with an attribute whose name or value contains `<script`, `<style` or (Chrome's
+/// addition) `<link`, ASCII case-insensitively, is not nonceable: markup injected into an
+/// unclosed attribute (`<p title="<script nonce=...`) must not inherit a page's nonce. Its
+/// nonce then matches no nonce-source. The spec's duplicate-attribute condition is not
+/// checked: the parser does not record dropped duplicates.
+pub(crate) fn is_nonceable(e: &ElementData) -> bool {
+    const MARKERS: [&[u8]; 3] = [b"<script", b"<style", b"<link"];
+    let suspect = |text: &str| {
+        let text = text.as_bytes();
+        MARKERS.iter().any(|m| text.windows(m.len()).any(|w| w.eq_ignore_ascii_case(m)))
+    };
+    !e.attrs.iter().any(|a| suspect(&a.name.local) || suspect(&a.value))
+}
 
 /// A Content Security Policy of a document (as delivered: its serialization), whether it is
 /// report-only (`Content-Security-Policy-Report-Only`), and whether a `<meta http-equiv>`
