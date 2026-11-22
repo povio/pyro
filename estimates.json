@@ -3,21 +3,21 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 540,
+    "macbook_in_scope": 542,
     "studio_in_scope": 111,
     "other_dirs_out_of_scope": 21,
-    "macbook_worker_variants_if_enabled": 183,
+    "macbook_worker_variants_if_enabled": 184,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 828,
+   "distinct_census_pages": 831,
    "owner_reported_unlisted": 5,
-   "selector_union": 939,
+   "selector_union": 942,
    "owner_estimate_reduction": 116,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
-    "html/canvas": 342,
+    "html/canvas": 345,
     "html/semantics": 150,
     "html/interaction": 100,
     "referrer-policy": 78,
@@ -33,16 +33,16 @@
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
     "xhr": 2,
-    "html/rendering": 1,
-    "IndexedDB": 1,
     "svg/styling": 1,
-    "quirks": 1
+    "html/rendering": 1,
+    "quirks": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
@@ -65,8 +65,8 @@
     "html/semantics": 134,
     "html/browsers": 78,
     "html/syntax": 30,
-    "fetch/api": 23,
     "html/webappapis": 23,
+    "fetch/api": 23,
     "html/dom": 7,
     "html/infrastructure": 3
    }
@@ -652,6 +652,13 @@
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
+   "tentative": 0
+  },
+  "C05e": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
    "tentative": 0
   },
   "P01": {
@@ -1656,13 +1663,13 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 866,
+ "implemented_total_estimate": 869,
  "milestones_reached": [
   250,
   500,
   750
  ],
- "macbook_in_scope_implemented": 540,
+ "macbook_in_scope_implemented": 542,
  "macbook_in_scope_milestones": [
   100,
   200,
