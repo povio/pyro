@@ -637,7 +637,7 @@ export class Locator extends Scope {
     await this.evaluate((el: any) => (el.select ? el.select() : getSelection()?.selectAllChildren(el)), undefined, options);
   }
   async scrollIntoViewIfNeeded(options: Timeout = {}): Promise<void> {
-    await this.evaluate((el: Element) => el.scrollIntoView({ block: 'nearest', inline: 'nearest' }), undefined, options);
+    await this.evaluate((el: Element) => el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' }), undefined, options);
   }
   async dispatchEvent(type: string, eventInit: Record<string, unknown> = {}, options: Timeout = {}): Promise<void> {
     await this._page._call('locator.dispatchEvent', DISPATCH_EVENT, { locator: this._spec, arg: { type, eventInit }, timeout: options.timeout }, this._desc);
