@@ -1,0 +1,890 @@
+[
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"strikethrough\",\"\"]] \"<b>foo[]bar</b>\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"strikethrough\",\"\"]] \"<b>foo[]bar</b>\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"strikethrough\",\"\"]] \"<i>foo[]bar</i>\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"strikethrough\",\"\"]] \"<i>foo[]bar</i>\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"strikethrough\",\"\"]] \"<span>foo</span>{}<span>bar</span>\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"strikethrough\",\"\"]] \"<span>foo</span>{}<span>bar</span>\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"strikethrough\",\"\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"strikethrough\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"underline\",\"\"]] \"<b>foo[]bar</b>\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"underline\",\"\"]] \"<b>foo[]bar</b>\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"underline\",\"\"]] \"<i>foo[]bar</i>\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"underline\",\"\"]] \"<i>foo[]bar</i>\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"underline\",\"\"]] \"<span>foo</span>{}<span>bar</span>\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"underline\",\"\"]] \"<span>foo</span>{}<span>bar</span>\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"underline\",\"\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"underline\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"delete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"delete\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"formatblock\",\"<div>\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"formatblock\",\"<div>\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"forwarddelete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"forwarddelete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"forwarddelete\",\"\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"forwarddelete\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"indent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"indent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"indent\",\"\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"indent\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"inserthorizontalrule\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"inserthorizontalrule\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"inserthtml\",\"ab<b>c</b>d\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"inserthtml\",\"ab<b>c</b>d\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertimage\",\"/img/lion.svg\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertimage\",\"/img/lion.svg\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertlinebreak\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertlinebreak\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertlinebreak\",\"\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertlinebreak\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertorderedlist\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertorderedlist\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertparagraph\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertparagraph\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertparagraph\",\"\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertparagraph\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertunorderedlist\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"insertunorderedlist\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifycenter\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifycenter\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifyfull\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifyfull\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifyleft\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifyleft\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifyleft\",\"\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifyleft\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifyright\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"justifyright\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"outdent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"outdent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"outdent\",\"\"]] \"foo[]bar\" queryCommandState(\"strikethrough\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"strikethrough\",\"\"],[\"outdent\",\"\"]] \"foo[]bar\": execCommand(\"strikethrough\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"delete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"delete\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"formatblock\",\"<div>\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"formatblock\",\"<div>\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"forwarddelete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"forwarddelete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"forwarddelete\",\"\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"forwarddelete\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"indent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"indent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"indent\",\"\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"indent\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"inserthorizontalrule\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"inserthorizontalrule\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"inserthtml\",\"ab<b>c</b>d\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"inserthtml\",\"ab<b>c</b>d\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertimage\",\"/img/lion.svg\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertimage\",\"/img/lion.svg\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertlinebreak\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertlinebreak\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertlinebreak\",\"\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertlinebreak\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertorderedlist\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertorderedlist\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertparagraph\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertparagraph\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertparagraph\",\"\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertparagraph\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertunorderedlist\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"insertunorderedlist\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifycenter\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifycenter\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifyfull\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifyfull\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifyleft\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifyleft\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifyleft\",\"\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifyleft\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifyright\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"justifyright\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"outdent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"outdent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"outdent\",\"\"]] \"foo[]bar\" queryCommandState(\"underline\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"underline\",\"\"],[\"outdent\",\"\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"underline\",\"\",\"first application\"],[\"underline\",\"\",\"second application\"],[\"createlink\",\"http://www.google.com/\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") first application return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"underline\",\"\",\"first application\"],[\"underline\",\"\",\"second application\"],[\"createlink\",\"http://www.google.com/\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") second application return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"underline\",\"\"],[\"createlink\",\"http://www.google.com/\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"underline\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ]
+]
