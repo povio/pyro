@@ -1397,10 +1397,6 @@ fn apply_traversal(
     true
 }
 
-fn parse(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
-    parse_str(nav, &input.to_string()?)
-}
-
 /// Parses `href` against the document's base URL.
 fn parse_str(nav: &PageNav, href: &str) -> JsResult<Url> {
     let base_url = nav
@@ -1414,6 +1410,28 @@ fn parse_str(nav: &PageNav, href: &str) -> JsResult<Url> {
         .base_url(base.as_ref())
         .parse(href)
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))
+}
+
+/// HTML "encoding-parse a URL" for Location (`href`, `assign()`, `replace()`), relative to the
+/// entry settings object: against the document of the script doing it (`pyro_js::entry_realm`;
+/// the Location's own document when there is none), with the query in that document's encoding
+/// (`?ÿ` is `?%FF` from a windows-1252 document, an unmappable character an escaped `&#...;`).
+fn parse_location(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
+    let href = input.to_string()?;
+    let entry = pyro_js::entry_realm()
+        .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()));
+    let resolved = match entry {
+        Some(page) => Some(pyro_webapi::html::resolve_url(&page.dom.borrow(), page.document(), &href)),
+        None => {
+            nav.document.borrow().as_ref().map(|(dom, doc)| pyro_webapi::html::resolve_url(&dom.borrow(), *doc, &href))
+        }
+    };
+    match resolved {
+        Some(resolved) => {
+            Url::parse(&resolved).map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))
+        }
+        None => parse_str(nav, &href),
+    }
 }
 
 /// HTML "can have its URL rewritten", as Chrome applies it: scheme,
@@ -1444,7 +1462,7 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 /// Location assignment: fragment-only changes are same-document; a `javascript:` URL runs
 /// its script in this document.
 fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
-    let target = parse(nav, input)?;
+    let target = parse_location(nav, input)?;
     if target.scheme() == "javascript" {
         nav.run_javascript_url(target.as_str());
         return Ok(());
