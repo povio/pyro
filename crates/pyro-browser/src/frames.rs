@@ -2081,10 +2081,13 @@ impl Browser {
                         referrer_policy,
                     },
                     // HTML "navigate an iframe or frame": "replace" while the frame's document is
-                    // not completely loaded, else "auto", a push (which leaving the initial
+                    // not completely loaded (its `load` and `pageshow` handlers still run, after
+                    // the frame counts as loaded), else "auto", a push (which leaving the initial
                     // about:blank document still makes a replace). An `<object>` or `<embed>`
                     // always replaces.
-                    if frame.loaded && !host.dom.borrow().is_document_object(owner) {
+                    let completely_loaded =
+                        frame.loaded && frame.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded());
+                    if completely_loaded && !host.dom.borrow().is_document_object(owner) {
                         HistoryHandling::Push
                     } else {
                         HistoryHandling::Replace
