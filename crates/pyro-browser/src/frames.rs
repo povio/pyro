@@ -794,6 +794,7 @@ impl FrameHost {
         sandbox.scripts_disabled |= ancestor.sandbox.scripts_disabled;
         sandbox.automatic_features_blocked |= ancestor.sandbox.automatic_features_blocked;
         sandbox.popups_blocked |= ancestor.sandbox.popups_blocked;
+        sandbox.document_domain_blocked |= ancestor.sandbox.document_domain_blocked;
         // Blink's Page::kMaxNumberOfFrames: a page holds at most 1000 subframes.
         if self.children.borrow().len() >= 1000 {
             return Err(JsError::Range("child frame limit reached".into()));
@@ -1170,6 +1171,9 @@ pub(crate) struct Sandbox {
     pub top_navigation_blocked: bool,
     /// Only `allow-top-navigation-by-user-activation`: the top-level one only with activation.
     pub top_navigation_needs_activation: bool,
+    /// The sandboxed `document.domain` browsing context flag (any sandbox, even with
+    /// `allow-same-origin`): setting `document.domain` throws.
+    pub document_domain_blocked: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
@@ -1187,7 +1191,19 @@ impl Sandbox {
             navigation_blocked: true,
             top_navigation_blocked: !top && !top_by_activation,
             top_navigation_needs_activation: !top && top_by_activation,
+            document_domain_blocked: true,
         }
+    }
+
+    /// The flags of a `Content-Security-Policy` `sandbox` directive in `csp` (enforced policies,
+    /// comma-separated; directives semicolon-separated), if it has one: those of a `sandbox`
+    /// attribute with the directive's tokens (CSP 3 § 6.3.2.1).
+    pub fn from_csp(csp: &str) -> Option<Self> {
+        csp.split(',').flat_map(|policy| policy.split(';')).find_map(|directive| {
+            let directive = directive.trim();
+            let (name, value) = directive.split_once(|c: char| c.is_ascii_whitespace()).unwrap_or((directive, ""));
+            name.eq_ignore_ascii_case("sandbox").then(|| Self::parse(Some(value)))
+        })
     }
 }
 impl Browser {

@@ -2224,6 +2224,7 @@ impl Browser {
                 flags.navigation_blocked |= parent.sandbox.navigation_blocked;
                 flags.top_navigation_blocked |= parent.sandbox.top_navigation_blocked;
                 flags.top_navigation_needs_activation |= parent.sandbox.top_navigation_needs_activation;
+                flags.document_domain_blocked |= parent.sandbox.document_domain_blocked;
             }
             flags
         } else {

@@ -1791,6 +1791,27 @@ impl Browser {
             if !enforce.is_empty() {
                 let _ = dom.borrow_mut().set_header_csp(doc, true);
             }
+            // A `sandbox` directive adds its flags to the document's (CSP 3 § 6.3.2.1), before
+            // its parser starts (scripts). (Its origin is not made opaque here.)
+            if let Some(flags) = crate::frames::Sandbox::from_csp(enforce) {
+                if let Some(mut state) = self.doc_mut(page) {
+                    let sandbox = &mut state.main_frame.sandbox;
+                    sandbox.scripts_disabled |= flags.scripts_disabled;
+                    sandbox.automatic_features_blocked |= flags.automatic_features_blocked;
+                    sandbox.popups_blocked |= flags.popups_blocked;
+                    sandbox.navigation_blocked |= flags.navigation_blocked;
+                    sandbox.top_navigation_blocked |= flags.top_navigation_blocked;
+                    sandbox.top_navigation_needs_activation |= flags.top_navigation_needs_activation;
+                    sandbox.document_domain_blocked |= flags.document_domain_blocked;
+                }
+                if flags.scripts_disabled {
+                    page_dom.set_scripting_disabled(true);
+                }
+                if flags.popups_blocked {
+                    page_dom.set_popups_sandboxed(true);
+                }
+                page_dom.set_document_domain_sandboxed(true);
+            }
             let _ = dom.borrow_mut().set_trusted_types_policies(doc, enforce, report_only);
         }
         if let Some(refresh) = resource.refresh.as_deref() {

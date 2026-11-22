@@ -2120,6 +2120,9 @@ impl JsClass for Document {
                 if n.page().document() != n.id {
                     return Err(security("Assignment is forbidden for documents without a browsing context."));
                 }
+                if n.page().document_domain_sandboxed() {
+                    return Err(security("Assignment is forbidden for sandboxed iframes."));
+                }
                 let Some(effective) = effective_domain(s, n) else {
                     return Err(security("Assignment is forbidden for documents with an opaque origin."));
                 };

@@ -1219,6 +1219,7 @@ pub(crate) fn create(
     bindings.set_bypass_service_worker(settings.bypass_service_worker);
     bindings.set_scripting_disabled(frame.sandbox.scripts_disabled);
     bindings.set_popups_sandboxed(frame.sandbox.popups_blocked);
+    bindings.set_document_domain_sandboxed(frame.sandbox.document_domain_blocked);
     bindings.set_request_context(pyro_webapi::RequestContext {
         frame_id: Some(frame.id.0),
         loader_id: Some(loader.0.clone()),
