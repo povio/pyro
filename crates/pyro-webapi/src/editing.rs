@@ -12,6 +12,7 @@
 mod character;
 mod paragraph_join;
 mod target_range;
+pub(crate) use target_range::rendered;
 mod whitespace;
 
 use std::rc::Rc;

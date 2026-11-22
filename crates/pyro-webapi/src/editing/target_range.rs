@@ -27,7 +27,7 @@ fn character(dom: &Dom, p: Point, backward: bool) -> Option<(Point, Point)> {
 }
 
 /// A hidden descendant cannot supply a visible editable character.
-pub(super) fn rendered(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
+pub(crate) fn rendered(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     let mut current = if dom.node_type(node).ok() == Some(NodeType::Element) {
         Some(node)
     } else {

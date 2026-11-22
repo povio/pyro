@@ -1390,6 +1390,46 @@ fn accepts_html_formatting(dom: &Dom, text: NodeId) -> bool {
     false
 }
 
+/// Once HTML formatting wraps SVG text, that text no longer paints in the
+/// SVG text run. Restore the range to a visible caret in the same text
+/// element, or to the next editable text when its whole run disappeared.
+fn restored_format_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) -> Point {
+    let Some(wrapper) = dom.parent_element(point.0).ok().flatten() else { return point };
+    if !dom.element(wrapper).is_ok_and(|el| el.is_html()) { return point; }
+    let mut root = wrapper;
+    loop {
+        let Some(parent) = dom.parent_element(root).ok().flatten() else { return point };
+        let Ok(el) = dom.element(parent) else { return point };
+        if el.namespace() != &markup5ever::ns!(svg) { return point; }
+        root = parent;
+        match el.local_name().as_ref() {
+            "text" => break,
+            "tspan" | "textPath" | "a" => {}
+            _ => return point,
+        }
+    }
+    let Ok(nodes) = dom.descendants(host) else { return point };
+    let mut previous = None;
+    let mut previous_in_run = None;
+    let mut past = false;
+    for n in nodes {
+        if n == point.0 { past = true; continue; }
+        if !editing::is_text(dom, n) || editing::len(dom, n) == 0 || editing::editing_host(dom, n) != Some(host) {
+            continue;
+        }
+        let in_run = dom.contains(root, n).unwrap_or(false);
+        if in_run && !dom.parent_element(n).ok().flatten().is_some_and(|p|
+            dom.element(p).is_ok_and(|el| el.namespace() == &markup5ever::ns!(svg)))
+        { continue; }
+        if !accepts_html_formatting(dom, n) || !editing::rendered(page, dom, n) { continue; }
+        if past { return previous_in_run.unwrap_or((n, 0)); }
+        previous = Some((n, editing::len(dom, n)));
+        if in_run { previous_in_run = previous; }
+    }
+    previous.or_else(|| dom.parent(root).ok().flatten().zip(dom.index_in_parent(root).ok()).map(|(p, i)| (p, i+1)))
+        .unwrap_or(point)
+}
+
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
@@ -1406,6 +1446,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
         return;
     }
     editing::apply_edit(page, host, input_type, href, None, |page| {
+        let mut wrapped_svg = false;
         let texts = {
             let mut dom = page.dom.borrow_mut();
             let texts = if collapsed {
@@ -1464,13 +1505,25 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 if let Some(href) = href {
                     let _ = dom.set_attribute(w, "href", href);
                 }
+                wrapped_svg |= dom.element(parent).is_ok_and(|el| el.namespace() == &markup5ever::ns!(svg));
                 let _ = dom.insert_before(parent, w, Some(t));
                 let _ = dom.append_child(w, t);
                 last_wrapper = Some(w);
             }
             texts
         };
-        select_texts(page, &texts, reversed);
+        if wrapped_svg {
+            let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else { return };
+            let (start, end) = {
+                let dom = page.dom.borrow();
+                (restored_format_point(page, &dom, host, (first, 0)),
+                 restored_format_point(page, &dom, host, (last, editing::len(&dom, last))))
+            };
+            if reversed { editing::set_selection(page, end, start); }
+            else { editing::set_selection(page, start, end); }
+        } else {
+            select_texts(page, &texts, reversed);
+        }
     });
 }
 
