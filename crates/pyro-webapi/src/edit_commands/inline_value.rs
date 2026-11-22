@@ -535,8 +535,19 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
 }
 
 pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -> bool {
-    let Some(fmt) = Format::parse(kind, value) else { return false };
     let Some((start, end)) = editing::selection_range(page) else { return false };
+    let Some(fmt) = Format::parse(kind, value) else {
+        if kind != Kind::Foreground { return false; }
+        if start == end {
+            if let Some(pending) = page.typing_values.borrow_mut().as_mut().filter(|p| p.range == (start, end)) {
+                pending.values.retain(|v| v.kind != Kind::Foreground);
+            }
+        } else {
+            super::record_unchanged_foreground(page, host);
+            editing::input_event(page, host, "input", "", None, false);
+        }
+        return true;
+    };
     let mut nodes = formattable_nodes(page, &page.dom.borrow(), host, start, end);
     if nodes.is_empty() {
         let mut slot = page.typing_values.borrow_mut();
