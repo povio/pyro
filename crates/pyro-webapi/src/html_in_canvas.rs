@@ -529,9 +529,11 @@ pub(crate) fn set_drawn_transform(page: &Rc<PageDom>, canvas: NodeId, element: N
         grid_scale(&layout, &dom, canvas)
     };
     let (sx, sy) = (if sx > 0.0 { sx } else { 1.0 }, if sy > 0.0 { sy } else { 1.0 });
-    let values = match values[..] {
-        [a, b, c, d, e, f] => vec![a / sx, b / sy, c / sx, d / sy, e / sx, f / sy],
-        _ => values,
+    let values = if values.len() == 6 {
+        let v = &values;
+        vec![v[0] / sx, v[1] / sy, v[2] / sx, v[3] / sy, v[4] / sx, v[5] / sy]
+    } else {
+        values
     };
     let mut state = page.html_in_canvas.borrow_mut();
     state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
