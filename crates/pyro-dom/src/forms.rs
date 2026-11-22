@@ -2368,8 +2368,9 @@ pub fn autofill_idl_value(attr: Option<&str>, anchor: bool) -> String {
     let mut credential = false;
     if category == Credential {
         credential = true;
+        // A lone `webauthn` is a valid autofill detail of its own (WPT form-autocomplete, Chrome).
         if index == 0 {
-            return String::new();
+            return "webauthn".into();
         }
         index -= 1;
         match autofill_category(&tokens[index]) {
@@ -2428,7 +2429,7 @@ mod autofill_tests {
         assert_eq!(v(Some("\tusername webauthn"), false), "username webauthn");
         assert_eq!(v(Some("  section-LOGIN  shipping work tel webauthn "), false), "section-login shipping work tel webauthn");
         assert_eq!(v(Some("foo section-bar billing work tel webauthn"), false), "");
-        assert_eq!(v(Some("webauthn"), false), "");
+        assert_eq!(v(Some("webauthn"), false), "webauthn");
         assert_eq!(v(Some("on webauthn"), false), "");
     }
 }
