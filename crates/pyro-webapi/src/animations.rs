@@ -434,6 +434,7 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                     None => s.null(),
                 },
                 s.string(&run.keyframe_easing),
+                s.number(run.generation as f64),
             ])?
             .value(),
         );

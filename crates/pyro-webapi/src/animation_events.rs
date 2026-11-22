@@ -65,6 +65,8 @@ pub(crate) struct Timeline {
     id: u64,
     /// The page clock when it started (its style change), in ms.
     start_ms: f64,
+    /// The style change event that started it ([`State::style_events`]).
+    generation: u64,
     pub(crate) delay_ms: f64,
     pub(crate) duration_ms: f64,
     /// 1 for a transition.
@@ -174,6 +176,9 @@ pub(crate) struct State {
     listed: Cell<bool>,
     /// The last timeline id handed out.
     ids: Cell<u64>,
+    /// Style change events processed so far ([`update`]): a transition's generation, which orders
+    /// `getAnimations()` (one event's transitions share it and list by property name).
+    style_events: Cell<u64>,
     /// Content roots seen styled `display: none` where Chrome has
     /// `content-visibility: hidden` (see [`hides_content`]): their content
     /// keeps a before-change style while hidden.
@@ -226,6 +231,8 @@ pub(crate) struct Run {
     /// The animation's name, or the transitioning property.
     pub name: String,
     pub start_ms: f64,
+    /// The style change event that started it (orders simultaneous transitions).
+    pub generation: u64,
     pub delay_ms: f64,
     pub duration_ms: f64,
     pub iterations: f64,
@@ -544,6 +551,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         return;
     }
     let state = &page.animation_events;
+    state.style_events.set(state.style_events.get() + 1);
     let mut planned = Vec::new();
     {
         let dom = page.dom.borrow();
@@ -705,6 +713,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 timeline_text: driven.then(|| timeline_text_of(style, &dom, el, pseudo, animation.index)).flatten(),
                 id: state.next_id(),
                 start_ms: now_ms,
+                generation: state.style_events.get(),
                 delay_ms: animation.delay_ms,
                 duration_ms: animation.duration_ms,
                 iterations: animation.iterations,
@@ -915,6 +924,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
                 transition,
                 name: if transition { shown_property(&t.name).to_owned() } else { t.name.clone() },
                 start_ms: t.start_ms,
+                generation: t.generation,
                 delay_ms: t.delay_ms,
                 duration_ms: t.duration_ms,
                 iterations: t.iterations,
@@ -1675,6 +1685,7 @@ fn start_transitions_of(
                 timeline_text: None,
                 id: state.next_id(),
                 start_ms: now_ms,
+                generation: state.style_events.get(),
                 delay_ms,
                 duration_ms,
                 iterations: 1.0,

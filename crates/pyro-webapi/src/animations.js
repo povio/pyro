@@ -1819,7 +1819,7 @@
     }
     return null;
   }
-  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger, keyframeEasing]) {
+  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger, keyframeEasing, generation]) {
     // The engine hands over computed easings; one it could not compute is
     // the initial `ease`, as an easing invalid at computed-value time is.
     let parsed;
@@ -1847,9 +1847,9 @@
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
     a.cssName = name;
     a.cssId = id;
-    // A transition's generation: the time of the style change event that started it (one
-    // event's transitions share it, and list by property name).
-    a.cssGeneration = start;
+    // A transition's generation: the style change event that started it (one event's
+    // transitions share it, and list by property name; two events in one task differ).
+    a.cssGeneration = generation;
     a.cssOwner = id == null ? null : target;
     a.cssPaused = held !== null;
     a.cssPseudoOrder = pseudo === '::marker' ? 1 : pseudo === '::before' ? 2 : pseudo === '::after' ? 3 : 0;
