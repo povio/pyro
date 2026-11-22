@@ -1027,7 +1027,7 @@ fn format_of(command: &str) -> Option<(&'static str, &'static [&'static str], &'
         "bold" => ("b", &["b", "strong"], "formatBold"),
         "italic" => ("i", &["i", "em"], "formatItalic"),
         "underline" => ("u", &["u"], "formatUnderline"),
-        "strikethrough" => ("strike", &["strike", "s", "del"], "formatStrikeThrough"),
+        "strikethrough" => ("strike", &["strike", "s"], "formatStrikeThrough"),
         "superscript" => ("sup", &["sup"], "formatSuperscript"),
         "subscript" => ("sub", &["sub"], "formatSubscript"),
         _ => return None,
@@ -1256,8 +1256,8 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
             page,
             host,
             &[
-                "b", "strong", "i", "em", "u", "s", "strike", "del", "sub", "sup", "font", "span", "code", "small",
-                "big", "mark",
+                "acronym", "b", "bdo", "big", "cite", "code", "dfn", "em", "font", "i", "ins", "kbd", "mark",
+                "nobr", "q", "s", "samp", "small", "span", "strike", "strong", "sub", "sup", "tt", "u", "var",
             ],
             "formatRemove",
         ),
@@ -1490,6 +1490,7 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
         let Ok(Some(p)) = dom.parent(cur) else { return };
         let Ok(Some(gp)) = dom.parent(p) else { return };
         let Ok(after) = dom.clone_node(p, false, None) else { return };
+        let _ = dom.remove_attribute(after, "id");
         let mut next = dom.next_sibling(cur).ok().flatten();
         while let Some(n) = next {
             next = dom.next_sibling(n).ok().flatten();
@@ -1500,6 +1501,7 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
             cur
         } else {
             let Ok(mid) = dom.clone_node(p, false, None) else { return };
+            let _ = dom.remove_attribute(mid, "id");
             let _ = dom.append_child(mid, cur);
             mid
         };
