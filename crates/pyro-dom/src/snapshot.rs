@@ -793,10 +793,10 @@ impl Dom {
                         }
                     }
                     if html && local == "iframe" {
-                        if let Some(height) = self.frame_content_heights.get(&n) {
+                        if let Some((width, height)) = self.frame_content_sizes.get(&n) {
                             attrs.push(RAttr {
-                                name: plain("data-pyro-frame-content-height"),
-                                value: Cow::Owned(height.to_string()),
+                                name: plain("data-pyro-frame-content-size"),
+                                value: Cow::Owned(format!("{width},{height}")),
                                 valueless: false,
                             });
                         }

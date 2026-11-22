@@ -1082,3 +1082,64 @@ fn cookie_partition_and_site_for_cookies_follow_the_whole_frame_chain() {
         assert_eq!(document.cookie_site_context(), expected, "{url}");
     }
 }
+
+/// css-sizing-4 responsive iframes: a script of the embedder reads an iframe of `frame-sizing:
+/// content-height` (`content-width`, a logical value by the iframe's writing mode) at the content
+/// size of a document that opted in with `<meta name="responsive-embedded-sizing">` admitting the
+/// embedder's origin, and at the default 300x150 otherwise. `window.requestResize()` throws
+/// `NotAllowedError` outside such a document. (WPT css-sizing `responsive-iframe/responsive-iframe-value`,
+/// `-allow-origins`, `-request-resize-error`.)
+#[test]
+fn an_embedders_script_reads_a_responsive_iframe_at_its_content_size() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("https://example.test/main", "text/html", "<body></body>", Duration::ZERO);
+    let child = |allow: &str| {
+        format!(
+            "<!doctype html><style>* {{ margin: 0 }} :root {{ width: 400px; height: 200px }}</style>\
+             <meta name=responsive-embedded-sizing content=\"{allow}\"><body>\
+             <script>try {{ requestResize(); window.resized = 'ok' }} catch (e) {{ window.resized = e.name }}</script>"
+        )
+    };
+    loader.insert("https://example.test/any", "text/html", &child("allow-origins=*"), Duration::ZERO);
+    loader.insert("https://example.test/parent", "text/html", &child("allow-origins=https://example.test"), Duration::ZERO);
+    loader.insert("https://example.test/other", "text/html", &child("allow-origins=https://other.test"), Duration::ZERO);
+    loader.insert("https://example.test/prefix", "text/html", &child("ALLOW-ORIGINS=*"), Duration::ZERO);
+    loader.insert(
+        "https://example.test/plain",
+        "text/html",
+        "<!doctype html><style>:root { height: 200px }</style><body><script>try { requestResize(); window.resized = 'ok' } catch (e) { window.resized = e.name }</script>",
+        Duration::ZERO,
+    );
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.frames_ = {}; \
+         for (const [name, sizing, wm] of [['any', 'content-height'], ['parent', 'content-height'], \
+              ['other', 'content-height'], ['prefix', 'content-height'], ['plain', 'content-height'], \
+              ['width', 'content-width'], ['inline', 'content-inline-size', 'vertical-rl']]) { \
+           const f = document.createElement('iframe'); f.frameBorder = '0'; \
+           f.style.setProperty('frame-sizing', sizing); if (wm) f.style.writingMode = wm; \
+           f.src = ['width', 'inline'].includes(name) ? '/any' : '/' + name; \
+           document.body.appendChild(f); frames_[name] = f; } 'ok'",
+    );
+    settle(&mut t);
+    let size = |name: &str| eval(&root, &format!("[frames_.{name}.offsetWidth, frames_.{name}.offsetHeight].join()"));
+    assert_eq!(size("any"), "300,200");
+    assert_eq!(size("parent"), "300,200");
+    assert_eq!(size("other"), "300,150", "the list does not admit the embedder");
+    assert_eq!(size("prefix"), "300,150", "`allow-origins=` is case-sensitive");
+    assert_eq!(size("plain"), "300,150", "not responsively embedded");
+    assert_eq!(size("width"), "400,150");
+    assert_eq!(size("inline"), "300,200", "a vertical iframe's inline size is its height");
+    assert_eq!(eval(&root, "frames_.any.contentWindow.resized + ' ' + frames_.plain.contentWindow.resized"), "ok NotAllowedError");
+    assert_eq!(
+        eval(&root, "try { requestResize(); 'ok' } catch (e) { e.name }"),
+        "NotAllowedError",
+        "a top-level document is not embedded"
+    );
+}

@@ -1042,6 +1042,8 @@ fn finish_overlay_exits(page: &Rc<PageDom>) {
 /// sync right before the read's full one (two syncs per read of a changed
 /// document).
 pub(crate) fn layout_flush(page: &Rc<PageDom>, el: NodeId) {
+    // pyro: an iframe showing a responsively embedded document is read at its content's size.
+    page.sync_responsive_frames();
     if let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) {
         if !page.is_disposed() && !page.scripting_disabled() {
             track_style_changes(&page.animation_events, &dom, layout.style());

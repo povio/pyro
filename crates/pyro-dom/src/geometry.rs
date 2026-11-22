@@ -815,6 +815,12 @@ pub trait GeometrySource {
     }
     /// The document's scroll size as of the last sync.
     fn document_size(&self) -> Option<(f64, f64)>;
+    /// pyro: the size of the document's content as of the last sync: its root element's border box
+    /// and the overflow it scrolls to, not widened to the viewport (what a responsively embedded
+    /// document's iframe takes; css-sizing-4). `None`: the engine does not know it.
+    fn document_content_size(&self) -> Option<(f64, f64)> {
+        None
+    }
     /// pyro: the space the viewport's shown classic scrollbars take (the vertical one's width,
     /// the horizontal one's height) as of the last sync; zero with overlay scrollbars.
     fn viewport_scrollbar_sizes(&self) -> (f64, f64) {

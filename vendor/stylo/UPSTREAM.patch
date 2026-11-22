@@ -2682,7 +2682,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-22 20:57:36
++++ b/properties/longhands.toml	2026-11-22 21:18:30
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -3926,8 +3926,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
-+# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the height of
-+# its embedded document's content (`data-pyro-frame-content-height`, from pyro) for `content-height`.
++# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the size of
++# its embedded document's content (`data-pyro-frame-content-size`, from pyro) on the axis its value names.
 +[frame-sizing]
 +struct = "position"
 +engine = "servo"

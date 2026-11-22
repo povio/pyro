@@ -161,6 +161,7 @@ pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, U
 pub use node::{wrap_node, NodeData};
 pub use page::{AgentClusterGroup, AvailableImage, FrameContainer,
     BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
+    ResponsiveFramesSource,
     IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
     RemotePoster,
 };

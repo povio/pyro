@@ -260,9 +260,9 @@ pub struct Dom {
     /// What each `version` bump changed, for caches that can update
     /// selectively (style invalidation). Bounded: see `changes_since`.
     journal: Vec<(u64, Change)>,
-    /// The content height of the responsively embedded document each iframe shows (by slot), for the
-    /// renderer (`set_frame_content_height`, snapshot `data-pyro-frame-content-height`).
-    pub(crate) frame_content_heights: rustc_hash::FxHashMap<u32, f32>,
+    /// The content size (width, height) of the responsively embedded document each iframe shows (by
+    /// slot), for the renderer (`set_frame_content_size`, snapshot `data-pyro-frame-content-size`).
+    pub(crate) frame_content_sizes: rustc_hash::FxHashMap<u32, (f32, f32)>,
     /// pyro: the user agent's pan and zoom of an `<svg>` (`SVGSVGElement.currentTranslate` and
     /// `currentScale`): its translation and scale, when not the identity.
     pub(crate) svg_points: rustc_hash::FxHashMap<u32, std::rc::Weak<crate::svg_point_list::PointLists>>,
@@ -400,7 +400,7 @@ impl Dom {
             removals: 0,
             removal_log: VecDeque::new(),
             journal: Vec::new(),
-            frame_content_heights: Default::default(),
+            frame_content_sizes: Default::default(),
             svg_points: Default::default(),
             svg_numbers: Default::default(),
             svg_lengths: Default::default(),
@@ -1025,6 +1025,7 @@ impl Dom {
             header_referrer_policy: None,
             layout_client: None,
             responsive_embedded: false,
+            responsive_embedding_policy: None,
             content_language: None,
         };
         let idx = self.alloc(NodeKind::Document(Box::new(data)), NIL);
@@ -1181,9 +1182,11 @@ impl Dom {
         // (Blink `HTMLMetaElement::ProcessContent`; WPT css-sizing `responsive-iframe/*`)
         if e.attr_local(&local_name!("name")).is_some_and(|name| name.eq_ignore_ascii_case("responsive-embedded-sizing")) {
             let doc = n.owner_doc;
+            let content = e.attr_local(&local_name!("content")).map(Box::<str>::from);
             let d = self.doc_data_mut(doc);
             if d.body == NIL && !d.responsive_embedded {
                 d.responsive_embedded = true;
+                d.responsive_embedding_policy = content;
                 self.viewport_meta_version += 1;
             }
             return;
@@ -1275,20 +1278,26 @@ impl Dom {
         self.document_data(doc).ok()?.viewport_meta.as_ref()
     }
 
-    /// The content height of the document `iframe` shows when that document is responsively embedded
-    /// (`None`: it is not), which the render snapshot gives the renderer: an iframe of `frame-sizing:
-    /// content-height` takes it as its natural height (css-sizing-4).
-    pub fn set_frame_content_height(&mut self, iframe: NodeId, height: Option<f32>) {
+    /// The content size (width, height) of the document `iframe` shows when that document is
+    /// responsively embedded (`None`: it is not), which the render snapshot gives the renderer: an
+    /// iframe of `frame-sizing: content-height` (`content-width`, or a logical value) takes it as its
+    /// natural size on that axis (css-sizing-4).
+    pub fn set_frame_content_size(&mut self, iframe: NodeId, size: Option<(f32, f32)>) {
         let Ok(i) = self.check(iframe) else { return };
-        if self.frame_content_heights.get(&i).copied() == height {
+        if self.frame_content_sizes.get(&i).copied() == size {
             return;
         }
-        match height {
-            Some(height) => self.frame_content_heights.insert(i, height),
-            None => self.frame_content_heights.remove(&i),
+        match size {
+            Some(size) => self.frame_content_sizes.insert(i, size),
+            None => self.frame_content_sizes.remove(&i),
         };
         self.bump();
         self.note(Change::State(i));
+    }
+
+    /// The size [`Dom::set_frame_content_size`] gave `iframe`, if any.
+    pub fn frame_content_size(&self, iframe: NodeId) -> Option<(f32, f32)> {
+        self.check(iframe).ok().and_then(|i| self.frame_content_sizes.get(&i).copied())
     }
 
     /// pyro: the pan and zoom (`currentTranslate` x and y, `currentScale`) of the `<svg>` `svg`.
@@ -1424,32 +1433,43 @@ impl Dom {
         self.note(Change::State(i));
     }
 
-    /// [`Dom::set_frame_content_height`] for all iframes at once: those not in `heights` have none.
+    /// [`Dom::set_frame_content_size`] for all iframes at once: those not in `sizes` have none.
     /// `scope`: as for [`Dom::set_frame_documents`].
-    pub fn set_frame_content_heights(&mut self, scope: &[NodeId], heights: &[(NodeId, f32)]) {
-        let keep: Vec<u32> = heights.iter().filter_map(|&(iframe, _)| self.check(iframe).ok()).collect();
+    pub fn set_frame_content_sizes(&mut self, scope: &[NodeId], sizes: &[(NodeId, (f32, f32))]) {
+        let keep: Vec<u32> = sizes.iter().filter_map(|&(iframe, _)| self.check(iframe).ok()).collect();
         let in_scope = self.scope_indices(scope);
         let stale: Vec<u32> = self
-            .frame_content_heights
+            .frame_content_sizes
             .keys()
             .copied()
             .filter(|i| !keep.contains(i) && self.in_frame_scope(*i, &in_scope))
             .collect();
         for i in stale {
-            self.frame_content_heights.remove(&i);
+            self.frame_content_sizes.remove(&i);
             if self.slot_live(i) {
                 self.bump();
                 self.note(Change::State(i));
             }
         }
-        for &(iframe, height) in heights {
-            self.set_frame_content_height(iframe, Some(height));
+        for &(iframe, size) in sizes {
+            self.set_frame_content_size(iframe, Some(size));
         }
     }
 
     /// Whether `doc` opted in to responsive embedded sizing (`DocumentData::responsive_embedded`).
     pub fn is_responsively_embedded(&self, doc: NodeId) -> bool {
         self.document_data(doc).is_ok_and(|d| d.responsive_embedded)
+    }
+
+    /// The `content` of the `<meta name="responsive-embedded-sizing">` that opted `doc` in (its
+    /// `allow-origins=` list), if it did and the element had one.
+    pub fn responsive_embedding_policy(&self, doc: NodeId) -> Option<&str> {
+        self.document_data(doc).ok().filter(|d| d.responsive_embedded)?.responsive_embedding_policy.as_deref()
+    }
+
+    /// Whether `doc` has a body yet (its parser, or a script, inserted one).
+    pub fn has_body(&self, doc: NodeId) -> bool {
+        self.document_data(doc).is_ok_and(|d| d.body != NIL)
     }
 
     /// Bumped whenever a document's viewport `<meta>` changes.

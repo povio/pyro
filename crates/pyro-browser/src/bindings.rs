@@ -1052,7 +1052,7 @@ pub(crate) fn blank_document_has_content(page_dom: &PageDom) -> bool {
 
 /// A frame's document's origin for policy checks: its URL's, an about: document's parent's,
 /// `None` when opaque (a sandboxed frame, a data: URL).
-fn frame_origin(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> Option<String> {
+pub(crate) fn frame_origin(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> Option<String> {
     if opaque {
         return None;
     }
@@ -1156,8 +1156,10 @@ pub(crate) fn create(
     viewport.mobile &= page.child.is_none();
     bindings.set_viewport(viewport);
     if page.child.is_some() {
-        bindings.set_frame_viewport_source(frame_viewport_source(host, &frame));
+        bindings.set_frame_viewport_source(frame_viewport_source(host, &frame, doc));
     }
+    // pyro: its iframes showing responsively embedded documents take their content's size.
+    bindings.set_responsive_frames_source(Some(crate::responsive_frames::source(host, page)));
     bindings.set_nested_frame(page.child.is_some());
     bindings.set_opaque_origin(frame.sandbox.opaque);
     let own_site = pyro_net::Url::parse(&frame.origin).ok().and_then(|url| pyro_net::cookies::partition_key(&url));
@@ -1225,9 +1227,15 @@ pub(crate) fn create(
 /// layout, with the parent viewport's other metrics. Read again only when
 /// the parent's layout inputs changed; `None` before the parent lays the
 /// iframe out (or while either document is borrowed).
+/// pyro: a responsively embedded `document` lays out in its initial viewport on the axes its iframe
+/// takes from its content (css-sizing-4 `frame-sizing`; the iframe's size without the content's:
+/// the default object size, 300x150), so the size it gives does not feed back into itself (WPT
+/// css-sizing `responsive-iframe/responsive-iframe-icb`). Until it opts in (a navigation still
+/// parsing its head), it sees its iframe's current box.
 fn frame_viewport_source(
     host: &Rc<crate::frames::FrameHost>,
     frame: &crate::Frame,
+    document: pyro_dom::NodeId,
 ) -> Option<pyro_webapi::FrameViewportSource> {
     let owner = frame.owner?;
     let parent = host.key(frame.parent.as_ref()?)?;
@@ -1245,7 +1253,16 @@ fn frame_viewport_source(
                 return Some(v.clone());
             }
         }
-        let (width, height) = layout.content_size(&dom, owner)?;
+        let (mut width, mut height) = layout.content_size(&dom, owner)?;
+        if dom.frame_content_size(owner).is_some() && dom.is_responsively_embedded(document) {
+            let (by_width, by_height) = layout.frame_sizing_axes(&dom, owner);
+            if by_width {
+                width = 300.0;
+            }
+            if by_height {
+                height = 150.0;
+            }
+        }
         let mut viewport = layout.viewport().clone();
         viewport.screen_width.get_or_insert(viewport.width);
         viewport.screen_height.get_or_insert(viewport.height);

@@ -481,6 +481,11 @@ pub struct PageDom {
     /// A child frame's viewport (its iframe's content box): `None` for top
     /// documents, which keep the emulated viewport.
     frame_viewport: RefCell<Option<FrameViewportSource>>,
+    /// pyro: brings the content sizes of the responsively embedded documents its iframes show up to
+    /// date in the DOM store before a script reads its layout (css-sizing-4 `frame-sizing`;
+    /// [`PageDom::sync_responsive_frames`]), and whether it is running.
+    responsive_frames: RefCell<Option<ResponsiveFramesSource>>,
+    responsive_frames_running: Cell<bool>,
     /// Child frames: the viewport was sized from the iframe once (later
     /// changes are resizes), a `resize` task is queued, and the earliest a
     /// listening window re-reads its iframe after a task (with a wake queued).
@@ -501,6 +506,10 @@ pub struct PageDom {
 /// Computes a child frame's viewport from its iframe; `None`: unknown yet,
 /// keep the current one.
 pub type FrameViewportSource = Rc<dyn Fn() -> Option<pyro_dom::media::Viewport>>;
+
+/// pyro: sets the content sizes of a document's responsively embedded child frames on their
+/// iframes (`Dom::set_frame_content_size`), from the browser that knows its frames.
+pub type ResponsiveFramesSource = Rc<dyn Fn()>;
 
 /// Navigation Timing marks of a document, in the event clock's
 /// milliseconds (`performance.now()`); `None` until the step ran.
@@ -1103,6 +1112,8 @@ impl PageDom {
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
+            responsive_frames: RefCell::new(None),
+            responsive_frames_running: Cell::new(false),
         })
     }
 
@@ -1814,6 +1825,7 @@ impl PageDom {
 
     /// Starts layout-dependent resource requests when a rendering opportunity observes changed styles.
     pub fn sync_frame_resources(&self) {
+        self.sync_responsive_frames();
         if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
             let stamp = { let s = layout.style().observation_stamp(&dom); (s.0, s.1) };
             if stamp != self.load_layout_version.get() || self.load_layout_version.get() == (0, 0) {
@@ -1967,6 +1979,26 @@ impl PageDom {
         for (target, query, matches) in self.media_query_changes() {
             self.fire_media_query_change(target, &query, matches);
         }
+    }
+
+    /// pyro: the browser's update of this document's responsively embedded frames' content sizes
+    /// ([`PageDom::sync_responsive_frames`]); `None`: it has none to update.
+    pub fn set_responsive_frames_source(&self, source: Option<ResponsiveFramesSource>) {
+        *self.responsive_frames.borrow_mut() = source;
+    }
+
+    /// pyro: brings the content sizes of the responsively embedded documents this document's iframes
+    /// show up to date (css-sizing-4 `frame-sizing`), so the layout a script reads next (an iframe's
+    /// `offsetHeight`, a ResizeObserver's gather) sizes those iframes from their content as the
+    /// renderer does. Called with no borrow of the DOM store held; a nested call (the update lays the
+    /// child documents out) does nothing.
+    pub fn sync_responsive_frames(&self) {
+        let Some(source) = self.responsive_frames.borrow().clone() else { return };
+        if self.responsive_frames_running.replace(true) {
+            return;
+        }
+        source();
+        self.responsive_frames_running.set(false);
     }
 
     /// Sizes this child frame's viewport from its iframe (see
@@ -2407,6 +2439,9 @@ impl PageDom {
         crate::mutation_observer::after_task(self);
         crate::svg_use::after_task(self);
         crate::intersection_observer::after_task(self);
+        // pyro: what a responsively embedded child document's content became sizes its iframe
+        // before the observers gather.
+        self.sync_responsive_frames();
         crate::resize_observer::after_task(self);
         self.frame_resize_after_task();
         crate::layout_api::schedule_scroll_clamp(self);

@@ -521,7 +521,7 @@ fn frame_documents_are_replaced_per_page() {
     assert!(has(&dom.borrow()));
     // The popup refreshes its own frames (it has none).
     dom.borrow_mut().set_frame_documents(&[popup], Vec::new());
-    dom.borrow_mut().set_frame_content_heights(&[popup], &[]);
+    dom.borrow_mut().set_frame_content_sizes(&[popup], &[]);
     assert!(has(&dom.borrow()), "the opener's iframe keeps its document");
     // The opener refreshing its own set without the frame does drop it.
     dom.borrow_mut().set_frame_documents(&[opener], Vec::new());

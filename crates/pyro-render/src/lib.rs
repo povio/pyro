@@ -2772,6 +2772,13 @@ impl Renderer {
         Some(doc.document_scroll_size((vw, vh)))
     }
 
+    /// pyro: `page`'s document content size, as last synced: the root element's border box and its
+    /// scrollable overflow, not widened to the viewport (`BaseDocument::document_content_size`; a
+    /// responsively embedded document's natural size, css-sizing-4).
+    pub fn document_content_size(&self, page: u64) -> Option<(f64, f64)> {
+        self.mirrors.get(&page)?.doc.document_content_size()
+    }
+
     /// Whether a style rule of `page`'s document depends on `:active`
     /// (Stylo's state dependencies, kept as sheets are flushed). `None`:
     /// not mirrored.

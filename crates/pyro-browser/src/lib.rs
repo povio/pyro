@@ -18,6 +18,7 @@ mod network_idle;
 mod preload;
 mod quiet;
 mod refresh;
+mod responsive_frames;
 mod speculate;
 mod stylesheets;
 mod viewport;
@@ -654,43 +655,30 @@ impl std::ops::DerefMut for Page {
 }
 
 impl Page {
-    /// pyro: the content heights of the responsively embedded documents its iframes show (css-sizing-4
+    /// pyro: the content sizes of the responsively embedded documents its iframes show (css-sizing-4
     /// responsive iframes: a `<meta name="responsive-embedded-sizing">` before the body), handed to the
-    /// render snapshot (`Dom::set_frame_content_heights`): an iframe of `frame-sizing: content-height` is
-    /// as tall as its document's root element. Call before taking a render snapshot.
+    /// render snapshot (`Dom::set_frame_content_size`): an iframe of `frame-sizing: content-height` is
+    /// as tall as its document's content. Each document updates its own iframes
+    /// (`PageDom::sync_responsive_frames`, which script reads of its layout run too). Call before
+    /// taking a render snapshot.
     pub fn update_responsive_frames(&self) {
         if !self.frames.has_children() {
             return;
         }
-        let mut heights = Vec::new();
-        let mut store = None;
-        for key in self.frames.keys() {
-            if key.child.is_none() {
-                continue;
+        // Innermost documents first: a responsively embedded document's own frames size it.
+        let depth = |mut key: frames::FrameKey| {
+            let mut depth = 0;
+            while key.child.is_some() && depth < 64 {
+                key = self.frames.parent_key(key);
+                depth += 1;
             }
-            let Some((owner, page_dom, document)) =
-                self.frames.with_frame(key, |f| (f.owner, f.page_dom.clone(), f.document))
-            else {
-                continue;
-            };
-            let (Some(owner), Some(page_dom), Some(document)) = (owner, page_dom, document) else { continue };
-            store.get_or_insert_with(|| page_dom.dom.clone());
-            let root = {
-                let Ok(dom) = page_dom.dom.try_borrow() else { continue };
-                if !dom.is_responsively_embedded(document) {
-                    continue;
-                }
-                dom.document_element(document).ok().flatten()
-            };
-            let Some(root) = root else { continue };
-            let Some(layout) = page_dom.try_layout() else { continue };
-            let Ok(dom) = page_dom.dom.try_borrow() else { continue };
-            heights.push((owner, layout.offset_height(&dom, root) as f32));
-        }
-        let store = store.or_else(|| self.main_frame.page_dom.as_ref().map(|p| p.dom.clone()));
-        if let Some(store) = store {
-            if let Ok(mut dom) = store.try_borrow_mut() {
-                dom.set_frame_content_heights(&self.frame_tree_documents(), &heights);
+            depth
+        };
+        let mut keys: Vec<(usize, frames::FrameKey)> = self.frames.keys().into_iter().map(|k| (depth(k), k)).collect();
+        keys.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, key) in keys {
+            if let Some(page_dom) = self.frames.page_dom(key) {
+                page_dom.sync_responsive_frames();
             }
         }
     }
