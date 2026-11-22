@@ -1425,9 +1425,57 @@ fn formatted_split_edge(dom: &Dom, block: NodeId, point: Point) -> Option<bool> 
     }
 }
 
+/// Enter on the placeholder of an empty list item exits one list level.
+fn exit_empty_list_item(dom: &mut Dom, host: NodeId, item: NodeId) -> Option<Point> {
+    if !dom.element(item).is_ok_and(|el| el.is_html() && el.local_name() == &markup5ever::local_name!("li"))
+        || item == host || editing_host(dom, item) != Some(host)
+    {
+        return None;
+    }
+    match dom.child_count(item).ok()? {
+        0 => {}
+        1 if dom.first_child(item).ok()?.is_some_and(|child| local(dom, child) == "br" && editing_host(dom, child) == Some(host)) => {}
+        _ => return None,
+    }
+    let list = dom.parent_element(item).ok()??;
+    let list_element = |dom: &Dom, n| dom.element(n).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "ol" | "ul"));
+    if list == host || !list_element(dom, list) { return None; }
+    let parent = dom.parent_element(list).ok()??;
+    let nested_item = local(dom, parent) == "li";
+    let destination = if nested_item {
+        let outer = dom.parent_element(parent).ok()??;
+        if parent == host || !list_element(dom, outer) || dom.next_sibling(list).ok()?.is_some() { return None; }
+        outer
+    } else { parent };
+    if editing_host(dom, destination) != Some(host) { return None; }
+    let doc = dom.node_document(item).ok()?;
+    let tag = if list_element(dom, destination) { "li" } else { dom.document_data(doc).ok()?.default_paragraph_separator };
+    let paragraph = dom.create_element(doc, tag).ok()?;
+    let br = dom.create_element(doc, "br").ok()?;
+    dom.append_child(paragraph, br).ok()?;
+
+    // Preserve both runs of neighboring items. split_edge keeps the
+    // original list and its ID on the left and moves the existing children.
+    if nested_item {
+        let next = dom.next_sibling(parent).ok()?;
+        dom.insert_before(destination, list, next).ok()?;
+    }
+    let preceding = dom.prev_sibling(item).ok()?.is_some();
+    let following = dom.next_sibling(item).ok()?.is_some();
+    if preceding && following {
+        crate::edit_commands::alignment::split_edge(dom, destination, item, true, &mut [])?;
+    }
+    let before = if preceding { dom.next_sibling(list).ok()? } else { Some(list) };
+    dom.insert_before(destination, paragraph, before).ok()?;
+    dom.remove_node(item).ok()?;
+    if !preceding && !following { dom.remove_node(list).ok()?; }
+    Some((paragraph, 0))
+}
+
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     // A DOM caret inside an inline void has no child insertion position.
     // Split at the rendered object's edge so it travels with the right line.
+    if let Some(point) = exit_empty_list_item(dom, host, caret.0) { return point; }
     let void = caret.0;
     let kind = dom.element(void).ok().filter(|el| el.is_html() && pyro_dom::serialize::is_void(el.local_name()))
         .map(|el| el.local_name().to_string());
