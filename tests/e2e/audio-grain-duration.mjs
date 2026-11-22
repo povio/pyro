@@ -15,9 +15,11 @@ const offlineClose = batch === 'offline-close';
 const offlineQuantum = batch === 'offline-quantum';
 const compressor = batch === 'compressor';
 const reverse = batch === 'reverse-loop';
+const resampling = batch === 'resampling';
 const batchDirectory = reverse ? '/webaudio/the-audio-api/the-oscillatornode-interface/' : compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
 const batchPages = compressor ? ['the-dynamicscompressornode-interface/dynamicscompressor-basic.html', 'the-dynamicscompressornode-interface/ctor-dynamicscompressor.html', 'the-audioparam-interface/k-rate-dynamics-compressor-connections.html'] : offlineQuantum ? ['offlineaudiocontext-rendersizehint.html', 'offlineaudiocontext-suspend-rendersizehint.https.html', 'offlineaudiocontext-close.html'] : offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
 if (reverse) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html');
+if (resampling) batchPages.splice(0, batchPages.length, 'buffer-resampling.html', 'sub-sample-buffer-stitching.html');
 const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
 if (hold) allowed.add('/webaudio/resources/audio-param.js');
@@ -33,7 +35,7 @@ try {
     const path = new URL(route.request().url()).pathname;
     if (!allowed.has(path)) return route.abort();
     let body = await readFile(join(wptRoot, path), 'utf8');
-    if (path === '/resources/testharness.js') body += '\nglobalThis.results = new Promise(resolve => add_completion_callback((tests, status) => resolve({status:status.status, tests:tests.map(test => [test.name, test.status])})));';
+    if (path === '/resources/testharness.js') body += '\nglobalThis.results = new Promise(resolve => add_completion_callback((tests, status) => resolve({status:status.status, tests:tests.map(test => test.status ? [test.name, test.status, test.message] : [test.name, test.status])})));';
     await route.fulfill({contentType: path.endsWith('.html') ? 'text/html' : 'application/javascript', body});
   });
   const outcomes = {};
@@ -42,6 +44,7 @@ try {
     if (modulePath) assert.ok(await page.evaluate(() => globalThis.installedAudio?.OfflineAudioContext === OfflineAudioContext && globalThis.installedAudio?.AudioBufferSourceNode === AudioBufferSourceNode), 'Web Audio module installation failed');
     if (modulePath && periodic) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.OscillatorNode === OscillatorNode && installedAudio.PeriodicWave === globalThis.PeriodicWave));
     if (modulePath && realtime) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext));
+    if (modulePath && resampling) assert.ok(await page.evaluate(() => installedAudio.OscillatorNode === OscillatorNode && installedAudio.AudioBuffer === AudioBuffer && installedAudio.ChannelMergerNode === ChannelMergerNode));
     if (modulePath && compressor) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.DynamicsCompressorNode === globalThis.DynamicsCompressorNode));
     if (modulePath && retro) assert.ok(await page.evaluate(() => installedAudio.AudioParam === AudioParam && new OfflineAudioContext(1, 128, 44100).createGain().gain instanceof AudioParam));
     await page.waitForFunction(() => globalThis.results);

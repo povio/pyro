@@ -1855,7 +1855,7 @@
       let offset = min(n.offset * data.rate, len);
       if (n.loop && step < 0) offset = max(offset, loopStart);
       if (n.loop && step >= 0 && offset >= loopEnd) offset = loopStart;
-      n.pos = offset + (f0 + from - startAt) * step;
+      n.pos = offset + max(0, f0 + from - startAt) * step;
       n.played = max(0, ceil(startAt - 1e-9) - startAt) * abs(step);
     }
     const maxPlayed = n.duration * data.rate;
@@ -1877,10 +1877,11 @@
       for (let ch = 0; ch < out.length; ch++) {
         const src = data.channels[ch];
         const a = src[k] || 0;
+        if (frac === 0) { out[ch][i] = a; continue; }
         let next = k + 1;
         if (n.loop && pos < loopEnd && next >= loopEnd) next = floor(loopStart);
-        const b = frac === 0 ? 0 : src[next] || 0;
-        out[ch][i] = a + (b - a) * frac;
+        const slope = next < len ? (src[next] || 0) - a : k === len - 1 && k > 0 ? a - src[k - 1] : 0;
+        out[ch][i] = a + slope * frac;
       }
       pos += step;
       n.played += abs(step);
