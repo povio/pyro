@@ -1,0 +1,90 @@
+{
+  "scores": {
+    "baseFull": 6,
+    "candidateFull": 40,
+    "chrome158Full": 60,
+    "baseNamed": 189,
+    "candidateNamed": 673,
+    "chrome158Named": 1156,
+    "gained": 484,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 483,
+    "lpOnly": 0
+  },
+  "gainsByPage": {
+    "webcodecs/audio-data-copyTo.any.html": 4,
+    "webcodecs/audio-data-copyTo.any.worker.html": 4,
+    "webcodecs/audio-data-copyto-offset.any.html": 6,
+    "webcodecs/audio-data-copyto-offset.any.worker.html": 6,
+    "webcodecs/audio-data-copyto-oversized.any.html": 8,
+    "webcodecs/audio-data-copyto-oversized.any.worker.html": 8,
+    "webcodecs/audio-data-serialization.any.html": 3,
+    "webcodecs/audio-data.any.html": 22,
+    "webcodecs/audio-data.any.worker.html": 22,
+    "webcodecs/audio-decoder.https.any.html": 34,
+    "webcodecs/audio-decoder.https.any.worker.html": 34,
+    "webcodecs/audio-serialization.crossAgentCluster.https.html": 4,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?adts_aac": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?flac": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?mp3": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?mp4_aac": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?opus": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?pcm_alaw": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?pcm_f32": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?pcm_s16": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?pcm_s24": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?pcm_s32": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?pcm_u8": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?pcm_ulaw": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.html?vorbis": 9,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?adts_aac": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?flac": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?mp3": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?mp4_aac": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?opus": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?pcm_alaw": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?pcm_f32": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?pcm_s16": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?pcm_s24": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?pcm_s32": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?pcm_u8": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?pcm_ulaw": 10,
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?vorbis": 9,
+    "webcodecs/idlharness.https.any.html": 31,
+    "webcodecs/idlharness.https.any.worker.html": 31,
+    "webcodecs/opus-multichannel.https.any.html": 1,
+    "webcodecs/serialization-to-shared-and-service-workers.https.html": 4,
+    "webcodecs/transfering.https.any.html": 2,
+    "webcodecs/transfering.https.any.worker.html": 2
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 34,
+        "error": 27
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "4eb79d8c273890b3a26a228b45a93047db61b32bd84b0766098b6c5575c11d38"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 60,
+        "error": 1
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "4753b8e90e41f1b7b06d3b1b7cdd92189335e26aa64031ce19ce8e80005465e5"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 61
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "0e2f106355f37f9e11b5789792040aa87c0a16b595e69671ad8f4f901a08bf0d"
+    }
+  }
+}
