@@ -1,0 +1,34 @@
+[
+  [
+    "editing/plaintext-only/nested-with-contenteditable-true.html",
+    "contenteditable=\"\" in contenteditable=\"plaintext-only\" and contenteditable=\"false\" should support style edit",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/plaintext-only/nested-with-contenteditable-true.html",
+    "contenteditable=\"true\" in contenteditable=\"plaintext-only\" and contenteditable=\"false\" should support style edit",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/plaintext-only/nested-with-contenteditable-true.html",
+    "even after moving selection into contenteditable=\"\" in contenteditable=\"plaintext-only\" and contenteditable=\"false\" from parent editing host should support style edit",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/plaintext-only/nested-with-contenteditable-true.html",
+    "even after moving selection into contenteditable=\"true\" in contenteditable=\"plaintext-only\" and contenteditable=\"false\" from parent editing host should support style edit",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]

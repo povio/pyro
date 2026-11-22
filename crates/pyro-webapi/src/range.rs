@@ -10,6 +10,7 @@ use pyro_dom::{position, Dom, NodeId, NodeType};
 use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::collections::NodeHold;
+use crate::editing;
 use crate::node::{node_arg, wrap_node, Node};
 use crate::page::PageDom;
 use crate::util::*;
@@ -899,6 +900,25 @@ fn selection_range_object<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Val
 
 /// Whether `node` is in the page's document (the selection ignores nodes
 /// of other trees).
+/// A script selection wholly inside an independent rich editing host moves
+/// focus there from its containing editor. Install the range first so the
+/// focusing steps observe it and do not initialize a new collapsed caret.
+fn focus_nested_selection_host(page: &Rc<PageDom>, anchor: Point, focus: Point) {
+    let dom = page.dom.borrow();
+    let Some(active) = dom.focused(page.document()).ok().flatten() else { return };
+    let Some(outer) = editing::editing_host(&dom, active) else { return };
+    let Some(inner) = editing::editing_host(&dom, anchor.0) else { return };
+    if inner == outer || !dom.contains(outer, inner).unwrap_or(false)
+        || editing::editing_host(&dom, focus.0) != Some(inner) || editing::plaintext_at(&dom, inner) { return; }
+    drop(dom);
+    crate::input::focus_element(page, inner);
+}
+
+fn set_script_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
+    editing::set_selection(page, anchor, focus);
+    focus_nested_selection_host(page, anchor, focus);
+}
+
 fn in_document(page: &PageDom, node: NodeId) -> bool {
     let dom = page.dom.borrow();
     dom.is_connected(node).unwrap_or(false) && dom.node_document(node).ok() == Some(page.document())
@@ -1073,6 +1093,7 @@ impl JsClass for Selection {
             let owner = r.owner.clone();
             drop(r);
             editing::set_selection_range(&sel.page, owner, Some((s.realm_id(), pyro_js::Persistent::new(s, a.get(0)))));
+            focus_nested_selection_host(&sel.page, start, end);
             Ok(s.undefined())
         });
         def.method("removeAllRanges", 0, |s, sel, _a| {
@@ -1102,7 +1123,7 @@ impl JsClass for Selection {
             }
             let p = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.collapse")?;
             if in_document(&sel.page, p.0) {
-                editing::set_selection(&sel.page, p, p);
+                set_script_selection(&sel.page, p, p);
             }
             Ok(s.undefined())
         });
@@ -1113,7 +1134,7 @@ impl JsClass for Selection {
             }
             let p = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.setPosition")?;
             if in_document(&sel.page, p.0) {
-                editing::set_selection(&sel.page, p, p);
+                set_script_selection(&sel.page, p, p);
             }
             Ok(s.undefined())
         });
@@ -1121,14 +1142,14 @@ impl JsClass for Selection {
             let Some((start, _)) = editing::selection_range(&sel.page) else {
                 return Err(JsError::dom("InvalidStateError", "There is no selection to collapse."));
             };
-            editing::set_selection(&sel.page, start, start);
+            set_script_selection(&sel.page, start, start);
             Ok(s.undefined())
         });
         def.method("collapseToEnd", 0, |s, sel, _a| {
             let Some((_, end)) = editing::selection_range(&sel.page) else {
                 return Err(JsError::dom("InvalidStateError", "There is no selection to collapse."));
             };
-            editing::set_selection(&sel.page, end, end);
+            set_script_selection(&sel.page, end, end);
             Ok(s.undefined())
         });
         def.method("selectAllChildren", 1, |s, sel, a| {
@@ -1141,7 +1162,7 @@ impl JsClass for Selection {
                 dom.child_count(node).js()? as u32
             };
             if in_document(&sel.page, node) {
-                editing::set_selection(&sel.page, (node, 0), (node, children));
+                set_script_selection(&sel.page, (node, 0), (node, children));
             }
             Ok(s.undefined())
         });
@@ -1150,7 +1171,7 @@ impl JsClass for Selection {
             let anchor = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.setBaseAndExtent")?;
             let focus = point_arg(s, &sel.page, a.get(2), a.get(3), "Selection.setBaseAndExtent")?;
             if in_document(&sel.page, anchor.0) && in_document(&sel.page, focus.0) {
-                editing::set_selection(&sel.page, anchor, focus);
+                set_script_selection(&sel.page, anchor, focus);
             }
             Ok(s.undefined())
         });
@@ -1167,7 +1188,7 @@ impl JsClass for Selection {
                 let dom = sel.page.dom.borrow();
                 dom.root_node(anchor.0, false).js()? == dom.root_node(focus.0, false).js()?
             };
-            editing::set_selection(&sel.page, if same_root { anchor } else { focus }, focus);
+            set_script_selection(&sel.page, if same_root { anchor } else { focus }, focus);
             Ok(s.undefined())
         });
         def.pure_method("containsNode", 1, |s, sel, a| {

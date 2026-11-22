@@ -1,0 +1,11 @@
+editing/run/multitest.html?1-1000 825 825 811 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?1001-2000 824 824 814 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?2001-3000 821 821 807 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?3001-4000 851 851 834 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?4001-5000 939 939 936 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?5001-6000 936 936 923 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?6001-7000 924 924 913 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?7001-8000 935 935 883 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?8001-9000 953 953 959 gain 0 loss 0 membership delta 0
+editing/run/multitest.html?9001-last 984 984 1044 gain 0 loss 0 membership delta 0
+Total 10092 losses 0 gains 0

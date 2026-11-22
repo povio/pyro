@@ -1,0 +1,4 @@
+selection/contenteditable/initial-selection-during-focus-event-propagation.html 3 3 3 gain 0 loss 0 membership delta 0
+selection/selection-focused-element-becomes-nonfocusable.html 0 0 0 gain 0 loss 0 membership delta 0
+selection/textcontrols/focus.html 0 0 1 gain 0 loss 0 membership delta 0
+Total 7 losses 0 gains 0
