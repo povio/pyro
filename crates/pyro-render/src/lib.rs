@@ -2856,18 +2856,24 @@ impl Renderer {
     /// live document, painted alone (blitz-paint `paint_element_subtree`: its subtree only, its own
     /// transform cancelled, its border box's top left at the origin) and rasterised on the CPU, as
     /// straight-alpha RGBA at `scale` device pixels per CSS px, with whether it may hold content
-    /// a page must not read back (blitz-paint `subtree_may_taint`). `None` for an unknown page or
-    /// element, or one without an area to paint.
-    pub fn paint_element(&mut self, page: u64, key: u64, scale: f64) -> Option<(RgbaImage, bool)> {
+    /// a page must not read back (blitz-paint `subtree_may_taint`) and its border box in CSS px.
+    /// Text is drawn as screenshots draw it (the same text threshold and glyph grid). `None` for an
+    /// unknown page or element, or one without an area to paint.
+    pub fn paint_element(&mut self, page: u64, key: u64, scale: f64) -> Option<(RgbaImage, bool, (f64, f64))> {
+        let scale = scale.clamp(0.1, 16.0);
+        let threshold = (!self.text_antialiasing).then_some(TEXT_ALIASING_THRESHOLD);
+        let subpixel = self.subpixel_text_positioning;
         let m = self.mirrors.get_mut(&page)?;
         let id = m.node(key)?;
-        let (scene, size, taints) = blitz_paint::paint_element_subtree(&mut m.doc, id, scale.clamp(0.1, 16.0))?;
+        let (scene, size, taints) = anyrender_svg::with_text_threshold(threshold, || {
+            blitz_paint::with_glyph_grid(Affine::IDENTITY, subpixel, || blitz_paint::paint_element_subtree(&mut m.doc, id, scale))
+        })?;
         let (width, height) = (size.width.ceil() as u32, size.height.ceil() as u32);
         if width == 0 || height == 0 || width > MAX_WIDTH || height > MAX_HEIGHT {
             return None;
         }
         let painted = Painted { scene, opaque: false, hash: 0, width, height, timings: Timings::default() };
-        Some((self.raster(painted, Backend::Cpu).0, taints))
+        Some((self.raster(painted, Backend::Cpu).0, taints, (size.width / scale, size.height / scale)))
     }
 
     /// Stage 3.

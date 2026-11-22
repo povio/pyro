@@ -293,7 +293,15 @@ pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId)
     let rect = layout.bounding_client_rect(&dom, element);
     let key = pyro_dom::snapshot::render_key(element);
     let painted = layout.synced_geometry_source(&dom).and_then(|source| source.element_image(key, 1.0));
-    let taints = painted.as_ref().is_some_and(|p| p.3);
-    let pixels = painted.map(|(w, h, data, _)| (w, h, data));
-    Ok(ElementImage { width: rect.width, height: rect.height, pixels, taints })
+    // Its border box as laid out (a transformed element is drawn untransformed, so its bounding
+    // rect would stretch it); an element without one to paint keeps its bounding rect's size.
+    Ok(match painted {
+        Some(image) => ElementImage {
+            width: image.width,
+            height: image.height,
+            pixels: Some((image.pixel_width, image.pixel_height, image.rgba)),
+            taints: image.taints,
+        },
+        None => ElementImage { width: rect.width, height: rect.height, pixels: None, taints: false },
+    })
 }

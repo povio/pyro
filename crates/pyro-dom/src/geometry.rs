@@ -693,6 +693,21 @@ pub struct TransitionFrame {
 }
 
 /// The engine laying the document out (Blitz in `render` builds).
+/// HTML-in-Canvas `drawElementImage`: an element painted alone ([`GeometrySource::element_image`]).
+#[derive(Clone, Debug)]
+pub struct ElementImage {
+    /// Its border box in CSS px, as laid out (no transform).
+    pub width: f64,
+    pub height: f64,
+    /// Straight-alpha RGBA pixels.
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+    pub rgba: Vec<u8>,
+    /// The paint may hold content a page must not read back (an image of unknown origin, a
+    /// nested document, a visited link).
+    pub taints: bool,
+}
+
 pub trait GeometrySource {
     fn set_transition_samples(&self, _root: u64, _values: &[(usize,usize,f64)]) -> bool { true }
     fn transition_animation_styles(&self, _root: u64) -> Option<Vec<(usize,String, style::servo_arc::Arc<style::properties::ComputedValues>)>> { Some(Vec::new()) }
@@ -714,12 +729,10 @@ pub trait GeometrySource {
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// HTML-in-Canvas `drawElementImage`: the element `key` painted alone (its subtree only, its
-    /// own transform cancelled, its border box's top left at the origin) as of the last sync, as
-    /// straight-alpha RGBA at `scale` device pixels per CSS px: (width, height, pixels, taints),
-    /// `taints` when it may hold content a page must not read back (an image of unknown origin, a
-    /// nested document, a visited link). `None` (the default): no renderer, or no such element
+    /// own transform cancelled, its border box's top left at the origin) as of the last sync, at
+    /// `scale` device pixels per CSS px. `None` (the default): no renderer, or no such element
     /// with an area to paint.
-    fn element_image(&self, _key: u64, _scale: f64) -> Option<(u32, u32, Vec<u8>, bool)> {
+    fn element_image(&self, _key: u64, _scale: f64) -> Option<ElementImage> {
         None
     }
     fn anchor_scroll_shift(&self, _key: u64, _scroll: &dyn Fn(Option<u64>) -> (f64, f64), _sticky: &dyn Fn(u64) -> (f64, f64)) -> (f64, f64) { (0.0, 0.0) }

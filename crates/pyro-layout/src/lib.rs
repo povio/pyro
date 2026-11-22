@@ -1071,9 +1071,17 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
-    fn element_image(&self, key: u64, scale: f64) -> Option<(u32, u32, Vec<u8>, bool)> {
-        let (image, taints) = RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.paint_element(self.page, key, scale))?;
-        Some((image.width, image.height, image.data, taints))
+    fn element_image(&self, key: u64, scale: f64) -> Option<pyro_dom::geometry::ElementImage> {
+        let (image, taints, (width, height)) =
+            RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.paint_element(self.page, key, scale))?;
+        Some(pyro_dom::geometry::ElementImage {
+            width,
+            height,
+            pixel_width: image.width,
+            pixel_height: image.height,
+            rgba: image.data,
+            taints,
+        })
     }
 
     fn geometry(&self) -> Option<ExternalGeometry> {
