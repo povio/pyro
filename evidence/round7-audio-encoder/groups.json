@@ -1,0 +1,22 @@
+{
+  "target": [
+    "webcodecs/audio-encoder-aac-description.html",
+    "webcodecs/audio-encoder-codec-specific.https.any.html",
+    "webcodecs/audio-encoder-config.https.any.html",
+    "webcodecs/audio-encoder-config.https.any.worker.html",
+    "webcodecs/audio-encoder.https.any.html",
+    "webcodecs/idlharness.https.any.html",
+    "webcodecs/idlharness.https.any.worker.html",
+    "webcodecs/opus-multichannel.https.any.html"
+  ],
+  "guards": [
+    "webcodecs/audio-data.any.html",
+    "webcodecs/audio-data.any.worker.html",
+    "webcodecs/audioDecoder-codec-specific.https.any.html?opus",
+    "webcodecs/audioDecoder-codec-specific.https.any.html?pcm_s16",
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?opus",
+    "webcodecs/audioDecoder-codec-specific.https.any.worker.html?pcm_s16",
+    "webcodecs/encoded-audio-chunk.any.html",
+    "webcodecs/encoded-audio-chunk.any.worker.html"
+  ]
+}
