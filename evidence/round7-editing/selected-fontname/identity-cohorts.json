@@ -1,0 +1,82 @@
+{
+  "main": {
+    "onceUndo": [
+      "span-same/part/legacy/forward",
+      "span-same/part/legacy/backward",
+      "span-same/part/css/forward",
+      "span-same/part/css/backward"
+    ],
+    "restored": [
+      "span-same/full/legacy/forward",
+      "span-same/part/legacy/forward",
+      "span-same/full/legacy/backward",
+      "span-same/part/legacy/backward",
+      "span-same/full/css/forward",
+      "span-same/part/css/forward",
+      "span-same/full/css/backward",
+      "span-same/part/css/backward"
+    ]
+  },
+  "history": {
+    "restored": [
+      "span-same/full/legacy/forward",
+      "span-same/part/legacy/forward",
+      "span-same/full/legacy/backward",
+      "span-same/part/legacy/backward",
+      "span-same/full/css/forward",
+      "span-same/part/css/forward",
+      "span-same/full/css/backward",
+      "span-same/part/css/backward"
+    ],
+    "redone": [
+      "span-same/part/legacy/forward",
+      "span-same/part/legacy/backward",
+      "span-same/part/css/forward",
+      "span-same/part/css/backward"
+    ]
+  },
+  "repeat": {
+    "restored": [
+      "span-css/part/legacy/forward",
+      "span-css/part/legacy/backward",
+      "font-css/full/css/forward",
+      "span-css/part/css/forward",
+      "font-css/part/css/forward",
+      "font-css/full/css/backward",
+      "span-css/part/css/backward",
+      "font-css/part/css/backward"
+    ],
+    "redone": [
+      "span-css/part/legacy/forward",
+      "span-css/part/legacy/backward",
+      "font-css/full/css/forward",
+      "span-css/part/css/forward",
+      "font-css/part/css/forward",
+      "font-css/full/css/backward",
+      "span-css/part/css/backward",
+      "font-css/part/css/backward"
+    ]
+  },
+  "pinned": {
+    "onceUndo": [
+      "exact/part/legacy/forward",
+      "exact/part/legacy/backward",
+      "exact/part/css/forward",
+      "exact/part/css/backward"
+    ],
+    "restored": [
+      "exact/part/legacy/forward",
+      "exact/part/legacy/backward",
+      "exact/part/css/forward",
+      "exact/part/css/backward"
+    ]
+  },
+  "mainIntermediateSubsetOfFinal": true,
+  "sameMainAndSingleUndoFixtureIDs": true,
+  "repeatFontCSS": [
+    "font-css/full/css/forward",
+    "font-css/part/css/forward",
+    "font-css/full/css/backward",
+    "font-css/part/css/backward"
+  ]
+}
