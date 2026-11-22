@@ -318,6 +318,8 @@ pub(crate) struct State {
     filter_spec: Option<pyro_canvas::CanvasFilter>,
     letter_spacing: String,
     word_spacing: String,
+    /// pyro: `lang` (any string; `inherit` by default). Stored only: text is shaped without it.
+    lang: String,
     font_kerning: &'static str,
     font_stretch: &'static str,
     font_variant_caps: &'static str,
@@ -355,6 +357,7 @@ impl State {
             filter_spec: None,
             letter_spacing: "0px".into(),
             word_spacing: "0px".into(),
+            lang: "inherit".into(),
             font_kerning: "auto",
             font_stretch: "normal",
             font_variant_caps: "normal",
@@ -1739,6 +1742,7 @@ impl ContextData {
         );
         spacing_state!(def, "letterSpacing", letter_spacing);
         spacing_state!(def, "wordSpacing", word_spacing);
+        string_state!(def, "lang", lang);
         def.accessor(
             "globalCompositeOperation",
             |s, c| Ok(s.string(c.state.borrow().composite)),
