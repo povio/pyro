@@ -889,6 +889,9 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool, source: Option
         if !dom.is_connected(el).unwrap_or(false) {
             return fail("InvalidStateError", "The element is not in a Document.");
         }
+        if !in_active_document(page, &dom, el) {
+            return fail("InvalidStateError", "The element's document is not fully active.");
+        }
     }
     if !fire_toggle(page, el, "beforetoggle", false, true, true, source) {
         return Ok(());
@@ -952,13 +955,37 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
 /// `dialog.requestClose(result)` and a close request: a cancelable
 /// `cancel`, then the dialog closes unless it was canceled.
 fn request_close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String>, source: Option<NodeId>) {
-    if !is_open(&page.dom.borrow(), el) {
+    {
+        let dom = page.dom.borrow();
+        // Only a connected dialog of a fully active document has a close watcher.
+        if !is_open(&dom, el) || !dom.is_connected(el).unwrap_or(false) || !in_active_document(page, &dom, el) {
+            return;
+        }
+    }
+    // HTML close watcher "is running cancel action": a request made from the dialog's own
+    // `cancel` listener neither fires another `cancel` nor closes it.
+    let key = (page.id(), el);
+    if CANCELING.with(|c| c.borrow().contains(&key)) {
         return;
     }
-    if !crate::input::fire_simple(page, el, "cancel", false, true) {
+    CANCELING.with(|c| c.borrow_mut().push(key));
+    let proceed = crate::input::fire_simple(page, el, "cancel", false, true);
+    CANCELING.with(|c| c.borrow_mut().retain(|k| *k != key));
+    if !proceed {
         return;
     }
     close_dialog(page, el, result, source);
+}
+
+thread_local! {
+    /// Dialogs whose close request is firing `cancel` (page id, element).
+    static CANCELING: std::cell::RefCell<Vec<(u64, NodeId)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Whether `el` is in the page's own document, the one its browsing context shows (a document
+/// made by `createHTMLDocument` is not fully active).
+fn in_active_document(page: &PageDom, dom: &Dom, el: NodeId) -> bool {
+    dom.node_document(el).is_ok_and(|d| d == page.document())
 }
 
 /// `<form method=dialog>` submission: closes the form's nearest `dialog`
