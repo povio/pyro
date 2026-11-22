@@ -1206,8 +1206,12 @@ pub(crate) fn popover_target_activation(page: &Rc<PageDom>, node: NodeId, event_
     let Some(popover) = popover_target_of(page, node) else { return };
     let (showing, action) = {
         let dom = page.dom.borrow();
-        // A click inside a popover nested in its own invoker does nothing.
-        if dom.contains(popover, event_target).unwrap_or(false) && dom.contains(node, popover).unwrap_or(false) {
+        // A click inside a popover nested in its own invoker does nothing (a descendant, not the
+        // invoker itself: a button that is its own popover target toggles itself).
+        if popover != node
+            && dom.contains(popover, event_target).unwrap_or(false)
+            && dom.contains(node, popover).unwrap_or(false)
+        {
             return;
         }
         let action = dom.get_attribute(node, "popovertargetaction").ok().flatten().map(str::to_ascii_lowercase);
