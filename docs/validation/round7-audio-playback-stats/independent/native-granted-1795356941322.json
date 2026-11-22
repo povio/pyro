@@ -1,0 +1,229 @@
+{
+  "chrome": "158.0.8127.37",
+  "secure": true,
+  "permission": "granted",
+  "rate": 48000,
+  "identity": {
+    "stable": true,
+    "separate": true,
+    "tag": "[object AudioPlaybackStats]",
+    "instance": true,
+    "keys": [
+      "underrunDuration",
+      "underrunEvents",
+      "totalDuration",
+      "averageLatency",
+      "minimumLatency",
+      "maximumLatency",
+      "resetLatency",
+      "toJSON",
+      "constructor"
+    ],
+    "badGetter": "TypeError",
+    "badMethod": "TypeError",
+    "badReset": "TypeError",
+    "candidateFactory": false,
+    "visibility": "visible",
+    "growth": [
+      {
+        "ms": 1938.8999999761581,
+        "time": 0,
+        "json": {
+          "underrunDuration": 0,
+          "underrunEvents": 0,
+          "totalDuration": 0,
+          "averageLatency": 0,
+          "minimumLatency": 0,
+          "maximumLatency": 0
+        }
+      },
+      {
+        "ms": 3091.199999988079,
+        "time": 1.152,
+        "json": {
+          "underrunDuration": 0,
+          "underrunEvents": 0,
+          "totalDuration": 0.9997,
+          "averageLatency": 0.0177,
+          "minimumLatency": 0,
+          "maximumLatency": 0.019100000000000002
+        }
+      },
+      {
+        "ms": 4243.399999976158,
+        "time": 2.304,
+        "json": {
+          "underrunDuration": 0,
+          "underrunEvents": 0,
+          "totalDuration": 2.0022,
+          "averageLatency": 0.0177,
+          "minimumLatency": 0,
+          "maximumLatency": 0.019100000000000002
+        }
+      }
+    ]
+  },
+  "resetUndefined": true,
+  "samples": [
+    {
+      "label": "start",
+      "ms": 7.699999988079071,
+      "state": "running",
+      "time": 0.005333333333333333,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.0027,
+        "averageLatency": 0,
+        "minimumLatency": 0,
+        "maximumLatency": 0
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "running1",
+      "ms": 260.19999998807907,
+      "state": "running",
+      "time": 0.256,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.0027,
+        "averageLatency": 0,
+        "minimumLatency": 0,
+        "maximumLatency": 0
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "running2",
+      "ms": 760.8999999761581,
+      "state": "running",
+      "time": 0.752,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.0027,
+        "averageLatency": 0,
+        "minimumLatency": 0,
+        "maximumLatency": 0
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "suspended1",
+      "ms": 843.3999999761581,
+      "state": "suspended",
+      "time": 0.752,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.0027,
+        "averageLatency": 0,
+        "minimumLatency": 0,
+        "maximumLatency": 0
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "suspended2",
+      "ms": 1196.3999999761581,
+      "state": "suspended",
+      "time": 0.752,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.0027,
+        "averageLatency": 0,
+        "minimumLatency": 0,
+        "maximumLatency": 0
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "reset",
+      "ms": 1196.3999999761581,
+      "state": "suspended",
+      "time": 0.752,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.0027,
+        "averageLatency": 0,
+        "minimumLatency": 0,
+        "maximumLatency": 0
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "resumed",
+      "ms": 1502.300000011921,
+      "state": "running",
+      "time": 1.056,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.7545,
+        "averageLatency": 0.0176,
+        "minimumLatency": 0,
+        "maximumLatency": 0.019100000000000002
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "closed1",
+      "ms": 1585,
+      "state": "closed",
+      "time": 1.056,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.7545,
+        "averageLatency": 0.0176,
+        "minimumLatency": 0,
+        "maximumLatency": 0.019100000000000002
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "closed2",
+      "ms": 1937.199999988079,
+      "state": "closed",
+      "time": 1.056,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.7545,
+        "averageLatency": 0.0176,
+        "minimumLatency": 0,
+        "maximumLatency": 0.019100000000000002
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    },
+    {
+      "label": "closedReset",
+      "ms": 1937.300000011921,
+      "state": "closed",
+      "time": 1.056,
+      "json": {
+        "underrunDuration": 0,
+        "underrunEvents": 0,
+        "totalDuration": 0.7545,
+        "averageLatency": 0,
+        "minimumLatency": 0,
+        "maximumLatency": 0
+      },
+      "fieldsMatch": true,
+      "freshJSON": true
+    }
+  ]
+}

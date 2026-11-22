@@ -1,0 +1,68 @@
+native-prompt-1795356936997.json [
+  {
+    label: 'closed2',
+    ms: 2040,
+    state: 'closed',
+    time: 1.0293333333333334,
+    json: {
+      underrunDuration: 0,
+      underrunEvents: 0,
+      totalDuration: 0.7278,
+      averageLatency: 0.0176,
+      minimumLatency: 0,
+      maximumLatency: 0.0192
+    },
+    fieldsMatch: true,
+    freshJSON: true
+  },
+  {
+    label: 'closedReset',
+    ms: 2040,
+    state: 'closed',
+    time: 1.0293333333333334,
+    json: {
+      underrunDuration: 0,
+      underrunEvents: 0,
+      totalDuration: 0.7278,
+      averageLatency: 0,
+      minimumLatency: 0,
+      maximumLatency: 0
+    },
+    fieldsMatch: true,
+    freshJSON: true
+  }
+]
+native-granted-1795356941322.json [
+  {
+    label: 'closed2',
+    ms: 1937.199999988079,
+    state: 'closed',
+    time: 1.056,
+    json: {
+      underrunDuration: 0,
+      underrunEvents: 0,
+      totalDuration: 0.7545,
+      averageLatency: 0.0176,
+      minimumLatency: 0,
+      maximumLatency: 0.019100000000000002
+    },
+    fieldsMatch: true,
+    freshJSON: true
+  },
+  {
+    label: 'closedReset',
+    ms: 1937.300000011921,
+    state: 'closed',
+    time: 1.056,
+    json: {
+      underrunDuration: 0,
+      underrunEvents: 0,
+      totalDuration: 0.7545,
+      averageLatency: 0,
+      minimumLatency: 0,
+      maximumLatency: 0
+    },
+    fieldsMatch: true,
+    freshJSON: true
+  }
+]
