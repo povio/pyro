@@ -1,0 +1,23 @@
+running 2 tests
+test blob_hyperlinks::tests::svg_href_takes_precedence_over_xlink_and_other_namespaces ... ok
+test blob_hyperlinks::tests::hyperlink_record_survives_revoke_but_new_parses_do_not_recover_it ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 109 filtered out; finished in 0.00s
+running 1 test
+test event_source_js::event_source_message_retains_its_response_origin ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 708 filtered out; finished in 0.01s
+running 1 test
+test messaging::same_origin_frames_post_cloned_messages_with_the_incumbent_source_and_origin ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 554 filtered out; finished in 0.08s
+running 1 test
+test messaging::popup_and_opener_see_each_other_as_message_source ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 554 filtered out; finished in 0.05s
+running 1 test
+test messaging::popup_message_origin_uses_the_sender_at_post_time ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 554 filtered out; finished in 0.06s
+running 2 tests
+test origin::tests::opaque_copies_and_registered_blob_origins_retain_identity ... ok
+test origin::tests::tuple_comparisons_preserve_scheme_and_ignore_port_only_for_sites ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 98 filtered out; finished in 0.00s
+running 1 test
+test dom_js::origin_values_use_native_records_and_preserve_opaque_identity ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 708 filtered out; finished in 0.02s

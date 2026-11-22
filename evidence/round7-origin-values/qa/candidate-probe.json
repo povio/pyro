@@ -1,0 +1,43 @@
+{
+  "surface": "function",
+  "opaque": [
+    true,
+    true,
+    false,
+    true,
+    true
+  ],
+  "tuple": [
+    false,
+    true,
+    false,
+    true,
+    true,
+    false
+  ],
+  "links": [
+    true,
+    true
+  ],
+  "invalid": [
+    [
+      "TypeError",
+      "TypeError",
+      "TypeError",
+      "TypeError",
+      "TypeError",
+      "TypeError"
+    ],
+    0
+  ],
+  "popup": [
+    true,
+    "TypeError",
+    0
+  ],
+  "message": true,
+  "worker": [
+    false,
+    true
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "target": {
+    "chromeOnly": 6,
+    "lpOnly": 8
+  },
+  "guard": {
+    "chromeOnly": 3,
+    "lpOnly": 19
+  }
+}
