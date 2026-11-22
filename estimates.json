@@ -2,68 +2,77 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 110,
+   "distinct_census_pages": 219,
    "studio_css_reported_pages_not_deduped": 0,
    "by_dir": {
-    "html/canvas": 107,
+    "html/canvas": 207,
+    "fetch/api": 4,
+    "FileAPI": 4,
     "mathml": 2,
+    "html/rendering": 1,
     "quirks": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 157,
+   "distinct_census_pages": 56,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
-    "html/canvas": 119,
     "scheduler": 19,
+    "html/canvas": 19,
     "fetch/content-encoding": 9,
     "html/semantics": 5,
     "fetch/data-urls": 3,
-    "svg/styling": 1,
-    "html/rendering": 1
+    "svg/styling": 1
    }
   },
   "queued": {
-   "distinct_census_pages": 584,
+   "distinct_census_pages": 1148,
    "studio_css_reported_pages_not_deduped": 122,
    "by_dir": {
+    "html/semantics": 253,
     "svg/animations": 229,
     "html/canvas": 119,
+    "referrer-policy": 114,
+    "html/interaction": 108,
+    "content-security-policy": 72,
+    "html/syntax": 42,
     "intersection-observer": 41,
-    "html/semantics": 23,
     "dom/events": 21,
     "webidl": 19,
     "html/dom": 17,
     "scroll-animations": 17,
+    "workers": 12,
     "pointerevents": 11,
-    "html/syntax": 8,
     "shadow-dom": 7,
     "selection": 7,
-    "workers": 6,
     "navigation-api": 6,
-    "uievents": 5,
     "html/editing": 5,
     "fetch/api": 5,
+    "uievents": 5,
     "svg/types": 4,
     "svg/path": 4,
-    "event-timing": 3,
-    "mathml": 3,
     "close-watcher": 3,
-    "dom/nodes": 3,
-    "html/browsers": 3,
+    "event-timing": 3,
     "inert": 3,
-    "html/rendering": 2,
+    "mathml": 3,
+    "html/browsers": 3,
+    "dom/nodes": 3,
     "resource-timing": 2,
-    "fetch/fetch-later": 2,
+    "html/rendering": 2,
     "soft-navigation-heuristics": 2,
-    "pointerlock": 1,
-    "custom-elements": 1,
+    "fetch/fetch-later": 2,
     "document-picture-in-picture": 1,
-    "editing": 1
+    "editing": 1,
+    "pointerlock": 1,
+    "custom-elements": 1
    }
   }
  },
  "per_brief": {
+  "OWN-blob-textstream": {
+   "state": "implemented-unbuilt",
+   "pages": 8
+  },
   "Q01": {
    "state": "proposed",
    "pages": 161
@@ -73,7 +82,7 @@
    "pages": 1
   },
   "Q03": {
-   "state": "active",
+   "state": "frozen",
    "pages": 1
   },
   "Q03b": {
@@ -325,7 +334,7 @@
    "pages": null
   },
   "C01": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "pages": 100
   },
   "C02": {
@@ -403,8 +412,48 @@
   "P15": {
    "state": "proposed",
    "pages": 36
+  },
+  "F01": {
+   "state": "proposed",
+   "pages": 139
+  },
+  "F02": {
+   "state": "proposed",
+   "pages": 108
+  },
+  "F03": {
+   "state": "proposed",
+   "pages": 63
+  },
+  "F04": {
+   "state": "proposed",
+   "pages": 66
+  },
+  "F05": {
+   "state": "proposed",
+   "pages": 36
+  },
+  "F06": {
+   "state": "proposed",
+   "pages": 20
+  },
+  "F07": {
+   "state": "proposed",
+   "pages": 40
+  },
+  "F08": {
+   "state": "proposed",
+   "pages": 31
+  },
+  "F09": {
+   "state": "proposed",
+   "pages": 30
+  },
+  "F10": {
+   "state": "proposed",
+   "pages": 34
   }
  },
- "implemented_total_estimate": 110,
+ "implemented_total_estimate": 219,
  "milestones_reached": []
 }

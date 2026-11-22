@@ -35,6 +35,17 @@ SEL={
  'P13':[r'^fetch/api/request/destination/fetch-destination'],
  'P14':[r'^svg/animations/'],
  'P15':[r'^intersection-observer/v2/'],
+ 'F01':[r'^(referrer-policy|content-security-policy)/gen/.*/sharedworker-(module|import|import-data)\.',r'^workers/modules/shared-worker'],
+ 'F02':[r'^html/interaction/focus/focusgroup/'],
+ 'F03':[r'^html/semantics/forms/the-select-element/customizable-select'],
+ 'F04':[r'^html/semantics/scripting-1/the-script-element/module/'],
+ 'F05':[r'^referrer-policy/gen/.*/worker-(classic|module)\.'],
+ 'F06':[r'^content-security-policy/gen/.*/worker-import-data\.'],
+ 'F07':[r'^html/semantics/scripting-1/the-script-element/(json-module|css-module)/'],
+ 'F08':[r'^html/semantics/scripting-1/the-script-element/moving-between-documents/'],
+ 'F09':[r'^html/semantics/scripting-1/the-script-element/execution-timing/'],
+ 'F10':[r'^html/syntax/speculative-parsing/generated/'],
+ 'OWN-blob-textstream':[r'(?i)textstream'],
 }
 MACHINE_DIRS={'MacBook':('html/','fetch/','IndexedDB/','encoding/'),'Studio':('css/','referrer-policy/','content-security-policy/')}
 def load():
@@ -49,7 +60,7 @@ def main(ledger,out):
   L=[json.loads(l) for l in open(ledger)]
   per={};
   for r in L:
-    if r['kind']!='brief': continue
+    if r['kind']!='brief' and r['id'] not in SEL: continue
     i=r['id']
     if i=='Q01': pages=set(q01)&strict
     elif SEL.get(i)==['__COUNT2__']: pages={'mathml/relations/css-styling/<page-1 of Q09 mspace>','mathml/relations/css-styling/<page-2 of Q09 mspace>'}
