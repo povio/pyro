@@ -327,6 +327,16 @@ pub(crate) fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str,
         let dom = n.page().dom.borrow();
         let doc = dom.node_document(n.id).js()?;
         match dom.element(n.id) {
+            // An element's handler content attributes are its IDL handlers':
+            // GlobalEventHandlers (and the Fullscreen ones), plus
+            // WindowEventHandlers on <body> and <frameset>. Document-only
+            // handlers (onreadystatechange, onvisibilitychange) are none.
+            Ok(e) if !(crate::handlers::GLOBAL.contains(&ty)
+                || crate::handlers::FULLSCREEN.contains(&ty)
+                || (e.is_html() && matches!(&*e.name.local, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))) =>
+            {
+                (false, false, false)
+            }
             Ok(e) => (
                 e.is_html() || e.namespace() == &markup5ever::ns!(svg)
                     || (e.namespace() == &markup5ever::ns!(mathml)
