@@ -921,7 +921,7 @@ fn keyboard_click(page: &Rc<PageDom>, el: NodeId) {
 }
 
 fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
-    let (url, target, opener, referrer_policy, pings) = {
+    let (url, target, noopener, referrer_policy, pings) = {
         let dom = page.dom.borrow();
         let Some(href) = dom.get_attribute(el, "href").ok().flatten().or_else(|| svg_link_href(&dom, el)) else {
             return;
@@ -960,32 +960,33 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
                 return;
             }
         }
-        // HTML: a link that targets a new browsing context is noopener unless rel=opener.
-        let rel = dom.get_attribute(el, "rel").ok().flatten().unwrap_or_default().to_ascii_lowercase();
-        let rel: Vec<&str> = rel.split_ascii_whitespace().collect();
-        let opener = rel.contains(&"opener") && !rel.contains(&"noopener") && !rel.contains(&"noreferrer");
         // Without a target of its own (or an empty one, as browsers treat it), the first
         // `<base target>`'s.
         let own = dom.get_attribute(el, "target").ok().flatten().filter(|t| !t.is_empty()).map(str::to_owned);
         let target = own.or_else(|| dom.node_document(el).ok().and_then(|doc| dom.base_target(doc)));
+        // HTML "get an element's noopener": rel=noopener/noreferrer, or `_blank` without
+        // rel=opener. A link to a named target keeps its opener.
+        let rel = dom.get_attribute(el, "rel").ok().flatten().unwrap_or_default();
+        let noopener = crate::window::element_noopener(rel, target.as_deref());
         // `rel=noreferrer`, else the link's `referrerpolicy` state.
         let referrer_policy = pyro_net::ReferrerPolicy::of_link(
             dom.get_attribute(el, "rel").ok().flatten(),
             dom.get_attribute(el, "referrerpolicy").ok().flatten(),
         );
-        (url, target, opener, referrer_policy, pings)
+        (url, target, noopener, referrer_policy, pings)
     };
     if let Some(pings) = pings {
         send_pings(page, pings, &url, referrer_policy);
     }
+    let popup = crate::window::element_popup_ticket(page, target.as_deref(), noopener);
     page.navigate(crate::page::NavigationRequest {
         url,
         target,
         method: "GET".into(),
         body: None,
         content_type: None,
-        opener,
-        popup: None,
+        opener: popup.is_some(),
+        popup,
         window_features: Default::default(),
         referrer_policy,
         source: Some(el),

@@ -580,7 +580,8 @@ pub struct NavigationRequest {
     pub body: Option<Vec<u8>>,
     pub content_type: Option<String>,
     /// A new browsing context (popup) keeps its opener (`window.opener`):
-    /// `window.open` without `noopener`, or a link with `rel=opener`.
+    /// `window.open` without `noopener`, or a link or form whose target creates one without
+    /// noopener (`window::element_noopener`).
     pub opener: bool,
     /// `window.open`'s returned object watches this popup.
     pub popup: Option<Rc<crate::popup::PopupTicket>>,

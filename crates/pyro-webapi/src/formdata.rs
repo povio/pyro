@@ -456,20 +456,24 @@ pub(crate) fn form_submission(
     let mut url = url::Url::parse(&action).ok()?;
     let enctype = attr_override(&dom, form, submitter, "enctype", "formenctype").map(|e| e.to_ascii_lowercase());
     let target = attr_override(&dom, form, submitter, "target", "formtarget").filter(|t| !t.is_empty() && t != "_self");
+    // HTML "get an element's noopener" with the form's rel: a named target keeps its opener.
+    let rel = dom.get_attribute(form, "rel").ok().flatten().unwrap_or_default().to_owned();
     drop(dom);
     // HTML "submit": a form that navigates its own document before it has
     // completely loaded replaces the document's entry.
     let replace = target.is_none() && page.navigates_by_replacing();
     if method == "GET" {
         url.set_query(Some(&urlencode(&entries, enc)));
+        let noopener = crate::window::element_noopener(&rel, target.as_deref());
+        let popup = crate::window::element_popup_ticket(page, target.as_deref(), noopener);
         return Some(NavigationRequest {
             url: url.to_string(),
             target,
             method: "GET".into(),
             body: None,
             content_type: None,
-            opener: false,
-            popup: None,
+            opener: popup.is_some(),
+            popup,
             window_features: Default::default(),
             referrer_policy: None,
             source: Some(submitter.unwrap_or(form)),

@@ -997,6 +997,46 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
     }
 }
 
+/// HTML "get an element's noopener" for a hyperlink or form that targets `target` with link
+/// types `rel`: rel=noopener or noreferrer, or `_blank` without rel=opener.
+pub(crate) fn element_noopener(rel: &str, target: Option<&str>) -> bool {
+    let rel = rel.to_ascii_lowercase();
+    let has = |t: &str| rel.split_ascii_whitespace().any(|r| r == t);
+    if has("noopener") || has("noreferrer") {
+        return true;
+    }
+    !has("opener") && target.is_some_and(|t| t.eq_ignore_ascii_case("_blank"))
+}
+
+/// The popup ticket for a hyperlink or form submission whose target may create a new
+/// auxiliary browsing context (HTML "rules for choosing a navigable" with a new top-level
+/// traversable): like `window.open`'s, it gives the popup its opener, its name ("" for
+/// `_blank`) and a copy of this document's session storage. It goes unused when the name turns
+/// out to be an existing frame. None for `_self`/`_top`/`_parent`, no target, or noopener (the
+/// popup then has no opener and no name).
+pub(crate) fn element_popup_ticket(
+    page: &Rc<PageDom>,
+    target: Option<&str>,
+    noopener: bool,
+) -> Option<Rc<crate::popup::PopupTicket>> {
+    let target = target.filter(|t| !t.is_empty())?;
+    let lower = target.to_ascii_lowercase();
+    if noopener || matches!(lower.as_str(), "_self" | "_top" | "_parent") {
+        return None;
+    }
+    let named = lower != "_blank";
+    let mut session = crate::storage::StorageNamespace::default();
+    if let Some(realm) = page.main_world_realm() {
+        let scope = realm.scope();
+        if let Ok(s) = &scope {
+            session = copy_session_storage(s, page);
+        }
+    }
+    let name = if named { target.to_owned() } else { String::new() };
+    let (ticket, _popup) = crate::popup::PopupTicket::new(name, session);
+    Some(ticket)
+}
+
 /// A new session storage namespace holding a copy of this document's
 /// session storage area (HTML copies the opener's whole session storage
 /// into a new top-level traversable). Only the document's own origin is
