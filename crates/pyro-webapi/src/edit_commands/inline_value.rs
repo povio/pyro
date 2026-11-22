@@ -478,7 +478,10 @@ fn value_carrier(dom: &Dom, node: NodeId, host: NodeId, fmt: &Format) -> Option<
     let name = editing::local(dom, parent);
     if !matches!(name.as_str(), "font" | "span") { return None; }
     let style = DeclarationBlock::parse(dom.get_attribute(parent, "style").ok()?.unwrap_or(""));
-    (name == "font" && dom.get_attribute(parent, fmt.kind.html_attr()?).ok()?.is_some() || !style.value(fmt.kind.property()).is_empty())
+    let legacy_attr = fmt.kind.html_attr().is_some_and(|attr| name == "font" && dom.has_attribute(parent, attr).unwrap_or(false));
+    let sized = fmt.kind == Kind::Background && (!style.value("font-size").is_empty()
+        || name == "font" && dom.has_attribute(parent, "size").unwrap_or(false));
+    (legacy_attr || sized || !style.value(fmt.kind.property()).is_empty())
         .then_some(parent)
 }
 
@@ -501,12 +504,24 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
                     && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
             }
         }
+        if fmt.kind == Kind::Background {
+            let style = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
+            if style.value("background-color").is_empty() && (dom.child_count(carrier).ok()? != 1
+                || !single && !pyro_dom::color_well::is_fully_transparent(&page.layout().computed_style_value(dom, carrier, "background-color")))
+            {
+                // A partial size carrier or stylesheet-painted element keeps
+                // its own extent; paint the selected text inside it.
+                return wrap(dom, text, fmt);
+            }
+        }
         let outer = dom.parent_element(carrier).ok()??;
         let mut points = [(text, 0), (text, editing::len(dom, text))];
         let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
         super::alignment::split_edge(dom, outer, text, true, &mut points)?;
         let name = editing::local(dom, middle);
-        if name == "font" { dom.remove_attribute(middle, fmt.kind.html_attr()?).ok()?; }
+        if name == "font" {
+            if let Some(attr) = fmt.kind.html_attr() { dom.remove_attribute(middle, attr).ok()?; }
+        }
         let mut style = DeclarationBlock::parse(dom.get_attribute(middle, "style").ok()?.unwrap_or(""));
         if style.remove(fmt.kind.property()) {
             if style.is_empty() { dom.remove_attribute(middle, "style").ok()?; }
@@ -603,11 +618,11 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
             && (needs[0] || !DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten()
                 .unwrap_or("")).value("font-family").is_empty()))
     } else { None };
-    let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size | Kind::Family) && {
+    let rewrite_runs = (kind != Kind::Background || !pyro_dom::color_well::is_fully_transparent(&fmt.css)) && {
         let dom = page.dom.borrow();
         nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| {
             value_carrier(&dom, n, host, &fmt).is_some_and(|carrier| {
-                kind == Kind::Foreground || needs.contains(&true) || editing::local(&dom, carrier) == "span"
+                matches!(kind, Kind::Foreground | Kind::Background) || needs.contains(&true) || editing::local(&dom, carrier) == "span"
                     || kind == Kind::Family && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
                         && !DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok().flatten().unwrap_or(""))
                             .value("font-family").is_empty()
