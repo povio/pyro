@@ -945,6 +945,16 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     s.global().set_atom("fetch", function.value())
 }
 
+/// WebAssembly.compileStreaming and instantiateStreaming on the realm's `WebAssembly` namespace
+/// (install.js `wasmStreaming`, given as `factory`), with [`crate::response::read_for_wasm`] as
+/// the step that takes a Response's bytes.
+pub(crate) fn install_wasm_streaming(s: &Scope<'_>, factory: Value<'_>) -> JsResult<()> {
+    let read = s.function("readWasmResponse", |s, _, a| crate::response::read_for_wasm(s, a.get(0), a.get(1)))?;
+    let factory = factory.as_object().ok_or_else(|| JsError::Type("install.js wasmStreaming".into()))?;
+    factory.call(None, &[read.value()])?;
+    Ok(())
+}
+
 fn receive(
     wire: &Arc<Mutex<Wire>>,
     page: u64,

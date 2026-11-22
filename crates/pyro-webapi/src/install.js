@@ -374,6 +374,41 @@
     return out;
   };
 
+  // fetch.rs `install_wasm_streaming`: WebAssembly.compileStreaming and
+  // instantiateStreaming (WebAssembly Web API), which JavaScriptCore leaves to
+  // its host (JSAPIGlobalObject's method table has no compileStreaming hook,
+  // so the namespace lacks both). `read(response, method)` checks the
+  // Response (MIME type, CORS-same-origin, ok status) and consumes its body as
+  // an ArrayBuffer (response.rs `read_for_wasm`); the bytes then go through
+  // the realm's own WebAssembly.compile and instantiate, captured here, so
+  // every check those make applies to them as well.
+  const wasmStreaming = (read) => {
+    const wasm = typeof WebAssembly === 'object' && WebAssembly !== null ? WebAssembly : undefined;
+    if (wasm === undefined || 'compileStreaming' in wasm) return;
+    const compile = wasm.compile, instantiate = wasm.instantiate;
+    const Promise_ = Promise, then = Promise.prototype.then;
+    // Spec: "a promise resolved with source", then the response's bytes.
+    const bytesOf = (source, method) =>
+      apply(then, new Promise_(resolve => resolve(source)), [response => read(response, method)]);
+    const methods = {
+      compileStreaming(source, options) {
+        return apply(then, bytesOf(source, 'compileStreaming'),
+          [bytes => apply(compile, wasm, options === undefined ? [bytes] : [bytes, options])]);
+      },
+      instantiateStreaming(source, importObject, options) {
+        if (importObject !== undefined && (importObject === null || (typeof importObject !== 'object' && typeof importObject !== 'function')))
+          return new Promise_((_, reject) => reject(new TypeError_("Failed to execute 'instantiateStreaming' on 'WebAssembly': Argument 1 must be an object")));
+        return apply(then, bytesOf(source, 'instantiateStreaming'),
+          [bytes => apply(instantiate, wasm, options === undefined ? [bytes, importObject] : [bytes, importObject, options])]);
+      },
+    };
+    for (const name of ['compileStreaming', 'instantiateStreaming']) {
+      const method = methods[name];
+      defineProperty(method, 'length', { value: 1, configurable: true });
+      defineProperty(wasm, name, { value: method, writable: true, enumerable: true, configurable: true });
+    }
+  };
+
   return {
     blobParts,
     encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, chunkTransferList, copyChunkInput, copyChunkTo, webIdlNumber: value => +value },
@@ -384,6 +419,7 @@
     urlSearchParams,
     fontFeatureMap,
     structuredClone: structuredCloneFactory,
+    wasmStreaming,
     // Element's own [Unscopable] `slot` (DOM) joins ChildNode's and ParentNode's.
     unscopables: [unscopable([...child, ...parent, 'slot']), unscopable(child), unscopable(child), unscopable([...parent, 'fullscreen']), unscopable(parent)],
     // An enumerable, configurable getter on the global (pyro-browser's
