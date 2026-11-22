@@ -1,0 +1,103 @@
+{
+  "available": "function",
+  "image": {
+    "metadata": [
+      0,
+      true
+    ],
+    "renders": {
+      "from-image": [
+        255,
+        0,
+        0,
+        255
+      ],
+      "none": [
+        255,
+        255,
+        0,
+        255
+      ]
+    }
+  },
+  "clone": {
+    "metadata": [
+      0,
+      true
+    ],
+    "renders": {
+      "from-image": [
+        255,
+        0,
+        0,
+        255
+      ],
+      "none": [
+        255,
+        255,
+        0,
+        255
+      ]
+    }
+  },
+  "explicitFlip": {
+    "metadata": [
+      0,
+      false
+    ],
+    "renders": {
+      "from-image": [
+        255,
+        255,
+        0,
+        255
+      ],
+      "none": [
+        255,
+        255,
+        0,
+        255
+      ]
+    }
+  },
+  "explicitTurn": {
+    "metadata": [
+      270,
+      true
+    ],
+    "renders": {
+      "from-image": [
+        0,
+        255,
+        0,
+        255
+      ],
+      "none": [
+        255,
+        255,
+        0,
+        255
+      ]
+    }
+  },
+  "rawTurn": {
+    "metadata": [
+      90,
+      false
+    ],
+    "renders": {
+      "from-image": [
+        0,
+        0,
+        255,
+        255
+      ],
+      "none": [
+        255,
+        255,
+        0,
+        255
+      ]
+    }
+  }
+}
