@@ -1,4 +1,14 @@
-//! Prioritized Task Scheduling for window and worker event loops.
+//! Prioritized Task Scheduling for window and worker event loops:
+//! `postTask()` and `yield()`.
+//!
+//! A scheduler keeps the scheduling state (priority source and abort source)
+//! of the task it is running: a `postTask()` callback, a `yield()`
+//! continuation or a `requestIdleCallback()` callback (background), for the
+//! callback and its microtask checkpoint. `yield()` inherits it; elsewhere
+//! (timers, events, another frame's scheduler) it continues at user-visible
+//! priority with no signal. JavaScriptCore has no hook that binds the state
+//! to a promise reaction when it is created, so a reaction registered in
+//! one task and run in another sees the running task's state, not its own.
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
@@ -14,12 +24,31 @@ use rustc_hash::FxHashMap;
 pub(crate) struct PendingTasks {
     next: Cell<u64>,
     records: RefCell<FxHashMap<u64, Rc<Task>>>,
+    /// The scheduling state of the task this scheduler is running.
+    current: RefCell<Option<Rc<SchedulingState>>>,
+}
+
+/// The spec's scheduling state. `priority` is `None` outside a scheduled
+/// task's state (requestIdleCallback has a fixed background one).
+struct SchedulingState {
+    priority: Option<WebPrioritySource>,
+    signal: Option<Persistent>,
 }
 
 impl PendingTasks {
     pub(crate) fn clear(&self) {
         // Drop JS roots and cancel delayed admissions before the realm detaches.
         drop(self.records.take());
+        drop(self.current.take());
+    }
+
+    /// Runs `f` (a task's callback and its microtask checkpoint) with
+    /// `state` as the current scheduling state, restoring the outer one.
+    fn with_state<R>(&self, state: Option<Rc<SchedulingState>>, f: impl FnOnce() -> R) -> R {
+        let outer = self.current.replace(state);
+        let out = f();
+        self.current.replace(outer);
+        out
     }
     pub(crate) fn cancel_realm(&self, realm: pyro_js::RealmId) {
         let ids: Vec<_> =
@@ -34,11 +63,12 @@ impl PendingTasks {
 }
 
 struct Task {
-    callback: Persistent,
+    /// `None` for a `yield()` continuation, which resolves with undefined.
+    callback: Option<Persistent>,
+    state: Rc<SchedulingState>,
     realm: WeakRealm,
     realm_id: pyro_js::RealmId,
     deferred: Deferred,
-    signal: Option<Persistent>,
     cancel: RefCell<Option<Box<dyn FnOnce()>>>,
     abort: RefCell<Option<AbortRegistration>>,
 }
@@ -57,7 +87,15 @@ impl JsClass for WebScheduler {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.promise_method("postTask", 1, post);
+        def.promise_method("yield", 0, yield_);
     }
+}
+
+/// Runs a `requestIdleCallback()` callback: `yield()` from it continues at
+/// background priority.
+pub fn with_idle_scheduling_state<R>(page: &PageDom, f: impl FnOnce() -> R) -> R {
+    let state = SchedulingState { priority: Some(WebPrioritySource::Fixed(WebTaskPriority::Background)), signal: None };
+    page.web_tasks.with_state(Some(Rc::new(state)), f)
 }
 
 pub(crate) fn define_global<W: JsClass>(def: &mut ClassDef<W>)
@@ -127,27 +165,34 @@ fn post<'s>(s: &Scope<'s>, owner: &Weak<PageDom>, a: Args<'s>) -> JsResult<Value
         }
     }
     let page = active_page(owner)?;
-    enqueue(
-        s,
-        &page,
-        Persistent::new(s, a.get(0)),
-        signal,
-        priority.unwrap_or(WebPrioritySource::Fixed(WebTaskPriority::UserVisible)),
-        delay,
-    )
+    let priority = priority.unwrap_or(WebPrioritySource::Fixed(WebTaskPriority::UserVisible));
+    let state = Rc::new(SchedulingState { priority: Some(priority.clone()), signal });
+    enqueue(s, &page, Some(Persistent::new(s, a.get(0))), state, priority, Some(delay))
 }
 
+/// `scheduler.yield()`: a continuation with the inherited priority and
+/// abort sources, which outranks tasks of that priority.
+fn yield_<'s>(s: &Scope<'s>, owner: &Weak<PageDom>, _a: Args<'s>) -> JsResult<Value<'s>> {
+    let page = active_page(owner)?;
+    let inherited = page.web_tasks.current.borrow().clone();
+    let state = inherited.unwrap_or_else(|| Rc::new(SchedulingState { priority: None, signal: None }));
+    let priority = state.priority.clone().unwrap_or(WebPrioritySource::Fixed(WebTaskPriority::UserVisible));
+    enqueue(s, &page, None, state, priority, None)
+}
+
+/// Queues a task (`delay` set) or a continuation (`callback` and `delay`
+/// unset) whose promise the state's signal can reject.
 fn enqueue<'s>(
     s: &Scope<'s>,
     page: &Rc<PageDom>,
-    callback: Persistent,
-    signal_value: Option<Persistent>,
+    callback: Option<Persistent>,
+    state: Rc<SchedulingState>,
     priority: WebPrioritySource,
-    delay: Duration,
+    delay: Option<Duration>,
 ) -> JsResult<Value<'s>> {
     let deferred = s.deferred()?;
     let promise = deferred.promise.get(s);
-    let signal = signal_value.as_ref().and_then(|p| s.unwrap::<AbortSignal>(p.get(s)));
+    let signal = state.signal.as_ref().and_then(|p| s.unwrap::<AbortSignal>(p.get(s)));
     if let Some(aborted) = signal.as_ref().filter(|sig| sig.aborted()) {
         deferred.reject(s, aborted.reason(s))?;
         return Ok(promise);
@@ -160,7 +205,7 @@ fn enqueue<'s>(
         realm_id: s.realm_id(),
         callback,
         deferred,
-        signal: signal_value,
+        state,
         cancel: RefCell::new(None),
         abort: RefCell::new(None),
     });
@@ -172,22 +217,22 @@ fn enqueue<'s>(
             let Some(record) = page.web_tasks.remove(id) else { return };
             let Some(realm) = record.realm.upgrade() else { return };
             let Ok(s) = realm.scope() else { return };
-            if let Some(signal) = record.signal.as_ref().and_then(|v| s.unwrap::<AbortSignal>(v.get(&s))) {
+            if let Some(signal) = record.state.signal.as_ref().and_then(|v| s.unwrap::<AbortSignal>(v.get(&s))) {
                 let _ = record.deferred.reject(&s, signal.reason(&s));
             };
         }));
         record.abort.replace(reg);
     }
     let weak = Rc::downgrade(page);
-    let cancel = hooks.post_web_task(
-        priority,
-        delay,
-        Box::new(move || {
-            if let Some(page) = weak.upgrade() {
-                run(&page, id)
-            }
-        }),
-    );
+    let run_task: Box<dyn FnOnce()> = Box::new(move || {
+        if let Some(page) = weak.upgrade() {
+            run(&page, id)
+        }
+    });
+    let cancel = match delay {
+        Some(delay) => hooks.post_web_task(priority, delay, run_task),
+        None => hooks.post_web_continuation(priority, run_task),
+    };
     if let Some(cancel) = cancel {
         record.cancel.replace(Some(cancel));
     } else {
@@ -208,22 +253,31 @@ fn run(page: &Rc<PageDom>, id: u64) {
         return;
     };
     let owner = page.clone();
+    let state = task.state.clone();
     // Let an abort during the synchronous part of the callback reject its
     // promise; disconnect the abort algorithm before assimilating its result.
-    if let Err(error) = s.in_script_frame(move |s| {
-        let value = s.invoke_callback(task.callback.get(s).as_object().expect("task callback"));
-        if owner.web_tasks.remove(id).is_some() {
-            task.abort.take();
-            match value {
-                Ok(v) => {
-                    let _ = task.deferred.resolve(s, v);
-                }
-                Err(e) => {
-                    let _ = task.deferred.reject(s, e.to_value(s));
+    // The scheduling state stays current through the microtask checkpoint
+    // that ends the frame.
+    let frame = page.web_tasks.with_state(Some(state), || {
+        s.in_script_frame(move |s| {
+            let value = match task.callback.as_ref() {
+                Some(callback) => s.invoke_callback(callback.get(s).as_object().expect("task callback")),
+                None => Ok(s.undefined()),
+            };
+            if owner.web_tasks.remove(id).is_some() {
+                task.abort.take();
+                match value {
+                    Ok(v) => {
+                        let _ = task.deferred.resolve(s, v);
+                    }
+                    Err(e) => {
+                        let _ = task.deferred.reject(s, e.to_value(s));
+                    }
                 }
             }
-        }
-    }) {
+        })
+    });
+    if let Err(error) = frame {
         if let Some(record) = page.web_tasks.remove(id) {
             let _ = record.deferred.reject(&s, error.to_value(&s));
         }
