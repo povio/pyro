@@ -1463,6 +1463,7 @@ fn layout_text(c: &ContextData, text: &str, state: &State) -> pyro_canvas::text:
         letter_spacing: spacing_px(&state.letter_spacing, font.size),
         word_spacing: spacing_px(&state.word_spacing, font.size),
         lang: lang.as_deref(),
+        variant_caps: font.variant_caps,
     };
     let (key, faces) = canvas_web_faces(page, &font.family);
     pyro_canvas::text::layout_with_faces(text, &style, key, &faces)

@@ -30,6 +30,9 @@ pub struct TextStyle<'a> {
     /// BCP 47 language the text is shaped for (OpenType `locl`, such as Turkish
     /// keeping `fi` apart), `None` when unknown.
     pub lang: Option<&'a str>,
+    /// `font-variant-caps` keyword (canvas `fontVariantCaps`); the small and
+    /// petite caps values are synthesized ([`small_caps`]).
+    pub variant_caps: &'a str,
 }
 
 /// Glyphs of one font, positioned relative to the text's origin (the
@@ -196,8 +199,41 @@ fn line(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
     out
 }
 
+/// Synthesized small caps, as Chromium draws them for a font without them: the
+/// letters `variant_caps` makes small (lowercase ones; for `all-` values
+/// uppercase ones too) uppercased, and the byte ranges of `text` to draw at
+/// 70% of the size. `None` for other values or nothing to make small.
+fn small_caps(text: &str, variant_caps: &str) -> Option<(String, Vec<std::ops::Range<usize>>)> {
+    let all = match variant_caps {
+        "small-caps" | "petite-caps" => false,
+        "all-small-caps" | "all-petite-caps" => true,
+        _ => return None,
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for c in text.chars() {
+        let small = c.is_lowercase() || (all && c.is_uppercase());
+        let start = out.len();
+        if small {
+            out.extend(c.to_uppercase());
+            match ranges.last_mut() {
+                Some(r) if r.end == start => r.end = out.len(),
+                _ => ranges.push(start..out.len()),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    (!ranges.is_empty()).then_some((out, ranges))
+}
+
+/// The share of the size synthesized small caps are drawn at (Chromium).
+const SMALL_CAPS_SCALE: f32 = 0.7;
+
 fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
     let size = if style.size.is_finite() && style.size > 0.0 { style.size.min(10_000.0) } else { 10.0 };
+    let caps = small_caps(text, style.variant_caps);
+    let text = caps.as_ref().map_or(text, |(t, _)| t.as_str());
     let mut builder = cx.layout.ranged_builder(&mut cx.fonts, text, 1.0, false);
     builder.push_default(StyleProperty::FontFamily(FontFamily::Source(Cow::Borrowed(style.family))));
     builder.push_default(StyleProperty::FontSize(size));
@@ -214,6 +250,9 @@ fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
     if let Some(lang) = style.lang.and_then(|l| parley::Language::parse(l).ok()) {
         builder.push_default(StyleProperty::Locale(Some(lang)));
     }
+    for range in caps.iter().flat_map(|(_, ranges)| ranges) {
+        builder.push(StyleProperty::FontSize(size * SMALL_CAPS_SCALE), range.clone());
+    }
     let mut layout: Layout<()> = builder.build(text);
     layout.break_all_lines(None);
     let mut out = TextLayout { width: f64::from(layout.full_width()), ..TextLayout::default() };
@@ -225,9 +264,11 @@ fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
         let run = glyph_run.run();
         let metrics = run.font_metrics();
         if first {
-            out.ascent = f64::from(metrics.ascent);
-            out.descent = f64::from(metrics.descent);
-            out.baselines = base_baselines(run.font(), run.font_size()).unwrap_or_default();
+            // At the text's size: a first run of small caps is drawn smaller.
+            let scale = if run.font_size() > 0.0 { size / run.font_size() } else { 1.0 };
+            out.ascent = f64::from(metrics.ascent * scale);
+            out.descent = f64::from(metrics.descent * scale);
+            out.baselines = base_baselines(run.font(), size).unwrap_or_default();
             first = false;
         }
         let glyphs: Vec<vello_cpu::Glyph> =

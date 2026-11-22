@@ -264,6 +264,7 @@ fn hostile_geometry_finishes() {
             letter_spacing: 0.0,
             word_spacing: 0.0,
             lang: None,
+            variant_caps: "normal",
         },
     );
     st.transform = Affine::scale(1e200);
@@ -296,6 +297,7 @@ fn text_has_ink_and_metrics() {
         letter_spacing: 0.0,
         word_spacing: 0.0,
         lang: None,
+        variant_caps: "normal",
     };
     let layout = text::layout("Hello", &style);
     assert!(layout.width > 30.0 && layout.width < 80.0, "{}", layout.width);
