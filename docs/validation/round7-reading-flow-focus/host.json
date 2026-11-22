@@ -1,0 +1,469 @@
+{
+ "start": "2026-11-22T00:56:50.752Z",
+ "end": "2026-11-22T00:57:07.267Z",
+ "preciseHost": {
+  "durationSeconds": 16.515,
+  "hostBusyPct": 87.961
+ },
+ "perArm": {
+  "reading-focus-base-1c2a606f9": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 8.273,
+   "weightedHostBusyPct": 88.24
+  },
+  "reading-nav-0952a65d2": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 8.241,
+   "weightedHostBusyPct": 87.69
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "reading-focus-base-1c2a606f9",
+   "start": "2026-11-22T00:56:50.752Z",
+   "end": "2026-11-22T00:56:56.529Z",
+   "durationSeconds": 5.777,
+   "hostBusyPct": 100.0
+  },
+  {
+   "order": 2,
+   "binary": "reading-nav-0952a65d2",
+   "start": "2026-11-22T00:56:56.529Z",
+   "end": "2026-11-22T00:56:58.990Z",
+   "durationSeconds": 2.461,
+   "hostBusyPct": 95.032
+  },
+  {
+   "order": 3,
+   "binary": "reading-nav-0952a65d2",
+   "start": "2026-11-22T00:56:58.990Z",
+   "end": "2026-11-22T00:57:03.148Z",
+   "durationSeconds": 4.158,
+   "hostBusyPct": 97.333
+  },
+  {
+   "order": 4,
+   "binary": "reading-focus-base-1c2a606f9",
+   "start": "2026-11-22T00:57:03.148Z",
+   "end": "2026-11-22T00:57:03.985Z",
+   "durationSeconds": 0.837,
+   "hostBusyPct": 67.781
+  },
+  {
+   "order": 5,
+   "binary": "reading-nav-0952a65d2",
+   "start": "2026-11-22T00:57:03.985Z",
+   "end": "2026-11-22T00:57:04.801Z",
+   "durationSeconds": 0.816,
+   "hostBusyPct": 58.638
+  },
+  {
+   "order": 6,
+   "binary": "reading-focus-base-1c2a606f9",
+   "start": "2026-11-22T00:57:04.801Z",
+   "end": "2026-11-22T00:57:05.692Z",
+   "durationSeconds": 0.891,
+   "hostBusyPct": 58.193
+  },
+  {
+   "order": 7,
+   "binary": "reading-focus-base-1c2a606f9",
+   "start": "2026-11-22T00:57:05.692Z",
+   "end": "2026-11-22T00:57:06.460Z",
+   "durationSeconds": 0.768,
+   "hostBusyPct": 56.937
+  },
+  {
+   "order": 8,
+   "binary": "reading-nav-0952a65d2",
+   "start": "2026-11-22T00:57:06.461Z",
+   "end": "2026-11-22T00:57:07.267Z",
+   "durationSeconds": 0.806,
+   "hostBusyPct": 44.9
+  }
+ ],
+ "benchmarkSHA256": "74f2def1262525bf5f271fce7196a3bd5d8763b43795cf267ee8f75655ff418d",
+ "minOneSecondBusyPct": 44.9,
+ "maxOneSecondBusyPct": 100,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-22T00:56:50.318Z",
+   "end": "2026-11-22T00:56:51.319Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:56:51.319Z",
+   "end": "2026-11-22T00:56:52.321Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:56:52.321Z",
+   "end": "2026-11-22T00:56:53.322Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:56:53.322Z",
+   "end": "2026-11-22T00:56:54.324Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:56:54.324Z",
+   "end": "2026-11-22T00:56:55.325Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:56:55.325Z",
+   "end": "2026-11-22T00:56:56.325Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:56:56.325Z",
+   "end": "2026-11-22T00:56:57.327Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:56:57.327Z",
+   "end": "2026-11-22T00:56:58.331Z",
+   "cpuBusyPct": 99.9
+  },
+  {
+   "start": "2026-11-22T00:56:58.331Z",
+   "end": "2026-11-22T00:56:59.333Z",
+   "cpuBusyPct": 81.6
+  },
+  {
+   "start": "2026-11-22T00:56:59.333Z",
+   "end": "2026-11-22T00:57:00.335Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:57:00.335Z",
+   "end": "2026-11-22T00:57:01.337Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:57:01.337Z",
+   "end": "2026-11-22T00:57:02.338Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T00:57:02.338Z",
+   "end": "2026-11-22T00:57:03.339Z",
+   "cpuBusyPct": 94.1
+  },
+  {
+   "start": "2026-11-22T00:57:03.339Z",
+   "end": "2026-11-22T00:57:04.338Z",
+   "cpuBusyPct": 60
+  },
+  {
+   "start": "2026-11-22T00:57:04.338Z",
+   "end": "2026-11-22T00:57:05.340Z",
+   "cpuBusyPct": 57.6
+  },
+  {
+   "start": "2026-11-22T00:57:05.340Z",
+   "end": "2026-11-22T00:57:06.343Z",
+   "cpuBusyPct": 59.1
+  },
+  {
+   "start": "2026-11-22T00:57:06.343Z",
+   "end": "2026-11-22T00:57:07.344Z",
+   "cpuBusyPct": 44.9
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-22T00:57:16.250Z",
+   "elapsedMs": 30003,
+   "cpuBusyPct": 76,
+   "load": [
+    27.185546875,
+    32.37255859375,
+    27.03759765625
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1152,
+     "pctCpu": 35.9,
+     "rssMiB": 37472
+    },
+    "independent-feature": {
+     "n": 2,
+     "pctCpu": 0,
+     "rssMiB": 19
+    },
+    "css-values": {
+     "n": 2,
+     "pctCpu": 203.6,
+     "rssMiB": 2376
+    },
+    "other-build": {
+     "n": 2,
+     "pctCpu": 99.7,
+     "rssMiB": 1270
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 104
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-22T00:56:46.264Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:55:09.945312+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 1,
+    "diagnostics": 1,
+    "ordinary": 1,
+    "policy": "Exclusive Studio IDB catalog 3a808192 active PGID96189 using target once; ordinary scoped registry PGID95964. CSS 0952a65d2 compiler/native 2/2 released; one serial QA for distinct focus/declaration outcomes and direct controls after checking execution SHA 15f6d6ee\u20268c0f. Editing compiler cleared; no extra concurrent jobs. Prepare true Tab traversal perf on QA release."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [
+      {
+       "pid": 96221,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 7574,
+       "state": "R",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 27.2
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [
+      {
+       "pid": 7055,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 66.4
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [
+      {
+       "pid": 4392,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 5757,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 710.4
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T00:57:16.204Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:56:57.066005+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 1,
+    "ordinary": 1,
+    "policy": "CSS dedicated QA released 00:55:35Z, +10/-0 to 12/12 and declaration guards 40/40, two direct shadow-slot differences retained. Direct START real-Tab ABBA/BAAB 64 forward/back events/fixture with 1s ticks after full host 68.4% and 10s mean 43.0%. Editing PGID1337 released; general QA 25f325bde next (44+10, 84 direct) only after timing, then registry QA."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [
+      {
+       "pid": 8499,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 7722,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 9119,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 98.5
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [
+      {
+       "pid": 9271,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 100
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [
+      {
+       "pid": 4392,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 9568,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 100
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-22T00:55:13.383382+00:00",
+ "qaEnd": "2026-11-22T00:55:17.328382+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "qaLastObservedAt": "2026-11-22T00:55:35Z",
+ "nextQAAdmissionAfter": "2026-11-22T00:57:07.267Z",
+ "workloadNotes": "Real forward/backward Tab steps under normal/source/flex/grid. Both direct shadow-slot differences remain independently documented. General editing QA started only after eight performance arms finished.",
+ "otherRawLogWindowOverlaps": [
+  {
+   "path": "round7-scoped-registries/native-web.log",
+   "start": "2026-11-22T00:55:47.615+00:00",
+   "lastAvailableWrite": "2026-11-22T00:57:31.019+00:00",
+   "overlapSeconds": 16.515
+  },
+  {
+   "path": "round7-editing/caret-script/native-script.log",
+   "start": "2026-11-22T00:56:48.719+00:00",
+   "lastAvailableWrite": "2026-11-22T00:57:13.473+00:00",
+   "overlapSeconds": 16.515
+  },
+  {
+   "path": "round7-local/idb-catalog-6fc045d76/base-native.log",
+   "start": "2026-11-22T00:56:56.266+00:00",
+   "lastAvailableWrite": "2026-11-22T00:57:39.357+00:00",
+   "overlapSeconds": 11.0009
+  },
+  {
+   "path": "round7-local/idb-catalog-6fc045d76/base-build.log",
+   "start": "2026-11-22T00:52:47.081+00:00",
+   "lastAvailableWrite": "2026-11-22T00:56:56.224+00:00",
+   "overlapSeconds": 5.4724
+  }
+ ]
+}
