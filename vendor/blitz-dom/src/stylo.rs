@@ -2280,15 +2280,8 @@ impl Node {
             }
 
             if *name == local_name!("hidden") {
-                // pyro: HTML rendering: `[hidden=until-found i]` is `content-visibility: hidden`
-                // (the box stays, its content is skipped); every other value is `display: none`
-                // (WPT html/editing/the-hidden-attribute/hidden-ua-stylesheet).
-                use style::values::specified::{ContentVisibility, Display};
-                if value.eq_ignore_ascii_case("until-found") {
-                    push_style(PropertyDeclaration::ContentVisibility(ContentVisibility::Hidden));
-                } else {
-                    push_style(PropertyDeclaration::Display(Display::None));
-                }
+                use style::values::specified::Display;
+                push_style(PropertyDeclaration::Display(Display::None));
             }
         }
 
