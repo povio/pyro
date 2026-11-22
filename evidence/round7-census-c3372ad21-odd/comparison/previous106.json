@@ -1,0 +1,4362 @@
+[
+ {
+  "coverage": "measured",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   0,
+   0
+  ],
+  "currentState": "missingName",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "The planned navigation of a form should be cancelled by a window stop\n  in the same task as the form submission",
+   "chrome158": [
+    "Pass",
+    "The planned navigation of a form should be cancelled by a window stop\n  in the same task as the form submission"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "The planned navigation of a form should be cancelled by a window stop\n  in the same task as the form submission"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "html/browsers/browsing-the-web/navigating-across-documents/form-submit-and-window-stop.html"
+  },
+  "reason": null,
+  "shard": "guard-history-000"
+ },
+ {
+  "coverage": "measured",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   12
+  ],
+  "currentState": "missingName",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), matching integrity check: loads with live signature.",
+   "chrome158": null,
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), matching integrity check: loads with live signature."
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "live-signature-in-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "subresource-integrity/signatures/tentative/authority.https.window.html"
+  },
+  "reason": null,
+  "shard": "guard-history-000"
+ },
+ {
+  "coverage": "measured",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   12
+  ],
+  "currentState": "missingName",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads with live signature.",
+   "chrome158": null,
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads with live signature."
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "live-signature-in-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "subresource-integrity/signatures/tentative/authority.https.window.html"
+  },
+  "reason": null,
+  "shard": "guard-history-000"
+ },
+ {
+  "coverage": "measured",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   12
+  ],
+  "currentState": "missingName",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), matching integrity check: loads with live signature.",
+   "chrome158": null,
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), matching integrity check: loads with live signature."
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "live-signature-in-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "subresource-integrity/signatures/tentative/authority.https.window.html"
+  },
+  "reason": null,
+  "shard": "guard-history-000"
+ },
+ {
+  "coverage": "measured",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   12
+  ],
+  "currentState": "missingName",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads with live signature.",
+   "chrome158": null,
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads with live signature."
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "live-signature-in-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "subresource-integrity/signatures/tentative/authority.https.window.html"
+  },
+  "reason": null,
+  "shard": "guard-history-000"
+ },
+ {
+  "coverage": "measured",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   12
+  ],
+  "currentState": "missingName",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "`fetch()`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads.",
+   "chrome158": null,
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "`fetch()`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads."
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "live-signature-in-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "subresource-integrity/signatures/tentative/authority.https.window.html"
+  },
+  "reason": null,
+  "shard": "guard-history-000"
+ },
+ {
+  "coverage": "measured",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   12
+  ],
+  "currentState": "missingName",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "`fetch()`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads.",
+   "chrome158": null,
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "`fetch()`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads."
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "live-signature-in-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "subresource-integrity/signatures/tentative/authority.https.window.html"
+  },
+  "reason": null,
+  "shard": "guard-history-000"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "cross-origin HTMLVideoElement: origin unclear getImageData",
+   "chrome158": [
+    "Pass",
+    "cross-origin HTMLVideoElement: origin unclear getImageData"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "cross-origin HTMLVideoElement: origin unclear getImageData"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "source-image-decode-rejection",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "cross-origin HTMLVideoElement: origin unclear getImageData"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/canvas/element/manual/imagebitmap/createImageBitmap-origin.sub.html"
+  },
+  "reason": null,
+  "shard": "guard-history-001"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "redirected to cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
+   "chrome158": [
+    "Pass",
+    "redirected to cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "redirected to cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "source-image-decode-rejection",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "redirected to cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/canvas/element/manual/imagebitmap/createImageBitmap-origin.sub.html"
+  },
+  "reason": null,
+  "shard": "guard-history-001"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window error: Move fetch-error external classic script to iframe after-prepare",
+   "chrome158": [
+    "Pass",
+    "window error: Move fetch-error external classic script to iframe after-prepare"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window error: Move fetch-error external classic script to iframe after-prepare"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "moved-script-event-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "window error: Move fetch-error external classic script to iframe after-prepare"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/semantics/scripting-1/the-script-element/moving-between-documents/after-prepare-iframe-fetch-error-external-classic.html"
+  },
+  "reason": null,
+  "shard": "guard-history-001"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "contenteditable=plaintext-only in the design mode should not prevent the style edit",
+   "chrome158": [
+    "Fail",
+    "contenteditable=plaintext-only in the design mode should not prevent the style edit"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "contenteditable=plaintext-only in the design mode should not prevent the style edit"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "contenteditable=plaintext-only in the design mode should not prevent the style edit"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/plaintext-only-in-designMode.html"
+  },
+  "reason": null,
+  "shard": "guard-main-004"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+   "chrome158": [
+    "Fail",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+   "chrome158": [
+    "Fail",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+   "chrome158": [
+    "Fail",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+   "chrome158": [
+    "Fail",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+   "chrome158": [
+    "Fail",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+   "chrome158": [
+    "Fail",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+   "chrome158": [
+    "Fail",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+   "chrome158": [
+    "Fail",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+   "chrome158": [
+    "Fail",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+   "chrome158": [
+    "Fail",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+   "chrome158": [
+    "Fail",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+   "chrome158": [
+    "Fail",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "plaintext-formatting-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "editing/plaintext-only/nested-with-contenteditable-true.html"
+  },
+  "reason": null,
+  "shard": "guard-main-006"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance is defined",
+   "chrome158": [
+    "Pass",
+    "window.performance is defined"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance is defined"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].entryType == \"measure\"",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].entryType == \"measure\""
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].entryType == \"measure\""
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].name == \"measure_mark_start_nav_end\"",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].name == \"measure_mark_start_nav_end\""
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].name == \"measure_mark_start_nav_end\""
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].startTime is correct",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].startTime is correct"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].startTime is correct"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].duration is approximately correct (up to 20ms difference allowed)",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].entryType == \"measure\"",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].entryType == \"measure\""
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].entryType == \"measure\""
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].name == \"measure_nav_start_mark_end\"",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].name == \"measure_nav_start_mark_end\""
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].name == \"measure_nav_start_mark_end\""
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].startTime is correct",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].startTime is correct"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].startTime is correct"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].entryType == \"measure\"",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].entryType == \"measure\""
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].entryType == \"measure\""
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].name == \"measure_nav_start_nav_end\"",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].name == \"measure_nav_start_nav_end\""
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].name == \"measure_nav_start_nav_end\""
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].startTime is correct",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].startTime is correct"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].startTime is correct"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].duration is approximately correct (up to 20ms difference allowed)",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].entryType == \"measure\"",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].entryType == \"measure\""
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].entryType == \"measure\""
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].name == \"measure_nav_start_no_end\"",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].name == \"measure_nav_start_no_end\""
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].name == \"measure_nav_start_no_end\""
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].startTime is correct",
+   "chrome158": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].startTime is correct"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].startTime is correct"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "user-timing/measure_navigation_timing.html"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "WebSockets: non-ascii URL in query, document encoding windows-1252",
+   "chrome158": [
+    "Pass",
+    "WebSockets: non-ascii URL in query, document encoding windows-1252"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "WebSockets: non-ascii URL in query, document encoding windows-1252"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "proxy-connection-failed",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "websockets/constructor/016.html?wss"
+  },
+  "reason": null,
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "newlyWithheld",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "newlyWithheld",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "Calling open/abort in readystatechange should not crash",
+   "chrome158": [
+    "Pass",
+    "Calling open/abort in readystatechange should not crash"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "Calling open/abort in readystatechange should not crash"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "cdp-local-address-unavailable",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "xhr/abort-progress-events.any.worker.html"
+  },
+  "reason": {
+   "blob": "73ff76c492869ed8a3297ed511a42ac4255836cc",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "shard": "ordinary-014",
+   "source": "xhr/abort-progress-events.any.js",
+   "url": "xhr/abort-progress-events.any.worker.html"
+  },
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "newlyWithheld",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "newlyWithheld",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "Events must not fire when state is UNSENT after abort()",
+   "chrome158": [
+    "Pass",
+    "Events must not fire when state is UNSENT after abort()"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "Events must not fire when state is UNSENT after abort()"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "cdp-local-address-unavailable",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "error",
+    null,
+    false
+   ],
+   "url": "xhr/abort-progress-events.any.worker.html"
+  },
+  "reason": {
+   "blob": "73ff76c492869ed8a3297ed511a42ac4255836cc",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "shard": "ordinary-014",
+   "source": "xhr/abort-progress-events.any.js",
+   "url": "xhr/abort-progress-events.any.worker.html"
+  },
+  "shard": "ordinary-014"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "Response.body is null for responses with status=204 (method=OPTIONS)",
+   "chrome158": [
+    "Fail",
+    "Response.body is null for responses with status=204 (method=OPTIONS)"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "Response.body is null for responses with status=204 (method=OPTIONS)"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "response-status-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "Response.body is null for responses with status=204 (method=OPTIONS)"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "fetch/api/basic/response-null-body.any.worker.html"
+  },
+  "reason": null,
+  "shard": "ordinary-018"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "Document timelines report current time relative to navigationStart",
+   "chrome158": [
+    "Pass",
+    "Document timelines report current time relative to navigationStart"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "Document timelines report current time relative to navigationStart"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "timeline-clock-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "Document timelines report current time relative to navigationStart"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "web-animations/timing-model/timelines/document-timelines.html"
+  },
+  "reason": null,
+  "shard": "ordinary-072"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window error: Move fetch-error external classic script to iframe move-back",
+   "chrome158": [
+    "Pass",
+    "window error: Move fetch-error external classic script to iframe move-back"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window error: Move fetch-error external classic script to iframe move-back"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "moved-script-event-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "window error: Move fetch-error external classic script to iframe move-back"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-fetch-error-external-classic.html"
+  },
+  "reason": null,
+  "shard": "ordinary-114"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sRGB-FF0000CC.png, Context srgb, ImageData srgb, cropSource=false",
+   "chrome158": [
+    "Pass",
+    "sRGB-FF0000CC.png, Context srgb, ImageData srgb, cropSource=false"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "sRGB-FF0000CC.png, Context srgb, ImageData srgb, cropSource=false"
+   ],
+   "combinedPage": [
+    "error",
+    "Error",
+    false
+   ],
+   "observedGroup": "source-image-decode-rejection",
+   "occurrence": 1,
+   "round7": [
+    "Timeout",
+    "sRGB-FF0000CC.png, Context srgb, ImageData srgb, cropSource=false"
+   ],
+   "round7Page": [
+    "error",
+    "Error",
+    false
+   ],
+   "url": "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html"
+  },
+  "reason": null,
+  "shard": "ordinary-126"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "<script> load: Move success external classic script to iframe move-back",
+   "chrome158": [
+    "Pass",
+    "<script> load: Move success external classic script to iframe move-back"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "<script> load: Move success external classic script to iframe move-back"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "moved-script-event-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "<script> load: Move success external classic script to iframe move-back"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-success-external-classic.html"
+  },
+  "reason": null,
+  "shard": "ordinary-135"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "Mixed-Content: Expects blocked for worklet-paint to same-http origin and swap-scheme redirection from https context.",
+   "chrome158": [
+    "Pass",
+    "Mixed-Content: Expects blocked for worklet-paint to same-http origin and swap-scheme redirection from https context."
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "Mixed-Content: Expects blocked for worklet-paint to same-http origin and swap-scheme redirection from https context."
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "blocked-vs-upgraded-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "Mixed-Content: Expects blocked for worklet-paint to same-http origin and swap-scheme redirection from https context."
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "mixed-content/gen/srcdoc-inherit.meta/unset/worklet-paint.https.html"
+  },
+  "reason": null,
+  "shard": "ordinary-143"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "<!doctype html><isindex>x</isindex>x",
+   "chrome158": [
+    "Pass",
+    "<!doctype html><isindex>x</isindex>x"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "<!doctype html><isindex>x</isindex>x"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "fixture-fetch-502",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/syntax/parsing/html5lib_write.html?file=isindex"
+  },
+  "reason": null,
+  "shard": "ordinary-148"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "<form><isindex>",
+   "chrome158": [
+    "Pass",
+    "<form><isindex>"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "<form><isindex>"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "fixture-fetch-502",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/syntax/parsing/html5lib_write.html?file=isindex"
+  },
+  "reason": null,
+  "shard": "ordinary-148"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "<isindex name=\"A\" action=\"B\" prompt=\"C\" foo=\"D\">",
+   "chrome158": [
+    "Pass",
+    "<isindex name=\"A\" action=\"B\" prompt=\"C\" foo=\"D\">"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "<isindex name=\"A\" action=\"B\" prompt=\"C\" foo=\"D\">"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "fixture-fetch-502",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/syntax/parsing/html5lib_write.html?file=isindex"
+  },
+  "reason": null,
+  "shard": "ordinary-148"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "<isindex>",
+   "chrome158": [
+    "Pass",
+    "<isindex>"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "<isindex>"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "fixture-fetch-502",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/syntax/parsing/html5lib_write.html?file=isindex"
+  },
+  "reason": null,
+  "shard": "ordinary-148"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "window error: Move parse-error external classic script to iframe move-back",
+   "chrome158": [
+    "Pass",
+    "window error: Move parse-error external classic script to iframe move-back"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "window error: Move parse-error external classic script to iframe move-back"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    true
+   ],
+   "observedGroup": "moved-script-event-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "window error: Move parse-error external classic script to iframe move-back"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-parse-error-external-classic.html"
+  },
+  "reason": null,
+  "shard": "ordinary-149"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sRGB-BB0000FF.png, Context srgb, ImageData srgb, scaleImage=false",
+   "chrome158": [
+    "Pass",
+    "sRGB-BB0000FF.png, Context srgb, ImageData srgb, scaleImage=false"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "sRGB-BB0000FF.png, Context srgb, ImageData srgb, scaleImage=false"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "pixel-value-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "sRGB-BB0000FF.png, Context srgb, ImageData srgb, scaleImage=false"
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html"
+  },
+  "reason": null,
+  "shard": "ordinary-178"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "Make an XHR request immediately after creating link rel=preload.",
+   "chrome158": [
+    "Pass",
+    "Make an XHR request immediately after creating link rel=preload."
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "Make an XHR request immediately after creating link rel=preload."
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "resource-count-assertion",
+   "occurrence": 1,
+   "round7": [
+    "Fail",
+    "Make an XHR request immediately after creating link rel=preload."
+   ],
+   "round7Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "url": "preload/preload-xhr.html"
+  },
+  "reason": null,
+  "shard": "ordinary-199"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false",
+   "chrome158": [
+    "Pass",
+    "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    false
+   ],
+   "combined": [
+    "Pass",
+    "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false"
+   ],
+   "combinedPage": [
+    "error",
+    "Error",
+    false
+   ],
+   "observedGroup": "source-image-decode-rejection",
+   "occurrence": 1,
+   "round7": [
+    "Timeout",
+    "sRGB-BB0000FF.png, Context srgb, ImageData srgb, cropSource=false"
+   ],
+   "round7Page": [
+    "error",
+    "Error",
+    false
+   ],
+   "url": "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html"
+  },
+  "reason": null,
+  "shard": "ordinary-229"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade (header not sent) - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade (header not sent) - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade (header not sent) - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade (header not sent) - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade (header not sent) - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade (header not sent) - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade (header not sent) - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade (header not sent) - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade-upgrade - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade-upgrade - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade-upgrade - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade-upgrade - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade-upgrade - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS downgrade-upgrade - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS upgrade - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS upgrade - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS upgrade - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS upgrade - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS upgrade - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS upgrade - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-site - HTTPS upgrade - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-site - HTTPS upgrade - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-site - HTTPS upgrade - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-site destination - location"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-site destination - location"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.assign",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.assign"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.assign"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.href",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.href"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.href"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ },
+ {
+  "coverage": "outsideRequestedShardSet",
+  "current": null,
+  "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+  "currentPage": null,
+  "currentState": "outsideRequestedShardSet",
+  "currentSubtestDiagnostic": null,
+  "original": {
+   "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.replace",
+   "chrome158": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.replace"
+   ],
+   "chrome158Page": [
+    "complete",
+    "OK",
+    true
+   ],
+   "combined": [
+    "Pass",
+    "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.replace"
+   ],
+   "combinedPage": [
+    "complete",
+    "OK",
+    false
+   ],
+   "observedGroup": "page-timeout-no-loss-name",
+   "occurrence": 1,
+   "round7": null,
+   "round7Page": [
+    "timeout",
+    null,
+    false
+   ],
+   "url": "fetch/metadata/generated/window-location.sub.html"
+  },
+  "reason": null,
+  "shard": "ordinary-266"
+ }
+]

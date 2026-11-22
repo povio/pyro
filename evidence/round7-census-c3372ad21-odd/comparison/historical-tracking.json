@@ -1,0 +1,31 @@
+{
+ "sources": {
+  "censusCommit": "01f49f43da24a20ecb20d99c967fc5de54272120",
+  "earlierLP": "8e7144b7e7de68be3b5b345138abe2c1dcc6d232",
+  "historical292SHA256": "7a594d9ce70d2c4bb2590e9d7f5415ece4108cc29cb7ebda925a2364e2388c5a",
+  "original106AuditCommit": "7589acd4c996d10eec55a375145afff49fb28eae",
+  "original106AuditSHA256": "adde6c4da710f89f20b6a2b7d905ec80279538ac48c779bbe599f1a68982bb82",
+  "previousLP": "1f1be032436bfeee9f48cdb5acbc0f71d21d5af9",
+  "previousPassChangesSHA256": "9ebb0fadebc4f525073021e33fc6cba526863544b6861324d51ea517f15bee1e"
+ },
+ "summary": {
+  "historical292": {
+   "currentDisposition": {
+    "Fail": 59,
+    "Pass": 133,
+    "historicallyWithheld": 4,
+    "missingName": 7,
+    "outsideRequestedShardSet": 89
+   },
+   "total": 292
+  },
+  "previous106": {
+   "currentDisposition": {
+    "missingName": 7,
+    "newlyWithheld": 2,
+    "outsideRequestedShardSet": 97
+   },
+   "total": 106
+  }
+ }
+}
