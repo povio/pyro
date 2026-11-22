@@ -1,0 +1,42 @@
+[
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"#000000fff\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"#000000fff\") return value",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"#f\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"#f\") return value",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"000000fff\") return value",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"f\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"f\") return value",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"potato quiche\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"potato quiche\") return value",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]
