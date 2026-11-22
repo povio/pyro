@@ -192,12 +192,10 @@ fn evaluate<'s>(
     let ws = realm.scope()?;
     let settle = Settle::new(s, deferred);
     // An engine with module graph phases: a graph that fails to fetch or parse rejects (the load's
-    // promise), one that fails to link rejects (`Err`), and its evaluation fulfills either way.
+    // promise), one that fails to link rejects; its evaluation fulfills either way (`run_loaded`).
     if let Some(loading) = ws.load_module_graph(source, url)? {
-        let url = url.to_owned();
-        settle.when(s, &ws, loading, move |ws, _| {
-            Some(ws.link_and_evaluate_module(&url).and_then(|evaluation| ended(ws, evaluation)))
-        })?;
+        let ran = run_loaded(&ws, loading, url.to_owned())?;
+        settle.when(s, &ws, ran, |_, _| None)?;
         return Ok(promise);
     }
     // Otherwise the evaluation promise also carries an import's fetch failure, which this cannot
@@ -207,10 +205,92 @@ fn evaluate<'s>(
             let after = ended(&ws, evaluation)?;
             settle.when(s, &ws, after, |_, _| None)?
         }
-        // A module that does not parse (or a failed import): the error, in the caller's realm.
+        // Thrown synchronously by the module's evaluation: reported, and it fulfills.
+        Err(pyro_js::JsError::Thrown(error)) if !is_link_error(&ws, error.get(&ws)) => {
+            report_evaluation_error(&ws, error.get(&ws));
+            settle.now(s, Ok(()))?
+        }
+        // A module that does not parse or link (or a failed import): the error, in the caller's realm.
         Err(e) => settle.now(s, Err(e.to_value(s)))?,
     }
     Ok(promise)
+}
+
+/// A promise of the worklet realm for the graph of `url` that `loading` (its load promise) loads:
+/// rejected when the load rejects (a fetch failed, a parse error) or the graph fails to link;
+/// otherwise fulfilled once the module ran (`run_module`). A load rejected with the cached
+/// evaluation error of a module that already threw (`Scope::is_module_evaluation_error`; reported
+/// when it threw) fulfills too.
+fn run_loaded<'w>(ws: &Scope<'w>, loading: Value<'w>, url: String) -> JsResult<Value<'w>> {
+    let deferred = Rc::new(ws.deferred()?);
+    let promise = deferred.promise.get(ws);
+    let (loaded, failed) = (deferred.clone(), deferred);
+    ws.then(
+        loading,
+        move |ws, _| {
+            // Resolving with run_module's promise adopts it.
+            let _ = match run_module(ws, &url) {
+                Ok(ran) => loaded.resolve(ws, ran),
+                Err(e) => loaded.reject(ws, e.to_value(ws)),
+            };
+        },
+        move |ws, error| {
+            let _ = if ws.is_module_evaluation_error(error) {
+                failed.resolve(ws, ws.undefined())
+            } else {
+                failed.reject(ws, error)
+            };
+        },
+    )?;
+    Ok(promise)
+}
+
+/// HTML "run a module script" (rethrow errors false) for the loaded graph of `url`: a link error is
+/// `Err`; otherwise a value or promise of `ws` that fulfills once the evaluation ends, an evaluation
+/// error reported (and recorded) rather than rejecting it. JavaScriptCore throws the evaluation error
+/// of a module without top-level await synchronously from `link_and_evaluate_module`, so a thrown
+/// error is told from a link error as loader.rs `module_graph_has_script` does.
+fn run_module<'w>(ws: &Scope<'w>, url: &str) -> JsResult<Value<'w>> {
+    match ws.link_and_evaluate_module(url) {
+        Ok(evaluation) => {
+            let deferred = Rc::new(ws.deferred()?);
+            let promise = deferred.promise.get(ws);
+            let (ran, threw) = (deferred.clone(), deferred);
+            ws.then(
+                evaluation,
+                move |ws, _| {
+                    let _ = ran.resolve(ws, ws.undefined());
+                },
+                move |ws, error| {
+                    report_evaluation_error(ws, error);
+                    let _ = threw.resolve(ws, ws.undefined());
+                },
+            )?;
+            Ok(promise)
+        }
+        Err(pyro_js::JsError::Thrown(error)) if !is_link_error(ws, error.get(ws)) => {
+            report_evaluation_error(ws, error.get(ws));
+            Ok(ws.undefined())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Whether `error`, thrown while linking and evaluating a graph, is a link error (a SyntaxError
+/// that is not a module's recorded evaluation error) rather than an evaluation error.
+fn is_link_error(ws: &Scope<'_>, error: Value<'_>) -> bool {
+    let Some(object) = error.as_object() else { return false };
+    if ws.is_module_evaluation_error(error) {
+        return false;
+    }
+    object.get_atom("name").ok().and_then(|n| n.as_string()).as_deref() == Some("SyntaxError")
+}
+
+/// Records `error` as the module's evaluation error (a later load of it rejects with it) and
+/// reports it.
+fn report_evaluation_error(ws: &Scope<'_>, error: Value<'_>) {
+    ws.note_module_evaluation_error(error);
+    ws.report_exception(&pyro_js::JsError::thrown(pyro_js::Persistent::new(ws, error)));
 }
 
 /// A promise of the worklet realm that fulfills once `evaluation` (an evaluation promise, or
@@ -230,8 +310,9 @@ fn await_graph<'s>(s: &Scope<'s>, global: &AudioWorkletGlobal, url: &str) -> JsR
     let deferred = s.deferred()?;
     let promise = deferred.promise.get(s);
     let settle = Settle::new(s, deferred);
-    let url = url.to_owned();
-    settle.when(s, &ws, loading, move |ws, _| Some(ws.link_and_evaluate_module(&url)))?;
+    // Loaded: link and run it (a no-op for a module that already ran), as an entry is.
+    let ran = run_loaded(&ws, loading, url.to_owned())?;
+    settle.when(s, &ws, ran, |_, _| None)?;
     Ok(promise)
 }
 
