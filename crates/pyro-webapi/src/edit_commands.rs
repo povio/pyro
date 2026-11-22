@@ -1432,7 +1432,7 @@ fn restored_format_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) 
 
 /// Remove a conflicting numeric weight from the selected portion before
 /// applying bold. Other attributes and declarations stay on their span.
-fn prepare_numeric_bold(dom: &mut Dom, host: NodeId, text: NodeId, use_css: bool) -> Option<bool> {
+fn prepare_numeric_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, use_css: bool) -> Option<bool> {
     use pyro_dom::stylo::declarations::DeclarationBlock;
     let span = dom.parent_element(text).ok()??;
     if span == host || !dom.element(span).is_ok_and(|el| el.is_html() && &**el.local_name() == "span") {
@@ -1441,19 +1441,25 @@ fn prepare_numeric_bold(dom: &mut Dom, host: NodeId, text: NodeId, use_css: bool
     let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()??);
     let weight = style.value("font-weight").parse::<f64>().ok()?;
     if !(1.0..600.0).contains(&weight) { return None; }
+    // split_texts has already isolated the selected text. If there are
+    // unselected siblings, keep their carrier and apply bold inside it.
+    if dom.child_count(span).ok()? != 1 { return Some(false); }
     style.remove("font-weight");
     if style.is_empty() && dom.attributes(span).ok()?.len() == 1 {
         hoist(dom, text, span);
-        return Some(false);
+        return None;
     }
-    let outer = dom.parent_element(span).ok()??;
-    let middle = alignment::split_edge(dom, outer, text, false, &mut [])?;
-    alignment::split_edge(dom, outer, text, true, &mut [])?;
-    if use_css { style.set("font-weight", "bold", false)?; }
     if style.is_empty() {
-        dom.remove_attribute(middle, "style").ok()?;
+        dom.remove_attribute(span, "style").ok()?;
     } else {
-        dom.set_attribute(middle, "style", &style.css_text()).ok()?;
+        dom.set_attribute(span, "style", &style.css_text()).ok()?;
+    }
+    if FontToggle::Bold.active(&page.layout().computed_style_value(dom, span, "font-weight")) {
+        return Some(true);
+    }
+    if use_css {
+        style.set("font-weight", "bold", false)?;
+        dom.set_attribute(span, "style", &style.css_text()).ok()?;
     }
     Some(use_css)
 }
@@ -1495,10 +1501,8 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             let mut last_wrapper: Option<NodeId> = None;
             let use_css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
             for &t in &texts {
-                if tag == "b" && prepare_numeric_bold(&mut dom, host, t, use_css) == Some(true) {
-                    continue;
-                }
-                let carried = carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some());
+                let prepared = if tag == "b" { prepare_numeric_bold(page, &mut dom, host, t, use_css) } else { None };
+                let carried = prepared.unwrap_or_else(|| carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some()));
                 if carried {
                     continue;
                 }
