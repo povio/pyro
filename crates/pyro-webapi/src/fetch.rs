@@ -736,12 +736,6 @@ pub(crate) fn parse_request<'s>(
     Ok((request, signal, extras))
 }
 
-/// Fetch "extract a body" for the supported BodyInit types: FormData
-/// (multipart/form-data with a generated boundary), Blob, URLSearchParams,
-/// BufferSource, else ToString. Returns (bytes, Content-Type or "" when the
-/// type sets none). ReadableStream bodies are handled by the callers, which
-/// drain them first (`Response` constructor, `fetch`); other objects are
-/// stringified as the Web IDL union's last member, USVString.
 /// Body mixin `textStream()` once the body is known usable: `body` (the
 /// object's body stream, or null) piped through a UTF-8 TextDecoderStream.
 /// A null body gives a fresh empty stream on each call and stays unused.
@@ -754,6 +748,12 @@ pub(crate) fn text_stream<'s>(s: &Scope<'s>, body: Value<'s>) -> JsResult<Value<
     crate::streams::helper(s, &page, "textFromStream", &[body])
 }
 
+/// Fetch "extract a body" for the supported BodyInit types: FormData
+/// (multipart/form-data with a generated boundary), Blob, URLSearchParams,
+/// BufferSource, else ToString. Returns (bytes, Content-Type or "" when the
+/// type sets none). ReadableStream bodies are handled by the callers, which
+/// drain them first (`Response` constructor, `fetch`); other objects are
+/// stringified as the Web IDL union's last member, USVString.
 pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, String)> {
     if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body)? {
         return Ok((bytes, mime));

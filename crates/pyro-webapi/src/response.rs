@@ -184,6 +184,7 @@ impl JsClass for Response {
         });
     }
 }
+
 /// `response.body`: null, or the one stream this Response hands out (made on
 /// first use over the native body).
 fn body_stream<'s>(s: &Scope<'s>, d: &ResponseData) -> JsResult<Value<'s>> {
