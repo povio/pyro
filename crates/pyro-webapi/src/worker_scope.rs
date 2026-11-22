@@ -866,6 +866,8 @@ fn script_text(bytes: &[u8]) -> String {
 /// asynchronous: its failure is reported, and this says true).
 fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bool {
     let Ok(s) = state.realm.scope() else { return false };
+    // The worker's own policies (recorded by `set_up`) gate WebAssembly compilation.
+    crate::csp::sync_wasm_gate(&s, &state.page);
     if !module {
         if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
             s.report_exception(&e);
@@ -916,6 +918,7 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
 /// The constructor admits module shared workers only with the two steps.
 fn start_module_graph(state: &WorkerLoop, script: &(String, String)) -> bool {
     let Ok(s) = state.realm.scope() else { return false };
+    crate::csp::sync_wasm_gate(&s, &state.page);
     let id = state.id;
     state.starting.set(true);
     // The first step fetches the graph and runs nothing: every request until it settles is a

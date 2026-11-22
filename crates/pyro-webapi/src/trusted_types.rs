@@ -220,6 +220,8 @@ pub fn sync_compile_strings(s: &Scope<'_>, page: &Rc<PageDom>) {
     if page.dom.borrow().csp_policies(page.document()).is_empty() && page.tt_eval_level.get() == 0 {
         return;
     }
+    // WebAssembly compilation follows the same policies (`'wasm-unsafe-eval'`).
+    crate::csp::sync_wasm_gate(s, page);
     let level = eval_level(page);
     if level == page.tt_eval_level.get() {
         return;
