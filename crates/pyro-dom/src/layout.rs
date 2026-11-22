@@ -4378,7 +4378,7 @@ impl Layout {
                 // as Chromium reports it (`7px`, `50%`, `auto`).
                 return declared.unwrap_or_else(|| "auto".into());
             }
-            if self.style.style_overridden() && declared.as_deref().is_some_and(|v| v.starts_with("calc-size(")) {
+            if self.style.style_overridden() && declared.as_deref().is_some_and(|v| v.starts_with("calc-size(") || matches!(v, "auto" | "min-content" | "max-content" | "fit-content" | "stretch")) {
                 if let Some(size) = self.synced_geometry_source(dom).and_then(|source| {
                     let sampled = self.style.stylo_style(dom, el)?;
                     source.sampled_calc_size(crate::snapshot::render_key(el), name == "width", &sampled)

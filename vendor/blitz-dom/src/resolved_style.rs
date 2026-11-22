@@ -363,6 +363,13 @@ impl BaseDocument {
         let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
         let endpoint = sizes.0.prepared_size();
         let size = sizes.1.prepared_size();
+        let keyword = |value: &Size| matches!(value, Size::Auto | Size::MinContent | Size::MaxContent | Size::FitContent | Size::Stretch);
+        if keyword(endpoint) && keyword(size) && endpoint != size {
+            let parent = node.layout_parent.get()?;
+            let layout = self.physical_unrounded_layout(parent);
+            let available = if width { layout.content_box_width() } else { layout.content_box_height() };
+            return self.sampled_basis_in_block_flow(node_id, width, Some(available), size);
+        }
         let matching_keyword = matches!((endpoint, size),
             (Size::Auto, Size::CalcSizeAuto(_)) | (Size::MinContent, Size::CalcSizeMinContent(_)) |
             (Size::MaxContent, Size::CalcSizeMaxContent(_)) | (Size::FitContent, Size::CalcSizeFitContent(_)));
@@ -438,7 +445,7 @@ impl BaseDocument {
         };
         let layout = self.physical_unrounded_layout(id);
         let border_box = position.box_sizing == BoxSizing::BorderBox;
-        if (width && matches!(size, Size::CalcSizeAuto(_))) || matches!(size, Size::CalcSizeStretch(_)) {
+        if (width && matches!(size, Size::Auto | Size::CalcSizeAuto(_))) || matches!(size, Size::Stretch | Size::CalcSizeStretch(_)) {
             let axis_is_definite = if width {
                 fixed(&container.get_position().width) && position.min_width.is_auto() && matches!(position.max_width, MaxSize::None)
             } else {
