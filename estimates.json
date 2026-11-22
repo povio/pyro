@@ -13,15 +13,15 @@
     "html/canvas": 263,
     "html/syntax": 12,
     "html/semantics": 5,
-    "FileAPI": 4,
     "fetch/api": 4,
+    "FileAPI": 4,
     "fetch/data-urls": 3,
-    "xhr": 2,
     "encoding": 2,
-    "dom/collections": 1,
-    "svg/styling": 1,
+    "xhr": 2,
     "html/rendering": 1,
-    "quirks": 1
+    "quirks": 1,
+    "dom/collections": 1,
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -39,40 +39,40 @@
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
-    "scroll-animations": 17,
     "html/dom": 17,
+    "scroll-animations": 17,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
     "shadow-dom": 7,
     "selection": 7,
     "navigation-api": 6,
-    "uievents": 5,
-    "intersection-observer": 5,
     "html/editing": 5,
+    "intersection-observer": 5,
+    "uievents": 5,
     "svg/types": 4,
-    "event-timing": 3,
-    "close-watcher": 3,
     "mathml": 3,
+    "close-watcher": 3,
+    "event-timing": 3,
     "inert": 3,
-    "dom/nodes": 2,
+    "html/rendering": 2,
     "svg/animations": 2,
     "fetch/fetch-later": 2,
-    "resource-timing": 2,
-    "html/rendering": 2,
+    "dom/nodes": 2,
     "soft-navigation-heuristics": 2,
-    "pointerlock": 1,
-    "document-picture-in-picture": 1,
-    "custom-elements": 1,
+    "resource-timing": 2,
     "editing": 1,
+    "custom-elements": 1,
+    "document-picture-in-picture": 1,
+    "pointerlock": 1,
     "html/browsers": 1
    }
   },
   "queued": {
-   "distinct_census_pages": 600,
+   "distinct_census_pages": 628,
    "owner_reported_unlisted": 75,
-   "selector_union": 565,
+   "selector_union": 593,
    "owner_estimate_reduction": 40,
-   "of_which_tentative": 22,
+   "of_which_tentative": 25,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
@@ -81,9 +81,10 @@
     "content-security-policy": 72,
     "html/semantics": 71,
     "intersection-observer": 36,
+    "fetch/api": 27,
     "webidl": 19,
     "workers": 12,
-    "fetch/api": 5,
+    "fetch/content-encoding": 6,
     "svg/path": 4,
     "html/browsers": 2,
     "dom/nodes": 1
@@ -680,6 +681,26 @@
    "state": "proposed",
    "pages": null,
    "tentative": null
+  },
+  "R-FETCH-1": {
+   "state": "proposed",
+   "pages": 10,
+   "tentative": 0
+  },
+  "R-FETCH-2": {
+   "state": "proposed",
+   "pages": 9,
+   "tentative": 0
+  },
+  "R-FETCH-3": {
+   "state": "proposed",
+   "pages": 6,
+   "tentative": 0
+  },
+  "R-FETCH-4": {
+   "state": "proposed",
+   "pages": 3,
+   "tentative": 3
   }
  },
  "implemented_total_estimate": 386,
