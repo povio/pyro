@@ -1,0 +1,98 @@
+[
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"foo[bar<b>baz]qoz</b>quz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1001-2000",
+    "[[\"bold\",\"\"]] \"foo [bar <b>baz] qoz</b> quz sic\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"bold\",\"\"]] \"fo[o<b>b]ar</b>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"fo[o<b>bar</b>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?2001-3000",
+    "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"fo[o<b>bar</b>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1-1000",
+    "[[\"italic\",\"\"]] \"foo[bar<i>baz]qoz</i>quz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1001-2000",
+    "[[\"italic\",\"\"]] \"fo[o<i>b]ar</i>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/italic.html?1001-2000",
+    "[[\"italic\",\"\"]] \"foo [bar <i>baz] qoz</i> quz sic\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"fo[o<s>bar</s>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"fo[o<s>bar</s>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"fo[o<u>bar</u>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"underline\",\"\"]] \"fo[o<u>b]ar</u>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]
