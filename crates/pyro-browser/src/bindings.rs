@@ -854,6 +854,24 @@ impl PageHooks for Hooks {
         }
     }
 
+    fn target_window<'s>(&self, scope: &pyro_js::Scope<'s>, name: &str) -> Option<pyro_js::Value<'s>> {
+        let host = self.frames.upgrade()?;
+        if !host.matches(self.page, &self.loader) {
+            return None;
+        }
+        let key = match host.ancestor_target(self.page, name, false) {
+            Some(ancestor) => ancestor?,
+            None => host.named_frame(self.page, name)?,
+        };
+        match host.window_value(scope, self.page, key) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                scope.report_exception(&e);
+                None
+            }
+        }
+    }
+
     fn frame_window<'s>(&self, scope: &pyro_js::Scope<'s>, node: pyro_dom::NodeId) -> Option<pyro_js::Value<'s>> {
         let host = self.frames.upgrade()?;
         if !host.matches(self.page, &self.loader) {

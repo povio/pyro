@@ -944,6 +944,13 @@ pub trait PageHooks {
     ) -> pyro_js::JsResult<Option<pyro_js::Value<'s>>> {
         Ok(None)
     }
+    /// HTML "the rules for choosing a navigable" for an existing navigable: the WindowProxy, as
+    /// `scope` sees it, of the frame of this page that `name` chooses (`_parent`, `_top`, or a
+    /// frame's target name). `None` when no frame of the page has that name (a popup, or a new
+    /// window, is the caller's to find or make).
+    fn target_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _name: &str) -> Option<pyro_js::Value<'s>> {
+        None
+    }
 }
 
 impl PageDom {

@@ -1015,10 +1015,11 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 /// otherwise it returns this realm's [`crate::popup::PopupWindow`] for the
 /// popup (see that module for what it reaches). A named popup this document
 /// opened earlier and still open is reused: the same object comes back and
-/// the popup navigates to `url` unless it is empty (HTML "navigable target
-/// name" lookup, limited to this document's own popups). The popup's session
-/// storage is copied from this document's now. `_self`/`_top`/`_parent`
-/// navigate this page.
+/// the popup navigates to `url` unless it is empty. An existing frame of the
+/// page that the name chooses (`_parent`, `_top`, a frame's target name; the
+/// embedder's `target_window` hook) comes back the same way. The popup's
+/// session storage is copied from this document's now. `_self` navigates this
+/// document.
 fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<Value<'s>> {
     let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
     let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
@@ -1041,6 +1042,29 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
     let lower = target.to_ascii_lowercase();
     let same_context = matches!(lower.as_str(), "_self" | "_top" | "_parent");
     let named = !same_context && lower != "_blank";
+    // An existing frame of this page the name chooses (`_parent`, `_top`, a frame's target
+    // name): it navigates when there is a URL, and window.open returns its WindowProxy.
+    if lower == "_parent" || lower == "_top" || (named && !no_opener) {
+        if let Some(window) = page.hooks().and_then(|h| h.target_window(s, &target)) {
+            if url_given {
+                page.navigate(crate::page::NavigationRequest {
+                    url,
+                    target: Some(target.clone()),
+                    method: "GET".into(),
+                    body: None,
+                    content_type: None,
+                    opener: false,
+                    popup: None,
+                    window_features: features,
+                    referrer_policy: features.noreferrer.then_some(pyro_net::ReferrerPolicy::NoReferrer),
+                    source: None,
+                    form_entries: None,
+                    replace: false,
+                });
+            }
+            return Ok(window);
+        }
+    }
     if named && !no_opener {
         let existing =
             page.popups.borrow().iter().find(|(n, p)| *n == target && !p.is_closed()).map(|(_, p)| p.clone());
@@ -1057,9 +1081,9 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
     }
     // HTML "the rules for choosing a navigable": a document with the sandboxed auxiliary
     // navigation browsing context flag (a sandbox without `allow-popups`) gets no new window,
-    // and window.open returns null. A name that finds an existing frame still navigates it (the
-    // embedder looks the name up first and blocks only a new window), so the navigation is still
-    // asked for, without a popup ticket.
+    // and window.open returns null. An existing frame the name chooses was handled above; without
+    // the embedder's hook the navigation is still asked for (the embedder looks the name up first
+    // and blocks only a new window), without a popup ticket.
     let sandboxed = !same_context && page.popups_sandboxed();
     let (ticket, popup) = if same_context || no_opener || sandboxed {
         (None, None)
