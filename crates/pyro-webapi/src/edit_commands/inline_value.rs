@@ -322,6 +322,26 @@ pub(super) fn query(page: &PageDom, kind: Kind) -> String {
 }
 
 pub(super) fn mixed(page: &PageDom, kind: Kind) -> bool {
+    if kind == Kind::Background {
+        if let Some((a, b)) = editing::selection_range(page).filter(|(a,b)| a != b) {
+            let dom = page.dom.borrow();
+            if let Some(host) = editing::editing_host(&dom, a.0) {
+                let nodes = formattable_nodes(page, &dom, host, a, b);
+                let paint_owner = |n| {
+                    let mut el = dom.parent_element(n).ok()?;
+                    while let Some(node) = el.filter(|&node| node != host) {
+                        if !DeclarationBlock::parse(dom.get_attribute(node, "style").ok()?.unwrap_or(""))
+                            .value("background-color").is_empty() { return Some(node); }
+                        el = dom.parent_element(node).ok()?;
+                    }
+                    None
+                };
+                if let Some(owner) = nodes.first().and_then(|&n| paint_owner(n)) {
+                    if nodes.iter().all(|&n| paint_owner(n) == Some(owner)) { return false; }
+                }
+            }
+        }
+    }
     let values = selected_values(page, kind);
     values.first().is_some_and(|a| values.iter().any(|b| b != a))
 }
@@ -478,8 +498,48 @@ fn value_carrier(dom: &Dom, node: NodeId, host: NodeId, fmt: &Format) -> Option<
     let name = editing::local(dom, parent);
     if !matches!(name.as_str(), "font" | "span") { return None; }
     let style = DeclarationBlock::parse(dom.get_attribute(parent, "style").ok()?.unwrap_or(""));
-    (name == "font" && dom.get_attribute(parent, fmt.kind.html_attr()?).ok()?.is_some() || !style.value(fmt.kind.property()).is_empty())
+    let legacy_attr = fmt.kind.html_attr().is_some_and(|attr| name == "font" && dom.has_attribute(parent, attr).unwrap_or(false));
+    let sized = fmt.kind == Kind::Background && (!style.value("font-size").is_empty()
+        || name == "font" && dom.has_attribute(parent, "size").unwrap_or(false));
+    (legacy_attr || sized || !style.value(fmt.kind.property()).is_empty())
         .then_some(parent)
+}
+
+/// Keep the original painted carrier on the unselected suffix. The ID
+/// stays on the first fragment; other authored attributes survive cloning.
+fn isolate_painted_text(dom: &mut Dom, carrier: NodeId, text: NodeId) -> Option<NodeId> {
+    let parent = dom.parent_element(carrier).ok()??;
+    if dom.prev_sibling(text).ok()?.is_some() {
+        let prefix = dom.clone_node(carrier, false, None).ok()?;
+        dom.insert_before(parent, prefix, Some(carrier)).ok()?;
+        dom.remove_attribute(carrier, "id").ok()?;
+        while let Some(child) = dom.first_child(carrier).ok()?.filter(|&n| n != text) {
+            dom.append_child(prefix, child).ok()?;
+        }
+    }
+    if dom.next_sibling(text).ok()?.is_none() { return Some(carrier); }
+    let selected = dom.clone_node(carrier, false, None).ok()?;
+    dom.remove_attribute(carrier, "id").ok()?;
+    dom.insert_before(parent, selected, Some(carrier)).ok()?;
+    dom.append_child(selected, text).ok()?;
+    Some(selected)
+}
+
+fn inline_paint_scope(page: &PageDom, dom: &Dom, host: NodeId, text: NodeId) -> bool {
+    let mut cur = dom.parent_element(text).ok().flatten();
+    let mut painted = false;
+    while let Some(el) = cur.filter(|&el| el != host) {
+        let display = page.layout().computed_style_value(dom, el, "display");
+        let style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+        if !style.value("background-color").is_empty() {
+            // Nested authored backgrounds have independent paint boundaries.
+            if painted || !matches!(display.as_str(), "inline" | "contents") { return false; }
+            painted = true;
+        }
+        if !matches!(display.as_str(), "inline" | "contents") { break; }
+        cur = dom.parent_element(el).ok().flatten();
+    }
+    true
 }
 
 fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &Format, previous: Option<NodeId>, single: bool) -> Option<NodeId> {
@@ -501,12 +561,27 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
                     && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
             }
         }
+        if fmt.kind == Kind::Background {
+            let style = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
+            if style.value("background-color").is_empty() && dom.child_count(carrier).ok()? != 1 {
+                // A partial size carrier keeps
+                // its own extent; paint the selected text inside it.
+                return wrap(dom, text, fmt);
+            }
+        }
         let outer = dom.parent_element(carrier).ok()??;
         let mut points = [(text, 0), (text, editing::len(dom, text))];
-        let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
-        super::alignment::split_edge(dom, outer, text, true, &mut points)?;
+        let middle = if fmt.kind == Kind::Background {
+            isolate_painted_text(dom, carrier, text)?
+        } else {
+            let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
+            super::alignment::split_edge(dom, outer, text, true, &mut points)?;
+            middle
+        };
         let name = editing::local(dom, middle);
-        if name == "font" { dom.remove_attribute(middle, fmt.kind.html_attr()?).ok()?; }
+        if name == "font" {
+            if let Some(attr) = fmt.kind.html_attr() { dom.remove_attribute(middle, attr).ok()?; }
+        }
         let mut style = DeclarationBlock::parse(dom.get_attribute(middle, "style").ok()?.unwrap_or(""));
         if style.remove(fmt.kind.property()) {
             if style.is_empty() { dom.remove_attribute(middle, "style").ok()?; }
@@ -566,6 +641,51 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
     Some(el)
 }
 
+/// Reapplying a highlight to a complete inline run replaces its paint
+/// wrapper. Keep the styled children together so a class on one child
+/// cannot leak onto its neighbors when the new wrapper is assembled.
+fn reapply_highlight(page: &Rc<PageDom>, host: NodeId, start: Point, end: Point, fmt: &Format) -> bool {
+    if fmt.kind != Kind::Background || start == end { return false; }
+    let dom = page.dom.borrow();
+    let Ok(wrapper) = crate::range::common_ancestor(&dom, start.0, end.0) else { return false };
+    if wrapper == host || !super::local_html(&dom, wrapper, "span") || dom.child_count(wrapper).ok().unwrap_or(0) < 2
+        || page.layout().computed_style_value(&dom, wrapper, "display") != "inline"
+        || !dom.attributes(wrapper).is_ok_and(|attrs| attrs.len() == 1)
+        || dom.get_attribute(wrapper, "style").ok().flatten().is_none_or(|v| {
+            let decl = DeclarationBlock::parse(v);
+            decl.names() != ["background-color"] || !equivalent(fmt, &effective(page, &dom, Kind::Background, wrapper))
+        })
+        || editing::deep_forward(&dom, (wrapper, 0)) != editing::deep_forward(&dom, start)
+        || editing::deep_backward(&dom, (wrapper, editing::len(&dom, wrapper))) != editing::deep_backward(&dom, end)
+    { return false; }
+    let children: Vec<_> = dom.children(wrapper).into_iter().flatten().collect();
+    if !children.iter().all(|&n| editing::is_text(&dom, n) || (super::local_html(&dom, n, "span") || super::local_html(&dom, n, "font"))
+        && dom.child_count(n).ok() == Some(1) && dom.first_child(n).ok().flatten().is_some_and(|t| editing::is_text(&dom, t))
+        && super::rich_node(&dom, n) && page.layout().computed_style_value(&dom, n, "display") == "inline")
+    { return false; }
+    let Some((anchor, focus)) = editing::selection(page) else { return false };
+    drop(dom);
+    editing::apply_edit(page, host, "", None, None, |page| {
+        let mut dom = page.dom.borrow_mut();
+        let Ok(Some(parent)) = dom.parent_element(wrapper) else { return };
+        let Ok(span) = dom.create_element(page.document(), "span") else { return };
+        apply_to(&mut dom, span, fmt, None);
+        let _ = dom.insert_before(parent, span, Some(wrapper));
+        for child in children {
+            if !editing::is_text(&dom, child) {
+                let style = DeclarationBlock::parse(dom.get_attribute(child, "style").ok().flatten().unwrap_or(""));
+                let _ = dom.set_attribute(child, "style", &style.css_text());
+            }
+            let _ = dom.append_child(span, child);
+        }
+        let _ = dom.remove_child(parent, wrapper);
+        let retarget = |p: Point| if p.0 == wrapper { (span, p.1) } else { p };
+        drop(dom);
+        editing::set_selection(page, retarget(anchor), retarget(focus));
+    });
+    true
+}
+
 pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -> bool {
     let Some((start, end)) = editing::selection_range(page) else { return false };
     let Some(fmt) = Format::parse(kind, value) else {
@@ -579,6 +699,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
         }
         return true;
     };
+    if reapply_highlight(page, host, start, end, &fmt) { return true; }
     let mut nodes = formattable_nodes(page, &page.dom.borrow(), host, start, end);
     if nodes.is_empty() {
         let mut slot = page.typing_values.borrow_mut();
@@ -603,11 +724,11 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
             && (needs[0] || !DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten()
                 .unwrap_or("")).value("font-family").is_empty()))
     } else { None };
-    let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size | Kind::Family) && {
+    let rewrite_runs = (kind != Kind::Background || !pyro_dom::color_well::is_fully_transparent(&fmt.css)) && {
         let dom = page.dom.borrow();
-        nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| {
+        nodes.iter().all(|&n| editing::is_text(&dom, n) && (kind != Kind::Background || inline_paint_scope(page, &dom, host, n))) && nodes.iter().any(|&n| {
             value_carrier(&dom, n, host, &fmt).is_some_and(|carrier| {
-                kind == Kind::Foreground || needs.contains(&true) || editing::local(&dom, carrier) == "span"
+                matches!(kind, Kind::Foreground | Kind::Background) || needs.contains(&true) || editing::local(&dom, carrier) == "span"
                     || kind == Kind::Family && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
                         && !DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok().flatten().unwrap_or(""))
                             .value("font-family").is_empty()
@@ -685,7 +806,11 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     super::note_host_edited(page, host);
     if changed {
         let data = if kind == Kind::Family { value } else { &fmt.css };
-        editing::input_event(page, host, "input", fmt.input_type(), (!fmt.hashless).then_some(data), false);
+        if rewrite_runs && kind == Kind::Background {
+            editing::input_event(page, host, "input", "", None, false);
+        } else {
+            editing::input_event(page, host, "input", fmt.input_type(), (!fmt.hashless).then_some(data), false);
+        }
     }
     true
 }

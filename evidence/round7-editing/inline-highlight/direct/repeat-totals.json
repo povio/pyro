@@ -1,0 +1,62 @@
+{
+  "after": {
+    "wrapperConnected": 64,
+    "html": 64,
+    "glyphs": 64,
+    "anchor": 64,
+    "focus": 64,
+    "direction": 64,
+    "text": 64,
+    "mixed": 64,
+    "connected": 64,
+    "value": 32
+  },
+  "twice": {
+    "wrapperConnected": 56,
+    "html": 32,
+    "glyphs": 56,
+    "anchor": 44,
+    "focus": 44,
+    "direction": 64,
+    "text": 56,
+    "mixed": 64,
+    "connected": 64,
+    "value": 32
+  },
+  "undo": {
+    "undo": 64
+  },
+  "onceUndo": {
+    "html": 64,
+    "glyphs": 64,
+    "anchor": 56,
+    "focus": 56,
+    "direction": 64,
+    "text": 56,
+    "mixed": 64,
+    "value": 28
+  },
+  "restored": {
+    "wrapperConnected": 64,
+    "html": 64,
+    "glyphs": 64,
+    "anchor": 64,
+    "focus": 64,
+    "direction": 64,
+    "text": 64,
+    "mixed": 48,
+    "value": 32
+  },
+  "events": {
+    "events": 64
+  },
+  "firstReturn": {
+    "firstReturn": 64
+  },
+  "repeatReturn": {
+    "repeatReturn": 64
+  },
+  "finalUndo": {
+    "finalUndo": 64
+  }
+}

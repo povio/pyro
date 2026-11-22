@@ -1,0 +1,614 @@
+{
+  "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span><span style=\\\"background-color:rgb(210, 180, 140)\\\"><span sty"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span><span style=\\\"background-color:rgb(210, 180, 140)\\\"><span sty"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span><span style=\\\"background-color:rgb(210, 180, 140)\\\"><span sty"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span><span style=\\\"background-color:rgb(210, 180, 140)\\\"><span sty"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\"><span style=\\\"background-color:rgb(0, 255, 255)\\\">b</span>ar</span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\"><span style=\\\"background-color:rgb(0, 255, 255)\\\">b</span>ar</span"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\"><span style=\\\"background-color:rgb(0, 255, 255)\\\">b</span>ar</span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\"><span style=\\\"background-color:rgb(0, 255, 255)\\\">b</span>ar</span"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span><span style=\\\"background-color:rgb(210, 180, 140)\\\"><span sty"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span><span style=\\\"background-color:rgb(210, 180, 140)\\\"><span sty"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span><span style=\\\"background-color:rgb(210, 180, 140)\\\"><span sty"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span><span style=\\\"background-color:rgb(210, 180, 140)\\\"><span sty"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\"><span style=\\\"background-color:rgb(0, 255, 255)\\\">b</span>ar</span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\"><span style=\\\"background-color:rgb(0, 255, 255)\\\">b</span>ar</span"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\"><span style=\\\"background-color:rgb(0, 255, 255)\\\">b</span>ar</span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\"><span style=\\\"background-color:rgb(0, 255, 255)\\\">b</span>ar</span"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<span style=\\\"background-color:rgb(210, 180, 140)\\\">ba<span style=\\\"background-color:rgb(0, 255, 255)\\\">r</span></span"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    },
+    "chrome": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<span style=\\\"background-color:rgb(210, 180, 140)\\\">fo<span style=\\\"background-color:rgb(0, 255, 255)\\\">o</span></span><s"
+    }
+  },
+  "Calling execCommand(\"backColor\", false, #00FF00FF) (inputType value)": {
+    "base": {
+      "name": "Calling execCommand(\"backColor\", false, #00FF00FF) (inputType value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"backColor\", false, #00FF00FF) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"backColor\", false, #00FF00FF) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    }
+  },
+  "Calling execCommand(\"backColor\", false, #00FF00FF) (data value)": {
+    "base": {
+      "name": "Calling execCommand(\"backColor\", false, #00FF00FF) (data value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"backColor\", false, #00FF00FF) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgb(0, 255, 0)\" but got (object) null"
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"backColor\", false, #00FF00FF) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgb(0, 255, 0)\" but got (object) null"
+    }
+  },
+  "Calling execCommand(\"backColor\", false, #0000FF88) (inputType value)": {
+    "base": {
+      "name": "Calling execCommand(\"backColor\", false, #0000FF88) (inputType value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"backColor\", false, #0000FF88) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"backColor\", false, #0000FF88) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    }
+  },
+  "Calling execCommand(\"backColor\", false, #0000FF88) (data value)": {
+    "base": {
+      "name": "Calling execCommand(\"backColor\", false, #0000FF88) (data value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"backColor\", false, #0000FF88) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgba(0, 0, 255, 0.533)\" but got (object) null"
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"backColor\", false, #0000FF88) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgba(0, 0, 255, 0.533)\" but got (object) null"
+    }
+  },
+  "Calling execCommand(\"backColor\", false, orange) (inputType value)": {
+    "base": {
+      "name": "Calling execCommand(\"backColor\", false, orange) (inputType value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"backColor\", false, orange) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"backColor\", false, orange) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    }
+  },
+  "Calling execCommand(\"backColor\", false, orange) (data value)": {
+    "base": {
+      "name": "Calling execCommand(\"backColor\", false, orange) (data value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"backColor\", false, orange) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgb(255, 165, 0)\" but got (object) null"
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"backColor\", false, orange) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgb(255, 165, 0)\" but got (object) null"
+    }
+  },
+  "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (inputType value)": {
+    "base": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (inputType value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    }
+  },
+  "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (data value)": {
+    "base": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (data value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgb(0, 255, 0)\" but got (object) null"
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgb(0, 255, 0)\" but got (object) null"
+    }
+  },
+  "Calling execCommand(\"hiliteColor\", false, #0000FF88) (inputType value)": {
+    "base": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #0000FF88) (inputType value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #0000FF88) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #0000FF88) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    }
+  },
+  "Calling execCommand(\"hiliteColor\", false, #0000FF88) (data value)": {
+    "base": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #0000FF88) (data value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #0000FF88) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgba(0, 0, 255, 0.533)\" but got (object) null"
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"hiliteColor\", false, #0000FF88) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgba(0, 0, 255, 0.533)\" but got (object) null"
+    }
+  },
+  "Calling execCommand(\"hiliteColor\", false, orange) (inputType value)": {
+    "base": {
+      "name": "Calling execCommand(\"hiliteColor\", false, orange) (inputType value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"hiliteColor\", false, orange) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"hiliteColor\", false, orange) (inputType value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected \"formatBackColor\" but got \"\""
+    }
+  },
+  "Calling execCommand(\"hiliteColor\", false, orange) (data value)": {
+    "base": {
+      "name": "Calling execCommand(\"hiliteColor\", false, orange) (data value)",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "Calling execCommand(\"hiliteColor\", false, orange) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgb(255, 165, 0)\" but got (object) null"
+    },
+    "chrome": {
+      "name": "Calling execCommand(\"hiliteColor\", false, orange) (data value)",
+      "status": "Fail",
+      "msg": "assert_equals: expected (string) \"rgb(255, 165, 0)\" but got (object) null"
+    }
+  }
+}
