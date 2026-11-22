@@ -2,30 +2,31 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 220,
+   "distinct_census_pages": 224,
    "studio_css_reported_pages_not_deduped": 0,
    "by_dir": {
     "html/canvas": 207,
+    "html/semantics": 4,
     "FileAPI": 4,
     "fetch/data-urls": 3,
-    "html/semantics": 2,
+    "encoding": 2,
     "mathml": 2,
-    "quirks": 1,
-    "html/rendering": 1
+    "html/rendering": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 562,
+   "distinct_census_pages": 557,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
-    "html/semantics": 211,
+    "html/semantics": 209,
     "html/interaction": 108,
     "html/canvas": 45,
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
     "shadow-dom": 7,
@@ -35,22 +36,20 @@
     "html/editing": 5,
     "intersection-observer": 5,
     "svg/types": 4,
-    "event-timing": 3,
     "mathml": 3,
     "close-watcher": 3,
     "inert": 3,
-    "svg/animations": 2,
-    "encoding": 2,
+    "event-timing": 3,
     "soft-navigation-heuristics": 2,
+    "dom/nodes": 2,
     "resource-timing": 2,
     "html/rendering": 2,
+    "svg/animations": 2,
     "fetch/fetch-later": 2,
-    "dom/nodes": 2,
-    "pointerlock": 1,
     "html/browsers": 1,
-    "svg/styling": 1,
+    "editing": 1,
     "document-picture-in-picture": 1,
-    "editing": 1
+    "pointerlock": 1
    }
   },
   "queued": {
@@ -96,7 +95,7 @@
    "pages": null
   },
   "Q04": {
-   "state": "claimed",
+   "state": "implemented, unbuilt",
    "pages": 1
   },
   "Q05": {
@@ -372,7 +371,7 @@
    "pages": 6
   },
   "P04": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "pages": 2
   },
   "P05": {
@@ -460,10 +459,14 @@
    "pages": 34
   },
   "E01": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "pages": 2
+  },
+  "E02": {
+   "state": "claimed",
+   "pages": null
   }
  },
- "implemented_total_estimate": 220,
+ "implemented_total_estimate": 224,
  "milestones_reached": []
 }
