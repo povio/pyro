@@ -1353,10 +1353,9 @@ impl FrameHost {
         let masked = policy.is_some_and(|p| crate::nav::masks_ancestor_origin(p, &embedder, &frame.origin));
         let mut list = Vec::with_capacity(parent_list.len() + 1);
         if masked {
+            // Every occurrence of the embedder's origin in the parent's list is masked too.
             list.push("null".to_owned());
-            let run = parent_list.iter().take_while(|o| **o == embedder).count();
-            list.extend(std::iter::repeat("null".to_owned()).take(run));
-            list.extend(parent_list.into_iter().skip(run));
+            list.extend(parent_list.into_iter().map(|o| if o == embedder { "null".to_owned() } else { o }));
         } else {
             list.push(embedder);
             list.extend(parent_list);
