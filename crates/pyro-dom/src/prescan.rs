@@ -597,6 +597,15 @@ fn parse_tag(input: &str, from: usize) -> Option<(&str, Attrs<'_>, bool, usize)>
 /// "character reference state" in an attribute: a named reference without
 /// its semicolon followed by `=` or an alphanumeric is left alone).
 fn decode_attr(text: &str) -> Cow<'_, str> {
+    decode_references(text, true)
+}
+
+/// Decode references in WebVTT text or tag annotations, using HTML data-state rules.
+pub fn decode_webvtt_references(text: &str) -> Cow<'_, str> {
+    decode_references(text, false)
+}
+
+fn decode_references(text: &str, in_attribute: bool) -> Cow<'_, str> {
     if !text.contains('&') {
         return Cow::Borrowed(text);
     }
@@ -667,7 +676,7 @@ fn decode_attr(text: &str) -> Cow<'_, str> {
             Some((c1, c2, end)) => {
                 let next = b.get(end).copied();
                 let semicolon = b[end - 1] == b';';
-                if !semicolon && next.is_some_and(|c| c == b'=' || c.is_ascii_alphanumeric()) {
+                if in_attribute && !semicolon && next.is_some_and(|c| c == b'=' || c.is_ascii_alphanumeric()) {
                     out.push_str(&text[i..end]);
                 } else {
                     out.push(char::from_u32(c1).unwrap_or('\u{fffd}'));
