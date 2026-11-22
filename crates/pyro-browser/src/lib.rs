@@ -356,6 +356,9 @@ pub enum PageEvent {
         url: String,
         opener: bool,
         ticket: Option<std::rc::Rc<pyro_webapi::PopupTicket>>,
+        window_features: pyro_webapi::window_features::WindowFeatures,
+        referrer: Option<String>,
+        referrer_policy: Option<pyro_net::ReferrerPolicy>,
     },
     /// The object `window.open` returned asked something of its popup. Comes
     /// after that popup's `PopupRequested`.
@@ -610,6 +613,7 @@ pub struct Page {
     /// page's documents through it, and dropping it tells the opener the
     /// popup closed.
     pub(crate) popup: Option<Rc<pyro_webapi::PopupTicket>>,
+    pub(crate) script_closable: bool,
     /// A popup's about:blank documents take the opener's origin and base
     /// URL (origin, opaque-origin token, base URL), as a child frame's do
     /// from its parent.
@@ -1580,6 +1584,7 @@ impl Browser {
 
     fn push_page(&mut self, id: PageId, context: ContextId, frame: Frame, frames: Rc<FrameHost>, nav: Rc<PageNav>) {
         let session_storage = frames.settings.borrow().session.clone();
+        let viewport = frames.settings.borrow().viewport.clone();
         let init_scripts = self.contexts.iter().find(|c| c.id == context).unwrap().init_scripts.clone();
         frames.settings.borrow_mut().scripts = init_scripts.clone();
         // A popup made ahead (`create_page_with`) took its id earlier.
@@ -1607,6 +1612,7 @@ impl Browser {
             },
             session_storage,
             popup: None,
+            script_closable: false,
             opener_origin: None,
             user_agent_override: None,
             max_touch_points: 0,
@@ -1616,7 +1622,7 @@ impl Browser {
             cache_disabled: false,
             bypass_service_worker: false,
             request_defaults: Default::default(),
-            viewport: Default::default(),
+            viewport,
             pending_resize: None,
         });
     }
@@ -1665,6 +1671,22 @@ impl Browser {
         true
     }
 
+    /// Initialize the browser chrome and viewport of a newly created top-level
+    /// context even when the initiating script requested no opener handle.
+    pub fn configure_popup(&mut self, page: PageId, opener: PageId, features: pyro_webapi::window_features::WindowFeatures) {
+        let Some(mut viewport) = self.page(opener).map(|p| p.viewport.clone()) else { return };
+        let chrome = frames::apply_window_features(&mut viewport, features);
+        if let Some(p) = self.page_mut(page) {
+            let mut settings = p.frames.settings.borrow_mut();
+            settings.window_chrome = chrome;
+            settings.viewport = viewport.clone();
+            if let Some(dom) = &p.main_frame.page_dom {
+                dom.set_window_chrome(chrome.0, chrome.1, chrome.2);
+            }
+        }
+        let _ = self.set_viewport(page, viewport);
+    }
+
     /// Makes `page` (just created in the opener's context) the popup that
     /// `opener`'s document requested with `ticket` (`PageEvent::PopupRequested`).
     /// With a ticket the popup keeps its opener: its documents see the
@@ -1674,6 +1696,7 @@ impl Browser {
     /// requested browsing context name, and the opener's object reaches its
     /// documents. Without one (`noopener`) only the context is shared.
     pub fn adopt_popup(&mut self, page: PageId, opener: PageId, ticket: Option<Rc<pyro_webapi::PopupTicket>>) {
+        if let Some(p) = self.page_mut(page) { p.script_closable = true; }
         let Some(ticket) = ticket else { return };
         let opener_state = self.page(opener).map(|p| {
             let frame = &p.main_frame;

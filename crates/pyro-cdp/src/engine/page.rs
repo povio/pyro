@@ -613,6 +613,7 @@ impl EngineHost {
                 if root.as_ref() == Some(&frame_id) {
                     if let Some(state) = self.pages.get_mut(&page) {
                         state.uncommitted_popup_of = None;
+                        state.popup_referrer = None;
                     }
                     self.popup_url_committed(page, &url);
                     for session in self.sessions_of(page, |s| s.dom_enabled) {
@@ -783,12 +784,12 @@ impl EngineHost {
                     self.event("Page.frameDetached", &json!({ "frameId": frame_id.0, "reason": "remove" }), s);
                 }
             }
-            PageEvent::PopupRequested { url, opener, ticket, .. } => {
+            PageEvent::PopupRequested { url, opener, ticket, window_features, referrer, referrer_policy, .. } => {
                 self.popup_requests.push(crate::target::PopupRequest {
                     opener: page,
                     url,
                     opener_access: opener,
-                    handle: ticket.map(|t| t as std::rc::Rc<dyn std::any::Any>),
+                    handle: Some(std::rc::Rc::new(super::PopupOpen { ticket, features: window_features, referrer, referrer_policy })),
                 });
             }
             PageEvent::PopupCommand { popup, command } => {

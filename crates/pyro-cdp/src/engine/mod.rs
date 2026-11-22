@@ -359,6 +359,13 @@ pub(crate) struct Session {
     pub(crate) handles: Rc<remote::Handles>,
 }
 
+struct PopupOpen {
+    ticket: Option<std::rc::Rc<pyro_webapi::PopupTicket>>,
+    features: pyro_webapi::window_features::WindowFeatures,
+    referrer: Option<String>,
+    referrer_policy: Option<pyro_net::ReferrerPolicy>,
+}
+
 pub(crate) struct PageState {
     pub(crate) id: PageId,
     pub(crate) context: ContextKey,
@@ -389,6 +396,7 @@ pub(crate) struct PageState {
     /// This page is a `window.open` popup; dropped with the page, which tells
     /// the opener's object it closed.
     pub(crate) popup_ticket: Option<std::rc::Rc<pyro_webapi::PopupTicket>>,
+    popup_referrer: Option<(Option<String>, Option<pyro_net::ReferrerPolicy>)>,
     /// The opener of a popup (a link or `window.open`) that has committed no
     /// document of its own yet, its initial about:blank one aside. A
     /// download its navigation turns into is the opener's, and the popup
@@ -684,6 +692,7 @@ impl EngineHost {
                 next_script_id: 1,
                 initial_popup: false,
                 popup_ticket: None,
+                popup_referrer: None,
                 uncommitted_popup_of: None,
                 suppress_next_char: false,
                 intercept_drags: false,
@@ -1541,14 +1550,19 @@ impl Host for EngineHost {
         target_id: &str,
         handle: Option<std::rc::Rc<dyn std::any::Any>>,
     ) {
-        let ticket: Option<std::rc::Rc<pyro_webapi::PopupTicket>> = handle.and_then(|h| h.downcast().ok());
+        let creation = handle.and_then(|h| h.downcast::<PopupOpen>().ok());
+        let ticket = creation.as_ref().and_then(|c| c.ticket.clone());
         if let (Some(opener_id), Some(id)) =
             (self.pages.get(&opener).map(|s| s.id), self.pages.get(&page).map(|s| s.id))
         {
+            if let Some(creation) = &creation {
+                self.thread.browser.configure_popup(id, opener_id, creation.features);
+            }
             self.thread.browser.adopt_popup(id, opener_id, ticket.clone());
         }
         if let Some(state) = self.pages.get_mut(&page) {
             state.popup_ticket = ticket;
+            state.popup_referrer = creation.map(|c| (c.referrer.clone(), c.referrer_policy));
             state.uncommitted_popup_of = Some(opener);
         }
         if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
@@ -1586,8 +1600,7 @@ impl Host for EngineHost {
         context: ContextKey,
         handle: Option<&std::rc::Rc<dyn std::any::Any>>,
     ) -> CdpResult<(PageKey, String, bool)> {
-        let ticket = handle.and_then(|h| h.clone().downcast::<pyro_webapi::PopupTicket>().ok());
-        let prebuilt = ticket.as_ref().and_then(|t| t.take_prebuilt());
+        let prebuilt = handle.and_then(|h| h.downcast_ref::<PopupOpen>()).and_then(|c| c.ticket.as_ref()?.take_prebuilt());
         let context_id = self.contexts.get(&context).map(|c| c.id);
         if let (Some(prebuilt), Some(context_id)) = (prebuilt, context_id) {
             if let Some(id) = self.thread.browser.create_page_with(context_id, prebuilt) {
@@ -1601,6 +1614,7 @@ impl Host for EngineHost {
 
     fn announce_initial_document(&mut self, page: PageKey) -> bool {
         let Some(id) = self.pages.get(&page).map(|s| s.id) else { return false };
+        if let Some(state) = self.pages.get_mut(&page) { state.popup_referrer = None; }
         let announced = self.thread.browser.announce_initial_document(id);
         self.flush();
         announced
@@ -1612,7 +1626,12 @@ impl Host for EngineHost {
 
     fn navigate(&mut self, page: PageKey, url: &str) -> CdpResult<()> {
         let id = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.id;
-        let result = self.thread.browser.navigate(id, pyro_browser::NavigateOpts::address_bar(url));
+        let mut opts = pyro_browser::NavigateOpts::address_bar(url);
+        if let Some((referrer, policy)) = self.pages.get_mut(&page).and_then(|s| s.popup_referrer.take()) {
+            opts.referrer = referrer;
+            opts.referrer_policy = policy;
+        }
+        let result = self.thread.browser.navigate(id, opts);
         self.thread.browser.checkpoint();
         self.flush();
         result.map(|_| ()).map_err(|e| CdpError::server(format!("navigation failed: {e}")))

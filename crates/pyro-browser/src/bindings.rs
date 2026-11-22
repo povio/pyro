@@ -307,7 +307,7 @@ impl PageHooks for Hooks {
                 })
                 && host.frame(page).is_some_and(|f| !f.sandbox.popups_blocked);
             if new_context {
-                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned()) {
+                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned(), request.window_features) {
                     Ok(prebuilt) => {
                         if let Some(dom) = &prebuilt.frame.page_dom {
                             ticket.attach_page(dom);
@@ -404,6 +404,9 @@ impl PageHooks for Hooks {
                             url: request.url,
                             opener: request.opener,
                             ticket: request.popup,
+                            window_features: request.window_features,
+                            referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
+                            referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
                         },
                     );
                 }
@@ -460,7 +463,7 @@ impl PageHooks for Hooks {
         self.sched.post(TaskSource::Navigation, move |b| {
             // Only a popup is script-closable (Chrome: "Scripts may close
             // only the windows that were opened by them").
-            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.popup.is_some()) {
+            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.script_closable) {
                 return;
             }
             let Some(frame_id) =
@@ -1029,6 +1032,8 @@ pub(crate) fn create(
         bodies: host.layout_bodies.clone(),
         asked_fonts: Default::default(),
     }));
+    let (is_popup, left, top) = settings.window_chrome;
+    bindings.set_window_chrome(is_popup, left, top);
     bindings.set_storage_namespaces(settings.local, settings.session);
     let mut viewport = settings.viewport;
     // Only the main frame lays out as a phone; frames take their iframe's box.

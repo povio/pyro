@@ -188,6 +188,7 @@ pub struct PageDom {
     pub(crate) sw_controlled: Cell<bool>,
     /// The document is shown in a child frame (a client's `frameType`).
     nested_frame: Cell<bool>,
+    window_chrome: Cell<(bool, i32, i32)>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
     pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
     /// MessagePorts whose peer was collected; their pins are reconciled at
@@ -553,6 +554,7 @@ pub struct NavigationRequest {
     pub opener: bool,
     /// `window.open`'s returned object watches this popup.
     pub popup: Option<Rc<crate::popup::PopupTicket>>,
+    pub window_features: crate::window_features::WindowFeatures,
     /// The request's own referrer policy: a link's `referrerpolicy` state,
     /// no-referrer for `rel=noreferrer` (`None`: the document's policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
@@ -854,6 +856,7 @@ impl PageDom {
             sw_client: RefCell::new(None),
             sw_controlled: Cell::new(false),
             nested_frame: Cell::new(false),
+            window_chrome: Cell::default(),
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
@@ -1128,6 +1131,19 @@ impl PageDom {
     pub fn blob_url_count(&self) -> usize {
         self.blob_urls.borrow().len()
     }
+    pub fn set_window_chrome(&self, is_popup: bool, left: i32, top: i32) {
+        self.window_chrome.set((is_popup, left, top));
+    }
+
+    pub(crate) fn screen_position(&self) -> (i32, i32) {
+        let (_, left, top) = self.window_chrome.get();
+        (left, top)
+    }
+
+    pub(crate) fn bars_visible(&self) -> bool {
+        self.is_fully_active() && !self.window_chrome.get().0
+    }
+
     pub fn is_disposed(&self) -> bool {
         self.disposed.get()
     }

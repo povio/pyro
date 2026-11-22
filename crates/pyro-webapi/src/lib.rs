@@ -123,6 +123,7 @@ pub mod validity;
 pub(crate) mod webaudio;
 pub mod websocket;
 pub mod window;
+pub mod window_features;
 pub mod window_message;
 pub mod worker;
 pub(crate) mod shared_worker;
