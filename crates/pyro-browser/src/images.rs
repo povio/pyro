@@ -883,7 +883,9 @@ impl Browser {
         for node in nodes {
             let connected = {
                 let dom = bindings.dom.borrow();
-                if !dom.is_alive(node) {
+                // Gone, or adopted into another document (which runs its own steps for it): no
+                // longer this document's to load.
+                if !dom.is_alive(node) || dom.node_document(node).ok() != Some(bindings.document()) {
                     drop(dom);
                     if let Some(mut p) = self.doc_mut(page) {
                         p.images.deferred.remove(&node);
