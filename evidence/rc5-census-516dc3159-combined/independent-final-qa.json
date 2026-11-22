@@ -1,0 +1,46 @@
+{
+  "verified": true,
+  "source": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
+  "binarySHA256": "9b2454c277a52452150d59b33c64c7d46f0206781c0068f5a6b0dd0631ffd87e",
+  "workflow": 44998826328,
+  "artifact": 14745758172,
+  "systemJSCUUID": "C083204E-71DA-3BC5-AFF4-524B5EAFF741",
+  "even": {
+    "shards": 160,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "urls": 15072,
+    "complete": 13513,
+    "strict": 7664,
+    "passed": 825072,
+    "observed": 874074,
+    "timeout": 768,
+    "error": 791
+  },
+  "odd": {
+    "shards": 160,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "urls": 15107,
+    "complete": 13510,
+    "strict": 7613,
+    "passed": 866694,
+    "observed": 911646,
+    "error": 876,
+    "timeout": 721
+  },
+  "uniqueURLs": 30179,
+  "uniqueOrdinals": 320,
+  "authenticatedStudioPortConfigs": 160,
+  "unresolvedMappings": 0,
+  "comparison": {
+    "chromeObserved": 1802021,
+    "chromePassed": 1754948,
+    "chromeStrict": 24385,
+    "chromeOnly_pages": 9731,
+    "lpOnly_pages": 623,
+    "chromeOnly_names": 75805,
+    "lpOnly_names": 12623
+  },
+  "checked": "All raw LP page cells and original name/occurrence/status sets, archived signed Chrome names and page cells, directional named and page stream rows plus confirmed-only, full artifact checksums and release executable identity."
+}
