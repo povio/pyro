@@ -40,16 +40,16 @@
     "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
     "FileAPI": 4,
-    "fetch/http-cache": 3,
     "html/rendering": 3,
+    "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "xhr": 2,
     "fetch/orb": 2,
-    "fetch/redirect-navigate": 1,
-    "fetch/security": 1,
+    "xhr": 2,
     "svg/styling": 1,
-    "quirks": 1,
-    "IndexedDB": 1
+    "fetch/security": 1,
+    "IndexedDB": 1,
+    "fetch/redirect-navigate": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -76,17 +76,17 @@
     "html/infrastructure": 11,
     "fetch/fetch-later": 10,
     "fetch/api": 7,
-    "html/browsers": 6,
     "IndexedDB": 6,
+    "html/browsers": 6,
     "html/dom": 5,
     "html/webappapis": 5,
     "fetch/security": 4,
     "fetch/cross-origin-resource-policy": 2,
+    "fetch/redirects": 1,
     "fetch/images": 1,
     "fetch/content-type": 1,
-    "fetch/redirects": 1,
-    "fetch/http-cache": 1,
-    "fetch/range": 1
+    "fetch/range": 1,
+    "fetch/http-cache": 1
    }
   },
   "queued": {
