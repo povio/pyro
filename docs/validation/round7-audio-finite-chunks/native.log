@@ -1,0 +1,1 @@
+node tests/e2e/audio-finite-chunks.mjs "$C" "$M" "$W" > $D/$mode.json  0.59s user 0.31s system 146% cpu 0.614 total

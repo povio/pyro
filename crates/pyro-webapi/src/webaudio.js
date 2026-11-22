@@ -2207,26 +2207,39 @@
       c.channels = channels;
       c.suspends = new Map();
       c.rendering = false;
+      c.committed = 0;
+      c.chunks = [];
     }
     get length() { return ctxOf(this).length; }
-    startRendering() {
+    startRendering(chunkSize = null) {
       const c = ctxOf(this);
-      if (c.rendering || c.state === 'closed') {
-        return PromiseC.reject(new DE("Failed to execute 'startRendering' on 'OfflineAudioContext': cannot call startRendering more than once", 'InvalidStateError'));
-      }
-      c.rendering = true;
-      c.output = [];
-      for (let i = 0; i < c.channels; i++) c.output.push(new F32(c.length));
-      return new PromiseC((resolve) => {
-        c.finish = resolve;
-        setTimer(() => render(c), 0);
+      return new PromiseC(resolve => {
+        const size = chunkSize === null ? null : ulong(chunkSize);
+        if (c.committed === c.length) throw new DE('All frames have already been committed.', 'InvalidStateError');
+        if (size === 0) throw new DE('The requested chunk size cannot be zero.', 'NotSupportedError');
+        const start = c.committed;
+        const end = size === null ? c.length : min(c.length, start + ceil(size / QUANTUM) * QUANTUM);
+        const output = Array.from({length: c.channels}, () => new F32(end - start));
+        c.committed = end;
+        c.chunks.push({start, end, output, resolve});
+        if (!c.rendering) {
+          c.rendering = true;
+          c.state = 'running';
+          setTimer(() => fire(c.self, 'statechange'), 0);
+        }
+        if (c.chunks.length === 1) setTimer(() => render(c), 0);
       });
     }
     resume() {
       const c = ctxOf(this);
       if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has been closed.", 'InvalidStateError'));
       if (!c.rendering) return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has not started.", 'InvalidStateError'));
-      return new PromiseC((resolve) => setTimer(() => { if (c.state === 'suspended') render(c); resolve(); }, 0));
+      if (c.state === 'suspended') {
+        c.state = 'running';
+        setTimer(() => fire(c.self, 'statechange'), 0);
+        setTimer(() => render(c), 0);
+      }
+      return PromiseC.resolve();
     }
     suspend(suspendTime) {
       const c = ctxOf(this);
@@ -2238,7 +2251,7 @@
       if (frame >= c.length) {
         return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': cannot schedule a suspend at frame ${frame} (${t} seconds) because it is greater than or equal to the total render duration of ${c.length} frames`, 'InvalidStateError'));
       }
-      if (frame < c.frames || (c.rendering && frame === c.frames && c.state === 'running')) {
+      if (frame < c.frames) {
         return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': suspend(${t}) failed to suspend at frame ${frame} because it is earlier than the current frame of ${c.frames}`, 'InvalidStateError'));
       }
       if (c.suspends.has(frame)) {
@@ -2252,10 +2265,12 @@
 
   // Renders quanta until the end or a suspend point.
   function render(c) {
+    const chunk = c.chunks[0];
+    if (!chunk) return;
     setState(c, 'running');
     c.graphEpoch = (c.graphEpoch ?? 0) + 1;
     const dest = nodes.get(c.destination);
-    while (c.frames < c.length) {
+    while (c.frames < chunk.end) {
       const pause = c.suspends.get(c.frames);
       if (pause) {
         c.suspends.delete(c.frames);
@@ -2267,8 +2282,8 @@
       const f0 = c.frames;
       const q = f0 / QUANTUM;
       const bus = pull(dest, q, f0);
-      const count = min(QUANTUM, c.length - f0);
-      for (let ch = 0; ch < c.channels; ch++) c.output[ch].set(count === QUANTUM ? bus[ch] : bus[ch].subarray(0, count), f0);
+      const count = min(QUANTUM, chunk.end - f0);
+      for (let ch = 0; ch < c.channels; ch++) chunk.output[ch].set(count === QUANTUM ? bus[ch] : bus[ch].subarray(0, count), f0 - chunk.start);
       // Started sources nothing pulled still play (and end) on time.
       for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
       if (c.analyserNodes) for (const ref of c.analyserNodes) {
@@ -2295,13 +2310,17 @@
       }
       c.frames += QUANTUM;
     }
-    c.frames = c.length;
-    const rendered = makeBuffer(c.rate, c.output);
-    c.output = null;
+    const rendered = makeBuffer(c.rate, chunk.output);
+    const final = chunk.end === c.length;
+    c.chunks.shift();
+    if (c.chunks.length) setTimer(() => render(c), 0);
     flushEnded(c);
-    setState(c, 'closed');
-    c.finish(rendered);
-    apply(dispatch, c.self, [new OfflineAudioCompletionEvent('complete', { renderedBuffer: rendered })]);
+    if (final) {
+      c.state = 'closed';
+      setTimer(() => fire(c.self, 'statechange'), 0);
+    }
+    chunk.resolve(rendered);
+    if (final) apply(dispatch, c.self, [new OfflineAudioCompletionEvent('complete', { renderedBuffer: rendered })]);
   }
 
   class OfflineAudioCompletionEvent extends Ev {
