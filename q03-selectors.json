@@ -1,0 +1,518 @@
+{
+ "census": "5892e136 evidence/rc5-census-516dc3159-combined asymmetric/chrome-only-confirmed-names.jsonl.gz",
+ "checksum_rule": "sha256 of sorted 'url\\tname' lines joined by \\n with trailing \\n",
+ "Q03_bidi": [
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <a>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <abbr>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <area>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <audio>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <b>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <base>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <body>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <br>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <button>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <canvas>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <cite>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <code>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <data>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <datalist>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <del>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <details>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <dfn>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <dialog>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <em>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <embed>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <fieldset>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <head>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <html>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <i>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <iframe>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <img>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=button>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=checkbox>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=color>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=date>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=datetime-local>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=email>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=file>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=hidden>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=image>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=number>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=password>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=radio>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=range>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=reset>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=search>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=submit>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=tel>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=text>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=time>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <input type=url>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <ins>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <kbd>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <label>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <link>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <map>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <mark>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <meta>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <meter>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <object>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <optgroup>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <option>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <param>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <progress>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <q>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <rp>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <rt>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <ruby>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <s>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <samp>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <select>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <slot>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <small>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <source>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <span>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <strong>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <style>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <sub>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <sup>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <textarea>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <time>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <title>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <track>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <u>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <var>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <video>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <wbr>"
+  ]
+ ],
+ "Q03_resets": [
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"checkbox\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"color\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"color\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"date\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"date\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"datetime-local\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"datetime-local\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"email\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"email\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"hidden\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"hidden\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"image\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"image\"> - overflow-clip-margin"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"image\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"month\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"month\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"number\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"number\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"password\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"password\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"radio\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"range\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"search\"> - box-sizing"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"search\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"search\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"tel\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"tel\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"text\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"text\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"time\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"time\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"url\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"url\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"week\"> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<input type=\"week\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<marquee> - overflow"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<optgroup><option> (in <select>) - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<option> (in <select><optgroup>) - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<select multiple=\"\"> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<select><optgroup><option> - text-align"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<textarea> - display"
+  ],
+  [
+   "html/rendering/non-replaced-elements/form-controls/resets.html",
+   "<textarea> - text-align"
+  ]
+ ],
+ "Q03b": [
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <noscript>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <script>"
+  ],
+  [
+   "html/rendering/bidi-rendering/unicode-bidi-ua-rules.html",
+   "UA stylesheet rule for unicode-bidi, for <template>"
+  ]
+ ]
+}
