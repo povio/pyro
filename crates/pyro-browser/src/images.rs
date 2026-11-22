@@ -72,6 +72,20 @@ struct Image {
     outcome: Option<bool>,
 }
 
+/// pyro: the lazy images and iframes a capture started ([`Browser::approve_lazy_content`]).
+#[derive(Default)]
+pub struct LazyStarted {
+    images: Vec<(FrameKey, NodeId)>,
+    frames: Vec<FrameKey>,
+}
+
+impl LazyStarted {
+    /// Nothing started.
+    pub fn is_empty(&self) -> bool {
+        self.images.is_empty() && self.frames.is_empty()
+    }
+}
+
 impl Images {
     /// pyro: the URLs the document's elements requested as images themselves (`<img>`, SVG
     /// `<image>`, `<object>`), loaded or failed or in flight, for the document's life.
@@ -860,10 +874,10 @@ impl Browser {
     /// pyro: deferred lazy images and iframes of `page`'s documents start loading before a
     /// capture: every one for printing (Chrome loads lazy content to print), those near the
     /// viewport for a screenshot (one taken right at `load` precedes the lazy load check).
-    /// Whether any started.
-    pub fn approve_lazy_content(&mut self, page: crate::PageId, all: bool) -> bool {
-        let Some(host) = self.page(page).map(|p| p.frames.clone()) else { return false };
-        let mut started = false;
+    /// What started, for [`Browser::lazy_loading`].
+    pub fn approve_lazy_content(&mut self, page: crate::PageId, all: bool) -> LazyStarted {
+        let mut started = LazyStarted::default();
+        let Some(host) = self.page(page).map(|p| p.frames.clone()) else { return started };
         for key in host.keys() {
             let Some((bindings, nodes)) = self.doc(key).and_then(|d| {
                 Some((d.main_frame.page_dom.clone()?, d.images.deferred.keys().copied().collect::<Vec<NodeId>>()))
@@ -879,7 +893,7 @@ impl Browser {
                     p.images.approved.insert(node);
                 }
                 self.image_event_with(key, node, false);
-                started = true;
+                started.images.push((key, node));
             }
         }
         let frames: Vec<FrameKey> = host.lazy_frames.borrow().iter().map(|(k, _)| *k).collect();
@@ -893,9 +907,19 @@ impl Browser {
             host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
             host.lazy_approved.borrow_mut().push(key);
             host.queue_attributes(key, frame.loader_id.clone());
-            started = true;
+            started.frames.push(key);
         }
         started
+    }
+
+    /// pyro: whether what [`Browser::approve_lazy_content`] started still loads: one of its
+    /// images, or (`frames`) one of its iframes' attribute processing or navigation.
+    pub fn lazy_loading(&self, started: &LazyStarted, frames: bool) -> bool {
+        started.images.iter().any(|(key, node)| self.doc(*key).is_some_and(|d| d.images.entries.get(node).is_some_and(|i| i.pending)))
+            || (frames
+                && started.frames.iter().any(|key| {
+                    self.doc(*key).is_some_and(|d| d.pending_loader.is_some() || d.pending_frame_attributes > 0)
+                }))
     }
 
     /// pyro: whether a document of `page` still loads an image, or a frame's navigation or

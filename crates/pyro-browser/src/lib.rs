@@ -31,6 +31,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 pub use frames::{realm_page, FrameInfo};
+pub use images::LazyStarted;
 use frames::{FrameHost, FrameKey};
 pub use loader::{
     FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,

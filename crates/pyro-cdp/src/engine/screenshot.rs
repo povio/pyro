@@ -90,7 +90,13 @@ struct ShotWait {
     out: Option<std::path::PathBuf>,
     started: Instant,
     deadline: Instant,
+    /// The lazy content this capture started: what it waits for.
+    lazy: pyro_browser::LazyStarted,
 }
+
+/// Longest a screenshot waits for a lazy iframe it started to navigate (a hung navigation must
+/// not hold it for [`PDF_FETCH_WAIT`]); its lazy images may take that long.
+const SHOT_FRAME_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Longest a `printToPDF` waits for layout sub-resources.
 const PDF_FETCH_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -130,6 +136,8 @@ pub(crate) struct Renders {
     shot_waits: Vec<ShotWait>,
     /// The poll thread for waits on the page's own loads (lazy content) runs: one at a time.
     polling: Arc<AtomicBool>,
+    /// Bumped by each poll thread start: an older thread still running exits.
+    poll_generation: Arc<std::sync::atomic::AtomicU64>,
     /// pyro: how many times a PDF wait was parked ([`EngineHost::pdf_parks`]).
     pdf_parks: u64,
 }
@@ -742,9 +750,10 @@ impl EngineHost {
         let whole = matches!(area, Area::FullPage | Area::Clip { beyond_viewport: true, .. });
         let started = Instant::now();
         let (id, session) = (cmd.command.id, cmd.session_id.to_owned());
-        if self.thread.browser.approve_lazy_content(pid, whole) && self.thread.browser.content_loading(pid) {
+        let lazy = self.thread.browser.approve_lazy_content(pid, whole);
+        if !lazy.is_empty() && self.thread.browser.lazy_loading(&lazy, true) {
             let deadline = started + PDF_FETCH_WAIT;
-            self.renders.shot_waits.push(ShotWait { id, session, pid, area, format, out, started, deadline });
+            self.renders.shot_waits.push(ShotWait { id, session, pid, area, format, out, started, deadline, lazy });
             self.poll_waits();
             return Ok(None);
         }
@@ -757,11 +766,14 @@ impl EngineHost {
         if self.renders.polling.swap(true, Ordering::AcqRel) {
             return;
         }
+        // A thread stopped and a new one started before it saw the stop: the old one exits on
+        // the generation change, so only one ever polls.
+        let generation = self.renders.poll_generation.fetch_add(1, Ordering::AcqRel) + 1;
         let poll = self.renders.deliver(self.thread.handle());
-        let running = self.renders.polling.clone();
+        let (running, current) = (self.renders.polling.clone(), self.renders.poll_generation.clone());
         let _ = std::thread::Builder::new().name("pyro-capture-poll".into()).spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            if !running.load(Ordering::Acquire) {
+            if !running.load(Ordering::Acquire) || current.load(Ordering::Acquire) != generation {
                 break;
             }
             poll(Finished::Fetched);
@@ -782,12 +794,16 @@ impl EngineHost {
         let now = Instant::now();
         let waits = std::mem::take(&mut self.renders.shot_waits);
         for w in waits {
-            if now < w.deadline && self.thread.browser.content_loading(w.pid) {
+            // Its own lazy images until the deadline; its lazy iframes' navigations for a shorter
+            // while (a hung one must not hold it).
+            let frames = now < w.started + SHOT_FRAME_WAIT;
+            if now < w.deadline && self.thread.browser.lazy_loading(&w.lazy, frames) {
                 self.renders.shot_waits.push(w);
                 continue;
             }
             let (id, session) = (w.id, w.session.clone());
-            if let Err(e) = self.start_capture(w.id, w.session, w.pid, w.area, w.format, w.out, w.started) {
+            let ShotWait { id: wid, session: wsession, pid, area, format, out, started, .. } = w;
+            if let Err(e) = self.start_capture(wid, wsession, pid, area, format, out, started) {
                 self.out.push(msg::error_frame(Some(id), &e, Some(&session)));
             }
         }
