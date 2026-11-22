@@ -117,10 +117,13 @@ pub fn join_quota(child: &PageDom, parent: Option<&PageDom>, same_origin: bool) 
     *child.fetch_state.deferred.pool.borrow_mut() = pool;
 }
 
-/// Fetch "total request length": the URL's serialization, the body's length, and each header's
-/// name and value.
+/// Fetch "total request length": the URL's serialization without its fragment, the referrer's
+/// serialization when it is a URL, the body's length, and each header's name and value.
 fn total_request_length(request: &Request) -> usize {
-    request.url.as_str().len()
+    let mut url = request.url.clone();
+    url.set_fragment(None);
+    url.as_str().len()
+        + request.referrer.as_ref().map_or(0, |r| r.as_str().len())
         + request.body.as_ref().map_or(0, |b| b.len())
         + request.headers.iter().map(|(name, value)| name.as_str().len() + value.as_bytes().len()).sum::<usize>()
 }
@@ -161,14 +164,25 @@ fn fetch_later<'s>(s: &Scope<'s>, input: Value<'s>, init: Value<'s>) -> JsResult
     if page.is_disposed() {
         return Err(JsError::ContextDestroyed);
     }
-    // A ReadableStream body cannot be deferred: its bytes are not known now.
-    if init.is_object() {
-        let body = crate::fetch::option(s, init, "body")?;
-        if !body.is_undefined() && !body.is_null() && crate::streams::is_stream(s, body)? {
-            return Err(JsError::Type("fetchLater: a ReadableStream request body cannot be deferred.".into()));
+    // DeferredRequestInit conversion: `activateAfter` is a finite double (a TypeError before the
+    // request is made); a negative one is a RangeError once the request is made.
+    let activate_after = if init.is_object() {
+        match crate::fetch::option(s, init, "activateAfter")? {
+            v if v.is_undefined() => None,
+            v => {
+                let ms = v.to_number()?;
+                if !ms.is_finite() {
+                    return Err(JsError::Type("fetchLater: activateAfter is not a finite number.".into()));
+                }
+                Some(ms)
+            }
         }
-    }
-    let (mut request, signal, _extras) = crate::fetch::parse_request(s, &page, input, init)?;
+    } else {
+        None
+    };
+    // The request as `new Request(input, init)` makes it; a ReadableStream body (its bytes are
+    // not known now) is a TypeError there.
+    let (request, signal, _extras) = crate::fetch::parse_request(s, &page, input, init, true)?;
     if let Some(signal) = &signal {
         let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
         if signal.aborted() {
@@ -178,25 +192,12 @@ fn fetch_later<'s>(s: &Scope<'s>, input: Value<'s>, init: Value<'s>) -> JsResult
     if !matches!(request.url.scheme(), "http" | "https") || !pyro_net::is_potentially_trustworthy_url(&request.url) {
         return Err(JsError::Type("fetchLater: the request URL must be a potentially trustworthy HTTP(S) URL.".into()));
     }
-    let activate_after = if init.is_object() {
-        match crate::fetch::option(s, init, "activateAfter")? {
-            v if v.is_undefined() => None,
-            v => {
-                let ms = v.to_number()?;
-                if !ms.is_finite() {
-                    return Err(JsError::Type("fetchLater: activateAfter is not a finite number.".into()));
-                }
-                if ms < 0.0 {
-                    return Err(JsError::Range("fetchLater: activateAfter must not be negative.".into()));
-                }
-                Some(ms)
-            }
-        }
-    } else {
-        None
-    };
-    // Fetch "queue a deferred fetch": a keepalive request (`process` sends it outside the
-    // document's fetch group, straight to the network).
+    if activate_after.is_some_and(|ms| ms < 0.0) {
+        return Err(JsError::Range("fetchLater: activateAfter must not be negative.".into()));
+    }
+    // Fetch "queue a deferred fetch": a keepalive request. pyro-net's Request has no keepalive
+    // flag; what it means is how `process` sends it: outside the document's fetch group, so it
+    // outlives the document, and without the document's keepalive quota.
     let origin = request.url.origin().ascii_serialization();
     let length = total_request_length(&request);
     let available = available_quota(&page, &origin);
@@ -263,5 +264,13 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
         args.require(1, "fetchLater")?;
         fetch_later(s, args.get(0), args.get(1))
     })?;
+    // WebIDL: the operation's `length` is its required argument count.
+    let define = s.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?;
+    if let Some(define) = define.and_then(|d| d.as_object()) {
+        let descriptor = s.object();
+        descriptor.set_atom("value", s.number(1.0))?;
+        descriptor.set_atom("configurable", s.boolean(true))?;
+        define.call(None, &[function.value(), s.string("length"), descriptor.value()])?;
+    }
     s.global().set_atom("fetchLater", function.value())
 }

@@ -37,7 +37,7 @@ pub struct RequestData {
     /// `body` was read: its source holds this Request's body consumer.
     source_made: Cell<bool>,
     /// The body is a script's ReadableStream (the hidden STREAM), not `body`'s bytes.
-    script_stream: Cell<bool>,
+    pub(crate) script_stream: Cell<bool>,
 }
 impl Drop for RequestData {
     fn drop(&mut self) {

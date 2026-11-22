@@ -518,11 +518,14 @@ pub(crate) struct FetchExtras {
     keepalive: Option<KeepaliveGuard>,
 }
 
+/// `deferred`: for `fetchLater` (Fetch "queue a deferred fetch"), whose request may not have a
+/// ReadableStream body (from `init` or a Request input) and takes no keepalive quota of its own.
 pub(crate) fn parse_request<'s>(
     s: &Scope<'s>,
     page: &PageDom,
     input: Value<'s>,
     init: Value<'s>,
+    deferred: bool,
 ) -> JsResult<(Request, Option<Persistent>, FetchExtras)> {
     // A Request input: its fields, overridden by `init`.
     let request_input = s.unwrap::<crate::request::Request>(input);
@@ -623,6 +626,13 @@ pub(crate) fn parse_request<'s>(
         request.headers.append(key, value);
     }
     let body = option(s, init, "body")?;
+    if deferred {
+        let init_stream = !body.is_undefined() && !body.is_null() && crate::streams::is_stream(s, body)?;
+        let input_stream = body.is_undefined() && request_input.as_ref().is_some_and(|r| r.script_stream.get());
+        if init_stream || input_stream {
+            return Err(JsError::Type("fetchLater: a ReadableStream request body cannot be deferred.".into()));
+        }
+    }
     let input_body = match (&request_input, body.is_undefined()) {
         (Some(r), true) => r.take_body()?.map(|bytes| (bytes, r.body.mime.borrow().clone())),
         _ => None,
@@ -696,7 +706,7 @@ pub(crate) fn parse_request<'s>(
         v if v.is_undefined() => request_input.as_ref().is_some_and(|r| r.keepalive),
         v => v.to_bool(),
     };
-    let keepalive = if keepalive {
+    let keepalive = if keepalive && !deferred {
         let len = request.body.as_ref().map_or(0, Bytes::len);
         Some(
             reserve_keepalive(&page.fetch_state.keepalive_bytes, len)
@@ -929,7 +939,7 @@ fn fetch_call<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>, settled: Option<bool>
         if page.is_disposed() {
             return Err(JsError::ContextDestroyed);
         }
-        let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1))?;
+        let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1), false)?;
         request.body_from_stream = request.body.is_some() && settled == Some(true);
         // Init conversion can execute script, including embedder teardown.
         if page.is_disposed() {
