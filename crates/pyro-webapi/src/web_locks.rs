@@ -1,20 +1,17 @@
 //! Web Locks API (https://w3c.github.io/web-locks/): `navigator.locks` (`LockManager`) and `Lock`.
 //!
-//! The interfaces and each request's promise plumbing are made in JS (web_locks.js, one module per
-//! realm); the lock manager's state, which every same-origin document shares, is here: per
-//! (browser context, origin) "lock manager", per resource name a queue of requests, the held
-//! locks first. A request is granted in a task on its own document's page, which runs the
-//! module's callback with the new `Lock`; the module releases the lock when the callback's
-//! promise settles. A document that goes away (navigated, removed frame, closed popup) releases
-//! its locks and drops its requests, as the spec's "agent terminated" steps do, and the next
-//! requests in each queue are granted.
-//!
-//! Scope, as `BroadcastChannel`'s (message_channel.rs): the documents of the browser thread that
-//! share a browser context (`ContextServices`) and origin. Workers have no `navigator.locks`.
+//! A context's lock service shares the storage-key queues across its
+//! documents and workers. JS callbacks live only on their owning thread;
+//! each grant or steal posts a notice to that agent's event loop.
 
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+mod broker;
+pub(crate) use broker::LockService;
+use broker::{Client, Mode, Notice, Request, StorageKey};
+
+use std::cell::RefCell;
 use std::rc::{Rc, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use pyro_js::{JsError, JsResult, Object, Persistent, Scope, Value, WeakRealm};
 use rustc_hash::FxHashMap;
@@ -58,160 +55,99 @@ pub(crate) fn locks<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>
     if page.is_disposed() {
         return Err(JsError::ContextDestroyed);
     }
-    if !crate::secure_context::secure(s, page) {
+    if !crate::worker_scope::secure_worker(s).unwrap_or_else(|| crate::secure_context::secure(s, page)) {
         return Ok(s.undefined());
     }
     MODULE.module(s, page)?.get("locks")
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Exclusive,
-    Shared,
-}
-
-impl Mode {
-    fn as_str(self) -> &'static str {
-        match self {
-            Mode::Exclusive => "exclusive",
-            Mode::Shared => "shared",
-        }
-    }
-}
-
-struct Request {
-    id: u64,
-    mode: Mode,
-    /// The query's `clientId`: the document's service worker client id.
-    client_id: String,
-    /// Its grant callback ran (the lock reached script). Until then an abort still removes it.
-    delivered: Cell<bool>,
-    /// The requesting document's page (`PageDom::id`, also the query's `clientId`).
-    page_id: u64,
-    page: Weak<PageDom>,
+struct Callbacks {
     realm: WeakRealm,
-    /// Called (no arguments) in a task on the page when the lock is granted.
-    grant: Persistent,
-    /// Called (no arguments) in a task on the page when a `steal` request took the lock.
+    grant: Option<Persistent>,
     stolen: Persistent,
+    key: StorageKey,
+    name: String,
 }
 
-#[derive(Default)]
-struct Queue {
-    held: Vec<Request>,
-    pending: VecDeque<Request>,
+struct LocalClient {
+    page: Weak<PageDom>,
+    route: Arc<Client>,
+    requests: FxHashMap<u64, Callbacks>,
 }
-
-impl Queue {
-    /// Whether a request of `mode` at the front of the queue can be granted now.
-    fn grantable(&self, mode: Mode) -> bool {
-        match mode {
-            Mode::Exclusive => self.held.is_empty(),
-            Mode::Shared => self.held.iter().all(|r| r.mode == Mode::Shared),
-        }
-    }
-}
-
-/// One lock manager: a browser context's and origin's queues, by resource name.
-type Manager = FxHashMap<String, Queue>;
 
 thread_local! {
-    static MANAGERS: RefCell<FxHashMap<(usize, String), Manager>> = RefCell::default();
-    static NEXT_ID: Cell<u64> = const { Cell::new(1) };
-    /// Granted requests an abort took back before their grant task ran.
-    static CANCELLED: RefCell<rustc_hash::FxHashSet<u64>> = RefCell::default();
+    static CLIENTS: RefCell<FxHashMap<u64, LocalClient>> = RefCell::default();
+}
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn manager_key(s: &Scope<'_>, page: &PageDom) -> Option<StorageKey> {
+    Some(StorageKey {
+        origin: crate::storage::tuple_origin(s, page)?,
+        top_level_site: page.cookie_partition_key(),
+        cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
+    })
 }
 
-/// The lock manager key of the realm's document: its browser context and tuple origin, or
-/// `None` for an opaque origin (the API then throws SecurityError).
-fn manager_key(s: &Scope<'_>, page: &PageDom) -> Option<(usize, String)> {
-    let origin = crate::storage::tuple_origin(s, page)?;
-    Some((Rc::as_ptr(&page.context_services()) as usize, origin))
+fn forget(page_id: u64, id: u64) -> Option<Callbacks> {
+    CLIENTS.with(|clients| {
+        let mut clients = clients.borrow_mut();
+        let client = clients.get_mut(&page_id)?;
+        let callbacks = client.requests.remove(&id);
+        if client.requests.is_empty() { clients.remove(&page_id); }
+        callbacks
+    })
 }
 
-/// Calls `f` (a request's grant or stolen callback) in a task on its page, in its realm; a grant
-/// (`grant` is its request) only if the request is still held when the task runs.
-fn call_later(page: &Weak<PageDom>, realm: &WeakRealm, f: Persistent, grant: Option<u64>) {
-    let Some(target) = page.upgrade() else { return };
-    let realm = realm.clone();
-    let weak = page.clone();
-    target.post_task(Box::new(move || {
-        let Some(page) = weak.upgrade() else { return };
-        if page.is_disposed() || grant.is_some_and(|id| !deliver(id)) {
-            return;
+fn deliver(route: &Client) {
+    let Some(notice) = route.next_notice() else { return };
+    let id = match notice { Notice::Grant(id) | Notice::Stolen(id) => id };
+    let callback = match notice {
+        Notice::Grant(id) => CLIENTS.with(|clients| {
+            let mut clients = clients.borrow_mut();
+            let req = clients.get_mut(&route.page)?.requests.get_mut(&id)?;
+            Some((req.realm.clone(), req.grant.take()?))
+        }),
+        Notice::Stolen(id) => forget(route.page, id).map(|req| (req.realm, req.stolen)),
+    };
+    let Some((realm, callback)) = callback else { return };
+    let Some(realm) = realm.upgrade() else { return };
+    let Ok(s) = realm.scope() else { return };
+    if let Some(callback) = callback.get(&s).as_object() {
+        if let Err(error) = callback.call(None, &[s.number(id as f64)]) {
+            s.report_exception(&error);
         }
-        let Some(realm) = realm.upgrade() else { return };
-        let Ok(s) = realm.scope() else { return };
-        let callback = f.get(&s);
-        if let Some(callback) = callback.as_object() {
-            if let Err(e) = callback.call(None, &[]) {
-                s.report_exception(&e);
+    }
+}
+
+fn dispatch(wake: Vec<Arc<Client>>) {
+    for route in wake {
+        if route.thread == std::thread::current().id() {
+            let target = CLIENTS.with(|c| c.borrow().get(&route.page).and_then(|c| c.page.upgrade()));
+            if let Some(page) = target {
+                page.post_task(Box::new(move || deliver(&route)));
             }
+        } else if let Some(post) = route.poster.clone() {
+            post(Box::new(move || deliver(&route)));
         }
-    }));
-}
-
-/// Grants every request at the front of `queue` that can be granted ("process the lock request
-/// queue"): the requests are granted in order, so a request waits behind the ones before it.
-fn process(queue: &mut Queue) -> Vec<Call> {
-    let mut granted = Vec::new();
-    while let Some(front) = queue.pending.front() {
-        if !queue.grantable(front.mode) {
-            break;
-        }
-        let request = queue.pending.pop_front().expect("front");
-        granted.push(Call::Grant(request.id, request.page.clone(), request.realm.clone(), request.grant.clone()));
-        queue.held.push(request);
     }
-    granted
 }
 
-/// A callback to run in a task on a request's page: a grant (only if the request is still held
-/// then: a synchronous abort may have taken it back) or a steal.
-enum Call {
-    Grant(u64, Weak<PageDom>, WeakRealm, Persistent),
-    Stolen(Weak<PageDom>, WeakRealm, Persistent),
-}
-
-/// Whether the grant of request `id` may run now: not when an abort took it back first. A request
-/// whose lock was stolen before its grant ran still gets its callback (its promise is rejected),
-/// as the spec's grant task runs whatever happened to the lock since. Marks it delivered.
-fn deliver(id: u64) -> bool {
-    if CANCELLED.with(|c| c.borrow_mut().remove(&id)) {
-        return false;
-    }
-    MANAGERS.with(|m| {
-        if let Some(r) = m.borrow().values().flat_map(|manager| manager.values()).flat_map(|q| q.held.iter()).find(|r| r.id == id) {
-            r.delivered.set(true);
-        }
+fn remove_request(page: &PageDom, id: u64, abort: bool) -> bool {
+    let info = CLIENTS.with(|clients| {
+        let clients = clients.borrow();
+        let request = clients.get(&page.id())?.requests.get(&id)?;
+        // Abort only applies until the grant callback starts.
+        if abort && request.grant.is_none() { return None }
+        Some((request.key.clone(), request.name.clone()))
     });
-    true
-}
-
-fn run(call: Call) {
-    match call {
-        Call::Grant(id, page, realm, f) => call_later(&page, &realm, f, Some(id)),
-        Call::Stolen(page, realm, f) => call_later(&page, &realm, f, None),
+    let Some((key, name)) = info else { return false };
+    let (removed, wake) = page.context_services().web_locks.remove(&key, &name, id, abort);
+    if removed {
+        // A stolen request stays rooted until its stolen notice runs.
+        drop(forget(page.id(), id));
     }
-}
-
-/// Runs `f` on the realm's lock manager, then the grant callbacks it produced (outside the
-/// registry's borrow: a callback runs in a later task anyway).
-fn with_manager<R>(key: &(usize, String), f: impl FnOnce(&mut Manager) -> (R, Vec<Call>)) -> R {
-    let (result, calls) = MANAGERS.with(|m| {
-        let mut managers = m.borrow_mut();
-        let manager = managers.entry(key.clone()).or_default();
-        let out = f(manager);
-        manager.retain(|_, q| !q.held.is_empty() || !q.pending.is_empty());
-        if manager.is_empty() {
-            managers.remove(key);
-        }
-        out
-    });
-    for call in calls {
-        run(call);
-    }
-    result
+    dispatch(wake);
+    removed
 }
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
@@ -236,86 +172,44 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let name = a.get(0).to_string()?;
         let mode = if a.get(1).to_bool() { Mode::Exclusive } else { Mode::Shared };
         let (if_available, steal) = (a.get(2).to_bool(), a.get(3).to_bool());
-        let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let client_id = crate::service_worker::client_id(&page).unwrap_or_else(|| format!("{:032x}", page.id()));
-        let request = Request {
-            id,
-            mode,
-            client_id,
-            delivered: Cell::new(false),
-            page_id: page.id(),
-            page: Rc::downgrade(&page),
+        let callbacks = Callbacks {
             realm: s.realm().downgrade(),
-            grant: Persistent::new(s, a.get(4)),
+            grant: Some(Persistent::new(s, a.get(4))),
             stolen: Persistent::new(s, a.get(5)),
+            key: key.clone(),
+            name: name.clone(),
         };
-        let id = with_manager(&key, |manager| {
-            let queue = manager.entry(name).or_default();
-            let mut calls = Vec::new();
-            if steal {
-                // "steal": every held lock of the name is released, its holder's promise
-                // rejected with AbortError; the request goes first and is granted.
-                for held in queue.held.drain(..) {
-                    calls.push(Call::Stolen(held.page.clone(), held.realm.clone(), held.stolen.clone()));
-                }
-                queue.pending.push_front(request);
-            } else if if_available && !(queue.pending.is_empty() && queue.grantable(mode)) {
-                return (0, calls);
-            } else {
-                queue.pending.push_back(request);
-            }
-            calls.extend(process(queue));
-            (id, calls)
+        let route = CLIENTS.with(|clients| {
+            let mut clients = clients.borrow_mut();
+            let client = clients.entry(page.id()).or_insert_with(|| LocalClient {
+                page: Rc::downgrade(&page),
+                route: Arc::new(Client::new(page.id(), page.remote_poster())),
+                requests: FxHashMap::default(),
+            });
+            client.requests.insert(id, callbacks);
+            client.route.clone()
         });
+        let req = Request { id, mode, client_id, client: route };
+        let (accepted, wake) = page.context_services().web_locks.acquire(key, name, req, steal, if_available);
+        if !accepted {
+            drop(forget(page.id(), id));
+            return Ok(s.number(0.0));
+        }
+        dispatch(wake);
         Ok(s.number(id as f64))
     })?;
     native.set_atom("request", request.value())?;
-    // release(id): the held lock `id` goes (its callback's promise settled); later requests are
-    // granted. Nothing when it went already (stolen, or its document went away).
     let release = s.function("release", |s, _, a| {
         let page = crate::target::page_of(s)?;
-        let Some(key) = manager_key(s, &page) else { return Ok(s.undefined()) };
-        let id = a.get(0).to_number()? as u64;
-        with_manager(&key, |manager| {
-            let mut calls = Vec::new();
-            for queue in manager.values_mut() {
-                if let Some(i) = queue.held.iter().position(|r| r.id == id) {
-                    queue.held.remove(i);
-                    calls.extend(process(queue));
-                    break;
-                }
-            }
-            ((), calls)
-        });
+        remove_request(&page, a.get(0).to_number()? as u64, false);
         Ok(s.undefined())
     })?;
     native.set_atom("release", release.value())?;
-    // abort(id) -> whether `id` was still waiting (its signal aborted it: it leaves the queue).
     let abort = s.function("abort", |s, _, a| {
         let page = crate::target::page_of(s)?;
-        let Some(key) = manager_key(s, &page) else { return Ok(s.boolean(false)) };
-        let id = a.get(0).to_number()? as u64;
-        let removed = with_manager(&key, |manager| {
-            let mut calls = Vec::new();
-            let mut removed = false;
-            for queue in manager.values_mut() {
-                if let Some(i) = queue.pending.iter().position(|r| r.id == id) {
-                    queue.pending.remove(i);
-                    removed = true;
-                } else if let Some(i) = queue.held.iter().position(|r| r.id == id && !r.delivered.get()) {
-                    // Granted, but its grant has not reached script yet: the abort still wins.
-                    queue.held.remove(i);
-                    CANCELLED.with(|c| c.borrow_mut().insert(id));
-                    removed = true;
-                }
-                if removed {
-                    calls.extend(process(queue));
-                    break;
-                }
-            }
-            (removed, calls)
-        });
-        Ok(s.boolean(removed))
+        Ok(s.boolean(remove_request(&page, a.get(0).to_number()? as u64, true)))
     })?;
     native.set_atom("abort", abort.value())?;
     // watchAbort(signal, id): DOM "add an abort algorithm" to `signal`: when it aborts (before its
@@ -349,23 +243,9 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     // manager, in each queue's order.
     let query = s.function("query", |s, _, _| {
         let page = crate::target::page_of(s)?;
-        let rows: (Vec<(String, &'static str, String)>, Vec<(String, &'static str, String)>) = match manager_key(s, &page) {
-            None => Default::default(),
-            Some(key) => MANAGERS.with(|m| {
-                let managers = m.borrow();
-                let mut out: (Vec<_>, Vec<_>) = Default::default();
-                if let Some(manager) = managers.get(&key) {
-                    let mut names: Vec<&String> = manager.keys().collect();
-                    names.sort();
-                    for name in names {
-                        let queue = &manager[name];
-                        out.0.extend(queue.held.iter().map(|r| (name.clone(), r.mode.as_str(), r.client_id.clone())));
-                        out.1.extend(queue.pending.iter().map(|r| (name.clone(), r.mode.as_str(), r.client_id.clone())));
-                    }
-                }
-                out
-            }),
-        };
+        let rows = manager_key(s, &page)
+            .map(|key| page.context_services().web_locks.query(&key))
+            .unwrap_or_default();
         let list = |rows: &[(String, &'static str, String)]| -> JsResult<Value<'_>> {
             let mut items = pyro_js::RootedVec::new();
             for (name, mode, client) in rows {
@@ -384,43 +264,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
 /// The document `page` goes away: its locks are released and its requests dropped (the spec's
 /// steps when an agent or document is terminated), and the next requests are granted.
 pub(crate) fn dispose(page: &PageDom) {
-    let id = page.id();
-    let mut calls = Vec::new();
-    let mut dropped = Vec::new();
-    MANAGERS.with(|m| {
-        let mut managers = m.borrow_mut();
-        for manager in managers.values_mut() {
-            for queue in manager.values_mut() {
-                let before = queue.held.len() + queue.pending.len();
-                // Dropped outside the borrow: a Persistent's drop may run engine code.
-                let (gone, kept): (Vec<_>, Vec<_>) = queue.held.drain(..).partition(|r| r.page_id == id);
-                queue.held = kept;
-                dropped.extend(gone);
-                let (gone, kept): (Vec<_>, Vec<_>) = queue.pending.drain(..).partition(|r| r.page_id == id);
-                queue.pending = kept.into();
-                dropped.extend(gone);
-                if queue.held.len() + queue.pending.len() != before {
-                    calls.extend(process(queue));
-                }
-            }
-            manager.retain(|_, q| !q.held.is_empty() || !q.pending.is_empty());
-        }
-        managers.retain(|_, m| !m.is_empty());
-    });
-    drop(dropped);
-    for call in calls {
-        run(call);
+    let local = CLIENTS.with(|clients| clients.borrow_mut().remove(&page.id()));
+    if local.is_some() {
+        let wake = page.context_services().web_locks.dispose(page.id());
+        drop(local);
+        dispatch(wake);
     }
 }
 
-/// This module's part of [`crate::thread_state::reset_thread`]: what of its per-thread state
-/// still holds something, if any does.
 pub(crate) fn thread_leftover() -> Option<&'static str> {
-    // CANCELLED holds ids of aborted grants whose tasks went with their pages; the counter starts
-    // again, as the other ids handed to script do.
-    CANCELLED.with(|c| c.borrow_mut().clear());
-    if MANAGERS.with(|m| m.borrow().is_empty()) {
-        NEXT_ID.set(1);
-    }
-    MANAGERS.with(|m| !m.borrow().is_empty()).then_some("web_locks::MANAGERS")
+    CLIENTS.with(|clients| !clients.borrow().is_empty()).then_some("web_locks::CLIENTS")
 }

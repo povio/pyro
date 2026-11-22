@@ -88,6 +88,7 @@ pub(crate) struct WorkerStart {
     caches: crate::cache_storage::Namespace,
     opfs: crate::opfs::Namespace,
     permissions: crate::navigator_extras::PermissionTable,
+    web_locks: crate::web_locks::LockService,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
     pub(crate) early: Vec<Early>,
@@ -133,6 +134,7 @@ impl WorkerStart {
             caches: page.local_storage.borrow().caches(),
             opfs: page.local_storage.borrow().opfs(),
             permissions: page.context_services().permissions.clone(),
+            web_locks: page.context_services().web_locks.clone(),
             module: false,
             early: Vec::new(),
             service: None,
@@ -178,6 +180,7 @@ impl WorkerStart {
             caches: page.local_storage.borrow().caches(),
             opfs: page.local_storage.borrow().opfs(),
             permissions: page.context_services().permissions.clone(),
+            web_locks: page.context_services().web_locks.clone(),
             module,
             early: Vec::new(),
             service: Some(service),
@@ -578,7 +581,9 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     }
     let cookie_site = if start.url.scheme() == "data" { pyro_net::cookies::SiteContext::CrossSite } else { start.cookie_site_context };
     page.set_cookie_context(start.cookie_partition_key.clone(), cookie_site);
-    page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(start.permissions.clone())));
+    page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(
+        start.permissions.clone(), start.web_locks.clone(),
+    )));
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
     let started = Instant::now();
@@ -1252,6 +1257,7 @@ impl JsClass for WorkerNavigator {
         def.getter("hardwareConcurrency", |s, _ua| Ok(s.number(4.0)));
         def.getter("onLine", |s, _ua| Ok(s.boolean(true)));
         def.getter("language", |s, _ua| Ok(s.string("en-US")));
+        def.getter("locks", |s, _ua| crate::web_locks::locks(s, &crate::target::page_of(s)?));
         def.getter("storage", |s, _ua| crate::storage_manager::storage(s, &crate::target::page_of(s)?));
     }
 }
@@ -1338,6 +1344,26 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     engine.register::<DedicatedWorkerGlobalScope>()
 }
 
+/// These secure-context interface objects belong on the worker global itself.
+fn install_lock_interfaces(s: &Scope<'_>) -> JsResult<()> {
+    macro_rules! interface {
+        ($name:ident) => {{
+            struct $name;
+            impl pyro_js::LazyGlobalInterface for $name {
+                const NAME: &'static str = stringify!($name);
+                fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+                    let page = crate::target::page_of(s)?;
+                    crate::web_locks::MODULE.module(s, &page)?.get_atom(Self::NAME)
+                }
+            }
+            s.define_lazy_global_interface::<$name>()?;
+        }};
+    }
+    interface!(LockManager);
+    interface!(Lock);
+    Ok(())
+}
+
 /// The part of `crate::install` that applies without a window.
 fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     let realm = s.realm();
@@ -1365,6 +1391,11 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     }
     if secure_worker(s) == Some(true) {
         crate::storage_manager::install_worker_file_system_globals(s)?;
+        install_lock_interfaces(s)?;
+    } else if let Some(class) = s.global().get_atom("WorkerNavigator")?.as_object() {
+        if let Some(proto) = class.get_atom("prototype")?.as_object() {
+            proto.delete("locks")?;
+        }
     }
     if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !g.secure) {
         s.global().delete("VideoDecoder")?;

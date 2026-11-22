@@ -211,6 +211,7 @@ pub(crate) struct PermissionTable(Arc<RwLock<FxHashMap<Option<String>, OriginPer
 #[derive(Default)]
 pub struct ContextServices {
     pub(crate) permissions: PermissionTable,
+    pub(crate) web_locks: crate::web_locks::LockService,
     clipboard: RefCell<Vec<ClipboardEntry>>,
     /// Documents with PermissionStatus change listeners.
     watchers: RefCell<Vec<std::rc::Weak<PageDom>>>,
@@ -234,8 +235,8 @@ pub struct GeolocationFix {
 }
 
 impl ContextServices {
-    pub(crate) fn for_worker(permissions: PermissionTable) -> Self {
-        Self { permissions, ..Self::default() }
+    pub(crate) fn for_worker(permissions: PermissionTable, web_locks: crate::web_locks::LockService) -> Self {
+        Self { permissions, web_locks, ..Self::default() }
     }
 
     /// Whether loads of this context's frames may go through a service

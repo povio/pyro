@@ -105,7 +105,7 @@
             (e) => { if (lock) native.release(id); fail2(e); },
           );
         };
-        const grant = () => { abortSteps.delete(id); run(new Lock(token, name, mode)); };
+        const grant = (grantedId) => { id = grantedId; abortSteps.delete(id); run(new Lock(token, name, mode)); };
         const stolen = () => fail2(dom("Lock broken by another request with the 'steal' option.", 'AbortError'));
         id = native.request(encode(name), mode === 'exclusive', ifAvailable, steal, grant, stolen);
         if (id === 0) {
