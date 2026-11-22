@@ -1494,7 +1494,9 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
     let target = parse_location(nav, input)?;
     if target.scheme() == "javascript" {
-        let initiator = pyro_webapi::target::page_of(s).ok().map(|page| pyro_webapi::csp::NavigationInitiator::of(&page));
+        // Located at the calling script, for a blocked URL's violation.
+        let initiator =
+            pyro_webapi::target::page_of(s).ok().map(|page| pyro_webapi::csp::NavigationInitiator::of(&page).at(s));
         nav.run_javascript_url(target.as_str(), initiator);
         return Ok(());
     }
