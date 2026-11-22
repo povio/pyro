@@ -1,0 +1,16 @@
+{
+  "settlement-false": [
+    "old-ok",
+    "thief-ok",
+    true,
+    true,
+    0
+  ],
+  "settlement-true": [
+    "Error",
+    "thief-ok",
+    true,
+    true,
+    0
+  ]
+}

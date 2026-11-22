@@ -1,0 +1,27 @@
+{
+  "dedicated": [
+    "function",
+    "function",
+    true,
+    true,
+    true
+  ],
+  "nested": {
+    "error": "Error",
+    "detail": "timeout"
+  },
+  "shared": [
+    "function",
+    "function",
+    true,
+    true,
+    true
+  ],
+  "service": [
+    "function",
+    "function",
+    true,
+    true,
+    true
+  ]
+}

@@ -1,0 +1,20 @@
+const http=require('node:http'),fs=require('node:fs'),net=require('node:net'),path=require('node:path'),cp=require('node:child_process'),os=require('node:os');
+const w=__dirname,ref=path.join(path.dirname(w),'round6-reference-158/census'),pw=require(path.join(ref,'runner/node_modules/playwright-core'));
+const [label,explicit]=process.argv.slice(2);
+const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><body style="margin:0">');});
+const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',()=>r(s.address().port)));
+(async()=>{const port=await listen(server),sock=net.createServer(),cdp=await listen(sock);await new Promise(r=>sock.close(r));let proc,b;
+ try{const bin=explicit||path.join(ref,'launch-158');
+ const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'r7-svg-fixture-'));
+ proc=cp.spawn(bin,['serve','--host','127.0.0.1','--port',String(cdp),'--log-level','error','--load-resources','stylesheet','--load-resources','iframe'],{stdio:'ignore',env:{...process.env,WPT_CHROME_STATE_DIR:tmp,WPT_CHROME_REFERENCE_MODE:'wpt-stable'}});
+ for(let i=0;i<120;i++){try{if((await fetch('http://127.0.0.1:'+cdp+'/json/version')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
+ b=await pw.chromium.connectOverCDP('http://127.0.0.1:'+cdp);const ownerContext=await b.newContext();const page=await ownerContext.newPage();await page.goto('http://127.0.0.1:'+port+'/page');
+ const a='http://127.0.0.1:'+port, bSite='http://localhost:'+port;
+ await page.evaluate(async()=>{await new Promise(r=>navigator.locks.request('partition-test',async()=>{r();await new Promise(release=>self.releasePartition=release)}))});
+ const frame=async(parent,url)=>{await parent.evaluate(async url=>{await new Promise((resolve,reject)=>{const f=document.createElement('iframe');f.onload=resolve;f.onerror=reject;f.src=url;document.body.appendChild(f)})},url);return parent.childFrames().find(f=>f.url()===url)};
+ const check=f=>f.evaluate(async()=>{const q=await navigator.locks.query();return [q.held.some(l=>l.name==='partition-test'),await navigator.locks.request('partition-test',{ifAvailable:true},l=>!!l)]});
+ const top=page.mainFrame(),same=await frame(top,a+'/same'),middle=await frame(top,bSite+'/b'),nested=await frame(middle,a+'/nested');
+ const values={top:await check(top),same:await check(same),crossOrigin:await check(middle),nested:await check(nested)};
+ await page.evaluate(()=>self.releasePartition());
+ fs.writeFileSync(path.join(w,label+'-partition-probe.json'),JSON.stringify(values,null,2));
+ }finally{if(b)await b.close();if(proc)proc.kill();server.close()}})().catch(e=>{console.error(e);process.exitCode=1});
