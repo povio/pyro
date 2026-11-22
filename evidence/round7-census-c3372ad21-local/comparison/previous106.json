@@ -2126,12 +2126,21 @@
   "shard": "ordinary-018"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "Document timelines report current time relative to navigationStart"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   2,
+   3
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: The current time matches requestAnimationFrame time expected 17.9 but got 18",
   "original": {
    "canonical": "Document timelines report current time relative to navigationStart",
    "chrome158": [
@@ -2169,12 +2178,21 @@
   "shard": "ordinary-072"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "window error: Move fetch-error external classic script to iframe move-back"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   4,
+   5
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_unreached: Window error event shouldn't fired on destination window Reached unreachable code",
   "original": {
    "canonical": "window error: Move fetch-error external classic script to iframe move-back",
    "chrome158": [
