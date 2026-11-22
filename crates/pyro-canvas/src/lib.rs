@@ -13,7 +13,8 @@
 //!   composite it onto the bitmap per pixel with the operator, the global
 //!   alpha and the clipping region's coverage ([`composite`]); a shadow is
 //!   made from the source image's alpha, offset and blurred, and composited
-//!   first.
+//!   first. Its source is rendered apart, offset and with room for the blur,
+//!   so geometry off the bitmap still casts a shadow onto it.
 //! - Paths arrive in device coordinates (the canvas transform was applied as
 //!   they were built); strokes are traced in user space and transformed, as
 //!   HTML specifies, so a non-uniform transform shears the pen.
@@ -739,12 +740,30 @@ impl Surface {
                 source = filtered;
             }
         }
+        // pyro: the shadow is cast by the whole drawing, also its parts off the bitmap that its
+        // offset or blur bring onto it, so (without a filter, which needs the drawing at the
+        // bitmap's size) its source is rendered apart, already offset, with room for the blur.
+        let shadow_source = match shadow {
+            Some(shadow) if filter.is_none() => Some(shadow_source(paint, state, geometry, (w, h), &shadow, draw)),
+            _ => None,
+        };
         let mask = self.clip_mask(state.clip);
         let op = state.composite;
         let alpha = state.alpha.clamp(0.0, 1.0);
         let Some(pixmap) = self.pixmap_mut() else { return };
         if let Some(shadow) = shadow {
-            let shadow = composite::shadow(source.data_as_u8_slice(), usize::from(w), usize::from(h), &shadow);
+            let shadow = match shadow_source {
+                Some(ShadowSource { pixmap: s, pad }) => composite::shadow_cropped(
+                    s.data_as_u8_slice(),
+                    usize::from(s.width()),
+                    usize::from(s.height()),
+                    pad,
+                    usize::from(w),
+                    usize::from(h),
+                    &shadow,
+                ),
+                None => composite::shadow(source.data_as_u8_slice(), usize::from(w), usize::from(h), &shadow),
+            };
             composite::apply(pixmap.data_as_u8_slice_mut(), &shadow, alpha, op, mask.as_deref());
         }
         composite::apply(pixmap.data_as_u8_slice_mut(), source.data_as_u8_slice(), alpha, op, mask.as_deref());
@@ -772,6 +791,49 @@ impl Surface {
             }
         }))
     }
+}
+
+/// A draw's shadow source: the drawing offset by the shadow's offset, on a
+/// bitmap `pad` pixels larger than the canvas on each side (the reach of the
+/// blur), so geometry off the canvas still casts its shadow onto it.
+struct ShadowSource {
+    pixmap: Pixmap,
+    pad: usize,
+}
+
+fn shadow_source(
+    paint: &Paint,
+    state: &DrawState<'_>,
+    geometry: Affine,
+    (w, h): (u16, u16),
+    shadow: &Shadow,
+    draw: &mut dyn FnMut(&mut RenderContext, &mut Resources),
+) -> ShadowSource {
+    let side = u32::from(w.max(h));
+    // Room for the blur (three box passes of `composite::blur_box` each),
+    // bounded so the bitmap stays a valid canvas size.
+    let reach = (composite::blur_box(shadow.blur / 2.0, usize::try_from(side).unwrap_or(usize::MAX)) * 3 / 2 + 1) as u32;
+    let room = (MAX_SIDE - side) / 2;
+    let mut pad = reach.min(room);
+    while pad > 0 && !valid_size(u32::from(w) + 2 * pad, u32::from(h) + 2 * pad) {
+        pad /= 2;
+    }
+    let (pw, ph) = ((u32::from(w) + 2 * pad) as u16, (u32::from(h) + 2 * pad) as u16);
+    let mut pixmap = Pixmap::new(pw, ph);
+    // Geometry within range of the canvas (see `guard`) cannot be offset onto
+    // it from farther than this.
+    let far = 2.0 * (1e6 + 64.0 * f64::from(side));
+    if !(shadow.offset.x.abs() <= far && shadow.offset.y.abs() <= far) {
+        return ShadowSource { pixmap, pad: pad as usize };
+    }
+    let shift = Affine::translate(shadow.offset + Vec2::new(f64::from(pad), f64::from(pad)));
+    let shifted = DrawState { transform: shift * state.transform, ..state.clone() };
+    let mut ctx = settings(pw, ph);
+    let mut resources = Resources::new();
+    emit(&mut ctx, &mut resources, paint, &shifted, shift * geometry, 1.0, &[], (pw, ph), draw);
+    ctx.flush();
+    ctx.render(&mut pixmap, &mut resources);
+    ShadowSource { pixmap, pad: pad as usize }
 }
 
 /// The coverage (alpha) of what `draw` fills, per pixel.

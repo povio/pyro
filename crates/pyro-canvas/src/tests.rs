@@ -144,6 +144,94 @@ fn shadow_is_drawn_offset() {
 }
 
 #[test]
+fn shadow_of_geometry_off_the_bitmap() {
+    // 2d.shadow.*: a shape above the canvas, its shadow offset onto it.
+    let mut s = Surface::new(100, 50);
+    let mut st = state(&[]);
+    st.shadow = Some(Shadow { color: Color::from_rgba8(0, 255, 0, 255), blur: 0.0, offset: Vec2::new(0.0, 50.0) });
+    s.fill(&rect(0.0, -50.0, 100.0, 50.0), false, &rgb(255, 0, 0), &st);
+    assert_eq!(px(&mut s, 50, 25), [0, 255, 0, 255]);
+    assert_eq!(px(&mut s, 0, 0), [0, 255, 0, 255]);
+    assert_eq!(px(&mut s, 99, 49), [0, 255, 0, 255]);
+    // A blurred shadow of a shape just off the bitmap reaches onto it.
+    let mut s = Surface::new(50, 50);
+    let mut st = state(&[]);
+    st.shadow = Some(Shadow { color: Color::from_rgba8(0, 0, 0, 255), blur: 10.0, offset: Vec2::ZERO });
+    s.fill(&rect(-20.0, 0.0, 20.0, 50.0), false, &rgb(255, 0, 0), &st);
+    let edge = px(&mut s, 0, 25)[3];
+    assert!((100..156).contains(&edge), "{edge}");
+    // The clipping region still cuts the shadow.
+    let clip = [ClipPath { path: rect(0.0, 0.0, 50.0, 25.0), evenodd: false }];
+    let mut s = Surface::new(100, 50);
+    let mut st = state(&clip);
+    st.shadow = Some(Shadow { color: Color::from_rgba8(0, 255, 0, 255), blur: 0.0, offset: Vec2::new(0.0, 50.0) });
+    s.fill(&rect(0.0, -50.0, 100.0, 50.0), false, &rgb(255, 0, 0), &st);
+    assert_eq!(px(&mut s, 10, 10), [0, 255, 0, 255]);
+    assert_eq!(px(&mut s, 75, 10)[3], 0);
+    assert_eq!(px(&mut s, 10, 40)[3], 0);
+}
+
+/// The canvas of the 2d.shadow.* WPT pages: 100 by 50, red, and a shadow
+/// state with `color` offset by (`x`, `y`).
+fn shadow_case(color: Color, x: f64, y: f64) -> (Surface, Option<Shadow>) {
+    let mut s = Surface::new(100, 50);
+    s.fill(&rect(0.0, 0.0, 100.0, 50.0), false, &rgb(255, 0, 0), &state(&[]));
+    (s, Some(Shadow { color, blur: 0.0, offset: Vec2::new(x, y) }))
+}
+
+#[test]
+fn wpt_shadow_controls() {
+    let green = Color::from_rgba8(0, 255, 0, 255);
+    // 2d.shadow.alpha.2: a translucent shadow of an opaque fill above.
+    let (mut s, shadow) = shadow_case(Color::from_rgba8(0, 0, 255, 128), 0.0, 50.0);
+    let mut st = state(&[]);
+    st.shadow = shadow;
+    s.fill(&rect(0.0, -50.0, 100.0, 50.0), false, &rgb(255, 0, 0), &st);
+    let p = px(&mut s, 50, 25);
+    assert!(p[0].abs_diff(127) <= 2 && p[1] == 0 && p[2].abs_diff(127) <= 2 && p[3] == 255, "{p:?}");
+    // 2d.shadow.stroke.basic: a wide stroke above.
+    let (mut s, shadow) = shadow_case(green, 0.0, 50.0);
+    let mut st = state(&[]);
+    st.shadow = shadow;
+    let mut line = BezPath::new();
+    line.move_to((0.0, -25.0));
+    line.line_to((100.0, -25.0));
+    s.stroke(&line, &Stroke::new(50.0), &rgb(255, 0, 0), &st);
+    for x in [1, 50, 98] {
+        assert_eq!(px(&mut s, x, 25), [0, 255, 0, 255]);
+    }
+    // 2d.shadow.transform.2: the offset ignores the transform (rotate(π)).
+    let (mut s, shadow) = shadow_case(green, 0.0, 50.0);
+    let mut st = state(&[]);
+    st.shadow = shadow;
+    st.transform = Affine::rotate(std::f64::consts::PI);
+    s.fill(&(st.transform * rect(-100.0, 0.0, 100.0, 50.0)), false, &rgb(255, 0, 0), &st);
+    assert_eq!(px(&mut s, 50, 25), [0, 255, 0, 255]);
+    // 2d.shadow.composite.1: shadow and drawing composite one after the other.
+    let (mut s, shadow) = shadow_case(Color::from_rgba8(255, 0, 0, 255), 100.0, 0.0);
+    let mut st = state(&[]);
+    st.shadow = shadow;
+    st.composite = Composite::Xor;
+    s.fill(&rect(-100.0, 0.0, 200.0, 50.0), false, &rgb(0, 255, 0), &st);
+    assert_eq!(px(&mut s, 50, 25), [0, 255, 0, 255]);
+    // 2d.shadow.outside: shadows from all four sides.
+    let (mut s, _) = shadow_case(green, 0.0, 0.0);
+    for (r, (x, y)) in [
+        (rect(-100.0, 0.0, 25.0, 50.0), (100.0, 0.0)),
+        (rect(175.0, 0.0, 25.0, 50.0), (-100.0, 0.0)),
+        (rect(25.0, -100.0, 50.0, 25.0), (0.0, 100.0)),
+        (rect(25.0, 125.0, 50.0, 25.0), (0.0, -100.0)),
+    ] {
+        let mut st = state(&[]);
+        st.shadow = Some(Shadow { color: green, blur: 0.0, offset: Vec2::new(x, y) });
+        s.fill(&r, false, &rgb(255, 0, 0), &st);
+    }
+    for (x, y) in [(12, 25), (87, 25), (50, 12), (50, 37)] {
+        assert_eq!(px(&mut s, x, y), [0, 255, 0, 255]);
+    }
+}
+
+#[test]
 fn hostile_geometry_finishes() {
     let mut s = Surface::new(50, 50);
     let mut path = BezPath::new();
