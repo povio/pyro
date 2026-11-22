@@ -1,0 +1,51 @@
+WARNING:root:Skipping HTTP/2 compatibility check as system is not using OpenSSL (found: LibreSSL 2.8.3)
+[2026-11-22 09:19:34,943 http-local on port 50027] INFO - Starting https server on https://127.0.0.1:50027
+[2026-11-22 09:19:34,945 http on port 50024] CRITICAL - Failed to start HTTP server on port 50024; is something already using that port?
+[2026-11-22 09:19:34,945 http on port 50024] CRITICAL - start_http_server: Caught exception from wptserve.WebTestHttpd: [Errno 48] Address already in use
+[2026-11-22 09:19:34,945 http on port 50024] CRITICAL - Please ensure all the necessary WPT subdomains are mapped to a loopback device in /etc/hosts.
+See https://web-platform-tests.org/running-tests/from-local-system.html#system-setup for instructions.
+[2026-11-22 09:19:34,961 http-public on port 50028] INFO - Starting https server on https://127.0.0.1:50028
+[2026-11-22 09:19:34,961 http on port 50023] INFO - Starting https server on https://127.0.0.1:50023
+[2026-11-22 09:19:34,969 https on port 50026] INFO - Starting https server on https://127.0.0.1:50026
+[2026-11-22 09:19:34,970 https on port 50025] INFO - Starting https server on https://127.0.0.1:50025
+[2026-11-22 09:19:34,974 https-local on port 50030] INFO - Starting https server on https://127.0.0.1:50030
+[2026-11-22 09:19:34,976 wss on port 50650] INFO - Create socket on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50650))
+[2026-11-22 09:19:34,977 wss on port 50650] INFO - Bind on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50650))
+[2026-11-22 09:19:34,977 wss on port 50650] INFO - Listen on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50650))
+[2026-11-22 09:19:34,981 ws on port 50611] INFO - Create socket on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50611))
+[2026-11-22 09:19:34,981 ws on port 50611] INFO - Bind on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50611))
+[2026-11-22 09:19:34,981 ws on port 50611] INFO - Listen on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50611))
+[2026-11-22 09:19:34,988 h2 on port 51265] INFO - Starting http2 server on https://127.0.0.1:51265
+[2026-11-22 09:19:34,989 https-public on port 50580] INFO - Starting https server on https://127.0.0.1:50580
+INFO:root:Status of subprocess "http on port 50023": running
+INFO:root:Status of subprocess "http on port 50024": running
+INFO:root:Status of subprocess "http-local on port 50027": running
+INFO:root:Status of subprocess "http-public on port 50028": running
+[2026-11-22 09:19:35,404 http on port 50023] INFO - Stopped http server on 127.0.0.1:50023
+[2026-11-22 09:19:35,413 http-local on port 50027] INFO - Stopped http server on 127.0.0.1:50027
+INFO:root:Status of subprocess "https on port 50025": running
+INFO:root:Status of subprocess "https on port 50026": running
+INFO:root:Status of subprocess "https-local on port 50030": running
+[2026-11-22 09:19:35,426 http-public on port 50028] INFO - Stopped http server on 127.0.0.1:50028
+[2026-11-22 09:19:35,431 https on port 50026] INFO - Stopped http server on 127.0.0.1:50026
+[2026-11-22 09:19:35,426 https on port 50025] INFO - Stopped http server on 127.0.0.1:50025
+INFO:root:Status of subprocess "https-public on port 50580": running
+INFO:root:Status of subprocess "h2 on port 51265": running
+INFO:root:Status of subprocess "ws on port 50611": running
+[2026-11-22 09:19:35,440 https-public on port 50580] INFO - Stopped http server on 127.0.0.1:50580
+[2026-11-22 09:19:35,448 h2 on port 51265] INFO - Stopped http server on 127.0.0.1:51265
+INFO:root:Status of subprocess "wss on port 50650": running
+[2026-11-22 09:19:35,458 https-local on port 50030] INFO - Stopped http server on 127.0.0.1:50030
+INFO:root:Status of subprocess "http on port 50023": exited correctly
+WARNING:root:Status of subprocess "http on port 50024": failed. Exit with non-zero status: 1
+[2026-11-22 09:19:35,483 wss on port 50650] INFO - Close on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50650))
+[2026-11-22 09:19:35,486 ws on port 50611] INFO - Close on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50611))
+INFO:root:Status of subprocess "http-local on port 50027": exited correctly
+INFO:root:Status of subprocess "http-public on port 50028": exited correctly
+INFO:root:Status of subprocess "https on port 50025": exited correctly
+INFO:root:Status of subprocess "https on port 50026": exited correctly
+INFO:root:Status of subprocess "https-local on port 50030": exited correctly
+INFO:root:Status of subprocess "https-public on port 50580": exited correctly
+INFO:root:Status of subprocess "h2 on port 51265": exited correctly
+INFO:root:Status of subprocess "ws on port 50611": exited correctly
+INFO:root:Status of subprocess "wss on port 50650": exited correctly

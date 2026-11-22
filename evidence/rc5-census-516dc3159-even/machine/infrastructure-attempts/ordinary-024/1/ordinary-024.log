@@ -1,0 +1,2 @@
+wptserve on http://web-platform.test:50023 (log /var/folders/nn/qnd33c214r50y2h5h2b3bp700000gn/T/pyro-wptserve-gkOmFu/serve.log)
+lp: the WPT server (wptserve) exited (1); log: /var/folders/nn/qnd33c214r50y2h5h2b3bp700000gn/T/pyro-wptserve-gkOmFu/serve.log; the run fails

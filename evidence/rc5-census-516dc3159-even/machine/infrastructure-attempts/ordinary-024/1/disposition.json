@@ -1,0 +1,14 @@
+{
+  "key": "ordinary-024",
+  "reason": "auxiliary HTTP port 50024 failed to bind before first navigation",
+  "retry": "same frozen selector with fresh server",
+  "attemptedURLs": [
+    "IndexedDB/large-requests-abort.any.serviceworker.html",
+    "WebCryptoAPI/generateKey/failures_RSASSA-PKCS1-v1_5.https.any.html",
+    "ai/language-model/response-constraint/regex/csv-row.tentative.https.window.html",
+    "animation-worklet/idlharness.any.html",
+    "cookies/attributes/domain.sub.html",
+    "encoding/legacy-mb-japanese/shift_jis/sjis-decode-windows-31j.html?7001-last"
+  ],
+  "committedRows": 0
+}
