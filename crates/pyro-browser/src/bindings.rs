@@ -901,10 +901,21 @@ impl Browser {
             let Some((frame_host, target)) =
                 find(&host).map(|t| (host.clone(), t)).or_else(|| peers.iter().find_map(|p| find(p).map(|t| (p.clone(), t))))
             else {
+                // A document without a frame (createHTMLDocument, template contents) runs no
+                // script: a script prepared at its insertion and moved here since lets go of
+                // what prepare stashed (and the node it pinned).
+                if event.kind == pyro_dom::script::ResourceKind::Script {
+                    let _ = host.dom.borrow_mut().take_prepared_script(event.node);
+                }
                 continue;
             };
             self.apply_same_document_url(target);
-            let Some(bindings) = frame_host.page_dom(target) else { continue };
+            let Some(bindings) = frame_host.page_dom(target) else {
+                if event.kind == pyro_dom::script::ResourceKind::Script {
+                    let _ = host.dom.borrow_mut().take_prepared_script(event.node);
+                }
+                continue;
+            };
             if event.kind == pyro_dom::script::ResourceKind::Stylesheet {
                 if stylesheet_nodes.insert(event.node) {
                     self.stylesheet_event(target, event.node, unlinked.contains(&event.node));
