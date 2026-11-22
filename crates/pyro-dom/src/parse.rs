@@ -225,6 +225,9 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             if dom.internals.faces != 0 {
                 dom.faces_after_tree_change(n);
             }
+            if dom.input_seen {
+                dom.radios_after_insert(&[n], dom.is_connected_idx(parent));
+            }
             // Elements of defined names were constructed before their
             // insertion (`Sink::settle_custom`): no upgrade candidates here.
             // Tested inline: no custom element, no call.
@@ -629,6 +632,7 @@ impl<A: DomAccess> Sink<A> {
                     .any(|a| a.name.ns == ns!() && &*a.name.local == "content" && a.value.eq_ignore_ascii_case("drawable"));
             }
             local_name!("select") => d.select_seen = true,
+            local_name!("input") => d.input_seen = true,
             local_name!("animate") if name.ns == markup5ever::ns!(svg) => d.smil_seen = true,
             _ => {}
         }

@@ -793,6 +793,67 @@ impl Dom {
         Ok(())
     }
 
+    /// HTML radio button state: when `i` is a radio whose checkedness is true
+    /// after it joined a group, the other radios of that group are unchecked.
+    fn radio_joined_group(&mut self, i: u32) {
+        if !self.is_input(i) || self.input_type_idx(i) != InputType::Radio || !self.checkedness_idx(i) {
+            return;
+        }
+        for other in self.radio_group(i) {
+            if other != i && self.checkedness_idx(other) {
+                let oid = self.id_of(other);
+                if let Ok(c) = self.control_state_mut(oid) {
+                    c.checked = Some(false);
+                    c.dirty_checked = true;
+                }
+            }
+        }
+    }
+
+    /// After `nodes` were inserted: their radios that became connected or got
+    /// a form owner join a group, in tree order (the last checked one stays
+    /// checked). A disconnected tree without a form updates nothing, as in
+    /// Chrome.
+    pub(crate) fn radios_after_insert(&mut self, nodes: &[u32], connected: bool) {
+        let mut radios = Vec::new();
+        for &k in nodes {
+            let mut cur = k;
+            while cur != NIL {
+                if self.is_input(cur) && self.input_type_idx(cur) == InputType::Radio {
+                    radios.push(cur);
+                }
+                cur = self.following_in(cur, k);
+            }
+        }
+        for r in radios {
+            if connected || self.form_owner_idx(r) != NIL {
+                self.radio_joined_group(r);
+            }
+        }
+    }
+
+    /// After attribute `local` of `i` changed from `old`: a radio joins a
+    /// group when its type becomes radio or its name or form owner changes,
+    /// and a `checked` attribute added while the checkedness is not dirty
+    /// checks it.
+    pub(crate) fn radio_after_attr(&mut self, i: u32, local: &str, old: Option<&str>) {
+        if !self.is_input(i) {
+            return;
+        }
+        let join = match local {
+            "type" => InputType::parse(old) != InputType::Radio,
+            "name" | "form" => true,
+            "checked" => {
+                old.is_none()
+                    && !self.n(i).element().and_then(|e| e.control.as_ref()).is_some_and(|c| c.dirty_checked)
+            }
+            _ => false,
+        };
+        if join {
+            self.radio_joined_group(i);
+        }
+    }
+
     /// Form owner: `form` attribute target or nearest ancestor form.
     pub(crate) fn form_owner_idx(&self, idx: u32) -> u32 {
         let Some(e) = self.n(idx).element() else { return NIL };

@@ -203,6 +203,9 @@ impl Dom {
         if self.selectedcontent_seen && name.ns == markup5ever::ns!() {
             self.selectedcontent_after_attr(i, &name.local);
         }
+        if self.input_seen && name.ns == markup5ever::ns!() {
+            self.radio_after_attr(i, &name.local, old);
+        }
     }
 
     #[cold]

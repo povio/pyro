@@ -315,6 +315,9 @@ pub struct Dom {
     /// A `<select>` was created: the selectedness steps of insertions and
     /// removals (`Dom::options_after_insert`) run (none before).
     pub(crate) select_seen: bool,
+    /// An `<input>` was created: radios joining a group by insertion uncheck
+    /// the rest of it (`Dom::radio_joined_group`; none before).
+    pub(crate) input_seen: bool,
     /// `replace_all` is removing children whose options it already handled
     /// (`Dom::options_before_remove_children`).
     pub(crate) options_batch_removal: bool,
@@ -436,6 +439,7 @@ impl Dom {
             pending_input_value_attr: None,
             selectedcontent_seen: false,
             select_seen: false,
+            input_seen: false,
             options_batch_removal: false,
             selectedcontent_updating: false,
             selectedcontent_pending: Vec::new(),
@@ -1738,6 +1742,7 @@ impl Dom {
             local_name!("audio") | local_name!("video") | local_name!("track") => self.media_seen = true,
             local_name!("canvas") => self.canvas_seen = true,
             local_name!("select") => self.select_seen = true,
+            local_name!("input") => self.input_seen = true,
             local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
             _ => {}
         }
@@ -3133,6 +3138,9 @@ impl Dom {
         }
         if self.selectedcontent_seen {
             self.selectedcontent_after_insert(nodes, parent, connected);
+        }
+        if self.input_seen {
+            self.radios_after_insert(nodes, connected);
         }
     }
 
