@@ -618,10 +618,10 @@
         ReadableStream$s.set(this, strategy);
         return;
       }
-      const strat = strategyOf(strategy, 'ReadableStream');
-      if (source !== undefined && source !== null && !isObject(source)) {
+      if (source !== undefined && !isObject(source)) {
         throw new TypeErrorC("Failed to construct 'ReadableStream': The provided value is not of type 'object'.");
       }
+      const strat = strategyOf(strategy, 'ReadableStream');
       const d = dictionary(source, 'ReadableStream');
       const autoRaw = d.autoAllocateChunkSize;
       const auto = autoRaw === undefined ? undefined : NumberC(autoRaw);
@@ -712,8 +712,9 @@
       return it;
     }
     static from(iterable) {
-      const method = iterable === undefined || iterable === null ? undefined : iterable[asyncIterator];
-      const getter = method === undefined || method === null ? (iterable === undefined || iterable === null ? undefined : iterable[iterator]) : method;
+      if (!isObject(iterable)) throw new TypeErrorC("Failed to execute 'from' on 'ReadableStream': The provided value is not an object.");
+      const method = iterable[asyncIterator];
+      const getter = method === undefined || method === null ? iterable[iterator] : method;
       if (typeof getter !== 'function') throw new TypeErrorC("Failed to execute 'from' on 'ReadableStream': The provided value is not iterable.");
       const it = apply(getter, iterable, []);
       if (!isObject(it)) throw new TypeErrorC("Failed to execute 'from' on 'ReadableStream': The iterator is not an object.");
