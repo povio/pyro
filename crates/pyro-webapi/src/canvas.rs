@@ -1327,7 +1327,7 @@ fn draw_text(s: &Scope<'_>, c: &ContextData, a: Args<'_>, fill: bool) -> JsResul
         _ => 1.0,
     };
     let width = layout.width * scale;
-    let dx = match align_of(&state) {
+    let dx = match align_of(c, &state) {
         Align::Center => -width / 2.0,
         Align::Right => -width,
         Align::Left => 0.0,
@@ -1346,9 +1346,24 @@ enum Align {
     Right,
 }
 
-/// `textAlign` resolved for the direction (`inherit` is left-to-right).
-fn align_of(state: &State) -> Align {
-    let rtl = state.direction == "rtl";
+/// Whether text is right-to-left: `direction`, where `inherit` is the computed `direction` of a
+/// `<canvas>` (its `dir` or an ancestor's) and left-to-right for an OffscreenCanvas.
+fn is_rtl(c: &ContextData, state: &State) -> bool {
+    match state.direction {
+        "rtl" => true,
+        "ltr" => false,
+        _ => match c.target {
+            Target::Element(canvas) => c.page.try_layout().is_some_and(|layout| {
+                c.page.dom.try_borrow().is_ok_and(|dom| layout.computed_style_value(&dom, canvas, "direction") == "rtl")
+            }),
+            Target::Offscreen => false,
+        },
+    }
+}
+
+/// `textAlign` resolved for the direction ([`is_rtl`]).
+fn align_of(c: &ContextData, state: &State) -> Align {
+    let rtl = is_rtl(c, state);
     match state.text_align {
         "center" => Align::Center,
         "left" => Align::Left,
@@ -2022,7 +2037,7 @@ impl ContextData {
             let layout = layout_text(&c.page, &text, &state);
             let (width, ascent, descent) = (layout.width, layout.ascent, layout.descent);
             // Where the text starts relative to the alignment point.
-            let start = match align_of(&state) {
+            let start = match align_of(c, &state) {
                 Align::Center => -width / 2.0,
                 Align::Right => -width,
                 Align::Left => 0.0,
