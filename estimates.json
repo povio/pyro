@@ -32,11 +32,11 @@
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
-    "html/infrastructure": 9,
     "workers": 9,
+    "html/infrastructure": 9,
     "encoding": 7,
-    "fetch/data-urls": 6,
     "fetch/corb": 6,
+    "fetch/data-urls": 6,
     "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
@@ -45,11 +45,11 @@
     "fetch/nosniff": 3,
     "fetch/orb": 2,
     "xhr": 2,
-    "IndexedDB": 1,
-    "fetch/redirect-navigate": 1,
+    "fetch/security": 1,
     "svg/styling": 1,
-    "quirks": 1,
-    "fetch/security": 1
+    "fetch/redirect-navigate": 1,
+    "IndexedDB": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -76,17 +76,17 @@
     "html/infrastructure": 11,
     "fetch/fetch-later": 10,
     "fetch/api": 7,
-    "html/browsers": 6,
     "IndexedDB": 6,
-    "html/dom": 5,
+    "html/browsers": 6,
     "html/webappapis": 5,
+    "html/dom": 5,
     "fetch/security": 4,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/redirects": 1,
     "fetch/range": 1,
     "fetch/content-type": 1,
-    "fetch/images": 1,
-    "fetch/http-cache": 1
+    "fetch/redirects": 1,
+    "fetch/http-cache": 1,
+    "fetch/images": 1
    }
   },
   "queued": {
@@ -109,8 +109,8 @@
     "webidl": 19,
     "fetch/compression-dictionary": 8,
     "html/interaction": 5,
-    "svg/path": 4,
     "html/semantics": 4,
+    "svg/path": 4,
     "workers": 3,
     "dom/nodes": 1
    }
