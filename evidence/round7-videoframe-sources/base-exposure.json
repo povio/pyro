@@ -1,0 +1,46 @@
+{
+  "secure": {
+    "origin": "http://127.0.0.1:49960",
+    "secureContext": true,
+    "interfaces": {
+      "AudioPlaybackStats": {
+        "present": true,
+        "type": "function"
+      },
+      "ImageDecoder": {
+        "present": true,
+        "type": "function"
+      },
+      "ImageTrackList": {
+        "present": true,
+        "type": "function"
+      },
+      "ImageTrack": {
+        "present": true,
+        "type": "function"
+      }
+    }
+  },
+  "insecure": {
+    "origin": "http://192.168.1.105:49961",
+    "secureContext": false,
+    "interfaces": {
+      "AudioPlaybackStats": {
+        "present": false,
+        "type": "undefined"
+      },
+      "ImageDecoder": {
+        "present": false,
+        "type": "undefined"
+      },
+      "ImageTrackList": {
+        "present": false,
+        "type": "undefined"
+      },
+      "ImageTrack": {
+        "present": false,
+        "type": "undefined"
+      }
+    }
+  }
+}
