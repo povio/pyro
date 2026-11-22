@@ -335,8 +335,6 @@ pub(crate) struct State {
     /// pyro: `lang` (any string; `inherit` by default). Stored only: text is shaped without it.
     lang: String,
     font_kerning: &'static str,
-    font_stretch: &'static str,
-    font_variant_caps: &'static str,
     text_rendering: &'static str,
     pub(crate) transform: Affine,
     /// The clipping region: the intersection of these (device space).
@@ -373,8 +371,6 @@ impl State {
             word_spacing: "0px".into(),
             lang: "inherit".into(),
             font_kerning: "auto",
-            font_stretch: "normal",
-            font_variant_caps: "normal",
             text_rendering: "auto",
             transform: Affine::IDENTITY,
             clip: Rc::new(Vec::new()),
@@ -464,6 +460,19 @@ impl ContextData {
 
 fn default_font() -> FontSpec {
     text_metrics::parse_font("10px sans-serif", 10.0).expect("default canvas font")
+}
+
+/// The size relative canvas `font` sizes resolve against: the computed
+/// `font-size` of a connected `<canvas>`, else 10px (an OffscreenCanvas, a
+/// disconnected element).
+fn font_parent_size(c: &ContextData) -> f64 {
+    let Target::Element(canvas) = c.target else { return 10.0 };
+    let size = c.page.try_layout().map(|layout| layout.computed_style_value(&c.page.dom.borrow(), canvas, "font-size"));
+    size.as_deref()
+        .and_then(|v| v.strip_suffix("px"))
+        .and_then(|n| n.parse::<f64>().ok())
+        .filter(|n| n.is_finite() && *n >= 0.0)
+        .unwrap_or(10.0)
 }
 
 /// pyro: a canvas `filter` value for drawing: `None` for `none` (or nothing); else the value
@@ -1721,8 +1730,11 @@ impl ContextData {
             "font",
             |s, c| Ok(s.string(&c.state.borrow().font.serialize())),
             |_s, c, v| {
-                // Invalid values are ignored; em/% resolve against 10px.
-                if let Some(font) = text_metrics::parse_font(&dom_string(v)?, 10.0) {
+                // Invalid values are ignored; em/% resolve against the
+                // canvas element's computed font-size, else 10px. The
+                // shorthand also sets fontVariantCaps and fontStretch.
+                let value = dom_string(v)?;
+                if let Some(font) = text_metrics::parse_font(&value, font_parent_size(c)) {
                     c.state.borrow_mut().font = font;
                 }
                 Ok(())
@@ -1740,27 +1752,27 @@ impl ContextData {
         enum_state!(def, "lineJoin", line_join, ["round", "bevel", "miter"]);
         enum_state!(def, "imageSmoothingQuality", image_smoothing_quality, ["low", "medium", "high"]);
         enum_state!(def, "fontKerning", font_kerning, ["auto", "normal", "none"]);
-        enum_state!(
-            def,
+        def.accessor(
             "fontStretch",
-            font_stretch,
-            [
-                "ultra-condensed",
-                "extra-condensed",
-                "condensed",
-                "semi-condensed",
-                "normal",
-                "semi-expanded",
-                "expanded",
-                "extra-expanded",
-                "ultra-expanded"
-            ]
+            |s, c| Ok(s.string(c.state.borrow().font.stretch)),
+            |_s, c, v| {
+                let v = dom_string(v)?;
+                if let Some(&keyword) = text_metrics::STRETCHES.iter().find(|k| **k == v) {
+                    c.state.borrow_mut().font.stretch = keyword;
+                }
+                Ok(())
+            },
         );
-        enum_state!(
-            def,
+        def.accessor(
             "fontVariantCaps",
-            font_variant_caps,
-            ["normal", "small-caps", "all-small-caps", "petite-caps", "all-petite-caps", "unicase", "titling-caps"]
+            |s, c| Ok(s.string(c.state.borrow().font.variant_caps)),
+            |_s, c, v| {
+                let v = dom_string(v)?;
+                if let Some(&keyword) = text_metrics::VARIANT_CAPS.iter().find(|k| **k == v) {
+                    c.state.borrow_mut().font.variant_caps = keyword;
+                }
+                Ok(())
+            },
         );
         enum_state!(
             def,
