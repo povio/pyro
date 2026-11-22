@@ -70,7 +70,7 @@ impl BaseDocument {
         use style::values::specified::box_::{DisplayInside, DisplayOutside};
         let Some(node) = self.get_node(id) else { return false };
         let Some(styles) = node.primary_styles() else { return false };
-        let display = styles.get_box().clone_display();
+        let display = stylo_taffy::CopyStyleGetters::clone_display(&**styles);
         if display.is_none() || display.is_contents() {
             return false;
         }
