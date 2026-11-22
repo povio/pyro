@@ -555,6 +555,9 @@ impl PageNav {
     /// current entry takes it, without a new entry or a navigation.
     pub(crate) fn document_opened_url(&self, url: &str) {
         self.update_initial_blank_url(url);
+        // Frame::url (what CDP reports) follows at the next checkpoint
+        // (`Browser::apply_same_document_url`), as for a same-document change.
+        *self.pending_frame_url.borrow_mut() = Some(url.to_string());
     }
 
     fn set_url_sync(&self, url: &str) {
