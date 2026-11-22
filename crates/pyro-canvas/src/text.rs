@@ -60,6 +60,21 @@ struct Context {
 
 thread_local! {
     static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
+    /// pyro: contexts with web faces registered ([`layout_with_faces`]), by the key of their
+    /// face set, least recently made first; at most [`FACED_CONTEXTS`].
+    static FACED: RefCell<Vec<(u64, Context)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// pyro: face sets whose contexts a thread keeps (a page that keeps adding faces replaces its
+/// context instead of piling up font collections).
+const FACED_CONTEXTS: usize = 4;
+
+/// pyro: a web font a page gave canvas text (a document `@font-face` rule's loaded source or a
+/// loaded script `FontFace`), found by `family` as an installed font is.
+#[derive(Clone)]
+pub struct WebFace {
+    pub family: String,
+    pub data: parley::fontique::Blob<u8>,
 }
 
 /// Drops this thread's text shaping state, the font collection included
@@ -68,6 +83,8 @@ thread_local! {
 pub fn release_thread() {
     let context = CONTEXT.with(|cell| cell.try_borrow_mut().ok().and_then(|mut cell| cell.take()));
     drop(context);
+    let faced = FACED.with(|cell| cell.try_borrow_mut().map(|mut cell| std::mem::take(&mut *cell)).unwrap_or_default());
+    drop(faced);
 }
 
 /// HTML "text preparation": ASCII whitespace becomes spaces (one line).
@@ -86,21 +103,57 @@ pub fn layout(text: &str, style: &TextStyle<'_>) -> TextLayout {
         let mut cell = cell.borrow_mut();
         let cx =
             cell.get_or_insert_with(|| Context { fonts: crate::fonts::font_context(), layout: LayoutContext::new() });
-        if text.is_empty() {
-            // No glyphs: the metrics of the font a space would use.
-            let space = shape(cx, " ", style);
-            return TextLayout { ascent: space.ascent, descent: space.descent, ..TextLayout::default() };
-        }
-        let mut out = shape(cx, &text, style);
-        if out.runs.is_empty() {
-            // No glyphs (empty text): the metrics of the font a space
-            // would use.
-            let space = shape(cx, " ", style);
-            out.ascent = space.ascent;
-            out.descent = space.descent;
-        }
-        out
+        line(cx, &text, style)
     })
+}
+
+/// pyro: [`layout`] with a page's web faces besides the process's fonts. `key` names the face set
+/// (the caller changes it whenever `faces` change); the thread keeps the font collections of the
+/// last few sets. Without faces, exactly [`layout`].
+pub fn layout_with_faces(text: &str, style: &TextStyle<'_>, key: u64, faces: &[WebFace]) -> TextLayout {
+    if faces.is_empty() {
+        return layout(text, style);
+    }
+    let text = prepare(text);
+    FACED.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let at = match cell.iter().position(|(k, _)| *k == key) {
+            Some(at) => at,
+            None => {
+                if cell.len() >= FACED_CONTEXTS {
+                    cell.remove(0);
+                }
+                let mut fonts = crate::fonts::font_context();
+                for face in faces {
+                    // As blitz-dom registers a document's `@font-face` fonts (document.rs).
+                    let info_override =
+                        parley::fontique::FontInfoOverride { family_name: Some(face.family.as_str()), ..Default::default() };
+                    fonts.collection.register_fonts(face.data.clone(), Some(info_override));
+                }
+                cell.push((key, Context { fonts, layout: LayoutContext::new() }));
+                cell.len() - 1
+            }
+        };
+        line(&mut cell[at].1, &text, style)
+    })
+}
+
+/// One prepared line in `cx`.
+fn line(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
+    if text.is_empty() {
+        // No glyphs: the metrics of the font a space would use.
+        let space = shape(cx, " ", style);
+        return TextLayout { ascent: space.ascent, descent: space.descent, ..TextLayout::default() };
+    }
+    let mut out = shape(cx, text, style);
+    if out.runs.is_empty() {
+        // No glyphs (empty text): the metrics of the font a space
+        // would use.
+        let space = shape(cx, " ", style);
+        out.ascent = space.ascent;
+        out.descent = space.descent;
+    }
+    out
 }
 
 fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
