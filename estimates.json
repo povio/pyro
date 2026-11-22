@@ -11,10 +11,10 @@
    }
   },
   "in_progress": {
-   "distinct_census_pages": 138,
-   "studio_css_reported_pages_not_deduped": 34,
+   "distinct_census_pages": 157,
+   "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
-    "html/canvas": 100,
+    "html/canvas": 119,
     "scheduler": 19,
     "fetch/content-encoding": 9,
     "html/semantics": 5,
@@ -24,42 +24,42 @@
    }
   },
   "queued": {
-   "distinct_census_pages": 603,
-   "studio_css_reported_pages_not_deduped": 126,
+   "distinct_census_pages": 584,
+   "studio_css_reported_pages_not_deduped": 122,
    "by_dir": {
     "svg/animations": 229,
-    "html/canvas": 138,
+    "html/canvas": 119,
     "intersection-observer": 41,
     "html/semantics": 23,
     "dom/events": 21,
     "webidl": 19,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
     "pointerevents": 11,
     "html/syntax": 8,
     "selection": 7,
     "shadow-dom": 7,
     "workers": 6,
     "navigation-api": 6,
-    "uievents": 5,
-    "html/editing": 5,
     "fetch/api": 5,
+    "html/editing": 5,
+    "uievents": 5,
     "svg/path": 4,
     "svg/types": 4,
+    "event-timing": 3,
     "mathml": 3,
-    "inert": 3,
-    "dom/nodes": 3,
     "close-watcher": 3,
     "html/browsers": 3,
-    "event-timing": 3,
+    "dom/nodes": 3,
+    "inert": 3,
     "soft-navigation-heuristics": 2,
     "html/rendering": 2,
     "resource-timing": 2,
     "fetch/fetch-later": 2,
-    "document-picture-in-picture": 1,
-    "pointerlock": 1,
     "custom-elements": 1,
-    "editing": 1
+    "document-picture-in-picture": 1,
+    "editing": 1,
+    "pointerlock": 1
    }
   }
  },
@@ -225,7 +225,7 @@
    "pages": null
   },
   "SC-Q25-page-rule-selector-validation": {
-   "state": "proposed",
+   "state": "claimed",
    "pages": null
   },
   "SC-Q26-css-syntax-eof-serialization": {
@@ -261,7 +261,7 @@
    "pages": null
   },
   "SC-Q34-env-parsing": {
-   "state": "proposed",
+   "state": "claimed",
    "pages": null
   },
   "SC-Q35-picker-pseudo-parsing": {
@@ -333,7 +333,7 @@
    "pages": 30
   },
   "C04": {
-   "state": "validated",
+   "state": "claimed",
    "pages": 19
   },
   "C05": {
