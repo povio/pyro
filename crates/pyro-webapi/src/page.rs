@@ -1258,8 +1258,9 @@ impl PageDom {
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
-        // HTML BarProp.visible returns true when the browsing context is null.
-        !self.is_fully_active() || !self.window_chrome.get().0
+        // BarProp.visible: false once the window has no browsing context (its frame was removed,
+        // its popup discarded), as in Chrome (WPT the-window-object/BarProp); else not a popup.
+        self.is_fully_active() && !self.window_chrome.get().0
     }
 
     pub fn is_disposed(&self) -> bool {
