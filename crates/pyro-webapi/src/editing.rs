@@ -1400,7 +1400,34 @@ fn paragraph_for_split(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId, co
 }
 
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
-    let Some(caret) = paragraph_point(dom, host, caret) else { return caret };
+    // A DOM caret inside an inline void has no child insertion position.
+    // Split at the rendered object's edge so it travels with the right line.
+    let void = caret.0;
+    let kind = dom.element(void).ok().filter(|el| el.is_html() && pyro_dom::serialize::is_void(el.local_name()))
+        .map(|el| el.local_name().to_string());
+    let mut terminal_break = false;
+    let mut following_text = None;
+    let point = kind.as_deref().and_then(|kind| {
+        if void == host || !target_range::rendered(page, dom, void) { return None; }
+        let parent = dom.parent_element(void).ok()??;
+        let index = dom.index_in_parent(void).ok()?;
+        match kind {
+            "img" | "input" => Some((parent, index)),
+            "br" | "wbr" | "embed" => {
+                let next = dom.next_sibling(void).ok()?;
+                if let Some(text) = next.filter(|&n| is_text(dom, n) && len(dom, n) != 0) {
+                    if kind != "br" { following_text = Some(text); }
+                    Some((parent, index))
+                } else if next.is_none() {
+                    terminal_break = true;
+                    Some((parent, index + 1))
+                } else { None }
+            }
+            _ => None,
+        }
+    });
+    let Some(caret) = point.or_else(|| paragraph_point(dom, host, caret)) else { return caret };
+
     // Content that is text only (a `<script>` or `<style>` in the head of a designMode
     // document) gets a linefeed, as in browsers: no element goes into it.
     if in_text_only_element(dom, caret.0) {
@@ -1473,7 +1500,15 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         block = wrapper;
     }
     let tag = local(dom, block);
-    let Ok(new_block) = dom.clone_node(block, false, None) else {
+    let new_block = if terminal_break && dom.parent(void).ok().flatten() == Some(block)
+        && matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
+    {
+        let separator = dom.document_data(doc).map(|d| d.default_paragraph_separator).unwrap_or("div").to_owned();
+        dom.create_element(doc, &separator)
+    } else {
+        dom.clone_node(block, false, None)
+    };
+    let Ok(new_block) = new_block else {
         return caret;
     };
     let _ = dom.remove_attribute(new_block, "id");
@@ -1548,6 +1583,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         let _ = dom.replace_all(new_block, Some(only_child));
     }
     placeholder_if_empty(dom, block);
+    if let Some(text) = following_text { return (text, 0); }
     placeholder_if_empty(dom, new_block).unwrap_or_else(|| paragraph_point(dom, new_block, (new_block, 0)).unwrap_or((new_block, 0)))
 }
 
