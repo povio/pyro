@@ -211,9 +211,12 @@ pub(crate) fn content_attribute_changed(
     let handler: Value<'_> = match body {
         Some(body) => {
             // CSP `script-src-attr` (a listed hash of the body counts with 'unsafe-hashes'): a
-            // blocked handler is not installed; the violation is at the element.
+            // blocked handler is not installed; the violation is at the element, located at the
+            // script that set the attribute (none for the parser's).
             let element = target.page.dom.borrow().key_node(target.key);
-            if !crate::csp::inline_allowed(&target.page, crate::csp::InlineKind::ScriptAttribute, "", body, element) {
+            let location = if crate::csp::has_policies(&target.page) { crate::csp::handler_location(s) } else { None };
+            let kind = crate::csp::InlineKind::ScriptAttribute;
+            if !crate::csp::inline_allowed_at(&target.page, kind, "", body, element, location.as_ref()) {
                 return set_event_handler(s, target, ty, s.null());
             }
             let ctor = s.global().get_atom("Function")?;
@@ -251,6 +254,32 @@ pub(crate) fn drain_inline(page: &crate::page::PageDom) {
     if !page.dom.borrow().has_pending_inline_handlers() {
         return;
     }
+    crate::csp::with_handler_location(None, || drain_pending(page));
+}
+
+/// Before a fragment parse a script does (`innerHTML`) in a document with a CSP policy: the
+/// handler attributes still pending are compiled unlocated, so that
+/// [`drain_inline_after_fragment`] locates only the fragment's. Without a policy nothing is
+/// located and compiling stays lazy.
+pub(crate) fn drain_inline_before_fragment(page: &crate::page::PageDom) {
+    if crate::csp::has_policies(page) {
+        drain_inline(page);
+    }
+}
+
+/// Right after a fragment parse the script running in `s` did, in a document with a CSP
+/// policy: compiles the fragment's handler attributes now, their violations located at that
+/// script (`securitypolicyviolation`'s `lineNumber` is the `innerHTML` assignment's, as in
+/// Chrome).
+pub(crate) fn drain_inline_after_fragment(s: &Scope<'_>, page: &crate::page::PageDom) {
+    if !crate::csp::has_policies(page) || !page.dom.borrow().has_pending_inline_handlers() {
+        return;
+    }
+    let location = crate::csp::SourceLocation::running(s);
+    crate::csp::with_handler_location(location, || drain_pending(page));
+}
+
+fn drain_pending(page: &crate::page::PageDom) {
     let Some(realm) = page.main_world_realm() else { return };
     let Ok(s) = realm.scope() else { return };
     let pending = page.dom.borrow_mut().take_pending_inline_handlers();
