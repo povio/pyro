@@ -4040,6 +4040,18 @@ impl Layout {
         )
     }
 
+    fn reveal_scroll_padding(&self, dom: &Dom, alignment: RevealAlignment, element: Option<NodeId>, width: f64, height: f64) -> [f64; 4] {
+        use app_units::Au;
+        if !matches!(alignment, RevealAlignment::Logical { .. }) { return [0.0; 4]; }
+        let Some(style) = element.and_then(|node| self.style.stylo_style(dom, node)) else { return [0.0; 4] };
+        let padding = style.get_padding();
+        let horizontal = Au::from_f64_px(width);
+        let vertical = Au::from_f64_px(height);
+        [(&padding.scroll_padding_left, horizontal), (&padding.scroll_padding_top, vertical),
+         (&padding.scroll_padding_right, horizontal), (&padding.scroll_padding_bottom, vertical)]
+            .map(|(value, basis)| value.to_used_value(basis).map_or(0.0, Au::to_f64_px))
+    }
+
     fn scroll_into_view_offset_targets(
         &mut self,
         dom: &Dom,
@@ -4103,11 +4115,13 @@ impl Layout {
                 // `scroll-snap-align` in place of the alignment asked for), as Chromium does (CSS
                 // Scroll Snap 1 § 4; WPT css-overflow `targeted-column-scroll-marker-selection-001`).
                 let (offset_x, offset_y) = if script { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
+                let (port_width, port_height) = (self.client_width(dom, node), self.client_height(dom, node));
+                let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, Some(node), port_width, port_height);
                 let left = (axes.x || explicit)
-                    .then(|| offset_x(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
+                    .then(|| offset_x(x - pl, width, (port_width - pl - pr).max(0.0), self.scroll_left(node) as i64))
                     .flatten();
                 let top = (axes.y || explicit)
-                    .then(|| offset_y(y, height, self.client_height(dom, node), self.scroll_top(node) as i64))
+                    .then(|| offset_y(y - pt, height, (port_height - pt - pb).max(0.0), self.scroll_top(node) as i64))
                     .flatten();
                 if self.element_scroll_to(dom, node, left, top) {
                     moved.push(ScrollTarget::Container(node));
@@ -4126,8 +4140,11 @@ impl Layout {
             self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()).unwrap_or([0.0; 4]);
         let (offset_x, offset_y) = alignment.offsets(|| self.viewport_style_element(dom)
             .and_then(|node| self.style.stylo_style(dom, node)).map(|style| style.writing_mode));
-        let left = offset_x(target.left() - gl, target.width, self.inner_width() as f64 - gl - gr, self.window_scroll.0 as i64);
-        let top = offset_y(target.top() - gt, target.height, self.inner_height() as f64 - gt - gb, self.window_scroll.1 as i64);
+        let (width, height) = (self.inner_width() as f64 - gl - gr, self.inner_height() as f64 - gt - gb);
+        let root = dom.document_element(self.document()).ok().flatten();
+        let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, root, width, height);
+        let left = offset_x(target.left() - gl - pl, target.width, (width - pl - pr).max(0.0), self.window_scroll.0 as i64);
+        let top = offset_y(target.top() - gt - pt, target.height, (height - pt - pb).max(0.0), self.window_scroll.1 as i64);
         if self.window_scroll_to(dom, left, top) {
             moved.push(ScrollTarget::Viewport);
         }

@@ -1,0 +1,149 @@
+{
+  "version": "158.0.8127.37",
+  "results": [
+    {
+      "url": "css/cssom-view/scrollIntoView-horizontal-tb-writing-mode-and-rtl-direction.html",
+      "status": 0,
+      "tests": [
+        {
+          "name": "scrollIntoView({\"block\":\"start\",\"inline\":\"start\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"start\",\"inline\":\"center\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"start\",\"inline\":\"end\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"center\",\"inline\":\"start\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"center\",\"inline\":\"center\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"center\",\"inline\":\"end\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"end\",\"inline\":\"start\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"end\",\"inline\":\"center\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"end\",\"inline\":\"end\"})",
+          "status": 0,
+          "message": null
+        }
+      ]
+    },
+    {
+      "url": "css/cssom-view/scrollIntoView-horizontal-tb-writing-mode.html",
+      "status": 0,
+      "tests": [
+        {
+          "name": "scrollIntoView({\"block\":\"start\",\"inline\":\"start\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"start\",\"inline\":\"center\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"start\",\"inline\":\"end\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"center\",\"inline\":\"start\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"center\",\"inline\":\"center\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"center\",\"inline\":\"end\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"end\",\"inline\":\"start\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"end\",\"inline\":\"center\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({\"block\":\"end\",\"inline\":\"end\"})",
+          "status": 0,
+          "message": null
+        }
+      ]
+    },
+    {
+      "url": "css/cssom-view/scrollIntoView-scrollMargin.html",
+      "status": 0,
+      "tests": [
+        {
+          "name": "scrollIntoView({block: \"center\", inline: \"center\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({block: \"start\", inline: \"start\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({block: \"end\", inline: \"end\"})",
+          "status": 0,
+          "message": null
+        }
+      ]
+    },
+    {
+      "url": "css/cssom-view/scrollIntoView-scrollPadding.html",
+      "status": 0,
+      "tests": [
+        {
+          "name": "scrollIntoView({block: \"center\", inline: \"center\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({block: \"start\", inline: \"start\"})",
+          "status": 0,
+          "message": null
+        },
+        {
+          "name": "scrollIntoView({block: \"end\", inline: \"end\"})",
+          "status": 0,
+          "message": null
+        }
+      ]
+    }
+  ]
+}
