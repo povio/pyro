@@ -1,0 +1,51 @@
+{
+  "IDL harness": {
+    "matchedGain": 18,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "reflection interface": {
+    "matchedGain": 6,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "event interface and dispatch": {
+    "matchedGain": 12,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 2,
+    "lpOnly": 0
+  },
+  "other interest behavior": {
+    "matchedGain": 0,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 190,
+    "lpOnly": 0
+  },
+  "legacy controls": {
+    "matchedGain": 0,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 10,
+    "lpOnly": 0
+  },
+  "reference target hover activation": {
+    "matchedGain": 0,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 3,
+    "lpOnly": 0
+  },
+  "reference target reflection matrices": {
+    "matchedGain": 0,
+    "newPass": 45,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 675
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "scores": {
+    "baseFull": 7,
+    "candidateFull": 10,
+    "chrome158Full": 37,
+    "baseNamed": 6226,
+    "candidateNamed": 6307,
+    "chrome158Named": 5837,
+    "lost": 0,
+    "new": 45,
+    "missing": 0,
+    "chromeOnly": 205,
+    "lpOnly": 675,
+    "gained": 81
+  },
+  "gainsByPage": {
+    "html/semantics/interestfor/idlharness.tentative.html": 18,
+    "html/semantics/interestfor/interestelement-interface.tentative.html": 6,
+    "html/semantics/interestfor/interestevent-dispatch-shadow.tentative.html": 1,
+    "html/semantics/interestfor/interestevent-interface.tentative.html": 11,
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html": 15,
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html": 15,
+    "shadow-dom/reference-target/tentative/property-reflection.html": 15
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 46,
+        "error": 4
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "25b8e16e18ff917f6c3d2f31c00bbddea5a4427f7a9625895b14b47bea40e60d"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "error": 4,
+        "complete": 46
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "be7d86a4a0f6aa7224607179bced83a26f31738484fe0cf4ca2b79013f03333c"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 47,
+        "error": 3
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "3f655b019249db341c31a8ce5fe942f0a1c8b9f67079d94dec32bfff6b48e999"
+    }
+  }
+}
