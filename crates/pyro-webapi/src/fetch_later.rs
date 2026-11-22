@@ -107,11 +107,12 @@ impl DeferredFetches {
 }
 
 /// Sets the quota of `child`, a new document in a frame of `parent`'s document: `parent`'s
-/// control document's when their origins are the same or the container's `allow` delegates
-/// "deferred-fetch" to the child's origin (`delegated`: `Some(true)`); none when that `allow`
-/// declares "deferred-fetch" for another origin (`Some(false)`: the container reserved the normal
-/// quota, which this document may not use, and no minimal one, as Fetch's "reserve deferred-fetch
-/// quota" does); else (or with no parent document) a minimal quota of its own. Called by the
+/// control document's when their origins are the same or the container reserved the normal
+/// quota for it and "deferred-fetch" is enabled for its origin (`delegated`: `Some(true)`); none
+/// when the container reserved the normal quota for the origin it navigated to but the document
+/// ended up at another one (`Some(false)`: no minimal one either, as Fetch's "reserve
+/// deferred-fetch quota" does); else (or with no parent document) a minimal quota of its own,
+/// also when `allow` names "deferred-fetch" without enabling it (`'none'`). Called by the
 /// embedder before the document runs script.
 pub fn join_quota(child: &PageDom, parent: Option<&PageDom>, same_origin: bool, delegated: Option<bool>) {
     let pool = match parent {

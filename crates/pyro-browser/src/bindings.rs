@@ -1219,22 +1219,27 @@ pub(crate) fn create(
         let same_origin = host
             .frame(parent_key)
             .is_some_and(|parent| crate::frames::frame_origin_key(&parent) == crate::frames::frame_origin_key(&frame));
-        // The container's `allow` on "deferred-fetch" for this document's origin: delegated to it
-        // (the normal quota), or declared for another origin (its `src`'s, before a redirect),
-        // which reserved the normal quota for a document that may not use it and no minimal one.
+        // Fetch "reserve deferred-fetch quota": the container reserves the normal quota when its
+        // `allow` enables "deferred-fetch" for the origin it navigates to (its `src`'s, before any
+        // redirect), else the minimal one. A normal reservation is this document's to use only
+        // when "deferred-fetch" is enabled for its own origin too (`Some(true)`); after a
+        // redirect to another origin it has none (`Some(false)`). `None`: the minimal quota.
         let delegated = parent.as_ref().and_then(|pd| {
             let parent_url =
                 pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
             let parent_origin = frame_origin(host, parent_key, &parent_url, pd.has_opaque_origin());
             let child_origin = frame_origin(host, page, url, frame.sandbox.opaque);
             let container = frame.fullscreen_container.clone();
-            pyro_webapi::fullscreen::container_allows(
-                "deferred-fetch",
-                container.allow.as_deref(),
-                parent_origin.as_deref(),
-                container.declared_origin.as_deref(),
-                child_origin.as_deref(),
-            )
+            let enabled_for = |origin: Option<&str>| {
+                pyro_webapi::fullscreen::container_allows(
+                    "deferred-fetch",
+                    container.allow.as_deref(),
+                    parent_origin.as_deref(),
+                    container.declared_origin.as_deref(),
+                    origin,
+                ) == Some(true)
+            };
+            enabled_for(container.declared_origin.as_deref()).then(|| enabled_for(child_origin.as_deref()))
         });
         pyro_webapi::fetch_later::join_quota(&bindings, parent.as_deref(), same_origin, delegated);
     }
