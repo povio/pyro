@@ -1,8 +1,18 @@
 # Pyro 0.0.50-rc.5 compatibility progress
 
-Release candidate **0.0.50-rc.5** tags source commit `516dc3159`. The measurements below identify the earlier builds that produced each result. [Tagged source](https://github.com/povio/pyro/tree/v0.0.50-rc.5) · [Build and publication workflow](https://github.com/povio/pyro/actions/runs/44998826328)
+Release candidate **0.0.50-rc.5** tags source commit `516dc3159`. The measurements below identify the executable and coverage for each run. [Tagged source](https://github.com/povio/pyro/tree/v0.0.50-rc.5) · [Build and publication workflow](https://github.com/povio/pyro/actions/runs/44998826328)
 
-## Non-CSS Web Platform Tests
+## RC.5 standalone macOS arm64 executable
+
+The ordinary macOS arm64 executable from the RC.5 release workflow loads the system JavaScriptCore framework and reports `fork: false`. The npm macOS arm64 binary uses a patched static JavaScriptCore and supports fork mode. The measurements in this section cover the standalone executable.
+
+| Verified shard set | Eligible URLs measured | Named assertions passing / observed | Fully passing pages |
+| --- | ---: | ---: | ---: |
+| 160 even shards | 15,072 | 825,072 / 874,074 | 7,664 |
+
+The even-shard run used macOS 27.2.1. On the same URLs, archived signed Chrome 158.0.8127.37 results recorded 856,367 of 879,997 named assertions passing and 12,174 fully passing pages. The full non-CSS plan contains 320 shards and 30,179 eligible URLs. [Executable identity, runtime and even-shard receipts](https://github.com/povio/pyro/tree/9a39f6638cee1d721bb028607c9975f13ef8ebed/evidence/rc5-census-516dc3159-even)
+
+## Development checkpoint with pinned JavaScriptCore
 
 Pyro fully passed **15,737 of 30,179 eligible pages** at the round seven checkpoint (`c3372ad21`), up from 15,344 in the previous census. All 320 shards ran on macOS. Each engine’s assertion denominator counts the named outcomes observed for that engine.
 
