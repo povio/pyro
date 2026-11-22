@@ -2753,7 +2753,7 @@ fn convert_list_items(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, st
 
     // An outer paragraph and its subordinate list paragraphs each need
     // conversion, but an unselected subordinate list keeps its type.
-    let nested = start != end && dom.contains(source, last).ok()? && dom.descendants(source).ok()?.any(|n|
+    let nested = start != end && dom.contains(source, last).ok()? && dom.descendants(source).ok()?.skip(1).any(|n|
         local_html(dom, n, "ol") || local_html(dom, n, "ul"));
     if nested {
         let mut runs: Vec<(NodeId, NodeId, NodeId)> = Vec::new();
@@ -2930,7 +2930,7 @@ fn unlist_nested_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, sta
     let first = ancestor_item(dom, start.0, host)?;
     let list = dom.parent_element(first).ok()??;
     if start == end || !local_html(dom, list, tag) || dom.parent(list).ok()? != Some(host)
-        || !dom.contains(list, end.0).ok()? || !dom.descendants(list).ok()?.any(|n| local_html(dom,n,"ol") || local_html(dom,n,"ul"))
+        || !dom.contains(list, end.0).ok()? || !dom.descendants(list).ok()?.skip(1).any(|n| local_html(dom,n,"ol") || local_html(dom,n,"ul"))
         || dom.descendants(list).ok()?.any(|n| editing::editing_host(dom,n) != Some(host))
     { return None; }
     let selected: HashSet<_> = texts_in(dom, list, start, end).into_iter().filter_map(|t| ancestor_item(dom,t,host)).collect();
@@ -3688,9 +3688,7 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
                         if list != end_list && dom.parent(list).ok() == dom.parent(end_list).ok() { return false; }
                     }
                     let other = if tag == "ol" { "ul" } else { "ol" };
-                    let nested = ancestor_named(&dom, list, host, &["ol", "ul"]).is_some()
-                        || dom.descendants(list).is_ok_and(|mut nodes| nodes.any(|n| local_html(&dom, n, "ol") || local_html(&dom, n, "ul")));
-                    if nested && editing::selection(page).is_some_and(|(anchor,_)| editing::editing_host(&dom, anchor.0) == Some(host)) {
+                    if editing::selection(page).is_some_and(|(anchor, _)| editing::editing_host(&dom, anchor.0) == Some(host)) {
                         return local_html(&dom, list, tag) && ancestor_named(&dom, end.0, host, &["ol", "ul"]) == Some(list)
                             && !dom.descendants(list).is_ok_and(|mut nodes| nodes.any(|n| local_html(&dom, n, other)));
                     }
