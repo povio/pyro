@@ -128,7 +128,7 @@ impl<'a> FocusNavigation<'a> {
             match (s.get_position().reading_flow, display.inside()) {
                 (ReadingFlow::SourceOrder, DisplayInside::Flow) if display.outside() == DisplayOutside::Block => ReadingFlow::SourceOrder,
                 (ReadingFlow::SourceOrder, DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid) => ReadingFlow::SourceOrder,
-                (ReadingFlow::FlexFlow, DisplayInside::Flex) => ReadingFlow::FlexFlow,
+                (f @ (ReadingFlow::FlexFlow | ReadingFlow::FlexVisual), DisplayInside::Flex) => f,
                 (f @ (ReadingFlow::GridOrder | ReadingFlow::GridRows | ReadingFlow::GridColumns), DisplayInside::Grid) => f,
                 _ => ReadingFlow::Normal,
             }
@@ -140,9 +140,23 @@ impl<'a> FocusNavigation<'a> {
     fn order_roots(&self, owner: u32, roots: &mut [u32], flow: ReadingFlow) {
         let Some(layout) = self.layout else { return };
         let mut placements = FxHashMap::default();
+        if flow == ReadingFlow::FlexVisual {
+            use style::computed_values::{flex_direction::T as Direction, flex_wrap::T as Wrap};
+            let container = self.id_of(owner);
+            if let (Some(style), Some(source)) = (layout.style().stylo_style(self.dom, container), layout.synced_geometry_source(self.dom)) {
+                let position = style.get_position();
+                let reverse_line = position.flex_wrap.contains(Wrap::WRAP_REVERSE);
+                let reverse_item = matches!(position.flex_direction, Direction::RowReverse | Direction::ColumnReverse);
+                for (key, line, item) in source.flex_reading_positions(crate::snapshot::render_key(container)) {
+                    placements.insert(key, (if reverse_line { usize::MAX - line } else { line },
+                        if reverse_item { usize::MAX - item } else { item }));
+                }
+            }
+        }
         if matches!(flow, ReadingFlow::GridRows | ReadingFlow::GridColumns) {
             if let Some(source) = layout.synced_geometry_source(self.dom) {
                 for (key, row, column) in source.grid_item_starts(crate::snapshot::render_key(self.id_of(owner))) {
+                    let (row, column) = (usize::from(row), usize::from(column));
                     placements.insert(key, if flow == ReadingFlow::GridColumns { (column, row) } else { (row, column) });
                 }
             }

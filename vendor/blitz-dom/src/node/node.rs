@@ -1376,6 +1376,14 @@ impl Node {
         (transform, context)
     }
 
+    /// Flex item identities and their indices within the logical flex lines.
+    pub fn flex_reading_positions(&self) -> Option<&[(taffy::NodeId, usize, usize)]> {
+        match &self.element_data()?.detailed_layout_info {
+            taffy::DetailedLayoutInfo::FlexReadingOrder(items) => Some(items),
+            _ => None,
+        }
+    }
+
     /// Placed in-flow items of this grid, as recorded by Taffy.
     pub fn placed_grid_items(&self) -> Option<&[taffy::DetailedGridItemsInfo]> {
         match &self.element_data()?.detailed_layout_info {

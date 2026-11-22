@@ -1144,6 +1144,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.generated_hit(self.page, owner, x, y))
     }
 
+    fn flex_reading_positions(&self, owner: u64) -> Vec<(u64, usize, usize)> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.flex_reading_positions(self.page, owner))).unwrap_or_default())
+    }
+
     fn grid_item_starts(&self, owner: u64) -> Vec<(u64, u16, u16)> {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.grid_item_starts(self.page, owner))).unwrap_or_default())
     }

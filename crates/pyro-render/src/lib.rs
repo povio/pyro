@@ -2221,6 +2221,14 @@ impl Renderer {
         None
     }
 
+    pub fn flex_reading_positions(&self, page: u64, owner: u64) -> Vec<(u64, usize, usize)> {
+        let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
+        let items = mirror.node(owner).and_then(|id| mirror.doc.get_node(id)).and_then(|n| n.flex_reading_positions());
+        items.into_iter().flatten().filter_map(|&(item, line, index)| {
+            Some((mirror.key_of(blitz_dom::NodeId::from_u64(item.into()))?, line, index))
+        }).collect()
+    }
+
     /// Mirror only actual DOM owners; anonymous grid items have no focus target.
     pub fn grid_item_starts(&self, page: u64, owner: u64) -> Vec<(u64, u16, u16)> {
         let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
