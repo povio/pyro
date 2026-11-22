@@ -2093,9 +2093,59 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
     });
 }
 
+/// Carry inherited text appearance before the items leave their source
+/// list. A plain text run can carry its style on a span; for structured
+/// items keep the existing children, including locked descendants, intact.
+fn carry_list_text_style(page: &PageDom, dom: &mut Dom, source: NodeId, destination: NodeId, items: &[NodeId]) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let layout = page.layout();
+    let authored = DeclarationBlock::parse(dom.get_attribute(source, "style").ok()?.unwrap_or(""));
+    let mut changes = Vec::new();
+    for property in ["color", "font-family", "font-size", "font-style", "font-weight"] {
+        let old = layout.computed_style_value(dom, source, property);
+        let new = layout.computed_style_value(dom, destination, property);
+        if !old.is_empty() && !new.is_empty() && old != new {
+            changes.push((property, old, new));
+        }
+    }
+    if changes.is_empty() { return Some(()); }
+    let doc = dom.node_document(source).ok()?;
+    for &item in items {
+        if dom.element(item).is_err() { continue; }
+        let children: Vec<_> = dom.children(item).ok()?.collect();
+        let text_only = !children.is_empty() && children.iter().all(|&n| editing::is_text(dom, n));
+        let mut style = if text_only { DeclarationBlock::parse("") }
+            else { DeclarationBlock::parse(dom.get_attribute(item, "style").ok()?.unwrap_or("")) };
+        let mut changed = false;
+        for (property, old, new) in &changes {
+            let value = layout.computed_style_value(dom, item, property);
+            if value.is_empty() || &value == new || !style.value(property).is_empty() { continue; }
+            // Prefer the authored color spelling when it resolves to the
+            // actual source color. Relative font sizes must use their
+            // resolved value to avoid scaling a second time.
+            let css = authored.value(property);
+            let css = if *property == "color" && &value == old && !css.is_empty()
+                && pyro_dom::color_well::editing_color(&css).is_some_and(|(c, _)| c == value)
+            { css } else { value };
+            style.set(property, &css, false)?;
+            changed = true;
+        }
+        if !changed { continue; }
+        if text_only {
+            let span = dom.create_element(doc, "span").ok()?;
+            dom.set_attribute(span, "style", &style.css_text()).ok()?;
+            dom.insert_before(item, span, children.first().copied()).ok()?;
+            for child in children { dom.append_child(span, child).ok()?; }
+        } else {
+            dom.set_attribute(item, "style", &style.css_text()).ok()?;
+        }
+    }
+    Some(())
+}
+
 /// Convert a contiguous run of items in an opposite-type list at the same
 /// nesting level. Keep the list items (and their subtrees) intact.
-fn convert_list_items(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<(Point, Point)> {
+fn convert_list_items(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<(Point, Point)> {
     let first_point = editing::deep_forward(dom, start);
     let last_point = if start == end { first_point } else { editing::deep_backward(dom, end) };
     let item_at = |mut n| -> Option<NodeId> {
@@ -2125,7 +2175,7 @@ fn convert_list_items(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end:
     let list = dom.create_element(dom.node_document(host).ok()?, tag).ok()?;
     // Preserve authored presentation on the selected items. Numbering and
     // the source list's ID belong to the source list, not the converted run.
-    for name in ["style", "class", "dir", "lang"] {
+    for name in ["dir", "lang"] {
         if let Some(value) = dom.get_attribute(source, name).ok()?.map(str::to_owned) {
             dom.set_attribute(list, name, &value).ok()?;
         }
@@ -2133,6 +2183,7 @@ fn convert_list_items(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end:
     let after = dom.next_sibling(source).ok()?;
     let before = if begin == 0 { Some(source) } else { after };
     dom.insert_before(parent, list, before).ok()?;
+    carry_list_text_style(page, dom, source, list, run)?;
     if begin > 0 && finish < children.len() {
         let tail = dom.clone_node(source, false, None).ok()?;
         dom.remove_attribute(tail, "id").ok()?;
@@ -2169,7 +2220,7 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
         {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
-            if let Some((a, b)) = convert_list_items(&mut dom, host, tag, start, end) {
+            if let Some((a, b)) = convert_list_items(page, &mut dom, host, tag, start, end) {
                 drop(dom);
                 editing::set_selection(page, a, b);
                 return;
