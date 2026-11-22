@@ -67,7 +67,9 @@
   const AbortSignalC = AbortSignal;
   const addListener = EventTarget.prototype.addEventListener;
   const removeListener = EventTarget.prototype.removeEventListener;
-  const fetchFn = fetch;
+  // fetch() for a body fetchBuffered settled (fetch.rs `settled_fetch_function`): the
+  // third argument says whether the body is the stream's bytes. Page script cannot reach it.
+  const fetchFn = natives.fetchSettled;
   const DOMExceptionC = DOMException;
   // What stream transfer uses, if the realm still has it (without it,
   // streams are not transferable).

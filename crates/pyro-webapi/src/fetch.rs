@@ -888,140 +888,153 @@ pub(crate) fn send_pings(
 }
 
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
+    let function = s.function("fetch", |s, _this, args| fetch_call(s, &args, None))?;
+    s.global().set_atom("fetch", function.value())
+}
+
+/// The fetch streams.js `fetchBuffered` makes once it has settled a stream body (its
+/// `natives.fetchSettled`, not reachable from page script): `fromStream` says whether the
+/// body is the stream's bytes. It never takes the stream path again.
+pub(crate) fn settled_fetch_function<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let function = s.function("fetch", |s, _this, args| {
-        let deferred = s.deferred()?;
-        let promise = deferred.promise.get(s);
-        // streams.js `fetchBuffered` calls back with a boolean third argument and a body it
-        // has settled: that call does not take the stream path again.
-        let settled_body = args.get(2).is_boolean();
-        let streamed =
-            if settled_body { Ok(None) } else { crate::streams::fetch_stream_body(s, args.get(0), args.get(1)) };
-        match streamed {
-            Ok(Some(sent)) => {
-                deferred.resolve(s, sent)?;
-                return Ok(promise);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                deferred.reject(s, error.to_value(s))?;
-                return Ok(promise);
+        let from_stream = args.get(2).to_bool();
+        fetch_call(s, &args, Some(from_stream))
+    })?;
+    Ok(function.value())
+}
+
+/// `fetch(input, init)`; `settled`: a call from `fetchBuffered` (see [`settled_fetch_function`]).
+fn fetch_call<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>, settled: Option<bool>) -> JsResult<Value<'s>> {
+    let deferred = s.deferred()?;
+    let promise = deferred.promise.get(s);
+    let streamed = if settled.is_some() {
+        Ok(None)
+    } else {
+        crate::streams::fetch_stream_body(s, args.get(0), args.get(1))
+    };
+    match streamed {
+        Ok(Some(sent)) => {
+            deferred.resolve(s, sent)?;
+            return Ok(promise);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            deferred.reject(s, error.to_value(s))?;
+            return Ok(promise);
+        }
+    }
+    let result = (|| {
+        args.require(1, "fetch")?;
+        let page = page_of(s)?;
+        if page.is_disposed() {
+            return Err(JsError::ContextDestroyed);
+        }
+        let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1))?;
+        request.body_from_stream = request.body.is_some() && settled == Some(true);
+        // Init conversion can execute script, including embedder teardown.
+        if page.is_disposed() {
+            return Err(JsError::ContextDestroyed);
+        }
+        if let Some(signal) = &signal {
+            let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
+            if signal.aborted() {
+                return Err(JsError::thrown(Persistent::new(s, signal.reason(s))));
             }
         }
-        let result = (|| {
-            args.require(1, "fetch")?;
-            let page = page_of(s)?;
-            if page.is_disposed() {
-                return Err(JsError::ContextDestroyed);
-            }
-            let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1))?;
-            // streams.js `fetchBuffered` passes `true` third when the body is a stream's bytes.
-            request.body_from_stream = request.body.is_some() && settled_body && args.get(2).to_bool();
-            // Init conversion can execute script, including embedder teardown.
-            if page.is_disposed() {
-                return Err(JsError::ContextDestroyed);
-            }
+        let limits = page.fetch_state.limits.get();
+        if page.fetch_state.jobs.borrow().len() >= limits.max_requests {
+            return Err(JsError::Type("Too many pending fetches".into()));
+        }
+        let net =
+            page.net.borrow().clone().ok_or_else(|| JsError::Type("Page networking is not installed".into()))?;
+        let poster =
+            page.remote_poster().ok_or_else(|| JsError::Type("Browser task poster is not installed".into()))?;
+        Ok((page, request, signal, extras, limits, net, poster))
+    })();
+    match result {
+        Err(error) => deferred.reject(s, error.to_value(s))?,
+        Ok((page, mut request, signal, extras, limits, net, poster)) => {
+            page.apply_request_defaults(&mut request);
+            attach_blob(&page, &mut request);
+            request.max_body = Some(limits.max_body_bytes);
+            let id = net.next_request_id();
+            let wire = Arc::new(Mutex::new(Wire {
+                frontier: NetworkDelivery::default(),
+                head: None,
+                chunks: Vec::new(),
+                bytes: 0,
+                terminal: None,
+                closed: false,
+                scheduled: false,
+                null_body: request.method == Method::HEAD,
+                streaming: false,
+                budget: page.fetch_state.budget.clone(),
+            }));
+            let body = Rc::new(Body {
+                wire: wire.clone(),
+                visible_terminal: RefCell::new(None),
+                page: Rc::downgrade(&page),
+                id,
+                realm_id: s.realm_id(),
+                readers: RefCell::new(Vec::new()),
+                stream_reads: RefCell::new(Vec::new()),
+                stream_open: Cell::new(false),
+                stream_cursor: Cell::new(0),
+                consumers: Cell::new(0),
+                abort_registration: RefCell::new(None),
+                abort_signal: RefCell::new(None),
+                aborted: Cell::new(false),
+                disposed: Cell::new(false),
+                keepalive: extras.keepalive.is_some(),
+                mime: RefCell::new(String::new()),
+            });
+            page.fetch_state.bodies.borrow_mut().insert(id, Rc::downgrade(&body));
             if let Some(signal) = &signal {
                 let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
-                if signal.aborted() {
-                    return Err(JsError::thrown(Persistent::new(s, signal.reason(s))));
-                }
-            }
-            let limits = page.fetch_state.limits.get();
-            if page.fetch_state.jobs.borrow().len() >= limits.max_requests {
-                return Err(JsError::Type("Too many pending fetches".into()));
-            }
-            let net =
-                page.net.borrow().clone().ok_or_else(|| JsError::Type("Page networking is not installed".into()))?;
-            let poster =
-                page.remote_poster().ok_or_else(|| JsError::Type("Browser task poster is not installed".into()))?;
-            Ok((page, request, signal, extras, limits, net, poster))
-        })();
-        match result {
-            Err(error) => deferred.reject(s, error.to_value(s))?,
-            Ok((page, mut request, signal, extras, limits, net, poster)) => {
-                page.apply_request_defaults(&mut request);
-                attach_blob(&page, &mut request);
-                request.max_body = Some(limits.max_body_bytes);
-                let id = net.next_request_id();
-                let wire = Arc::new(Mutex::new(Wire {
-                    frontier: NetworkDelivery::default(),
-                    head: None,
-                    chunks: Vec::new(),
-                    bytes: 0,
-                    terminal: None,
-                    closed: false,
-                    scheduled: false,
-                    null_body: request.method == Method::HEAD,
-                    streaming: false,
-                    budget: page.fetch_state.budget.clone(),
-                }));
-                let body = Rc::new(Body {
-                    wire: wire.clone(),
-                    visible_terminal: RefCell::new(None),
-                    page: Rc::downgrade(&page),
-                    id,
-                    realm_id: s.realm_id(),
-                    readers: RefCell::new(Vec::new()),
-                    stream_reads: RefCell::new(Vec::new()),
-                    stream_open: Cell::new(false),
-                    stream_cursor: Cell::new(0),
-                    consumers: Cell::new(0),
-                    abort_registration: RefCell::new(None),
-                    abort_signal: RefCell::new(None),
-                    aborted: Cell::new(false),
-                    disposed: Cell::new(false),
-                    keepalive: extras.keepalive.is_some(),
-                    mime: RefCell::new(String::new()),
-                });
-                page.fetch_state.bodies.borrow_mut().insert(id, Rc::downgrade(&body));
-                if let Some(signal) = &signal {
-                    let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
-                    *body.abort_signal.borrow_mut() = Some(signal.wrapper.clone());
-                    let weak = Rc::downgrade(&body);
-                    *body.abort_registration.borrow_mut() = signal.register_native(Box::new(move |_| {
-                        if let Some(body) = weak.upgrade() {
-                            body.abort();
-                        }
-                    }));
-                }
-                let job = Rc::new(Job {
-                    realm: s.realm().downgrade(),
-                    realm_id: s.realm_id(),
-                    promise: RefCell::new(Some(deferred)),
-                    signal,
-                    credentials: request.credentials,
-                    body,
-                    integrity: extras.integrity,
-                    held_head: RefCell::new(None),
-                });
-                if job.integrity.is_some() {
-                    // Nothing is delivered before the whole body is checked.
-                    job.body.wire.lock().unwrap().streaming = false;
-                }
-                page.fetch_state.jobs.borrow_mut().insert(id, job);
-                let page_id = page.id();
-                PAGES.with(|pages| pages.borrow_mut().insert(page_id, Rc::downgrade(&page)));
-                let mut keepalive = extras.keepalive;
-                let sink: pyro_net::ResponseSink = Box::new(move |event| {
-                    if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
-                        keepalive.take();
+                *body.abort_signal.borrow_mut() = Some(signal.wrapper.clone());
+                let weak = Rc::downgrade(&body);
+                *body.abort_registration.borrow_mut() = signal.register_native(Box::new(move |_| {
+                    if let Some(body) = weak.upgrade() {
+                        body.abort();
                     }
-                    receive(&wire, page_id, id, &poster, limits, event)
-                });
-                let sink = crate::resource_timing::timed_sink_carried(
-                    &page,
-                    crate::resource_timing::Initiator::Fetch,
-                    &request.url,
-                    sink,
-                );
-                // A controlled page's request goes to its service worker
-                // first; any other is one flag test away from the network.
-                crate::service_worker::route(&page, &net, id, request, sink);
+                }));
             }
+            let job = Rc::new(Job {
+                realm: s.realm().downgrade(),
+                realm_id: s.realm_id(),
+                promise: RefCell::new(Some(deferred)),
+                signal,
+                credentials: request.credentials,
+                body,
+                integrity: extras.integrity,
+                held_head: RefCell::new(None),
+            });
+            if job.integrity.is_some() {
+                // Nothing is delivered before the whole body is checked.
+                job.body.wire.lock().unwrap().streaming = false;
+            }
+            page.fetch_state.jobs.borrow_mut().insert(id, job);
+            let page_id = page.id();
+            PAGES.with(|pages| pages.borrow_mut().insert(page_id, Rc::downgrade(&page)));
+            let mut keepalive = extras.keepalive;
+            let sink: pyro_net::ResponseSink = Box::new(move |event| {
+                if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                    keepalive.take();
+                }
+                receive(&wire, page_id, id, &poster, limits, event)
+            });
+            let sink = crate::resource_timing::timed_sink_carried(
+                &page,
+                crate::resource_timing::Initiator::Fetch,
+                &request.url,
+                sink,
+            );
+            // A controlled page's request goes to its service worker
+            // first; any other is one flag test away from the network.
+            crate::service_worker::route(&page, &net, id, request, sink);
         }
-        Ok(promise)
-    })?;
-    s.global().set_atom("fetch", function.value())
+    }
+    Ok(promise)
 }
 
 fn receive(
