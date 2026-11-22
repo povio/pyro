@@ -2443,6 +2443,45 @@ fn listify_bare_text(
     Some(((content, from), (content, to)))
 }
 
+/// A table selected by its outer boundaries is a single list item.
+/// A selection inside the cells formats their contents independently:
+/// the row must keep its cells even when the selection spans rows.
+fn listify_table_selection(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<(Point, Point)> {
+    let doc = dom.node_document(host).ok()?;
+    if start.0 == end.0 && end.1.checked_sub(start.1) == Some(1) {
+        if let Some(table) = dom.child_at(start.0, start.1).ok()?.filter(|&n|
+            dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "table")
+                && editing::editing_host(dom, n) == Some(host)) {
+            let list = dom.create_element(doc, tag).ok()?;
+            let item = dom.create_element(doc, "li").ok()?;
+            dom.insert_before(start.0, list, Some(table)).ok()?;
+            dom.append_child(list, item).ok()?;
+            dom.append_child(item, table).ok()?;
+            return Some(((item, 0), (item, 1)));
+        }
+    }
+
+    let first = editing::deep_forward(dom, start);
+    let last = if start == end { first } else { editing::deep_backward(dom, end) };
+    let is_cell = |n| dom.element(n).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "td" | "th"));
+    if !is_cell(editing::block_of(dom, first.0, host)) || !is_cell(editing::block_of(dom, last.0, host)) {
+        return None;
+    }
+    let cells = selected_blocks(dom, host, first, last);
+    if !cells.iter().all(|&n| is_cell(n)) { return None; }
+    for cell in cells {
+        if editing::editing_host(dom, cell) != Some(host) { continue; }
+        let list = dom.create_element(doc, tag).ok()?;
+        let item = dom.create_element(doc, "li").ok()?;
+        while let Some(child) = dom.first_child(cell).ok()? {
+            dom.append_child(item, child).ok()?;
+        }
+        dom.append_child(list, item).ok()?;
+        dom.append_child(cell, list).ok()?;
+    }
+    Some((first, last))
+}
+
 /// insertOrderedList / insertUnorderedList: the selected blocks become
 /// items of a new list; inside such a list already, its items become `div`
 /// lines again.
@@ -2461,6 +2500,13 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
                 drop(dom);
                 editing::set_selection(page, a, b);
                 return;
+            }
+            if ancestor_named(&dom, start.0, host, &["ol", "ul"]).is_none() {
+                if let Some((a, b)) = listify_table_selection(&mut dom, host, tag, start, end) {
+                    drop(dom);
+                    editing::set_selection(page, a, b);
+                    return;
+                }
             }
             let in_list = ancestor_named(&dom, start.0, host, &[tag]);
             if let Some(list) = in_list {
@@ -2609,14 +2655,18 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
         "stylewithcss" => page.dom.borrow().document_data(doc).is_ok_and(|d| d.style_with_css),
         "insertorderedlist" | "insertunorderedlist" => {
             let tag = if cmd == "insertorderedlist" { "ol" } else { "ul" };
-            let Some((start, _)) = editing::selection_range(page) else {
+            let Some((start, end)) = editing::selection_range(page) else {
                 return false;
             };
             let dom = page.dom.borrow();
             let Some(host) = editing::editing_host(&dom, start.0) else {
                 return false;
             };
-            ancestor_named(&dom, start.0, host, &[tag]).is_some()
+            let list = ancestor_named(&dom, start.0, host, &[tag]);
+            if start != end && ancestor_named(&dom, start.0, host, &["td", "th"]).is_some() {
+                return list.is_some() && list == ancestor_named(&dom, end.0, host, &[tag]);
+            }
+            list.is_some()
         }
         _ if format_of(&cmd).is_some() => format_state(page, &cmd).1,
         _ => false,
