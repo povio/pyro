@@ -243,9 +243,10 @@ pub(crate) fn attribute_kind(page: &PageDom, el: pyro_dom::NodeId, local: &str, 
     match ns.filter(|ns| !ns.is_empty()) {
         None if (html || svg || mathml) && !local.bytes().any(|b| b.is_ascii_uppercase()) && {
             // The element's event handler content attributes: GlobalEventHandlers, and
-            // WindowEventHandlers on `<body>` and `<frameset>`.
+            // WindowEventHandlers on `<body>` and `<frameset>`, and a permission element's own.
             let ty = local.strip_prefix("on").unwrap_or("");
             crate::handlers::GLOBAL.contains(&ty)
+                || (html && crate::handlers::element_handler(tag, ty))
                 || (html && matches!(tag, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))
         } =>
         {

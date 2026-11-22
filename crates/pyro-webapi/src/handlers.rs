@@ -46,7 +46,7 @@ macro_rules! global_events {
             "abort", "auxclick", "beforeinput", "beforematch", "beforetoggle", "blur", "cancel", "canplay", "canplaythrough",
             "change", "click", "close", "command", "contextlost", "contextmenu", "contextrestored", "copy", "cuechange", "cut",
             "dblclick", "drag", "dragend", "dragenter", "dragleave", "dragover", "dragstart", "drop",
-            "durationchange", "emptied", "ended", "error", "focus", "formdata", "input", "invalid", "keydown",
+            "durationchange", "emptied", "ended", "error", "focus", "formdata", "input", "installresult", "invalid", "keydown",
             "keypress", "keyup", "load", "loadeddata", "loadedmetadata", "loadstart", "mousedown", "mouseenter",
             "mouseleave", "mousemove", "mouseout", "mouseover", "mouseup", "paste", "pause", "play", "playing",
             "progress", "ratechange", "reset", "resize", "scroll", "scrollend", "securitypolicyviolation", "seeked",
@@ -107,6 +107,22 @@ pub(crate) const GLOBAL: &[&str] = global_events!(event_list!());
 pub(crate) const FULLSCREEN: &[&str] = fullscreen_events!(event_list!());
 pub(crate) const WINDOW: &[&str] = window_events!(event_list!());
 pub(crate) const DOCUMENT: &[&str] = document_events!(event_list!());
+/// The permission elements' own handlers (WICG PEPC and install element, tentative); which
+/// element has which is [`element_handler`].
+pub(crate) const PERMISSION_ELEMENT: &[&str] =
+    &["stream", "track", "location", "promptaction", "promptdismiss", "validationstatuschange"];
+
+/// Whether the HTML element named `local` has its own event handler for `ty` beyond
+/// GlobalEventHandlers: the permission elements' (`HTMLUserMediaElement.onstream`, ...).
+pub(crate) fn element_handler(local: &str, ty: &str) -> bool {
+    match local {
+        "usermedia" => ty == "stream",
+        "camera" | "microphone" => ty == "track",
+        "geolocation" => matches!(ty, "location" | "promptaction" | "promptdismiss" | "validationstatuschange"),
+        "install" => ty == "validationstatuschange",
+        _ => false,
+    }
+}
 
 /// The event type of an event handler content attribute named `local`
 /// (`onclick`), compared ASCII case-insensitively.
@@ -116,7 +132,14 @@ pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
     }
     // The first two bytes are ASCII: a char boundary follows them.
     let ty = &local[2..];
-    GLOBAL.iter().chain(WINDOW).chain(DOCUMENT).chain(FULLSCREEN).find(|t| t.eq_ignore_ascii_case(ty)).copied()
+    GLOBAL
+        .iter()
+        .chain(WINDOW)
+        .chain(DOCUMENT)
+        .chain(FULLSCREEN)
+        .chain(PERMISSION_ELEMENT)
+        .find(|t| t.eq_ignore_ascii_case(ty))
+        .copied()
 }
 
 /// Elements and Document: GlobalEventHandlers.

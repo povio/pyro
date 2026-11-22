@@ -329,10 +329,12 @@ pub(crate) fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str,
         match dom.element(n.id) {
             // An element's handler content attributes are its IDL handlers':
             // GlobalEventHandlers (and the Fullscreen ones), plus
-            // WindowEventHandlers on <body> and <frameset>. Document-only
-            // handlers (onreadystatechange, onvisibilitychange) are none.
+            // WindowEventHandlers on <body> and <frameset>, and a permission
+            // element's own. Document-only handlers (onreadystatechange,
+            // onvisibilitychange) are none.
             Ok(e) if !(crate::handlers::GLOBAL.contains(&ty)
                 || crate::handlers::FULLSCREEN.contains(&ty)
+                || (e.is_html() && crate::handlers::element_handler(&e.name.local, ty))
                 || (e.is_html() && matches!(&*e.name.local, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))) =>
             {
                 (false, false, false)

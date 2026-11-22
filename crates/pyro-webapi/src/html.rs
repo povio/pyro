@@ -749,6 +749,11 @@ pub enum ElClass {
     Directory,
     Param,
     Track,
+    Geolocation,
+    Install,
+    UserMedia,
+    Camera,
+    Microphone,
     Unknown,
     Generic,
     Svg,
@@ -954,6 +959,12 @@ pub fn html_class_for_local(local: &str) -> ElClass {
         "dir" => Directory,
         "param" => Param,
         "track" => Track,
+        // Permission elements (WICG PEPC, tentative).
+        "geolocation" => Geolocation,
+        "install" => Install,
+        "usermedia" => UserMedia,
+        "camera" => Camera,
+        "microphone" => Microphone,
         "applet" | "bgsound" | "blink" | "isindex" | "keygen" | "multicol" | "nextid" | "spacer" => Unknown,
         "abbr" | "address" | "article" | "aside" | "b" | "bdi" | "bdo" | "cite" | "code" | "dd" | "dfn" | "dt"
         | "em" | "figcaption" | "figure" | "footer" | "header" | "hgroup" | "i" | "kbd" | "main" | "mark" | "nav"
@@ -1036,6 +1047,11 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         Directory => s.wrap::<HtmlDirectoryElement>(d, k),
         Param => s.wrap::<HtmlParamElement>(d, k),
         Track => s.wrap::<HtmlTrackElement>(d, k),
+        Geolocation => s.wrap::<HtmlGeolocationElement>(d, k),
+        Install => s.wrap::<HtmlInstallElement>(d, k),
+        UserMedia => s.wrap::<HtmlUserMediaElement>(d, k),
+        Camera => s.wrap::<HtmlCameraElement>(d, k),
+        Microphone => s.wrap::<HtmlMicrophoneElement>(d, k),
         Unknown => s.wrap::<HtmlUnknownElement>(d, k),
         Generic => s.wrap::<HtmlElement>(d, k),
         Svg => s.wrap::<SvgElement>(d, k),
@@ -1168,6 +1184,11 @@ pub fn interface_name(class: ElClass) -> &'static str {
         Directory => HtmlDirectoryElement::NAME,
         Param => HtmlParamElement::NAME,
         Track => HtmlTrackElement::NAME,
+        Geolocation => HtmlGeolocationElement::NAME,
+        Install => HtmlInstallElement::NAME,
+        UserMedia => HtmlUserMediaElement::NAME,
+        Camera => HtmlCameraElement::NAME,
+        Microphone => HtmlMicrophoneElement::NAME,
         Unknown => HtmlUnknownElement::NAME,
         Generic => HtmlElement::NAME,
         Svg => SvgElement::NAME,
@@ -1317,6 +1338,11 @@ pub(crate) fn wrap_new_html_element<'s>(
         Directory => crate::node::wrap_new_node::<HtmlDirectoryElement>(s, page, el, new_target),
         Param => crate::node::wrap_new_node::<HtmlParamElement>(s, page, el, new_target),
         Track => crate::node::wrap_new_node::<HtmlTrackElement>(s, page, el, new_target),
+        Geolocation => crate::node::wrap_new_node::<HtmlGeolocationElement>(s, page, el, new_target),
+        Install => crate::node::wrap_new_node::<HtmlInstallElement>(s, page, el, new_target),
+        UserMedia => crate::node::wrap_new_node::<HtmlUserMediaElement>(s, page, el, new_target),
+        Camera => crate::node::wrap_new_node::<HtmlCameraElement>(s, page, el, new_target),
+        Microphone => crate::node::wrap_new_node::<HtmlMicrophoneElement>(s, page, el, new_target),
         Unknown => crate::node::wrap_new_node::<HtmlUnknownElement>(s, page, el, new_target),
         Generic => crate::node::wrap_new_node::<HtmlElement>(s, page, el, new_target),
         Svg => crate::node::wrap_new_node::<SvgElement>(s, page, el, new_target),
@@ -3737,6 +3763,81 @@ simple_class!(HtmlTrackElement, "HTMLTrackElement", HtmlElement, |def| {
     reflect_bool!(def, "default", "default");
 });
 
+// Permission elements (WICG "Page Embedded Permission Control", tentative): `<geolocation>`,
+// `<install>`, `<usermedia>`, `<camera>` and `<microphone>`. Pyro shows no permission prompt, so
+// an element is never valid, has no position, stream or track, and its permission reads
+// "prompt"; the interfaces, their reflected attributes and their event handlers are as Chrome
+// exposes them (WPT html/semantics/permission-element).
+
+/// The element's own event handler IDL attributes (`ontype`), in the element's handler slots
+/// (the content attributes are `handlers::is_handler_attribute`'s permission-element types).
+macro_rules! own_handlers {
+    ($def:expr, [$($ty:literal),* $(,)?]) => {
+        $(
+            $def.accessor(
+                concat!("on", $ty),
+                |s, n| crate::target::event_handler(s, &n.target, $ty),
+                |s, n, v| crate::target::set_event_handler(s, &n.target, $ty, v),
+            );
+        )*
+    };
+}
+
+/// `setConstraints(optional dictionary constraints = {})`: the dictionary converts (undefined,
+/// null or an object); no stream is requested before the element is activated.
+fn set_constraints<'s>(s: &Scope<'s>, a: &Args<'s>, interface: &str) -> JsResult<Value<'s>> {
+    let arg = a.get(0);
+    if !arg.is_nullish() && !arg.is_object() {
+        return Err(JsError::Type(
+            format!("Failed to execute 'setConstraints' on '{interface}': The provided value is not of type 'MediaTrackConstraintSet'.").into(),
+        ));
+    }
+    Ok(s.undefined())
+}
+
+/// InPagePermissionMixin: never valid (no registration), the permission "prompt".
+fn define_in_page_permission<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("isValid", |s, _n| Ok(s.boolean(false)));
+    def.getter("invalidReason", |s, _n| Ok(s.string("")));
+    def.getter("initialPermissionStatus", |s, _n| Ok(s.string("prompt")));
+    def.getter("permissionStatus", |s, _n| Ok(s.string("prompt")));
+    own_handlers!(def, ["promptaction", "promptdismiss", "validationstatuschange"]);
+}
+
+simple_class!(HtmlGeolocationElement, "HTMLGeolocationElement", HtmlElement, |def| {
+    def.getter("position", |s, _n| Ok(s.null()));
+    def.getter("error", |s, _n| Ok(s.null()));
+    reflect_bool!(def, "autolocate", "autolocate");
+    reflect_bool!(def, "watch", "watch");
+    own_handlers!(def, ["location"]);
+    define_in_page_permission(def);
+});
+simple_class!(HtmlInstallElement, "HTMLInstallElement", HtmlElement, |def| {
+    reflect_url!(def, "manifest", "manifest");
+    reflect_url!(def, "manifestId", "manifestid");
+    def.getter("isValid", |s, _n| Ok(s.boolean(false)));
+    def.getter("invalidReason", |s, _n| Ok(s.string("")));
+    own_handlers!(def, ["validationstatuschange"]);
+});
+simple_class!(HtmlUserMediaElement, "HTMLUserMediaElement", HtmlElement, |def| {
+    own_handlers!(def, ["stream", "cancel", "error"]);
+    def.getter("stream", |s, _n| Ok(s.null()));
+    def.getter("error", |s, _n| Ok(s.null()));
+    def.method("setConstraints", 0, |s, _n, a| set_constraints(s, &a, "HTMLUserMediaElement"));
+});
+simple_class!(HtmlCameraElement, "HTMLCameraElement", HtmlElement, |def| {
+    def.getter("track", |s, _n| Ok(s.null()));
+    def.getter("error", |s, _n| Ok(s.null()));
+    def.method("setConstraints", 0, |s, _n, a| set_constraints(s, &a, "HTMLCameraElement"));
+    own_handlers!(def, ["track", "error", "cancel"]);
+});
+simple_class!(HtmlMicrophoneElement, "HTMLMicrophoneElement", HtmlElement, |def| {
+    def.getter("track", |s, _n| Ok(s.null()));
+    def.getter("error", |s, _n| Ok(s.null()));
+    def.method("setConstraints", 0, |s, _n, a| set_constraints(s, &a, "HTMLMicrophoneElement"));
+    own_handlers!(def, ["track", "error", "cancel"]);
+});
+
 /// HTMLOrSVGOrMathMLElement reflects both focus attributes in no namespace,
 /// and the scoped focusgroup ones: `[SameObject, PutForwards=value]
 /// readonly attribute DOMTokenList focusGroup` (`focusgroup`) and the
@@ -5235,6 +5336,11 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<HtmlDirectoryElement>();
     engine.register::<HtmlParamElement>();
     engine.register::<HtmlTrackElement>();
+    engine.register::<HtmlGeolocationElement>();
+    engine.register::<HtmlInstallElement>();
+    engine.register::<HtmlUserMediaElement>();
+    engine.register::<HtmlCameraElement>();
+    engine.register::<HtmlMicrophoneElement>();
     engine.register::<SvgElement>();
     engine.register::<MathMlElement>();
     engine.register::<SvgGraphicsElement>();

@@ -42,6 +42,8 @@ pub enum EventInterface {
     PageRevealEvent,
     /// HTML `pageswap`.
     PageSwapEvent,
+    /// Install element `installresult` (WICG install element, tentative).
+    InstallResultEvent,
     MessageEvent,
     StorageEvent,
     MediaQueryListEvent,
@@ -166,6 +168,8 @@ pub struct EventFields {
     pub old_url: String,
     pub new_url: String,
     pub persisted: bool,
+    /// `InstallResultEvent.result` (an `InstallResult` value; empty reads as "aborted").
+    pub install_result: &'static str,
     pub message_data: Option<Persistent>,
     /// Same-document Window source, resolved in the observing world without
     /// an event-to-global persistent root. Port messages have no source.
@@ -451,6 +455,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
         EventInterface::PageRevealEvent => s.wrap::<PageRevealEvent>(d, Some(key)),
         EventInterface::PageSwapEvent => s.wrap::<PageSwapEvent>(d, Some(key)),
+        EventInterface::InstallResultEvent => s.wrap::<InstallResultEvent>(d, Some(key)),
         EventInterface::MessageEvent => s.wrap::<MessageEvent>(d, Some(key)),
         EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
         EventInterface::MediaQueryListEvent => s.wrap::<MediaQueryListEvent>(d, Some(key)),
@@ -1015,6 +1020,32 @@ fn fill_page_reveal_swap<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Ob
             *slot = (!v.is_undefined() && !v.is_null()).then(|| Persistent::new(s, v));
         }
     }
+    Ok(())
+}
+
+/// `InstallResultEventInit.result`: an `InstallResult` enum value, "aborted" when omitted.
+fn fill_install_result<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let value = match init {
+        Some(o) => o.get_atom("result")?,
+        None => return Ok(()),
+    };
+    if value.is_undefined() {
+        return Ok(());
+    }
+    let result = value.to_string()?;
+    f.install_result = match result.as_str() {
+        "success" => "success",
+        "aborted" => "aborted",
+        "invalid-data" => "invalid-data",
+        _ => {
+            return Err(JsError::Type(
+                format!(
+                    "Failed to construct 'InstallResultEvent': Failed to read the 'result' property from 'InstallResultEventInit': The provided value '{result}' is not a valid enum value of type InstallResult."
+                )
+                .into(),
+            ))
+        }
+    };
     Ok(())
 }
 
@@ -2092,6 +2123,24 @@ impl JsClass for PageSwapEvent {
     }
 }
 
+/// `InstallResultEvent` (WICG install element, tentative): the outcome of an `<install>`
+/// element's installation, `installresult`.
+pub struct InstallResultEvent;
+impl JsClass for InstallResultEvent {
+    const NAME: &'static str = "InstallResultEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<InstallResultEvent>(s, nt, a, EventInterface::InstallResultEvent, fill_install_result)
+        });
+        def.getter("result", |s, e| {
+            let result = e.fields.borrow().install_result;
+            Ok(s.string(if result.is_empty() { "aborted" } else { result }))
+        });
+    }
+}
+
 /// CSS Animations `AnimationEvent` (`animationstart`, `animationiteration`,
 /// `animationend`, `animationcancel`).
 pub struct AnimationEvent;
@@ -2208,6 +2257,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<PageTransitionEvent>();
     engine.register::<PageRevealEvent>();
     engine.register::<PageSwapEvent>();
+    engine.register::<InstallResultEvent>();
     engine.register::<MessageEvent>();
     engine.register::<StorageEvent>();
     engine.register::<MediaQueryListEvent>();
