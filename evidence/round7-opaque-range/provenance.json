@@ -1,0 +1,49 @@
+{
+  "parent": "0eb9a351fcb140943c47d88e907032f6a6efd0b7",
+  "parentTree": "bbf5412c219ee47cdaf78c454edcddeeb26317c3",
+  "baselineBinarySHA256": "afbb316daef0c88b53848e267725ca0924e6fcaf99050ec9b61d2dd5fddb66f6",
+  "candidateBuiltRevision": "7d235ed4be36c430561d860adf01f6eeeca7b35b",
+  "topicRevision": "7d235ed4be36c430561d860adf01f6eeeca7b35b",
+  "topicTree": "218f9034873ee2291583420f02f03e07ee88275a",
+  "candidateBinarySHA256": "86e83db490de4a9188c83121a7cdd65f5c124543bf9fd4d72ee0122b33d4c333",
+  "buildProfile": "wptiter/render, -j1",
+  "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "selectionSHA256": "bb297c32fab75d7bccce47a7fd9ae52c91b481a2fbc69d8e1bec955e29645159",
+  "reference": {
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "manifestSha256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+    "version": "158.0.8127.37",
+    "channel": "Google Chrome stable",
+    "os": "macOS 27.2.1 arm64",
+    "GoogleTeam": "EQHXZ8M8AV",
+    "executableSHA256": "b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e",
+    "frameworkSHA256": "a04d264c815c317ba1ffa89d388144ec639ec0e4a1a114a2ba524ad4bdd130c8",
+    "dmgSHA256": "75b9fdb7573aab8a89f1b00319692a1f785fb4e6fd07e97916a13b00b3d34bae",
+    "codesignResult": "codesign --verify --deep --strict passed",
+    "viewport": [
+      800,
+      600,
+      1
+    ],
+    "server": "wptserve",
+    "testdriver": true,
+    "http2": true,
+    "jobsPerShard": 4,
+    "context": "fresh per page; private profile per process",
+    "noNativeReplayRunnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+    "expectedRunnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+    "PlaywrightCore": "1.65.1",
+    "PlaywrightTarballSHA256": "6f5a60be62a4fddfbe7d10c448d8fbd54547da3358f2f8a04211440471ee863e",
+    "profileSHA256": "9249fd4ed0c99ddcc34ca0ba377af793a2d49184152d3cdd59c23ee80b2a1ab9",
+    "previous157ProfileSHA256": "4eca5733609fe2839db2fd930210e161a41b575ff52a4bc077896c20e93cdbb8",
+    "serializations": "Manifest-first testharness with original names, structured harness results, per-URL protocol and environment."
+  },
+  "specSourceDigests": {
+    "dom-spec.html": "2cc4900e8bfcb0954fb8f50c32dd41dc4d3fa309067aef638c7d30e2b5f2ff5a",
+    "dom-proposal.diff": "e99e3fde54a2f4b907ad35dbcc9103ca02c575ddb077545bd594b137434bb932",
+    "html-proposal.diff": "bb8aa98882aed4caf212a834e2a76dd180d8b779173a7947ad46ebf126538737",
+    "explainer.md": "9542d600dcf6738dbf50c66bd06e98958fddbdba37a03e8efe1488cf6a3025a4",
+    "form-elements-spec.html": "d4fdc46f2e9da81a958b0c1997e072949abc041f5bae03a8d9ab2c1e4c672b6e"
+  }
+}

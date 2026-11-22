@@ -2,6 +2,9 @@
 //! text editing primitives used by input dispatch (HTML §4.10).
 //! All offsets are UTF-16 code units, as exposed to JS.
 
+use std::cell::Cell;
+use std::rc::{Rc, Weak};
+
 use markup5ever::{local_name, LocalName};
 
 use crate::dom::{utf16_len, utf16_range, Dom};
@@ -13,6 +16,156 @@ use crate::node::{NodeId, NodeKind, NIL};
 pub struct ControlSelection {
     pub range: (u32, u32),
     pub direction: Option<bool>,
+}
+
+/// Live UTF-16 boundaries in a form control's value space. The public range
+/// does not expose the control's UA-internal text nodes.
+pub struct OpaqueRange {
+    element: Cell<Option<NodeId>>,
+    offsets: Cell<(u32, u32)>,
+    release_control: Cell<Option<Box<dyn FnOnce()>>>,
+}
+
+impl OpaqueRange {
+    pub fn element(&self) -> Option<NodeId> {
+        self.element.get()
+    }
+
+    pub fn offsets(&self) -> (u32, u32) {
+        self.offsets.get()
+    }
+
+    /// The binding holds the associated control, including a detached one,
+    /// until the range is disconnected or its last wrapper is collected.
+    pub fn hold_control(&self, release: Box<dyn FnOnce()>) {
+        self.release_control.set(Some(release));
+    }
+
+    pub fn disconnect(&self) {
+        self.element.set(None);
+        self.offsets.set((0, 0));
+        if let Some(release) = self.release_control.take() {
+            release();
+        }
+    }
+}
+
+impl Drop for OpaqueRange {
+    fn drop(&mut self) {
+        self.disconnect();
+    }
+}
+
+impl Dom {
+    pub fn create_value_range(&mut self, id: NodeId, start: u32, end: u32) -> DomResult<Rc<OpaqueRange>> {
+        let i = self.check(id)?;
+        let supported = self.html_local(i) == Some(&local_name!("textarea"))
+            || self.is_input(i) && self.input_type_idx(i).supports_value_ranges();
+        if !supported {
+            return Err(DomError::new(DomErrorKind::NotSupported, "control does not support value ranges"));
+        }
+        let length = utf16_len(&self.value(id)?);
+        if start > length || end > length {
+            return Err(DomError::new(DomErrorKind::IndexSize, "offset exceeds the control value length"));
+        }
+        let range = Rc::new(OpaqueRange {
+            element: Cell::new(Some(id)),
+            offsets: Cell::new((start, end.max(start))),
+            release_control: Cell::new(None),
+        });
+        let ranges = self.value_ranges.entry(i).or_default();
+        if ranges.len() == ranges.capacity() {
+            ranges.retain(|weak| weak.upgrade().is_some_and(|r| r.element().is_some()));
+        }
+        ranges.push(Rc::downgrade(&range));
+        Ok(range)
+    }
+
+    fn change_value_ranges(&mut self, i: u32, adjust: impl Fn(u32) -> u32) {
+        let Some(ranges) = self.value_ranges.get_mut(&i) else { return };
+        ranges.retain(|weak| {
+            let Some(r) = weak.upgrade().filter(|r| r.element().is_some()) else { return false };
+            let (start, end) = r.offsets();
+            r.offsets.set((adjust(start), adjust(end)));
+            true
+        });
+        if ranges.is_empty() {
+            self.value_ranges.remove(&i);
+        }
+    }
+
+    pub(crate) fn replace_all_value_ranges(&mut self, i: u32) {
+        self.change_value_ranges(i, |_| 0);
+    }
+
+    fn edit_value_ranges(&mut self, i: u32, value: &str, bytes: std::ops::Range<usize>, replacement: &str) {
+        if !self.value_ranges.contains_key(&i) || &value[bytes.clone()] == replacement {
+            return;
+        }
+        // Use the actual edited span (the UTF-8-backed control editor may
+        // snap an offset within a surrogate pair to a scalar boundary).
+        let start = utf16_len(&value[..bytes.start]);
+        let end = start + utf16_len(&value[bytes]);
+        let added = utf16_len(replacement);
+        self.change_value_ranges(i, |offset| {
+            if offset <= start { offset }
+            else if offset < end { start }
+            else { (offset - (end - start)).saturating_add(added) }
+        });
+    }
+
+    pub(crate) fn disconnect_value_ranges(&mut self, i: u32) {
+        if let Some(ranges) = self.value_ranges.remove(&i) {
+            for range in ranges.iter().filter_map(Weak::upgrade) {
+                range.disconnect();
+            }
+        }
+    }
+
+    pub(crate) fn disconnect_subtree_value_ranges(&mut self, root: u32) {
+        let controls: Vec<_> = self.value_ranges.keys().copied()
+            .filter(|&i| self.is_host_including_inclusive_ancestor(root, i)).collect();
+        for i in controls {
+            self.disconnect_value_ranges(i);
+        }
+    }
+
+    /// Only direct text children supply a clean textarea's default value.
+    pub(crate) fn tracked_textarea_value(&self, parent: u32) -> Option<(NodeId, String)> {
+        if !self.value_ranges.contains_key(&parent) || self.html_local(parent) != Some(&local_name!("textarea")) {
+            return None;
+        }
+        let el = self.n(parent).element()?;
+        if el.control.as_ref().is_some_and(|control| control.value.is_some()) {
+            return None;
+        }
+        let id = self.id_of(parent);
+        Some((id, self.value(id).ok()?))
+    }
+
+    pub(crate) fn update_tracked_textarea(&mut self, old: Option<(NodeId, String)>) {
+        if let Some((id, old)) = old {
+            if self.value(id).is_ok_and(|value| value != old) {
+                self.replace_all_value_ranges(id.idx);
+            }
+        }
+    }
+
+    /// Restore default value, checkedness and selectedness while retaining
+    /// custom validity. A changed relevant value is a wholesale replacement.
+    pub fn reset_control(&mut self, id: NodeId) -> DomResult<()> {
+        let i = self.check(id)?;
+        if self.control_state(id)?.is_none() { return Ok(()) }
+        let before = self.value_ranges.contains_key(&i).then(|| self.value(id)).transpose()?;
+        let state = self.control_state_mut(id)?;
+        let validity = state.custom_validity.take();
+        *state = Default::default();
+        state.custom_validity = validity;
+        if let Some(before) = before {
+            if self.value(id)? != before { self.replace_all_value_ranges(i); }
+        }
+        Ok(())
+    }
 }
 
 /// HTML "rules for parsing integers". Saturates: callers range-check against
@@ -100,6 +253,9 @@ impl InputType {
             File => ValueMode::Filename,
             _ => ValueMode::Value,
         }
+    }
+    pub(crate) fn supports_value_ranges(self) -> bool {
+        matches!(self, Self::Text | Self::Search | Self::Tel | Self::Url | Self::Password)
     }
     /// Types whose value is edited as free text (selection APIs apply).
     pub fn is_textual(self) -> bool {
@@ -796,11 +952,7 @@ impl Dom {
             }
             "textarea" => match e.control.as_ref().and_then(|c| c.value.as_ref()) {
                 Some(v) => v.clone(),
-                None => {
-                    let mut s = String::new();
-                    self.collect_text(i, &mut s);
-                    s.replace("\r\n", "\n").replace('\r', "\n")
-                }
+                None => self.child_text_content(id).replace("\r\n", "\n").replace('\r', "\n"),
             },
             "select" => match self.selected_options_idx(i).first() {
                 Some(&o) => self.option_value(self.id_of(o))?,
@@ -826,6 +978,7 @@ impl Dom {
                             _ => sanitize(ty, v),
                         };
                         let changed = self.value(id)? != v;
+                        if changed { self.replace_all_value_ranges(i); }
                         let end = utf16_len(&v);
                         let c = self.control_state_mut(id)?;
                         c.value = Some(v);
@@ -850,6 +1003,7 @@ impl Dom {
             "textarea" => {
                 let v = v.replace("\r\n", "\n").replace('\r', "\n");
                 let changed = self.value(id)? != v;
+                if changed { self.replace_all_value_ranges(i); }
                 let end = utf16_len(&v);
                 let c = self.control_state_mut(id)?;
                 c.value = Some(v);
@@ -1177,6 +1331,7 @@ impl Dom {
             }
         }
         let (a, b) = utf16_range(&value, s, e - s)?;
+        self.edit_value_ranges(i, &value, a..b, &text);
         value.replace_range(a..b, &text);
         let caret = s + utf16_len(&text);
         let c = self.control_state_mut(id)?;
@@ -1203,8 +1358,9 @@ impl Dom {
         let (start, end) = (start.min(len), end.min(len));
         let (mut sel_start, mut sel_end) = self.selection(id)?;
         let (a, b) = utf16_range(&value, start, end.saturating_sub(start))?;
-        value.replace_range(a..b, &text);
         let text_len = utf16_len(&text);
+        self.edit_value_ranges(i, &value, a..b, &text);
+        value.replace_range(a..b, &text);
         let new_end = start + text_len;
         match mode {
             RangeMode::Select => (sel_start, sel_end) = (start, new_end),

@@ -1,0 +1,48 @@
+{
+  "cancelled": [
+    "changed",
+    "sample",
+    false,
+    1,
+    0,
+    [
+      2,
+      4
+    ]
+  ],
+  "reset": [
+    "original",
+    "sample",
+    true,
+    0,
+    0,
+    [
+      0,
+      0
+    ]
+  ],
+  "handlers": [
+    [
+      "changed",
+      "sample",
+      false,
+      1,
+      0,
+      [
+        2,
+        4
+      ]
+    ],
+    [
+      "changed",
+      "sample",
+      false,
+      1,
+      0,
+      [
+        2,
+        4
+      ]
+    ]
+  ]
+}

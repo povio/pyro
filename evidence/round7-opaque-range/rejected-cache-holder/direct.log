@@ -1,0 +1,8 @@
+page.evaluate: TypeError: hidden properties require a host object
+    at createValueRange (native)
+    at <anonymous> (native)
+    at evaluate (native)
+    at <anonymous> (native)
+    at /Users/xban1x/Library/Caches/lightningpanda/round7-opaque-range/probe.cjs:12:26 {
+  log: []
+}

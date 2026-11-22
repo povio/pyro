@@ -1054,15 +1054,7 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
     };
     let mut dom = page.dom.borrow_mut();
     for c in controls {
-        // Back to the default value, checkedness and selectedness; a
-        // custom validity message is not part of that.
-        if dom.control_state(c).ok().flatten().is_some() {
-            if let Ok(st) = dom.control_state_mut(c) {
-                let custom_validity = st.custom_validity.take();
-                *st = Default::default();
-                st.custom_validity = custom_validity;
-            }
-        }
+        let _ = dom.reset_control(c);
         // A file input's selected files are emptied.
         if dom.input_type(c).ok() == Some(InputType::File) && local(&dom, c).as_deref() == Some("input") {
             page.files.borrow_mut().remove(&c);

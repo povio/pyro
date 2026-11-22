@@ -282,6 +282,9 @@ pub struct Dom {
     pub(crate) mutation: MutationState,
     /// Ranges to adjust on mutation (`crate::live_range`); empty when none exists.
     pub(crate) live_ranges: Vec<std::rc::Weak<crate::live_range::LiveRange>>,
+    /// Only controls with registered ranges have an entry. Weak references
+    /// let unobserved ranges die independently of their control.
+    pub(crate) value_ranges: rustc_hash::FxHashMap<u32, Vec<std::rc::Weak<crate::forms::OpaqueRange>>>,
     pub(crate) live_iterators: Vec<std::rc::Weak<crate::live_iterator::LiveIterator>>,
     /// The document whose window a node was created for, by node slot: for
     /// the nodes that moved to a document of another window, and for the
@@ -385,6 +388,7 @@ impl Dom {
             media: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
+            value_ranges: Default::default(),
             live_iterators: Vec::new(),
             creation_docs: Default::default(),
             upgrades: Default::default(),
@@ -2996,6 +3000,7 @@ impl Dom {
     }
 
     fn link(&mut self, node: u32, parent: u32, before: u32) {
+        let old_value = self.tracked_textarea_value(parent);
         let prev = if before == NIL { self.n(parent).last_child } else { self.n(before).prev };
         {
             let n = self.n_mut(node);
@@ -3020,6 +3025,7 @@ impl Dom {
         }
         self.n_mut(parent).add_child_count();
         self.tree_linked(node);
+        self.update_tracked_textarea(old_value);
         if !self.registry_associations.is_empty() && self.is_connected_idx(node) && !self.is_fragment_parse_host(self.n(node).owner_doc) {
             let mut i = node;
             while i != NIL {
@@ -3034,6 +3040,7 @@ impl Dom {
     /// Every unlink (DOM, parsers, moves) goes through here and every link
     /// through `link`, which keep `tree_scope`'s flags and id maps.
     fn unlink(&mut self, node: u32) {
+        let old_value = self.tracked_textarea_value(self.n(node).parent);
         self.tree_unlinking(node);
         let (parent, prev, next) = {
             let n = self.n(node);
@@ -3059,6 +3066,7 @@ impl Dom {
         let w = &mut self.walk[node as usize];
         w.parent = NIL;
         w.next = NIL;
+        self.update_tracked_textarea(old_value);
     }
 
     fn remove(&mut self, node: u32, suppress: bool) {
@@ -3066,6 +3074,9 @@ impl Dom {
         debug_assert!(parent != NIL);
         let prev = self.n(node).prev;
         let next = self.n(node).next;
+        if !self.value_ranges.is_empty() && self.is_connected_idx(node) {
+            self.disconnect_subtree_value_ranges(node);
+        }
         self.resources_before_remove(node);
         self.picture_images_changed(parent, node);
         self.options_before_remove(node);
@@ -3711,6 +3722,11 @@ impl Dom {
                 self.svg_strings.remove(&(i, kind));
             }
         }
+        let tracked_input = plain && self.value_ranges.contains_key(&i)
+            && self.html_local(i) == Some(&local_name!("input"));
+        let old_range_type = (tracked_input && name.local == local_name!("type")).then(|| self.input_type_idx(i));
+        let old_range_value = (tracked_input && name.local == local_name!("value"))
+            .then(|| self.value(self.id_of(i)).ok()).flatten();
         let track_href = self.blob_hyperlinks.is_some() && name.local == local_name!("href") && (plain || name.ns == ns!(xlink));
         let el = self.n_mut(i).element_mut().expect("element");
         let old_id = (plain && name.local == local_name!("id")).then(|| el.id_atom().cloned());
@@ -3725,6 +3741,21 @@ impl Dom {
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
         if track_href && old_href.as_deref() != crate::blob_hyperlinks::hyperlink_href(el) {
             self.capture_hyperlink_blob(i);
+        }
+        if let Some(old) = old_range_type {
+            let new_type = self.input_type_idx(i);
+            if old != new_type {
+                if new_type.supports_value_ranges() {
+                    self.replace_all_value_ranges(i);
+                } else {
+                    self.disconnect_value_ranges(i);
+                }
+            }
+        }
+        if let Some(old) = old_range_value {
+            if self.value(self.id_of(i)).is_ok_and(|value| value != old) {
+                self.replace_all_value_ranges(i);
+            }
         }
         if plain && &*name.local == "points" && !self.svg_points.is_empty() {
             if let Some(lists) = self.svg_points.get(&i).and_then(std::rc::Weak::upgrade) {
@@ -4157,6 +4188,7 @@ impl Dom {
         let s = self.n(i).kind.char_data().ok_or(DomError::Type("not character data"))?;
         let (a, b) = utf16_range(s, offset, count)?;
         let old = s.to_owned();
+        let old_value = self.tracked_textarea_value(self.n(i).parent);
         self.n_mut(i).kind.char_data_mut().unwrap().replace_range(a..b, data);
         if self.n(i).kind.char_data() == Some(old.as_str()) {
             // Unchanged text: a mutation for observers and XPath iterators
@@ -4170,6 +4202,7 @@ impl Dom {
             let count = count.min(utf16_len(&old) - offset);
             self.ranges_after_replace_data(i, offset, count, utf16_len(data));
         }
+        self.update_tracked_textarea(old_value);
         self.queue_character_data(i, &old);
         self.resources_after_text(i);
         Ok(())
@@ -4638,6 +4671,7 @@ impl Dom {
 
     fn free_slot(&mut self, i: u32, component_root: u32) {
         self.forget_hyperlink_blob(i);
+        if !self.value_ranges.is_empty() { self.disconnect_value_ranges(i); }
         if !self.interest_for_elements.is_empty() { self.interest_for_elements.remove(&i); }
         let owner = self.n(i).owner_doc;
         if !self.svg_points.is_empty() { self.svg_points.remove(&i); }

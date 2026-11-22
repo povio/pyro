@@ -1,0 +1,2497 @@
+warning: unused field `repository` in `workspace.package`
+  --> Cargo.toml:31:1
+   |
+31 | repository = "https://github.com/povio/pyro"
+   | ^^^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.repository`
+warning: workspace (manifest) generated 1 warning
+warning: unused import: `CalcNode`
+   --> vendor/stylo/values/computed/mod.rs:934:39
+    |
+934 |                 use specified::calc::{CalcNode, Leaf};
+    |                                       ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Cached` is never constructed
+    --> vendor/stylo/stylist.rs:3507:5
+     |
+3505 | enum StylistImplicitScopeRoot {
+     |      ------------------------ variant in this enum
+3506 |     Normal(ImplicitScopeRoot),
+3507 |     Cached(usize),
+     |     ^^^^^^
+     |
+     = note: `StylistImplicitScopeRoot` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused logical operation that must be used
+    --> vendor/stylo/properties/cascade.rs:2330:17
+     |
+2311 |         macro_rules! check_declaration_value_cycle {
+...
+2330 |                 arg_lowlink != usize::MAX || arg_self_ref
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the logical operation produces a value
+...
+2355 |                         for arg in &function.arguments { check_declaration_value_cycle!(arg); }
+     |                                                          ----------------------------------- in this macro invocation
+     |
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+2355 |                         for arg in &function.arguments { let _ = check_declaration_value_cycle!(arg);; }
+     |                                                          +++++++                                    +
+
+warning: `stylo` (lib) generated 3 warnings (run `cargo fix --lib -p stylo` to apply 1 suggestion)
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> crates/pyro-raster/src/lib.rs:204:19
+    |
+204 |         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |                   ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+204 -         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+204 +         self.used.try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |
+
+warning: `pyro-raster` (lib) generated 1 warning (run `cargo fix --lib -p pyro-raster` to apply 1 suggestion)
+   Compiling pyro-dom v0.0.17 (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/build-base/crates/pyro-dom)
+warning: unused import: `style::values::computed::ToComputedValue as _`
+   --> crates/pyro-dom/src/animation.rs:338:9
+    |
+338 |     use style::values::computed::ToComputedValue as _;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `nonce` is never read
+   --> crates/pyro-dom/src/snapshot.rs:452:5
+    |
+450 | struct TreeSink {
+    |        -------- field in this struct
+451 |     /// pyro: as [`HtmlSink::nonce`].
+452 |     nonce: String,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-dom` (lib) generated 2 warnings (run `cargo fix --lib -p pyro-dom` to apply 1 suggestion)
+warning: unnecessary parentheses around closure body
+   --> crates/pyro-dom/tests/render_html.rs:677:49
+    |
+677 | ...   let tag = attrs.iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.t...
+    |                                       ^                                                                        ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+677 -                 let tag = attrs.iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_uppercase());
+677 +                 let tag = attrs.iter().find(|a| a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag")).map(|a| a.value.to_uppercase());
+    |
+
+warning: unnecessary parentheses around closure body
+   --> crates/pyro-dom/tests/render_html.rs:727:74
+    |
+727 | ...).unwrap().iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_upperc...
+    |                               ^                                                                        ^
+    |
+help: remove these parentheses
+    |
+727 -                     let own = dom.attributes(e).unwrap().iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_uppercase());
+727 +                     let own = dom.attributes(e).unwrap().iter().find(|a| a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag")).map(|a| a.value.to_uppercase());
+    |
+
+warning: `pyro-dom` (test "integration") generated 2 warnings (run `cargo fix --test "integration" -p pyro-dom` to apply 2 suggestions)
+    Finished `wptiter` profile [optimized + debuginfo] target(s) in 20.59s
+     Running tests/integration.rs (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/target/wptiter/build/pyro-dom/75466d68b0622067/out/integration-75466d68b0622067)
+
+running 9 tests
+test forms_values::date_and_time_sanitization ... ok
+test forms_values::maxlength_truncates_insertion ... ok
+test forms_values::length_constraints_need_a_user_edit_and_a_text_state ... ok
+test forms_values::opaque_ranges_disconnect_on_connected_removal_and_input_type_change ... ok
+test forms_values::opaque_ranges_reset_only_when_the_relevant_value_changes ... ok
+test forms_values::range_value_sanitization ... ok
+test forms_values::opaque_ranges_follow_applied_utf16_replacements_before_selection_updates ... ok
+test forms_values::numeric_values_and_stepping ... ok
+test forms_values::pattern_step_bad_input_and_ranges ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.00s
+
+warning: unused field `repository` in `workspace.package`
+  --> Cargo.toml:31:1
+   |
+31 | repository = "https://github.com/povio/pyro"
+   | ^^^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.repository`
+warning: workspace (manifest) generated 1 warning
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> crates/pyro-raster/src/lib.rs:204:19
+    |
+204 |         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |                   ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+204 -         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+204 +         self.used.try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |
+
+warning: `pyro-raster` (lib) generated 1 warning (run `cargo fix --lib -p pyro-raster` to apply 1 suggestion)
+warning: unused import: `CalcNode`
+   --> vendor/stylo/values/computed/mod.rs:934:39
+    |
+934 |                 use specified::calc::{CalcNode, Leaf};
+    |                                       ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Cached` is never constructed
+    --> vendor/stylo/stylist.rs:3507:5
+     |
+3505 | enum StylistImplicitScopeRoot {
+     |      ------------------------ variant in this enum
+3506 |     Normal(ImplicitScopeRoot),
+3507 |     Cached(usize),
+     |     ^^^^^^
+     |
+     = note: `StylistImplicitScopeRoot` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused logical operation that must be used
+    --> vendor/stylo/properties/cascade.rs:2330:17
+     |
+2311 |         macro_rules! check_declaration_value_cycle {
+...
+2330 |                 arg_lowlink != usize::MAX || arg_self_ref
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the logical operation produces a value
+...
+2355 |                         for arg in &function.arguments { check_declaration_value_cycle!(arg); }
+     |                                                          ----------------------------------- in this macro invocation
+     |
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+2355 |                         for arg in &function.arguments { let _ = check_declaration_value_cycle!(arg);; }
+     |                                                          +++++++                                    +
+
+warning: `stylo` (lib) generated 3 warnings (run `cargo fix --lib -p stylo` to apply 1 suggestion)
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1128:21
+     |
+1128 |         let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+     |
+1128 -         let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+1128 +         let width = CodePointMapData::<EastAsianWidth>::new().get(ch);
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1130:16
+     |
+1130 |             && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1130 -             && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+1130 +             && CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1135:17
+     |
+1135 |                 icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1135 -                 icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+1135 +                 CodePointMapData::<GeneralCategory>::new().get(ch),
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1155:20
+     |
+1155 |     let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1155 -     let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+1155 +     let category = CodePointMapData::<GeneralCategory>::new().get(ch);
+     |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:602:21
+    |
+602 |         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+602 -         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+602 +         let coords: Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:635:21
+    |
+635 |         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+635 -         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+635 +         let coords: Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:658:23
+    |
+658 |         let mut own = alloc::vec::Vec::new();
+    |                       ^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+658 -         let mut own = alloc::vec::Vec::new();
+658 +         let mut own = Vec::new();
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:693:29
+    |
+693 |             cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+693 -             cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+693 +             cluster.flags = ShapedClusterFlags::from_bits(saved.flags);
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:382:25
+    |
+382 |         let variations: alloc::vec::Vec<FontVariation>;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+382 -         let variations: alloc::vec::Vec<FontVariation>;
+382 +         let variations: Vec<FontVariation>;
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:423:28
+    |
+423 |         let face_features: alloc::vec::Vec<harfrust::Feature>;
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+423 -         let face_features: alloc::vec::Vec<harfrust::Feature>;
+423 +         let face_features: Vec<harfrust::Feature>;
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:901:13
+    |
+901 | ) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+901 - ) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+901 + ) -> Option<Vec<harfrust::GlyphPosition>> {
+    |
+
+warning: missing documentation for a method
+   --> vendor/parley_engine/src/shape/shaped_text.rs:507:5
+    |
+507 |     pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `parley_engine` (lib) generated 12 warnings (run `cargo fix --lib -p parley_engine` to apply 11 suggestions)
+warning: unnecessary qualification
+   --> vendor/parley/src/shape/mod.rs:838:39
+    |
+838 | fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+    |
+838 - fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+838 + fn preserves_breaks<B: Brush>(style: &ResolvedStyle<B>) -> bool {
+    |
+
+warning: unnecessary qualification
+    --> vendor/parley/src/layout/line_break.rs:3257:32
+     |
+3257 | ...                   == crate::style::WhiteSpaceCollapse::BreakSpaces
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+3257 -                             == crate::style::WhiteSpaceCollapse::BreakSpaces
+3257 +                             == WhiteSpaceCollapse::BreakSpaces
+     |
+
+warning: trivial numeric cast: `u32` as `u32`
+  --> vendor/parley/src/shape/justify.rs:50:54
+   |
+50 |         while atomic.next_if(|&position| position <= character.text_byte_start as u32).is_some() {
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: cast can be replaced by coercion; this might require a temporary variable
+   = note: requested on the command line with `-W trivial-numeric-casts`
+
+warning: `parley` (lib) generated 3 warnings (run `cargo fix --lib -p parley` to apply 2 suggestions)
+warning: missing documentation for a method
+  --> vendor/taffy/src/style/flex.rs:67:5
+   |
+67 |     fn flex_basis_calculation(&self) -> Option<super::CalcSizeFunction> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> vendor/taffy/src/lib.rs:66:9
+   |
+66 | #![warn(missing_docs)]
+   |         ^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:238:5
+    |
+238 |     fn position_try_options(&self, _node: NodeId) -> ([usize; 5], usize, Option<bool>) { ([0; 5],0,None) }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:239:5
+    |
+239 |     fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:240:5
+    |
+240 |     fn selected_option_this_flush(&self, _node: NodeId) -> Option<Option<usize>> { None }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:241:5
+    |
+241 |     fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:242:5
+    |
+242 |     fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:243:5
+    |
+243 |     fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:244:5
+    |
+244 |     fn position_try_scroll_offset(&self, _node: NodeId, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:246:5
+    |
+246 |     fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:248:5
+    |
+248 |     fn set_position_overflow(&mut self, _node: NodeId, _overflows: bool) {}
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:250:5
+    |
+250 |     fn set_position_try_option(&mut self, _node: NodeId, _index: Option<usize>) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `taffy` (lib) generated 11 warnings
+warning: unused doc comment
+   --> vendor/blitz-dom/src/node/svg_css.rs:245:1
+    |
+245 | /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `UserAgentStylesheet`
+  --> vendor/blitz-dom/src/iframe.rs:13:43
+   |
+13 | use crate::{BaseDocument, DocumentConfig, UserAgentStylesheet, local_name};
+   |                                           ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `style::values::computed::text::TextEmphasisPosition`
+    --> vendor/blitz-dom/src/layout/inline/build.rs:1039:13
+     |
+1039 |         use style::values::computed::text::TextEmphasisPosition;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unnecessary parentheses around method argument
+    --> vendor/blitz-dom/src/layout/inline/layout.rs:1650:30
+     |
+1650 |             .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
+     |                              ^                                         ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+1650 -             .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
+1650 +             .set_text_indent(resolved_text_indent * scale - hang_first, indent_options);
+     |
+
+warning: unnecessary parentheses around method argument
+    --> vendor/blitz-dom/src/layout/inline/layout.rs:1664:66
+     |
+1664 |             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
+     |                                                                  ^                                         ^
+     |
+help: remove these parentheses
+     |
+1664 -             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
+1664 +             let max_content_width = inline_layout.content_widths(resolved_text_indent * scale - hang_first).max;
+     |
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/node/svg_css.rs:1806:13
+     |
+1806 |         let mut take_attr = |tag: &mut String, name: &str| -> Option<String> {
+     |             ----^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `row_top` is never read
+    --> vendor/blitz-dom/src/layout/multicol.rs:1413:25
+     |
+1413 |                         row_top = top;
+     |                         ^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+1439 |                 row_top = top;
+     |                 ------------- `row_top` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `row_top` is never read
+    --> vendor/blitz-dom/src/layout/multicol.rs:1439:17
+     |
+1431 |                     row_top = top + shown;
+     |                     --------------------- `row_top` is overwritten here before the previous value is read
+...
+1439 |                 row_top = top;
+     |                 ^^^^^^^^^^^^^ this value is reassigned later and never used
+
+warning: variable does not need to be mutable
+   --> vendor/blitz-dom/src/layout/replaced.rs:477:9
+    |
+477 |     let mut min_size = style
+    |         ----^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/layout/table.rs:1000:13
+     |
+1000 |         let mut push = |pieces: &mut Vec<(u32, u32, CollapsedEdge)>, s: u32, e: u32, edge: CollapsedEdge| {
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/layout/table.rs:4798:9
+     |
+4798 |     let mut spread = |sizes: &mut Vec<f32>,
+     |         ----^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: method `names_frame` is never used
+   --> vendor/blitz-dom/src/iframe.rs:178:19
+    |
+ 48 | impl BaseDocument {
+    | ----------------- method in this implementation
+...
+178 |     pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
+    |                   ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `scan_text` is never used
+   --> vendor/blitz-dom/src/layout/first_letter.rs:124:15
+    |
+124 | pub(crate) fn scan_text(text: &str) -> TextScan {
+    |               ^^^^^^^^^
+
+warning: function `painted_ancestor` is never used
+   --> vendor/blitz-dom/src/layout/inline/relative.rs:192:15
+    |
+192 | pub(crate) fn painted_ancestor(nodes: &crate::NodeTree, id: NodeId, root_id: NodeId) -> bool {
+    |               ^^^^^^^^^^^^^^^^
+
+warning: function `cors_checked` is never used
+   --> vendor/blitz-dom/src/net.rs:148:15
+    |
+148 | pub(crate) fn cors_checked(url: &Url, document: &Url) -> bool {
+    |               ^^^^^^^^^^^^
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+   --> vendor/blitz-dom/src/layout/line_clamp.rs:260:17
+    |
+260 |                 drop(line_bottom);
+    |                 ^^^^^-----------^
+    |                      |
+    |                      argument has type `{closure@vendor/blitz-dom/src/layout/line_clamp.rs:250:35: 250:47}`
+    |
+    = note: `#[warn(dropping_copy_types)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+    |
+260 -                 drop(line_bottom);
+260 +                 let _ = line_bottom;
+    |
+
+warning: `blitz-dom` (lib) generated 16 warnings (run `cargo fix --lib -p blitz-dom` to apply 8 suggestions)
+warning: unused import: `ParamCurve`
+   --> vendor/anyrender_vello_cpu/src/scene.rs:104:17
+    |
+104 |     use kurbo::{ParamCurve as _, ParamCurveArclen as _, PathEl};
+    |                 ^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:155:9
+    |
+155 |     let mut segment = |el: PathEl, from: kurbo::Point, pos: &mut f64, open: &mut Option<Run>, runs: &mut Vec<Run>, first_kept: &mut...
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:198:9
+    |
+198 |     let mut end_subpath = |closed: bool, open: &mut Option<Run>, runs: &mut Vec<Run>, first_run: usize, first_kept: Option<bool>, b...
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:262:9
+    |
+262 |     let mut add = |p: kurbo::Point, bbox: &mut Option<Rect>| {
+    |         ----^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: `anyrender_vello_cpu` (lib) generated 4 warnings (run `cargo fix --lib -p anyrender_vello_cpu` to apply 3 suggestions)
+warning: unused import: `style::values::computed::ToComputedValue as _`
+   --> crates/pyro-dom/src/animation.rs:338:9
+    |
+338 |     use style::values::computed::ToComputedValue as _;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `nonce` is never read
+   --> crates/pyro-dom/src/snapshot.rs:452:5
+    |
+450 | struct TreeSink {
+    |        -------- field in this struct
+451 |     /// pyro: as [`HtmlSink::nonce`].
+452 |     nonce: String,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-dom` (lib) generated 2 warnings (run `cargo fix --lib -p pyro-dom` to apply 1 suggestion)
+warning: unused import: `GenericPosition`
+  --> vendor/blitz-paint/src/render/clip_path.rs:15:41
+   |
+15 | use style::values::generics::position::{GenericPosition, GenericPositionOrAuto};
+   |                                         ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+   --> vendor/blitz-paint/src/text.rs:252:1
+    |
+252 | / /// pyro: a glyph origin `x` (device px) on Skia's quarter-pixel grid, taken to a layout unit
+253 | | /// (1/64 px) first: glyphs within a run then bin as those starting a box whose edge a layout unit
+254 | | /// rounds (text in two table cells against the same text in one line), where half-unit advances
+255 | | /// (1/128 px at 16px in a 2048-unit font) would put them on either side of a quarter's edge.
+    | |_--------------------------------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `kurbo::Shape`
+  --> vendor/blitz-paint/src/render/box_shadow.rs:66:9
+   |
+66 |     use kurbo::Shape as _;
+   |         ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> vendor/blitz-paint/src/render/border_shape.rs:193:13
+    |
+193 |         let mut take = |path: BezPath, best: &mut Option<(f64, BezPath)>| {
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `contrast_ratio` is never used
+  --> vendor/blitz-paint/src/color.rs:29:15
+   |
+29 | pub(crate) fn contrast_ratio(a: Color, b: Color) -> f32 {
+   |               ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `all_upright` is never read
+  --> vendor/blitz-paint/src/text.rs:34:5
+   |
+26 | pub(crate) struct VerticalLine {
+   |                   ------------ field in this struct
+...
+34 |     all_upright: bool,
+   |     ^^^^^^^^^^^
+   |
+   = note: `VerticalLine` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `blitz-paint` (lib) generated 6 warnings (run `cargo fix --lib -p blitz-paint` to apply 2 suggestions)
+   Compiling pyro-webapi v0.0.17 (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/build-base/crates/pyro-webapi)
+warning: function `in_effect_or_current` is never used
+   --> crates/pyro-webapi/src/animation_frame.rs:110:4
+    |
+110 | fn in_effect_or_current(timing: &Timing, local: f64, rate: f64, settled: bool) -> Option<(Progress, Level)> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-webapi` (lib) generated 1 warning
+warning: linker stderr: xargs: /bin/echo: terminated with signal 13; aborting
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `pyro-webapi` (test "integration") generated 1 warning
+    Finished `wptiter` profile [optimized + debuginfo] target(s) in 1m 04s
+     Running tests/integration.rs (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/target/wptiter/build/pyro-webapi/0c743dbf58a21391/out/integration-0c743dbf58a21391)
+
+running 1 test
+test svg_animated_enumeration_js::dom_idl_arguments_abstract_range_and_fullscreen ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 708 filtered out; finished in 0.02s
+
+warning: unused field `repository` in `workspace.package`
+  --> Cargo.toml:31:1
+   |
+31 | repository = "https://github.com/povio/pyro"
+   | ^^^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.repository`
+warning: workspace (manifest) generated 1 warning
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> crates/pyro-raster/src/lib.rs:204:19
+    |
+204 |         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |                   ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+204 -         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+204 +         self.used.try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |
+
+warning: `pyro-raster` (lib) generated 1 warning (run `cargo fix --lib -p pyro-raster` to apply 1 suggestion)
+warning: unused import: `CalcNode`
+   --> vendor/stylo/values/computed/mod.rs:934:39
+    |
+934 |                 use specified::calc::{CalcNode, Leaf};
+    |                                       ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Cached` is never constructed
+    --> vendor/stylo/stylist.rs:3507:5
+     |
+3505 | enum StylistImplicitScopeRoot {
+     |      ------------------------ variant in this enum
+3506 |     Normal(ImplicitScopeRoot),
+3507 |     Cached(usize),
+     |     ^^^^^^
+     |
+     = note: `StylistImplicitScopeRoot` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused logical operation that must be used
+    --> vendor/stylo/properties/cascade.rs:2330:17
+     |
+2311 |         macro_rules! check_declaration_value_cycle {
+...
+2330 |                 arg_lowlink != usize::MAX || arg_self_ref
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the logical operation produces a value
+...
+2355 |                         for arg in &function.arguments { check_declaration_value_cycle!(arg); }
+     |                                                          ----------------------------------- in this macro invocation
+     |
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+2355 |                         for arg in &function.arguments { let _ = check_declaration_value_cycle!(arg);; }
+     |                                                          +++++++                                    +
+
+warning: `stylo` (lib) generated 3 warnings (run `cargo fix --lib -p stylo` to apply 1 suggestion)
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1128:21
+     |
+1128 |         let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+     |
+1128 -         let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+1128 +         let width = CodePointMapData::<EastAsianWidth>::new().get(ch);
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1130:16
+     |
+1130 |             && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1130 -             && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+1130 +             && CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1135:17
+     |
+1135 |                 icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1135 -                 icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+1135 +                 CodePointMapData::<GeneralCategory>::new().get(ch),
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1155:20
+     |
+1155 |     let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1155 -     let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+1155 +     let category = CodePointMapData::<GeneralCategory>::new().get(ch);
+     |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:602:21
+    |
+602 |         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+602 -         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+602 +         let coords: Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:635:21
+    |
+635 |         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+635 -         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+635 +         let coords: Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:658:23
+    |
+658 |         let mut own = alloc::vec::Vec::new();
+    |                       ^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+658 -         let mut own = alloc::vec::Vec::new();
+658 +         let mut own = Vec::new();
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:693:29
+    |
+693 |             cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+693 -             cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+693 +             cluster.flags = ShapedClusterFlags::from_bits(saved.flags);
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:382:25
+    |
+382 |         let variations: alloc::vec::Vec<FontVariation>;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+382 -         let variations: alloc::vec::Vec<FontVariation>;
+382 +         let variations: Vec<FontVariation>;
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:423:28
+    |
+423 |         let face_features: alloc::vec::Vec<harfrust::Feature>;
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+423 -         let face_features: alloc::vec::Vec<harfrust::Feature>;
+423 +         let face_features: Vec<harfrust::Feature>;
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:901:13
+    |
+901 | ) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+901 - ) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+901 + ) -> Option<Vec<harfrust::GlyphPosition>> {
+    |
+
+warning: missing documentation for a method
+   --> vendor/parley_engine/src/shape/shaped_text.rs:507:5
+    |
+507 |     pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `parley_engine` (lib) generated 12 warnings (run `cargo fix --lib -p parley_engine` to apply 11 suggestions)
+warning: unnecessary qualification
+   --> vendor/parley/src/shape/mod.rs:838:39
+    |
+838 | fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+    |
+838 - fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+838 + fn preserves_breaks<B: Brush>(style: &ResolvedStyle<B>) -> bool {
+    |
+
+warning: unnecessary qualification
+    --> vendor/parley/src/layout/line_break.rs:3257:32
+     |
+3257 | ...                   == crate::style::WhiteSpaceCollapse::BreakSpaces
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+3257 -                             == crate::style::WhiteSpaceCollapse::BreakSpaces
+3257 +                             == WhiteSpaceCollapse::BreakSpaces
+     |
+
+warning: trivial numeric cast: `u32` as `u32`
+  --> vendor/parley/src/shape/justify.rs:50:54
+   |
+50 |         while atomic.next_if(|&position| position <= character.text_byte_start as u32).is_some() {
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: cast can be replaced by coercion; this might require a temporary variable
+   = note: requested on the command line with `-W trivial-numeric-casts`
+
+warning: `parley` (lib) generated 3 warnings (run `cargo fix --lib -p parley` to apply 2 suggestions)
+warning: missing documentation for a method
+  --> vendor/taffy/src/style/flex.rs:67:5
+   |
+67 |     fn flex_basis_calculation(&self) -> Option<super::CalcSizeFunction> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> vendor/taffy/src/lib.rs:66:9
+   |
+66 | #![warn(missing_docs)]
+   |         ^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:238:5
+    |
+238 |     fn position_try_options(&self, _node: NodeId) -> ([usize; 5], usize, Option<bool>) { ([0; 5],0,None) }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:239:5
+    |
+239 |     fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:240:5
+    |
+240 |     fn selected_option_this_flush(&self, _node: NodeId) -> Option<Option<usize>> { None }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:241:5
+    |
+241 |     fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:242:5
+    |
+242 |     fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:243:5
+    |
+243 |     fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:244:5
+    |
+244 |     fn position_try_scroll_offset(&self, _node: NodeId, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:246:5
+    |
+246 |     fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:248:5
+    |
+248 |     fn set_position_overflow(&mut self, _node: NodeId, _overflows: bool) {}
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:250:5
+    |
+250 |     fn set_position_try_option(&mut self, _node: NodeId, _index: Option<usize>) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `taffy` (lib) generated 11 warnings
+warning: unused doc comment
+   --> vendor/blitz-dom/src/node/svg_css.rs:245:1
+    |
+245 | /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `UserAgentStylesheet`
+  --> vendor/blitz-dom/src/iframe.rs:13:43
+   |
+13 | use crate::{BaseDocument, DocumentConfig, UserAgentStylesheet, local_name};
+   |                                           ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `style::values::computed::text::TextEmphasisPosition`
+    --> vendor/blitz-dom/src/layout/inline/build.rs:1039:13
+     |
+1039 |         use style::values::computed::text::TextEmphasisPosition;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unnecessary parentheses around method argument
+    --> vendor/blitz-dom/src/layout/inline/layout.rs:1650:30
+     |
+1650 |             .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
+     |                              ^                                         ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+1650 -             .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
+1650 +             .set_text_indent(resolved_text_indent * scale - hang_first, indent_options);
+     |
+
+warning: unnecessary parentheses around method argument
+    --> vendor/blitz-dom/src/layout/inline/layout.rs:1664:66
+     |
+1664 |             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
+     |                                                                  ^                                         ^
+     |
+help: remove these parentheses
+     |
+1664 -             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
+1664 +             let max_content_width = inline_layout.content_widths(resolved_text_indent * scale - hang_first).max;
+     |
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/node/svg_css.rs:1806:13
+     |
+1806 |         let mut take_attr = |tag: &mut String, name: &str| -> Option<String> {
+     |             ----^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `row_top` is never read
+    --> vendor/blitz-dom/src/layout/multicol.rs:1413:25
+     |
+1413 |                         row_top = top;
+     |                         ^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+1439 |                 row_top = top;
+     |                 ------------- `row_top` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `row_top` is never read
+    --> vendor/blitz-dom/src/layout/multicol.rs:1439:17
+     |
+1431 |                     row_top = top + shown;
+     |                     --------------------- `row_top` is overwritten here before the previous value is read
+...
+1439 |                 row_top = top;
+     |                 ^^^^^^^^^^^^^ this value is reassigned later and never used
+
+warning: variable does not need to be mutable
+   --> vendor/blitz-dom/src/layout/replaced.rs:477:9
+    |
+477 |     let mut min_size = style
+    |         ----^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/layout/table.rs:1000:13
+     |
+1000 |         let mut push = |pieces: &mut Vec<(u32, u32, CollapsedEdge)>, s: u32, e: u32, edge: CollapsedEdge| {
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/layout/table.rs:4798:9
+     |
+4798 |     let mut spread = |sizes: &mut Vec<f32>,
+     |         ----^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: method `names_frame` is never used
+   --> vendor/blitz-dom/src/iframe.rs:178:19
+    |
+ 48 | impl BaseDocument {
+    | ----------------- method in this implementation
+...
+178 |     pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
+    |                   ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `scan_text` is never used
+   --> vendor/blitz-dom/src/layout/first_letter.rs:124:15
+    |
+124 | pub(crate) fn scan_text(text: &str) -> TextScan {
+    |               ^^^^^^^^^
+
+warning: function `painted_ancestor` is never used
+   --> vendor/blitz-dom/src/layout/inline/relative.rs:192:15
+    |
+192 | pub(crate) fn painted_ancestor(nodes: &crate::NodeTree, id: NodeId, root_id: NodeId) -> bool {
+    |               ^^^^^^^^^^^^^^^^
+
+warning: function `cors_checked` is never used
+   --> vendor/blitz-dom/src/net.rs:148:15
+    |
+148 | pub(crate) fn cors_checked(url: &Url, document: &Url) -> bool {
+    |               ^^^^^^^^^^^^
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+   --> vendor/blitz-dom/src/layout/line_clamp.rs:260:17
+    |
+260 |                 drop(line_bottom);
+    |                 ^^^^^-----------^
+    |                      |
+    |                      argument has type `{closure@vendor/blitz-dom/src/layout/line_clamp.rs:250:35: 250:47}`
+    |
+    = note: `#[warn(dropping_copy_types)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+    |
+260 -                 drop(line_bottom);
+260 +                 let _ = line_bottom;
+    |
+
+warning: `blitz-dom` (lib) generated 16 warnings (run `cargo fix --lib -p blitz-dom` to apply 8 suggestions)
+warning: unused import: `ParamCurve`
+   --> vendor/anyrender_vello_cpu/src/scene.rs:104:17
+    |
+104 |     use kurbo::{ParamCurve as _, ParamCurveArclen as _, PathEl};
+    |                 ^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:155:9
+    |
+155 |     let mut segment = |el: PathEl, from: kurbo::Point, pos: &mut f64, open: &mut Option<Run>, runs: &mut Vec<Run>, first_kept: &mut...
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:198:9
+    |
+198 |     let mut end_subpath = |closed: bool, open: &mut Option<Run>, runs: &mut Vec<Run>, first_run: usize, first_kept: Option<bool>, b...
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:262:9
+    |
+262 |     let mut add = |p: kurbo::Point, bbox: &mut Option<Rect>| {
+    |         ----^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: `anyrender_vello_cpu` (lib) generated 4 warnings (run `cargo fix --lib -p anyrender_vello_cpu` to apply 3 suggestions)
+warning: unused import: `style::values::computed::ToComputedValue as _`
+   --> crates/pyro-dom/src/animation.rs:338:9
+    |
+338 |     use style::values::computed::ToComputedValue as _;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `nonce` is never read
+   --> crates/pyro-dom/src/snapshot.rs:452:5
+    |
+450 | struct TreeSink {
+    |        -------- field in this struct
+451 |     /// pyro: as [`HtmlSink::nonce`].
+452 |     nonce: String,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-dom` (lib) generated 2 warnings (run `cargo fix --lib -p pyro-dom` to apply 1 suggestion)
+warning: unused import: `GenericPosition`
+  --> vendor/blitz-paint/src/render/clip_path.rs:15:41
+   |
+15 | use style::values::generics::position::{GenericPosition, GenericPositionOrAuto};
+   |                                         ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+   --> vendor/blitz-paint/src/text.rs:252:1
+    |
+252 | / /// pyro: a glyph origin `x` (device px) on Skia's quarter-pixel grid, taken to a layout unit
+253 | | /// (1/64 px) first: glyphs within a run then bin as those starting a box whose edge a layout unit
+254 | | /// rounds (text in two table cells against the same text in one line), where half-unit advances
+255 | | /// (1/128 px at 16px in a 2048-unit font) would put them on either side of a quarter's edge.
+    | |_--------------------------------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `kurbo::Shape`
+  --> vendor/blitz-paint/src/render/box_shadow.rs:66:9
+   |
+66 |     use kurbo::Shape as _;
+   |         ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> vendor/blitz-paint/src/render/border_shape.rs:193:13
+    |
+193 |         let mut take = |path: BezPath, best: &mut Option<(f64, BezPath)>| {
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `contrast_ratio` is never used
+  --> vendor/blitz-paint/src/color.rs:29:15
+   |
+29 | pub(crate) fn contrast_ratio(a: Color, b: Color) -> f32 {
+   |               ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `all_upright` is never read
+  --> vendor/blitz-paint/src/text.rs:34:5
+   |
+26 | pub(crate) struct VerticalLine {
+   |                   ------------ field in this struct
+...
+34 |     all_upright: bool,
+   |     ^^^^^^^^^^^
+   |
+   = note: `VerticalLine` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `blitz-paint` (lib) generated 6 warnings (run `cargo fix --lib -p blitz-paint` to apply 2 suggestions)
+warning: function `in_effect_or_current` is never used
+   --> crates/pyro-webapi/src/animation_frame.rs:110:4
+    |
+110 | fn in_effect_or_current(timing: &Timing, local: f64, rate: f64, settled: bool) -> Option<(Progress, Level)> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-webapi` (lib) generated 1 warning
+warning: linker stderr: xargs: /bin/echo: terminated with signal 13; aborting
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `pyro-webapi` (test "integration") generated 1 warning
+    Finished `wptiter` profile [optimized + debuginfo] target(s) in 0.42s
+     Running tests/integration.rs (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/target/wptiter/build/pyro-webapi/0c743dbf58a21391/out/integration-0c743dbf58a21391)
+
+running 1 test
+test forms_js::form_reset ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 708 filtered out; finished in 0.01s
+
+warning: unused field `repository` in `workspace.package`
+  --> Cargo.toml:31:1
+   |
+31 | repository = "https://github.com/povio/pyro"
+   | ^^^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.repository`
+warning: workspace (manifest) generated 1 warning
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> crates/pyro-raster/src/lib.rs:204:19
+    |
+204 |         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |                   ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+204 -         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+204 +         self.used.try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |
+
+warning: `pyro-raster` (lib) generated 1 warning (run `cargo fix --lib -p pyro-raster` to apply 1 suggestion)
+warning: unused import: `CalcNode`
+   --> vendor/stylo/values/computed/mod.rs:934:39
+    |
+934 |                 use specified::calc::{CalcNode, Leaf};
+    |                                       ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Cached` is never constructed
+    --> vendor/stylo/stylist.rs:3507:5
+     |
+3505 | enum StylistImplicitScopeRoot {
+     |      ------------------------ variant in this enum
+3506 |     Normal(ImplicitScopeRoot),
+3507 |     Cached(usize),
+     |     ^^^^^^
+     |
+     = note: `StylistImplicitScopeRoot` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused logical operation that must be used
+    --> vendor/stylo/properties/cascade.rs:2330:17
+     |
+2311 |         macro_rules! check_declaration_value_cycle {
+...
+2330 |                 arg_lowlink != usize::MAX || arg_self_ref
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the logical operation produces a value
+...
+2355 |                         for arg in &function.arguments { check_declaration_value_cycle!(arg); }
+     |                                                          ----------------------------------- in this macro invocation
+     |
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+2355 |                         for arg in &function.arguments { let _ = check_declaration_value_cycle!(arg);; }
+     |                                                          +++++++                                    +
+
+warning: `stylo` (lib) generated 3 warnings (run `cargo fix --lib -p stylo` to apply 1 suggestion)
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1128:21
+     |
+1128 |         let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+     |
+1128 -         let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+1128 +         let width = CodePointMapData::<EastAsianWidth>::new().get(ch);
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1130:16
+     |
+1130 |             && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1130 -             && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+1130 +             && CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1135:17
+     |
+1135 |                 icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1135 -                 icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+1135 +                 CodePointMapData::<GeneralCategory>::new().get(ch),
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1155:20
+     |
+1155 |     let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1155 -     let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+1155 +     let category = CodePointMapData::<GeneralCategory>::new().get(ch);
+     |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:602:21
+    |
+602 |         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+602 -         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+602 +         let coords: Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:635:21
+    |
+635 |         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+635 -         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+635 +         let coords: Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:658:23
+    |
+658 |         let mut own = alloc::vec::Vec::new();
+    |                       ^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+658 -         let mut own = alloc::vec::Vec::new();
+658 +         let mut own = Vec::new();
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:693:29
+    |
+693 |             cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+693 -             cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+693 +             cluster.flags = ShapedClusterFlags::from_bits(saved.flags);
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:382:25
+    |
+382 |         let variations: alloc::vec::Vec<FontVariation>;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+382 -         let variations: alloc::vec::Vec<FontVariation>;
+382 +         let variations: Vec<FontVariation>;
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:423:28
+    |
+423 |         let face_features: alloc::vec::Vec<harfrust::Feature>;
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+423 -         let face_features: alloc::vec::Vec<harfrust::Feature>;
+423 +         let face_features: Vec<harfrust::Feature>;
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:901:13
+    |
+901 | ) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+901 - ) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+901 + ) -> Option<Vec<harfrust::GlyphPosition>> {
+    |
+
+warning: missing documentation for a method
+   --> vendor/parley_engine/src/shape/shaped_text.rs:507:5
+    |
+507 |     pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `parley_engine` (lib) generated 12 warnings (run `cargo fix --lib -p parley_engine` to apply 11 suggestions)
+warning: unnecessary qualification
+   --> vendor/parley/src/shape/mod.rs:838:39
+    |
+838 | fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+    |
+838 - fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+838 + fn preserves_breaks<B: Brush>(style: &ResolvedStyle<B>) -> bool {
+    |
+
+warning: unnecessary qualification
+    --> vendor/parley/src/layout/line_break.rs:3257:32
+     |
+3257 | ...                   == crate::style::WhiteSpaceCollapse::BreakSpaces
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+3257 -                             == crate::style::WhiteSpaceCollapse::BreakSpaces
+3257 +                             == WhiteSpaceCollapse::BreakSpaces
+     |
+
+warning: trivial numeric cast: `u32` as `u32`
+  --> vendor/parley/src/shape/justify.rs:50:54
+   |
+50 |         while atomic.next_if(|&position| position <= character.text_byte_start as u32).is_some() {
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: cast can be replaced by coercion; this might require a temporary variable
+   = note: requested on the command line with `-W trivial-numeric-casts`
+
+warning: `parley` (lib) generated 3 warnings (run `cargo fix --lib -p parley` to apply 2 suggestions)
+warning: missing documentation for a method
+  --> vendor/taffy/src/style/flex.rs:67:5
+   |
+67 |     fn flex_basis_calculation(&self) -> Option<super::CalcSizeFunction> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> vendor/taffy/src/lib.rs:66:9
+   |
+66 | #![warn(missing_docs)]
+   |         ^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:238:5
+    |
+238 |     fn position_try_options(&self, _node: NodeId) -> ([usize; 5], usize, Option<bool>) { ([0; 5],0,None) }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:239:5
+    |
+239 |     fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:240:5
+    |
+240 |     fn selected_option_this_flush(&self, _node: NodeId) -> Option<Option<usize>> { None }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:241:5
+    |
+241 |     fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:242:5
+    |
+242 |     fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:243:5
+    |
+243 |     fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:244:5
+    |
+244 |     fn position_try_scroll_offset(&self, _node: NodeId, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:246:5
+    |
+246 |     fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:248:5
+    |
+248 |     fn set_position_overflow(&mut self, _node: NodeId, _overflows: bool) {}
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:250:5
+    |
+250 |     fn set_position_try_option(&mut self, _node: NodeId, _index: Option<usize>) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `taffy` (lib) generated 11 warnings
+warning: unused doc comment
+   --> vendor/blitz-dom/src/node/svg_css.rs:245:1
+    |
+245 | /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `UserAgentStylesheet`
+  --> vendor/blitz-dom/src/iframe.rs:13:43
+   |
+13 | use crate::{BaseDocument, DocumentConfig, UserAgentStylesheet, local_name};
+   |                                           ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `style::values::computed::text::TextEmphasisPosition`
+    --> vendor/blitz-dom/src/layout/inline/build.rs:1039:13
+     |
+1039 |         use style::values::computed::text::TextEmphasisPosition;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unnecessary parentheses around method argument
+    --> vendor/blitz-dom/src/layout/inline/layout.rs:1650:30
+     |
+1650 |             .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
+     |                              ^                                         ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+1650 -             .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
+1650 +             .set_text_indent(resolved_text_indent * scale - hang_first, indent_options);
+     |
+
+warning: unnecessary parentheses around method argument
+    --> vendor/blitz-dom/src/layout/inline/layout.rs:1664:66
+     |
+1664 |             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
+     |                                                                  ^                                         ^
+     |
+help: remove these parentheses
+     |
+1664 -             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
+1664 +             let max_content_width = inline_layout.content_widths(resolved_text_indent * scale - hang_first).max;
+     |
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/node/svg_css.rs:1806:13
+     |
+1806 |         let mut take_attr = |tag: &mut String, name: &str| -> Option<String> {
+     |             ----^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `row_top` is never read
+    --> vendor/blitz-dom/src/layout/multicol.rs:1413:25
+     |
+1413 |                         row_top = top;
+     |                         ^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+1439 |                 row_top = top;
+     |                 ------------- `row_top` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `row_top` is never read
+    --> vendor/blitz-dom/src/layout/multicol.rs:1439:17
+     |
+1431 |                     row_top = top + shown;
+     |                     --------------------- `row_top` is overwritten here before the previous value is read
+...
+1439 |                 row_top = top;
+     |                 ^^^^^^^^^^^^^ this value is reassigned later and never used
+
+warning: variable does not need to be mutable
+   --> vendor/blitz-dom/src/layout/replaced.rs:477:9
+    |
+477 |     let mut min_size = style
+    |         ----^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/layout/table.rs:1000:13
+     |
+1000 |         let mut push = |pieces: &mut Vec<(u32, u32, CollapsedEdge)>, s: u32, e: u32, edge: CollapsedEdge| {
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/layout/table.rs:4798:9
+     |
+4798 |     let mut spread = |sizes: &mut Vec<f32>,
+     |         ----^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: method `names_frame` is never used
+   --> vendor/blitz-dom/src/iframe.rs:178:19
+    |
+ 48 | impl BaseDocument {
+    | ----------------- method in this implementation
+...
+178 |     pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
+    |                   ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `scan_text` is never used
+   --> vendor/blitz-dom/src/layout/first_letter.rs:124:15
+    |
+124 | pub(crate) fn scan_text(text: &str) -> TextScan {
+    |               ^^^^^^^^^
+
+warning: function `painted_ancestor` is never used
+   --> vendor/blitz-dom/src/layout/inline/relative.rs:192:15
+    |
+192 | pub(crate) fn painted_ancestor(nodes: &crate::NodeTree, id: NodeId, root_id: NodeId) -> bool {
+    |               ^^^^^^^^^^^^^^^^
+
+warning: function `cors_checked` is never used
+   --> vendor/blitz-dom/src/net.rs:148:15
+    |
+148 | pub(crate) fn cors_checked(url: &Url, document: &Url) -> bool {
+    |               ^^^^^^^^^^^^
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+   --> vendor/blitz-dom/src/layout/line_clamp.rs:260:17
+    |
+260 |                 drop(line_bottom);
+    |                 ^^^^^-----------^
+    |                      |
+    |                      argument has type `{closure@vendor/blitz-dom/src/layout/line_clamp.rs:250:35: 250:47}`
+    |
+    = note: `#[warn(dropping_copy_types)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+    |
+260 -                 drop(line_bottom);
+260 +                 let _ = line_bottom;
+    |
+
+warning: `blitz-dom` (lib) generated 16 warnings (run `cargo fix --lib -p blitz-dom` to apply 8 suggestions)
+warning: unused import: `ParamCurve`
+   --> vendor/anyrender_vello_cpu/src/scene.rs:104:17
+    |
+104 |     use kurbo::{ParamCurve as _, ParamCurveArclen as _, PathEl};
+    |                 ^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:155:9
+    |
+155 |     let mut segment = |el: PathEl, from: kurbo::Point, pos: &mut f64, open: &mut Option<Run>, runs: &mut Vec<Run>, first_kept: &mut...
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:198:9
+    |
+198 |     let mut end_subpath = |closed: bool, open: &mut Option<Run>, runs: &mut Vec<Run>, first_run: usize, first_kept: Option<bool>, b...
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:262:9
+    |
+262 |     let mut add = |p: kurbo::Point, bbox: &mut Option<Rect>| {
+    |         ----^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: `anyrender_vello_cpu` (lib) generated 4 warnings (run `cargo fix --lib -p anyrender_vello_cpu` to apply 3 suggestions)
+warning: unused import: `style::values::computed::ToComputedValue as _`
+   --> crates/pyro-dom/src/animation.rs:338:9
+    |
+338 |     use style::values::computed::ToComputedValue as _;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `nonce` is never read
+   --> crates/pyro-dom/src/snapshot.rs:452:5
+    |
+450 | struct TreeSink {
+    |        -------- field in this struct
+451 |     /// pyro: as [`HtmlSink::nonce`].
+452 |     nonce: String,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-dom` (lib) generated 2 warnings (run `cargo fix --lib -p pyro-dom` to apply 1 suggestion)
+warning: unused import: `GenericPosition`
+  --> vendor/blitz-paint/src/render/clip_path.rs:15:41
+   |
+15 | use style::values::generics::position::{GenericPosition, GenericPositionOrAuto};
+   |                                         ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+   --> vendor/blitz-paint/src/text.rs:252:1
+    |
+252 | / /// pyro: a glyph origin `x` (device px) on Skia's quarter-pixel grid, taken to a layout unit
+253 | | /// (1/64 px) first: glyphs within a run then bin as those starting a box whose edge a layout unit
+254 | | /// rounds (text in two table cells against the same text in one line), where half-unit advances
+255 | | /// (1/128 px at 16px in a 2048-unit font) would put them on either side of a quarter's edge.
+    | |_--------------------------------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `kurbo::Shape`
+  --> vendor/blitz-paint/src/render/box_shadow.rs:66:9
+   |
+66 |     use kurbo::Shape as _;
+   |         ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> vendor/blitz-paint/src/render/border_shape.rs:193:13
+    |
+193 |         let mut take = |path: BezPath, best: &mut Option<(f64, BezPath)>| {
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `contrast_ratio` is never used
+  --> vendor/blitz-paint/src/color.rs:29:15
+   |
+29 | pub(crate) fn contrast_ratio(a: Color, b: Color) -> f32 {
+   |               ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `all_upright` is never read
+  --> vendor/blitz-paint/src/text.rs:34:5
+   |
+26 | pub(crate) struct VerticalLine {
+   |                   ------------ field in this struct
+...
+34 |     all_upright: bool,
+   |     ^^^^^^^^^^^
+   |
+   = note: `VerticalLine` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `blitz-paint` (lib) generated 6 warnings (run `cargo fix --lib -p blitz-paint` to apply 2 suggestions)
+warning: function `in_effect_or_current` is never used
+   --> crates/pyro-webapi/src/animation_frame.rs:110:4
+    |
+110 | fn in_effect_or_current(timing: &Timing, local: f64, rate: f64, settled: bool) -> Option<(Progress, Level)> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-webapi` (lib) generated 1 warning
+warning: linker stderr: xargs: /bin/echo: terminated with signal 13; aborting
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `pyro-webapi` (test "integration") generated 1 warning
+    Finished `wptiter` profile [optimized + debuginfo] target(s) in 0.19s
+     Running tests/integration.rs (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/target/wptiter/build/pyro-webapi/0c743dbf58a21391/out/integration-0c743dbf58a21391)
+
+running 1 test
+test custom_elements_js::form_associated_callbacks_follow_owner_disabled_state_and_reset ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 708 filtered out; finished in 0.01s
+
+warning: unused field `repository` in `workspace.package`
+  --> Cargo.toml:31:1
+   |
+31 | repository = "https://github.com/povio/pyro"
+   | ^^^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.repository`
+warning: workspace (manifest) generated 1 warning
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> crates/pyro-raster/src/lib.rs:204:19
+    |
+204 |         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |                   ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+204 -         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+204 +         self.used.try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |
+
+warning: `pyro-raster` (lib) generated 1 warning (run `cargo fix --lib -p pyro-raster` to apply 1 suggestion)
+warning: unused import: `CalcNode`
+   --> vendor/stylo/values/computed/mod.rs:934:39
+    |
+934 |                 use specified::calc::{CalcNode, Leaf};
+    |                                       ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Cached` is never constructed
+    --> vendor/stylo/stylist.rs:3507:5
+     |
+3505 | enum StylistImplicitScopeRoot {
+     |      ------------------------ variant in this enum
+3506 |     Normal(ImplicitScopeRoot),
+3507 |     Cached(usize),
+     |     ^^^^^^
+     |
+     = note: `StylistImplicitScopeRoot` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused logical operation that must be used
+    --> vendor/stylo/properties/cascade.rs:2330:17
+     |
+2311 |         macro_rules! check_declaration_value_cycle {
+...
+2330 |                 arg_lowlink != usize::MAX || arg_self_ref
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the logical operation produces a value
+...
+2355 |                         for arg in &function.arguments { check_declaration_value_cycle!(arg); }
+     |                                                          ----------------------------------- in this macro invocation
+     |
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+2355 |                         for arg in &function.arguments { let _ = check_declaration_value_cycle!(arg);; }
+     |                                                          +++++++                                    +
+
+warning: `stylo` (lib) generated 3 warnings (run `cargo fix --lib -p stylo` to apply 1 suggestion)
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1128:21
+     |
+1128 |         let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+     |
+1128 -         let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+1128 +         let width = CodePointMapData::<EastAsianWidth>::new().get(ch);
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1130:16
+     |
+1130 |             && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1130 -             && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+1130 +             && CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1135:17
+     |
+1135 |                 icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1135 -                 icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+1135 +                 CodePointMapData::<GeneralCategory>::new().get(ch),
+     |
+
+warning: unnecessary qualification
+    --> vendor/parley_engine/src/analysis.rs:1155:20
+     |
+1155 |     let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+1155 -     let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+1155 +     let category = CodePointMapData::<GeneralCategory>::new().get(ch);
+     |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:602:21
+    |
+602 |         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+602 -         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+602 +         let coords: Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:635:21
+    |
+635 |         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+635 -         let coords: alloc::vec::Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+635 +         let coords: Vec<skrifa::instance::NormalizedCoord> = self.normalized_coords
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:658:23
+    |
+658 |         let mut own = alloc::vec::Vec::new();
+    |                       ^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+658 -         let mut own = alloc::vec::Vec::new();
+658 +         let mut own = Vec::new();
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaped_text.rs:693:29
+    |
+693 |             cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+693 -             cluster.flags = super::data::ShapedClusterFlags::from_bits(saved.flags);
+693 +             cluster.flags = ShapedClusterFlags::from_bits(saved.flags);
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:382:25
+    |
+382 |         let variations: alloc::vec::Vec<FontVariation>;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+382 -         let variations: alloc::vec::Vec<FontVariation>;
+382 +         let variations: Vec<FontVariation>;
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:423:28
+    |
+423 |         let face_features: alloc::vec::Vec<harfrust::Feature>;
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+423 -         let face_features: alloc::vec::Vec<harfrust::Feature>;
+423 +         let face_features: Vec<harfrust::Feature>;
+    |
+
+warning: unnecessary qualification
+   --> vendor/parley_engine/src/shape/shaper.rs:901:13
+    |
+901 | ) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+901 - ) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+901 + ) -> Option<Vec<harfrust::GlyphPosition>> {
+    |
+
+warning: missing documentation for a method
+   --> vendor/parley_engine/src/shape/shaped_text.rs:507:5
+    |
+507 |     pub fn set_cluster_advance(&mut self, index: u32, advance: f32) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `parley_engine` (lib) generated 12 warnings (run `cargo fix --lib -p parley_engine` to apply 11 suggestions)
+warning: unnecessary qualification
+   --> vendor/parley/src/shape/mod.rs:838:39
+    |
+838 | fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+    |
+838 - fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+838 + fn preserves_breaks<B: Brush>(style: &ResolvedStyle<B>) -> bool {
+    |
+
+warning: unnecessary qualification
+    --> vendor/parley/src/layout/line_break.rs:3257:32
+     |
+3257 | ...                   == crate::style::WhiteSpaceCollapse::BreakSpaces
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: remove the unnecessary path segments
+     |
+3257 -                             == crate::style::WhiteSpaceCollapse::BreakSpaces
+3257 +                             == WhiteSpaceCollapse::BreakSpaces
+     |
+
+warning: trivial numeric cast: `u32` as `u32`
+  --> vendor/parley/src/shape/justify.rs:50:54
+   |
+50 |         while atomic.next_if(|&position| position <= character.text_byte_start as u32).is_some() {
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: cast can be replaced by coercion; this might require a temporary variable
+   = note: requested on the command line with `-W trivial-numeric-casts`
+
+warning: `parley` (lib) generated 3 warnings (run `cargo fix --lib -p parley` to apply 2 suggestions)
+warning: missing documentation for a method
+  --> vendor/taffy/src/style/flex.rs:67:5
+   |
+67 |     fn flex_basis_calculation(&self) -> Option<super::CalcSizeFunction> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> vendor/taffy/src/lib.rs:66:9
+   |
+66 | #![warn(missing_docs)]
+   |         ^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:238:5
+    |
+238 |     fn position_try_options(&self, _node: NodeId) -> ([usize; 5], usize, Option<bool>) { ([0; 5],0,None) }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:239:5
+    |
+239 |     fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:240:5
+    |
+240 |     fn selected_option_this_flush(&self, _node: NodeId) -> Option<Option<usize>> { None }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:241:5
+    |
+241 |     fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:242:5
+    |
+242 |     fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:243:5
+    |
+243 |     fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:244:5
+    |
+244 |     fn position_try_scroll_offset(&self, _node: NodeId, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:246:5
+    |
+246 |     fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:248:5
+    |
+248 |     fn set_position_overflow(&mut self, _node: NodeId, _overflows: bool) {}
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> vendor/taffy/src/tree/traits.rs:250:5
+    |
+250 |     fn set_position_try_option(&mut self, _node: NodeId, _index: Option<usize>) -> bool { false }
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `taffy` (lib) generated 11 warnings
+warning: unused doc comment
+   --> vendor/blitz-dom/src/node/svg_css.rs:245:1
+    |
+245 | /// The source of the `<svg>` subtree at `root` for usvg (see the module docs).
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `UserAgentStylesheet`
+  --> vendor/blitz-dom/src/iframe.rs:13:43
+   |
+13 | use crate::{BaseDocument, DocumentConfig, UserAgentStylesheet, local_name};
+   |                                           ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `style::values::computed::text::TextEmphasisPosition`
+    --> vendor/blitz-dom/src/layout/inline/build.rs:1039:13
+     |
+1039 |         use style::values::computed::text::TextEmphasisPosition;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unnecessary parentheses around method argument
+    --> vendor/blitz-dom/src/layout/inline/layout.rs:1650:30
+     |
+1650 |             .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
+     |                              ^                                         ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+1650 -             .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
+1650 +             .set_text_indent(resolved_text_indent * scale - hang_first, indent_options);
+     |
+
+warning: unnecessary parentheses around method argument
+    --> vendor/blitz-dom/src/layout/inline/layout.rs:1664:66
+     |
+1664 |             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
+     |                                                                  ^                                         ^
+     |
+help: remove these parentheses
+     |
+1664 -             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
+1664 +             let max_content_width = inline_layout.content_widths(resolved_text_indent * scale - hang_first).max;
+     |
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/node/svg_css.rs:1806:13
+     |
+1806 |         let mut take_attr = |tag: &mut String, name: &str| -> Option<String> {
+     |             ----^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `row_top` is never read
+    --> vendor/blitz-dom/src/layout/multicol.rs:1413:25
+     |
+1413 |                         row_top = top;
+     |                         ^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+1439 |                 row_top = top;
+     |                 ------------- `row_top` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `row_top` is never read
+    --> vendor/blitz-dom/src/layout/multicol.rs:1439:17
+     |
+1431 |                     row_top = top + shown;
+     |                     --------------------- `row_top` is overwritten here before the previous value is read
+...
+1439 |                 row_top = top;
+     |                 ^^^^^^^^^^^^^ this value is reassigned later and never used
+
+warning: variable does not need to be mutable
+   --> vendor/blitz-dom/src/layout/replaced.rs:477:9
+    |
+477 |     let mut min_size = style
+    |         ----^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/layout/table.rs:1000:13
+     |
+1000 |         let mut push = |pieces: &mut Vec<(u32, u32, CollapsedEdge)>, s: u32, e: u32, edge: CollapsedEdge| {
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> vendor/blitz-dom/src/layout/table.rs:4798:9
+     |
+4798 |     let mut spread = |sizes: &mut Vec<f32>,
+     |         ----^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: method `names_frame` is never used
+   --> vendor/blitz-dom/src/iframe.rs:178:19
+    |
+ 48 | impl BaseDocument {
+    | ----------------- method in this implementation
+...
+178 |     pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
+    |                   ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `scan_text` is never used
+   --> vendor/blitz-dom/src/layout/first_letter.rs:124:15
+    |
+124 | pub(crate) fn scan_text(text: &str) -> TextScan {
+    |               ^^^^^^^^^
+
+warning: function `painted_ancestor` is never used
+   --> vendor/blitz-dom/src/layout/inline/relative.rs:192:15
+    |
+192 | pub(crate) fn painted_ancestor(nodes: &crate::NodeTree, id: NodeId, root_id: NodeId) -> bool {
+    |               ^^^^^^^^^^^^^^^^
+
+warning: function `cors_checked` is never used
+   --> vendor/blitz-dom/src/net.rs:148:15
+    |
+148 | pub(crate) fn cors_checked(url: &Url, document: &Url) -> bool {
+    |               ^^^^^^^^^^^^
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+   --> vendor/blitz-dom/src/layout/line_clamp.rs:260:17
+    |
+260 |                 drop(line_bottom);
+    |                 ^^^^^-----------^
+    |                      |
+    |                      argument has type `{closure@vendor/blitz-dom/src/layout/line_clamp.rs:250:35: 250:47}`
+    |
+    = note: `#[warn(dropping_copy_types)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+    |
+260 -                 drop(line_bottom);
+260 +                 let _ = line_bottom;
+    |
+
+warning: `blitz-dom` (lib) generated 16 warnings (run `cargo fix --lib -p blitz-dom` to apply 8 suggestions)
+warning: unused import: `ParamCurve`
+   --> vendor/anyrender_vello_cpu/src/scene.rs:104:17
+    |
+104 |     use kurbo::{ParamCurve as _, ParamCurveArclen as _, PathEl};
+    |                 ^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:155:9
+    |
+155 |     let mut segment = |el: PathEl, from: kurbo::Point, pos: &mut f64, open: &mut Option<Run>, runs: &mut Vec<Run>, first_kept: &mut...
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:198:9
+    |
+198 |     let mut end_subpath = |closed: bool, open: &mut Option<Run>, runs: &mut Vec<Run>, first_run: usize, first_kept: Option<bool>, b...
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> vendor/anyrender_vello_cpu/src/scene.rs:262:9
+    |
+262 |     let mut add = |p: kurbo::Point, bbox: &mut Option<Rect>| {
+    |         ----^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: `anyrender_vello_cpu` (lib) generated 4 warnings (run `cargo fix --lib -p anyrender_vello_cpu` to apply 3 suggestions)
+warning: unused import: `style::values::computed::ToComputedValue as _`
+   --> crates/pyro-dom/src/animation.rs:338:9
+    |
+338 |     use style::values::computed::ToComputedValue as _;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `nonce` is never read
+   --> crates/pyro-dom/src/snapshot.rs:452:5
+    |
+450 | struct TreeSink {
+    |        -------- field in this struct
+451 |     /// pyro: as [`HtmlSink::nonce`].
+452 |     nonce: String,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-dom` (lib) generated 2 warnings (run `cargo fix --lib -p pyro-dom` to apply 1 suggestion)
+warning: unused import: `GenericPosition`
+  --> vendor/blitz-paint/src/render/clip_path.rs:15:41
+   |
+15 | use style::values::generics::position::{GenericPosition, GenericPositionOrAuto};
+   |                                         ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+   --> vendor/blitz-paint/src/text.rs:252:1
+    |
+252 | / /// pyro: a glyph origin `x` (device px) on Skia's quarter-pixel grid, taken to a layout unit
+253 | | /// (1/64 px) first: glyphs within a run then bin as those starting a box whose edge a layout unit
+254 | | /// rounds (text in two table cells against the same text in one line), where half-unit advances
+255 | | /// (1/128 px at 16px in a 2048-unit font) would put them on either side of a quarter's edge.
+    | |_--------------------------------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `kurbo::Shape`
+  --> vendor/blitz-paint/src/render/box_shadow.rs:66:9
+   |
+66 |     use kurbo::Shape as _;
+   |         ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> vendor/blitz-paint/src/render/border_shape.rs:193:13
+    |
+193 |         let mut take = |path: BezPath, best: &mut Option<(f64, BezPath)>| {
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `contrast_ratio` is never used
+  --> vendor/blitz-paint/src/color.rs:29:15
+   |
+29 | pub(crate) fn contrast_ratio(a: Color, b: Color) -> f32 {
+   |               ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `all_upright` is never read
+  --> vendor/blitz-paint/src/text.rs:34:5
+   |
+26 | pub(crate) struct VerticalLine {
+   |                   ------------ field in this struct
+...
+34 |     all_upright: bool,
+   |     ^^^^^^^^^^^
+   |
+   = note: `VerticalLine` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `blitz-paint` (lib) generated 6 warnings (run `cargo fix --lib -p blitz-paint` to apply 2 suggestions)
+warning: function `in_effect_or_current` is never used
+   --> crates/pyro-webapi/src/animation_frame.rs:110:4
+    |
+110 | fn in_effect_or_current(timing: &Timing, local: f64, rate: f64, settled: bool) -> Option<(Progress, Level)> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-webapi` (lib) generated 1 warning
+warning: linker stderr: xargs: /bin/echo: terminated with signal 13; aborting
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `pyro-webapi` (test "integration") generated 1 warning
+    Finished `wptiter` profile [optimized + debuginfo] target(s) in 0.19s
+     Running tests/integration.rs (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/target/wptiter/build/pyro-webapi/0c743dbf58a21391/out/integration-0c743dbf58a21391)
+
+running 1 test
+test dom_js::controlled_changed_values_reset_selection_to_the_utf16_end ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 708 filtered out; finished in 0.01s
+

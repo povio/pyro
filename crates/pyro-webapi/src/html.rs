@@ -2201,6 +2201,27 @@ fn queue_selection_events_if_changed(n: &NodeData, before: Option<(u32, u32, Opt
 }
 
 fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.method("createValueRange", 2, |s, n, a| {
+        a.require(2, "createValueRange")?;
+        // Unlike the JSC C API's number conversion, the JS unsigned shift
+        // rejects BigInt even when an object's primitive conversion returns it.
+        const CONVERTER: &str = "lpValueRangeUnsignedLong";
+        let holder = crate::worker_scope::module_holder(s, n.page())?;
+        let convert = match s.get_hidden(holder, CONVERTER)?.and_then(|v| v.as_object()) {
+            Some(convert) => convert,
+            None => {
+                let convert = s.eval("(value => value >>> 0)", None, 1)?.as_object().expect("conversion function");
+                s.set_hidden(holder, CONVERTER, convert.value())?;
+                convert
+            }
+        };
+        let start = convert.call(None, &[a.get(0)])?.to_number()? as u32;
+        let end = convert.call(None, &[a.get(1)])?.to_number()? as u32;
+        let range = n.page().dom.borrow_mut().create_value_range(n.id, start, end).js()?;
+        let control = collections::NodeHold::new(n.page(), n.id)?;
+        range.hold_control(Box::new(move || drop(control)));
+        Ok(s.wrap::<crate::range::OpaqueRange>(range, None)?.value())
+    });
     def.accessor(
         "selectionStart",
         |s, n| {
@@ -2563,10 +2584,15 @@ simple_class!(HtmlTextAreaElement, "HTMLTextAreaElement", HtmlElement, |def| {
     );
     def.accessor(
         "defaultValue",
-        |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
+        |s, n| Ok(s.string(&n.page().dom.borrow().child_text_content(n.id))),
         |_s, n, v| {
-            let arg0 = dom_string(v)?;
-            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+            let value = dom_string(v)?;
+            let mut dom = n.page().dom.borrow_mut();
+            // HTML specifies string replace all, including for an equal value:
+            // the old Text child is replaced and children-changed steps run.
+            let doc = dom.node_document(n.id).js()?;
+            let child = if value.is_empty() { None } else { Some(dom.create_text(doc, &value).js()?) };
+            dom.replace_all(n.id, child).js()
         },
     );
     def.getter("textLength", |s, n| {
