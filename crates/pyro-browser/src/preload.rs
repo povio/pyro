@@ -13,6 +13,13 @@
 //! are megabytes of text), only a marker that answers a later modulepreload
 //! of the URL without a request. `rel=preload as=script` stays a plain
 //! fetch into the HTTP cache.
+//!
+//! `<link rel=prefetch>` is a low-priority fetch into the HTTP cache too (destination "",
+//! initiator "prefetch": CSP checks it against `default-src`, or any fetch directive that allows
+//! it, as Chrome), with the link's nonce and CORS mode. The link gets `load` for any response
+//! (a 404 too, as Chrome) and `error` for a network error or a CSP block; a blocked prefetch
+//! still gets a Resource Timing entry, with nothing transferred, as Chrome's. One fetch per URL
+//! per document: a link of a URL already prefetched (or prefetching) takes that fetch's outcome.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -38,6 +45,19 @@ pub(crate) struct Preloads {
     /// and a string compilation's (`eval`, `Function`, a `setTimeout` string). They can only be
     /// attributed to the inline scripts as a whole ([`InlineNonce`]).
     inline_nonce: InlineNonce,
+    /// `<link rel=prefetch>` fetches by URL.
+    prefetches: HashMap<String, PrefetchEntry>,
+}
+
+/// Called with whether a prefetch succeeded (`load`) or not (`error`).
+type PrefetchWaiter = Box<dyn FnOnce(&mut Browser, bool)>;
+
+enum PrefetchEntry {
+    /// In flight: the links waiting for its outcome.
+    Pending(Vec<PrefetchWaiter>),
+    /// Fetched: a later link of the URL loads at once. A failure is not kept (the next link
+    /// fetches again).
+    Done,
 }
 
 /// The one nonce of a document's inline scripts that ran (CSP): set by the first non-empty one,
@@ -281,13 +301,16 @@ impl Browser {
             let rel = attr("rel").unwrap_or_default();
             let module = rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("modulepreload"));
             let preload = rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("preload"));
-            (connected && (module || preload))
+            let prefetch = rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("prefetch"));
+            (connected && (module || preload || prefetch))
                 .then(|| {
                     let href = attr("href").filter(|v| !v.trim().is_empty())?;
                     let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| frame.base_url.clone());
                     let url = url::Url::parse(&base).ok()?.join(href.trim()).ok()?.to_string();
                     let kind = if module {
                         ResourceKind::ModuleScript
+                    } else if !preload {
+                        ResourceKind::Prefetch
                     } else {
                         match attr("as").as_deref().map(str::to_ascii_lowercase).as_deref() {
                             Some("script") => ResourceKind::Script,
@@ -328,6 +351,12 @@ impl Browser {
         }
         let hold = Rc::new(crate::loader::ResourceNode { dom: bindings.dom.clone(), node });
         let doc_id = bindings.document();
+        if kind == ResourceKind::Prefetch {
+            let referrer = frame.navigation_referrer();
+            let target = PrefetchTarget { node, hold, bindings, crossorigin, referrer_policy, referrer };
+            self.prefetch_link(page, &frame, url, target);
+            return;
+        }
         let module = kind == ResourceKind::ModuleScript;
         if module {
             // The same module already preloaded (or preloading) in this
@@ -413,6 +442,149 @@ impl Browser {
         };
         // CSP for the preload's destination, with the link's nonce.
         let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
+        if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, finish) {
+            cancel.disarm();
+        }
+    }
+}
+
+/// What a `<link rel=prefetch>`'s fetch needs from the link.
+struct PrefetchTarget {
+    node: NodeId,
+    hold: Rc<crate::loader::ResourceNode>,
+    bindings: Rc<pyro_webapi::PageDom>,
+    crossorigin: Option<String>,
+    referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    referrer: Option<String>,
+}
+
+impl Browser {
+    /// Prefetches `url` for the link (`<link rel=prefetch>`), or joins the document's fetch of
+    /// the URL: the link gets `load` or `error` in a later task either way.
+    fn prefetch_link(&mut self, page: FrameKey, frame: &crate::Frame, url: String, target: PrefetchTarget) {
+        let PrefetchTarget { node, hold, bindings, crossorigin, referrer_policy, referrer } = target;
+        let doc_id = bindings.document();
+        let event_bindings = bindings.clone();
+        let waiter: PrefetchWaiter = Box::new(move |_: &mut Browser, ok: bool| {
+            let _hold = hold;
+            if event_bindings.is_disposed() || event_bindings.document() != doc_id {
+                return;
+            }
+            pyro_webapi::lifecycle::resource_loaded(&event_bindings, node, ok);
+        });
+        let fetched = {
+            let Some(mut doc) = self.doc_mut(page) else { return };
+            let prefetches = &mut doc.preloads.prefetches;
+            let full = prefetches.len() >= MAX_PRELOADS;
+            match prefetches.get_mut(&url) {
+                Some(PrefetchEntry::Pending(waiters)) => {
+                    waiters.push(waiter);
+                    return;
+                }
+                Some(PrefetchEntry::Done) => Some(waiter),
+                // Bounded: past the limit a new URL is not prefetched (a hint, not a request).
+                None if full => return,
+                None => {
+                    prefetches.insert(url.clone(), PrefetchEntry::Pending(vec![waiter]));
+                    None
+                }
+            }
+        };
+        if let Some(waiter) = fetched {
+            self.scheduler().post(TaskSource::Networking, move |b| waiter(b, true));
+            return;
+        }
+        let finish_url = url.clone();
+        let loader = frame.loader_id.clone();
+        let start = std::time::Instant::now();
+        let finish = move |b: &mut Browser, result: Result<crate::Resource, String>| {
+            // Any response loads (a 404 or 500 too, as Chrome); a network error (CORS, CSP) is
+            // an error.
+            let ok = result.is_ok();
+            if bindings.is_disposed() || bindings.document() != doc_id {
+                return;
+            }
+            // A CSP block never reached the network: its entry has no response (Chrome reports
+            // one with nothing transferred).
+            if let Err(e) = &result {
+                if e.starts_with(pyro_net::csp::BLOCKED_BY_CSP) {
+                    bindings.queue_resource_timing(pyro_webapi::resource_timing::FetchReport {
+                        url: finish_url.clone(),
+                        initiator: pyro_webapi::resource_timing::Initiator::Link,
+                        start,
+                        end: std::time::Instant::now(),
+                        response: None,
+                        render_blocking: false,
+                    });
+                }
+            }
+            let waiters = match b.doc_mut(page) {
+                Some(mut doc) if doc.main_frame.loader_id == loader => {
+                    match doc.preloads.prefetches.remove(&finish_url) {
+                        Some(PrefetchEntry::Pending(waiters)) => {
+                            if ok {
+                                doc.preloads.prefetches.insert(finish_url.clone(), PrefetchEntry::Done);
+                            }
+                            waiters
+                        }
+                        Some(PrefetchEntry::Done) => {
+                            doc.preloads.prefetches.insert(finish_url.clone(), PrefetchEntry::Done);
+                            Vec::new()
+                        }
+                        None => Vec::new(),
+                    }
+                }
+                _ => Vec::new(),
+            };
+            for waiter in waiters {
+                waiter(b, ok);
+            }
+        };
+        // Mixed content: a secure document does not prefetch a URL that is not potentially
+        // trustworthy (Chrome blocks it; WPT mixed-content `link-prefetch-tag`). Secure: its
+        // origin is https:, or for an opaque one (a data: frame) its nearest ancestor's with an
+        // origin, as `frame_ancestors_block` walks them. (The network client's mixed-content list
+        // leaves prefetches out.)
+        let mut origin = frame.origin.clone();
+        let mut next = frame.parent.clone();
+        while origin == "null" {
+            let Some(id) = next.take() else { break };
+            let Some(ancestor) = self.frame(page.page, &id) else { break };
+            origin = ancestor.origin;
+            next = ancestor.parent;
+        }
+        if origin.starts_with("https:")
+            && pyro_net::Url::parse(&url).is_ok_and(|u| !pyro_net::secure_context::is_potentially_trustworthy_url(&u))
+        {
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("net::ERR_BLOCKED_BY_CLIENT".into())));
+            return;
+        }
+        let Some(resource_loader) = self.loader_for(page) else {
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
+            return;
+        };
+        let mut request = FetchRequest {
+            csp: None,
+            // Low priority: never ahead of the parser's requests.
+            parser_priority: false,
+            credentials: None,
+            post: None,
+            url,
+            kind: ResourceKind::Prefetch,
+            page: page.page,
+            referrer,
+            referrer_policy,
+            frame_id: Some(frame.id.0.clone()),
+            loader_id: Some(frame.loader_id.0.clone()),
+            crossorigin,
+            initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
+            module: None,
+            part: None,
+        };
+        // CSP: default-src or any fetch directive (`RequestDest::Prefetch`), with the link's
+        // nonce.
+        let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
+        // The fetch outlives the link and does not delay the document's load event.
         if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, finish) {
             cancel.disarm();
         }

@@ -88,6 +88,10 @@ pub enum ResourceKind {
     Object,
     /// A `<link rel=preload as=fetch>` (destination "", CORS mode).
     Fetch,
+    /// A `<link rel=prefetch>`: destination "" (`Sec-Fetch-Dest: empty`), initiator "prefetch"
+    /// (CSP: `default-src`, as Chrome), no-cors unless the link has `crossorigin`. Low
+    /// priority, never speculated, and it does not delay the document's load event.
+    Prefetch,
 }
 
 #[derive(Debug, Clone)]
@@ -131,7 +135,7 @@ impl FetchRequest {
     pub(crate) fn effective_credentials(&self) -> pyro_net::Credentials {
         // HTML CORS settings "No CORS": a no-cors request whose credentials mode is "include"
         // (a classic script or style sheet without `crossorigin`, cross-origin cookies too).
-        if matches!(self.kind, ResourceKind::Stylesheet | ResourceKind::Script)
+        if matches!(self.kind, ResourceKind::Stylesheet | ResourceKind::Script | ResourceKind::Prefetch)
             && self.crossorigin.is_none()
             && self.credentials.is_none()
         {
@@ -404,6 +408,8 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Track => pyro_net::Destination::Track,
             ResourceKind::Download | ResourceKind::Object => pyro_net::Destination::Other,
             ResourceKind::Fetch => pyro_net::Destination::Fetch,
+            // Destination "": `Other` sends `Sec-Fetch-Dest: empty` in no-cors mode.
+            ResourceKind::Prefetch => pyro_net::Destination::Other,
         };
         // Resource Timing: the document that gets this fetch's entry.
         let document = requesting_document(browser, &request);
@@ -783,6 +789,8 @@ pub(crate) fn csp_dest(request: &FetchRequest) -> Option<pyro_net::csp::RequestD
         ResourceKind::Object => RequestDest::Object,
         // `<link rel=preload as=fetch>`: the empty destination, connect-src.
         ResourceKind::Fetch => RequestDest::Empty,
+        // `<link rel=prefetch>`: default-src, or any fetch directive that allows it (Chrome).
+        ResourceKind::Prefetch => RequestDest::Prefetch,
         ResourceKind::Document | ResourceKind::Download => return None,
     })
 }
