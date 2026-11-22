@@ -1293,7 +1293,7 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
             if start == end {
                 return false;
             }
-            if format_state(page, &cmd).1 {
+            if format_state(page, &cmd).1 || tag == "i" && starts_in_semantic_italic(page, start, end) {
                 remove_inline(page, host, carriers, input_type);
             } else {
                 format_inline(page, host, tag, carriers, input_type, None);
@@ -1571,6 +1571,22 @@ fn join_plain_links(dom: &mut Dom, left: NodeId, right: NodeId, href: &str) {
         if dom.insert_before(right, child, first).is_err() { return; }
     }
     let _ = dom.remove_node(left);
+}
+
+/// A mixed selection beginning in an italic element toggles from the
+/// first selected run in document order, including for a backward range.
+fn starts_in_semantic_italic(page: &PageDom, start: Point, end: Point) -> bool {
+    let dom = page.dom.borrow();
+    let first = editing::deep_forward(&dom, start);
+    if !editing::is_text(&dom, first.0) || first.1 == editing::len(&dom, first.0) { return false; }
+    let Some(parent) = dom.parent_element(first.0).ok().flatten() else { return false };
+    dom.element(parent).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "address" | "cite" | "dfn" | "em" | "i" | "var"))
+        && !dom.contains(parent, editing::deep_backward(&dom, end).0).unwrap_or(false)
+        && FontToggle::Italic.active(&page.layout().computed_style_value(&dom, parent, "font-style"))
+}
+
+fn semantic_italic_tag(dom: &Dom, el: NodeId) -> bool {
+    dom.element(el).is_ok_and(|e| e.is_html() && matches!(&**e.local_name(), "cite" | "dfn" | "var"))
 }
 
 /// Choose the unit that should share an italic wrapper with adjacent
@@ -2017,6 +2033,32 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
             let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else { return };
             let first = (first, 0);
             let last = (last, editing::len(&dom, last));
+            let mut leading_unit = None;
+            if input_type == "formatItalic" && texts.len() > 1 {
+                if let Some(el) = dom.parent_element(first.0).ok().flatten().filter(|&el| semantic_italic_tag(&dom, el)
+                    && dom.child_count(el).ok() == Some(1) && dom.next_sibling(el).ok().flatten() == texts.get(1).copied()
+                    && page.layout().computed_style_value(&dom, el, "display") == "inline") {
+                    if let (Some(parent), Ok(doc)) = (dom.parent_element(el).ok().flatten(), dom.node_document(el)) {
+                        // Keep the intrinsic style of a fully selected semantic
+                        // element; apply normal to the containing run.
+                        let already_normal = editing::local(&dom, parent) == "span" && dom.get_attribute(parent, "style")
+                            .ok().flatten().is_some_and(|s| pyro_dom::stylo::declarations::DeclarationBlock::parse(s)
+                                .value("font-style") == "normal");
+                        if !already_normal {
+                            if let Ok(span) = dom.create_element(doc, "span") {
+                                let _ = dom.set_attribute(span, "style", "font-style: normal;");
+                                let _ = dom.insert_before(parent, span, Some(el));
+                                let _ = dom.append_child(span, el);
+                                for &next in texts.iter().skip(1) {
+                                    if dom.next_sibling(span).ok().flatten() != Some(next) { break; }
+                                    let _ = dom.append_child(span, next);
+                                }
+                                leading_unit = Some(el);
+                            }
+                        }
+                    }
+                }
+            }
             for &t in &texts {
                 let Some(owner) = editing::plaintext_root(&dom, t).or_else(|| editing::editing_host(&dom, t)) else { continue };
                 while let Some(mut a) = ancestor_format(&dom, t, owner, names, true) {
@@ -2086,6 +2128,17 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                     _ => None,
                 };
                 if let Some(font) = font.filter(|_| rich_node(&dom, t)) {
+                    if input_type == "formatItalic" && texts.len() > 1 {
+                        if let Some(el) = dom.parent_element(t).ok().flatten().filter(|&el| semantic_italic_tag(&dom, el)
+                            && dom.child_count(el).ok() == Some(1) && page.layout().computed_style_value(&dom, el, "display") == "inline") {
+                            if leading_unit != Some(el) {
+                                let mut style = pyro_dom::stylo::declarations::DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+                                style.remove("font-style");
+                                let _ = dom.set_attribute(el, "style", &style.css_text());
+                            }
+                            continue;
+                        }
+                    }
                     clear_remaining_font(page, &mut dom, font, owner, t, first, last);
                 }
             }
@@ -2870,6 +2923,8 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
             }
             list.is_some()
         }
+        "italic" => format_state(page, &cmd).1 || editing::selection_range(page)
+            .is_some_and(|(start, end)| start != end && starts_in_semantic_italic(page, start, end)),
         _ if format_of(&cmd).is_some() => format_state(page, &cmd).1,
         _ => false,
     }
