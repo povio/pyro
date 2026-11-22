@@ -24,6 +24,10 @@ const GLOBALS: &[&str] = &[
     "StorageBucket",
     "AudioPlaybackStats",
     "FetchLaterResult",
+    // `[SecureContext] readonly attribute CacheStorage caches`: absent rather than an accessor
+    // reading undefined, so a page's own `var caches = ...` (fetch/api/request/request-init-001)
+    // gets a plain global variable, as in Chrome.
+    "caches",
 ];
 /// `Navigator` members that exist only in a secure context.
 const NAVIGATOR: &[&str] = &["locks", "storageBuckets", "mediaDevices", "registerProtocolHandler", "unregisterProtocolHandler"];
@@ -50,6 +54,12 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
     let global = s.global();
     for name in GLOBALS {
         global.delete(name)?;
+    }
+    // `caches` is a Window attribute: also off the interface prototype, wherever it is installed.
+    if let Some(window) = global.get_atom("Window")?.as_object() {
+        if let Some(proto) = window.get_atom("prototype")?.as_object() {
+            proto.delete("caches")?;
+        }
     }
     if let Some(navigator) = global.get_atom("Navigator")?.as_object() {
         if let Some(proto) = navigator.get_atom("prototype")?.as_object() {
