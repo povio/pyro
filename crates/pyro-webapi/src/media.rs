@@ -1016,6 +1016,11 @@ fn select(page: &Rc<PageDom>, node: NodeId, generation: u32) {
 }
 
 fn resolve(page: &PageDom, node: NodeId, value: &str) -> Option<String> {
+    // Fetch "potentially dangling markup" (as Chrome): a URL written with a newline or tab
+    // (which the URL parser strips) and a `<` is blocked, so the source fails.
+    if value.contains(['\n', '\r', '\t']) && value.contains('<') {
+        return None;
+    }
     let dom = page.dom.borrow();
     let resolved = crate::html::resolve_url(&dom, node, value);
     url::Url::parse(&resolved).ok().map(|u| u.to_string())
