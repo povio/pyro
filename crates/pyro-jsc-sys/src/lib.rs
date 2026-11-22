@@ -644,6 +644,10 @@ pub mod spi {
         callback: Option<JSPromiseRejectionTrackerCallback>,
         operations: std::os::raw::c_uint,
     ) -> bool;
+    /// Patch 0039: called inside a class's `deleteProperty` callback that then
+    /// returns `false`, makes the delete fail (`false`, a `TypeError` in strict
+    /// mode code) instead of running the ordinary `[[Delete]]`.
+    pub type JSObjectRefuseDeletePropertyFn = unsafe extern "C" fn(ctx: JSContextRef);
 
     /// A custom accessor's getter (patched JSC, `JSObjectSetCustomAccessor`):
     /// called by inline caches with the receiver as `this_value` (any value,
@@ -1024,6 +1028,8 @@ pub mod spi {
         pub set_trusted_types_enforcement: Option<JSGlobalContextSetTrustedTypesEnforcementFn>,
         /// Patch 0036: the promise rejection tracker (Reject and Handle).
         pub set_promise_rejection_tracker: Option<JSGlobalContextSetPromiseRejectionTrackerFn>,
+        /// Patch 0039: a `deleteProperty` callback refuses the delete.
+        pub refuse_delete_property: Option<JSObjectRefuseDeletePropertyFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
         pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
@@ -1232,6 +1238,10 @@ pub mod spi {
             set_promise_rejection_tracker: resolve!("JSGlobalContextSetPromiseRejectionTracker"),
             #[cfg(not(any(pyro_jsc_rejection_tracker, not(pyro_jsc_static))))]
             set_promise_rejection_tracker: None,
+            #[cfg(any(pyro_jsc_refuse_delete, not(pyro_jsc_static)))]
+            refuse_delete_property: resolve!("JSObjectRefuseDeleteProperty"),
+            #[cfg(not(any(pyro_jsc_refuse_delete, not(pyro_jsc_static))))]
+            refuse_delete_property: None,
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
             set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),
