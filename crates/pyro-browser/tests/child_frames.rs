@@ -744,8 +744,8 @@ fn intersection_observer_sees_targets_in_child_documents() {
 }
 
 /// A `Content-Security-Policy` header's Trusted Types directives apply to the document
-/// (`require-trusted-types-for 'script'`: string HTML assignments throw) while its other
-/// directives are not enforced (`script-src 'none'` blocks nothing).
+/// (`require-trusted-types-for 'script'`: string HTML assignments throw), next to its other
+/// directives (`script-src 'unsafe-inline'` lets the inline script run).
 #[test]
 fn csp_header_trusted_types_directives_apply_others_do_not() {
     let mut t = crate::browser_thread().unwrap();
@@ -760,12 +760,86 @@ fn csp_header_trusted_types_directives_apply_others_do_not() {
          const p = trustedTypes.createPolicy('p', { createHTML: s => s }); d.innerHTML = p.createHTML('<i>y</i>'); out.push(d.innerHTML);</script>",
         Duration::ZERO,
     );
-    loader.set_csp("http://site.test/", "script-src 'none'; require-trusted-types-for 'script'; trusted-types p");
+    loader.set_csp("http://site.test/", "script-src 'unsafe-inline'; require-trusted-types-for 'script'; trusted-types p");
     t.browser.set_loader(Some(loader.clone()));
     t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
     settle(&mut t);
     let root = main_realm(&t, page);
     assert_eq!(eval(&root, "out.join('|')"), "TypeError|TypeError|<i>y</i>");
+}
+
+/// CSP `script-src 'none'` (a header) blocks the document's inline script.
+#[test]
+fn csp_header_script_src_none_blocks_inline_scripts() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert("http://site.test/", "text/html", "<script>globalThis.ran = true</script>", Duration::ZERO);
+    loader.set_csp("http://site.test/", "script-src 'none'");
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "String(globalThis.ran)"), "undefined");
+}
+
+/// CSP's inline check is part of "prepare the script element" (at its end tag): an inline
+/// script a stylesheet holds is checked with the nonce it had there, not one a script changed
+/// while it waited (WPT content-security-policy/script-src/scriptnonce-changed-1).
+#[test]
+fn csp_inline_script_held_by_a_stylesheet_keeps_its_end_tag_nonce() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<link rel=stylesheet href=/slow.css><script src=/change.js async></script>\
+         <script id=s nonce=abc>globalThis.ran = true</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/slow.css", "text/css", "p {}", Duration::from_millis(100));
+    loader.insert(
+        "http://site.test/change.js",
+        "text/javascript",
+        "globalThis.changed = true; document.getElementById('s').setAttribute('nonce', 'zzz')",
+        Duration::from_millis(10),
+    );
+    loader.set_csp("http://site.test/", "script-src 'self' 'nonce-abc'");
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "[globalThis.changed, globalThis.ran].join()"), "true,true");
+}
+
+/// CSP `'self'` in a sandboxed (opaque-origin) document matches its precursor origin, the one
+/// it would have without the sandbox, as Chrome (WPT content-security-policy/meta/sandbox-iframe).
+#[test]
+fn csp_self_matches_the_precursor_origin_of_a_sandboxed_document() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<script>globalThis.got = 'none'; addEventListener('message', e => { globalThis.got = String(e.data) })</script>\
+         <iframe sandbox=allow-scripts src=/child></iframe>",
+        Duration::ZERO,
+    );
+    loader.insert(
+        "http://site.test/child",
+        "text/html",
+        "<meta http-equiv=Content-Security-Policy content=\"script-src 'self' 'unsafe-inline'\">\
+         <script src=/s.js></script><script>parent.postMessage(String(globalThis.loaded), '*')</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/s.js", "text/javascript", "globalThis.loaded = 1", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "globalThis.got"), "1");
 }
 
 /// SVG `<use>` instances: a closed user-agent shadow root with a deep clone

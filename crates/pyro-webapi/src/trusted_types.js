@@ -327,11 +327,17 @@
       const d = data.get(value);
       return d !== undefined && d.kind === TrustedScript ? d.value : null;
     },
+    // HostEnsureCanCompileStrings, as the hooks call it: Trusted Types first (when its policies
+    // ask for it), then CSP's 'unsafe-eval' (csp.rs, which reports its violation).
+    canCompile(kind, code, ...args) {
+      if (native.ttLevel() > 0 && !exports.ttCanCompile(kind, code, ...args)) return false;
+      return native.cspEval(String_(code));
+    },
     // Trusted Types' HostEnsureCanCompileStrings: whether `code` may compile, for `kind`
     // "Function" (with the constructor's arguments), "eval" or "indirect-eval". A Function
     // made of TrustedScripts only passes; else the default policy's createScript must give the
     // code back unchanged, or the violation is reported (and blocks under an enforced policy).
-    canCompile(kind, code, ...args) {
+    ttCanCompile(kind, code, ...args) {
       const sink = kind === 'Function' ? 'Function' : 'eval';
       if (kind === 'Function' && args.length > 0 && args.every((a) => {
         const d = data.get(a);

@@ -252,7 +252,7 @@ impl Browser {
             return;
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
-        let request = FetchRequest {
+        let mut request = FetchRequest {
             csp: None,
             parser_priority: blocker.is_some(),
             credentials: None,
@@ -269,7 +269,9 @@ impl Browser {
             module: None,
             part: None,
         };
-        let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
+        // CSP `style-src-elem`, with the link's nonce.
+        let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
+        let cancel = self.fetch_document_resource(page, &resource_loader, request, finish);
         if let Some(mut sheet) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.stylesheets.entries.get_mut(&node)))
         {
             sheet.cancel = cancel;

@@ -665,17 +665,26 @@ impl PageNav {
     /// URL's script there (the document stays: a string result does not replace it). A document
     /// that requires Trusted Types for script runs what its default policy makes of the script
     /// (sink "Location href"), or nothing.
-    fn run_javascript_url(&self, url: &str) {
+    /// `initiator`: the CSP of the document that navigated (its realm's, snapshotted now), which
+    /// the URL is checked against; `None` (no realm to name one): this frame's document's.
+    fn run_javascript_url(&self, url: &str, initiator: Option<pyro_webapi::csp::NavigationInitiator>) {
         let Some(source) = crate::bindings::javascript_url_source(url) else { return };
         let page = self.page;
         let frame_id = self.frame_id.clone();
         let document = self.state.borrow().doc_seq;
+        let url = url.to_owned();
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(key) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(doc) = b.doc(key).filter(|p| p.nav.state.borrow().doc_seq == document) else { return };
             let (realm, page_dom) = (doc.main_frame.main_realm().cloned(), doc.main_frame.page_dom.clone());
             drop(doc);
             let (Some(realm), Some(page_dom)) = (realm, page_dom) else { return };
+            // CSP `script-src-elem` of the initiator for a navigation ('unsafe-inline', or with
+            // 'unsafe-hashes' a hash of the whole URL): blocked, nothing runs.
+            let initiator = initiator.unwrap_or_else(|| pyro_webapi::csp::NavigationInitiator::of(&page_dom));
+            if !initiator.allows_javascript_url(&url) {
+                return;
+            }
             let Ok(scope) = realm.scope() else { return };
             let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else { return };
             if let Err(e) = scope.eval(&source, None, 1) {
@@ -1461,10 +1470,12 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 
 /// Location assignment: fragment-only changes are same-document; a `javascript:` URL runs
 /// its script in this document.
-fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
+/// `s`: the calling realm, whose document is the navigation's initiator.
+fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
     let target = parse_location(nav, input)?;
     if target.scheme() == "javascript" {
-        nav.run_javascript_url(target.as_str());
+        let initiator = pyro_webapi::target::page_of(s).ok().map(|page| pyro_webapi::csp::NavigationInitiator::of(&page));
+        nav.run_javascript_url(target.as_str(), initiator);
         return Ok(());
     }
     // HTML "Location-object navigate": a document that has not completely
@@ -1538,7 +1549,7 @@ fn url_part(nav: &PageNav, f: impl Fn(&Url) -> String) -> String {
 fn set_url_part(s: &Scope<'_>, nav: &PageNav, change: impl FnOnce(&mut Url) -> JsResult<bool>) -> JsResult<()> {
     let mut url = Url::parse(&nav.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
     if change(&mut url)? {
-        assign(nav, s.string(url.as_str()), false)?;
+        assign(s, nav, s.string(url.as_str()), false)?;
     }
     Ok(())
 }
@@ -1604,16 +1615,16 @@ impl JsClass for Location {
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
-        def.accessor("href", |s, n| Ok(s.string(&n.url())), |_s, n, v| assign(n, v, false));
+        def.accessor("href", |s, n| Ok(s.string(&n.url())), |s, n, v| assign(s, n, v, false));
         def.pure_method("toString", 0, |s, n, _a| Ok(s.string(&n.url())));
         def.method("assign", 1, |s, n, a| {
             a.require(1, "assign")?;
-            assign(n, a.get(0), false)?;
+            assign(s, n, a.get(0), false)?;
             Ok(s.undefined())
         });
         def.method("replace", 1, |s, n, a| {
             a.require(1, "replace")?;
-            assign(n, a.get(0), true)?;
+            assign(s, n, a.get(0), true)?;
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
@@ -1741,7 +1752,7 @@ impl JsClass for Location {
                 if u.fragment() == Some(current.as_str()) {
                     return Ok(());
                 }
-                assign(n, s.string(u.as_str()), false)
+                assign(s, n, s.string(u.as_str()), false)
             },
         );
     }

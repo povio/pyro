@@ -2019,6 +2019,11 @@ impl Browser {
                 // document, which stays; its load follows. Author code in that check (a default
                 // policy) may remove the container: then nothing runs and no load is fired.
                 let parent_key = frame.parent.as_ref().and_then(|id| host.key(id));
+                // CSP: the URL is checked against the inserting document's policies (the
+                // navigation's initiator), snapshotted now.
+                let initiator =
+                    parent_key.and_then(|k| host.page_dom(k)).map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
+                let js_url = url.clone();
                 self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
                     let connected = |b: &Browser| {
                         b.page(key.page).is_some_and(|p| p.frames.dom.borrow().is_connected(owner).unwrap_or(false))
@@ -2033,7 +2038,10 @@ impl Browser {
                     });
                     // A string result replaces the initial document (HTML "evaluate a javascript: URL").
                     let mut result = None;
-                    if let (Some(realm), Some((parent_realm, parent_dom))) = (realm, checker) {
+                    // CSP `script-src-elem` of the initiator: blocked, no script runs (the load
+                    // of the initial document still follows).
+                    let allowed = initiator.as_ref().is_none_or(|i| i.allows_javascript_url(&js_url));
+                    if let (true, Some(realm), Some((parent_realm, parent_dom))) = (allowed, realm, checker) {
                         if let (Ok(scope), Ok(parent_scope)) = (realm.scope(), parent_realm.scope()) {
                             let script = pyro_webapi::trusted_types::javascript_url_script(&parent_scope, &parent_dom, &source);
                             if !connected(b) {

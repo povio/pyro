@@ -106,6 +106,10 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })
     })?;
     natives.set_atom("descriptor", f.value())?;
+    // fetch(url, init): fetch() of a FontFace source, as a "font" request (CSP: font-src, not
+    // connect-src).
+    let f = crate::fetch::internal_fetch(s, pyro_net::csp::RequestDest::Font)?;
+    natives.set_atom("fetch", f.value())?;
     // sources(text, base): the source string as [kind, url-or-name] pairs, or null.
     let f = s.function("sources", |s, _this, a| {
         let text = crate::util::dom_string(a.get(0))?;
