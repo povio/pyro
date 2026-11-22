@@ -1775,7 +1775,7 @@
   class AudioBufferSourceNode extends AudioScheduledSourceNode {
     constructor(context, options) {
       contextArg(context, 'AudioBufferSourceNode');
-      super(secret, context, { buffer: null, loop: false, loopStart: 0, loopEnd: 0, pos: undefined, played: 0 });
+      super(secret, context, { buffer: null, bufferSet: false, loop: false, loopStart: 0, loopEnd: 0, pos: undefined, played: 0 });
       const n = nodeOf(this);
       n.playbackRate = nodeParam(n, 1, -F32_MAX, F32_MAX, 'k-rate', true);
       n.detune = nodeParam(n, 0, -F32_MAX, F32_MAX, 'k-rate', true);
@@ -1794,12 +1794,13 @@
       if (v !== null && !buffers.has(v)) {
         throw new TypeErrorC("Failed to set the 'buffer' property on 'AudioBufferSourceNode': The provided value is not of type 'AudioBuffer'.");
       }
-      if (v !== null && n.buffer !== null) {
+      if (v !== null && n.bufferSet) {
         throw new DE("Failed to set the 'buffer' property on 'AudioBufferSourceNode': Cannot set buffer to non-null after it has been already been set to a non-null buffer", 'InvalidStateError');
       }
+      if (v !== null) n.bufferSet = true;
       n.buffer = v;
       // A buffer set after start() is acquired now.
-      if (v && n.start >= 0) n.data = acquire(v);
+      if (n.start >= 0) n.data = v === null ? null : acquire(v);
       ctxOf(n.ctx).scheduleEnds();
     }
     get playbackRate() { return nodeOf(this).playbackRate; }

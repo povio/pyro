@@ -24,6 +24,7 @@ if (reverse) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html');
 if (destinationCount) batchPages.splice(0, batchPages.length, 'destination.html');
 if (detuning) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html', 'detune-limiting.html');
 if (resampling) batchPages.splice(0, batchPages.length, 'buffer-resampling.html', 'sub-sample-buffer-stitching.html');
+if (batch === 'buffer-assignment') batchPages.splice(0, batchPages.length, 'audiobuffersource-channels.html', 'audiobuffersource-null.html');
 const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
 if (hold) allowed.add('/webaudio/resources/audio-param.js');
