@@ -1518,6 +1518,114 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
     }
 }
 
+/// Remove an explicitly authored paragraph weight while keeping its original
+/// value and priority on the unselected text. More complex paragraphs can
+/// retain the block declaration and override just the selected inline run.
+fn distribute_block_weight(page: &PageDom, dom: &mut Dom, block: NodeId, container: NodeId, first: Point, last: Point) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let mut style = DeclarationBlock::parse(dom.get_attribute(block, "style").ok()??);
+    let weight = style.value("font-weight");
+    if !weight.eq_ignore_ascii_case("bold") && !numeric_bold_weight(&weight) { return None; }
+    let important = style.important("font-weight");
+    // A chain of ordinary inline elements can carry the paragraph's weight
+    // to its text. Leave those elements in place and preserve the weight on
+    // either side inside the same innermost element.
+    let mut inline = container;
+    while inline != block {
+        let parent = dom.parent_element(inline).ok()??;
+        if dom.child_count(parent).ok()? != 1
+            || !matches!(editing::local(dom, inline).as_str(), "i" | "em" | "u" | "s" | "span")
+            || page.layout().computed_style_value(dom, inline, "display") != "inline"
+            || !DeclarationBlock::parse(dom.get_attribute(inline, "style").ok()?.unwrap_or("")).value("font-weight").is_empty()
+            || dom.has_attribute(inline, "class").ok()?
+        {
+            return None;
+        }
+        inline = parent;
+    }
+    let children: Vec<_> = dom.children(container).ok()?.collect();
+    if !children.iter().all(|&n| editing::is_text(dom, n)) { return None; }
+    style.remove("font-weight");
+    if style.is_empty() { dom.remove_attribute(block, "style").ok()?; }
+    else { dom.set_attribute(block, "style", &style.css_text()).ok()?; }
+    let doc = dom.node_document(block).ok()?;
+    let css = dom.document_data(doc).ok()?.style_with_css;
+    let parent_weight = page.layout().computed_style_value(dom, container, "font-weight");
+    for child in children {
+        let before = crate::range::compare_boundary_points_dom(dom, (child, editing::len(dom, child)), first) <= 0;
+        let after = crate::range::compare_boundary_points_dom(dom, last, (child, 0)) <= 0;
+        if !before && !after { continue; }
+        // The trailing run can use the legacy bold tag when it reproduces
+        // the authored weight. Numeric weights such as 600 or 900 need CSS.
+        let legacy = (after || container != block) && !css && !important && matches!(weight.as_str(), "bold" | "700")
+            && parent_weight == "400";
+        let span = dom.create_element(doc, if legacy { "b" } else { "span" }).ok()?;
+        if !legacy {
+            let mut retained = DeclarationBlock::parse("");
+            retained.set("font-weight", &weight, important)?;
+            dom.set_attribute(span, "style", &retained.css_text()).ok()?;
+        }
+        dom.insert_before(container, span, Some(child)).ok()?;
+        dom.append_child(span, child).ok()?;
+    }
+    Some(())
+}
+
+/// Keep the paragraph and unrelated styling when the selected text is still
+/// bold after removable formatting tags have been taken out.
+fn clear_remaining_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, first: Point, last: Point) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let parent = dom.parent_element(text).ok()??;
+    let layout = page.layout();
+    if !numeric_bold_weight(&layout.computed_style_value(dom, parent, "font-weight")) {
+        return Some(());
+    }
+
+    let block = editing::block_of(dom, text, host);
+    if block != host {
+        distribute_block_weight(page, dom, block, parent, first, last);
+        if !numeric_bold_weight(&layout.computed_style_value(dom, parent, "font-weight")) {
+            return Some(());
+        }
+    }
+    let mut parent = parent;
+    if parent != host && editing::local(dom, parent) == "span" {
+        let mut declarations = DeclarationBlock::parse(dom.get_attribute(parent, "style").ok()?.unwrap_or(""));
+        if declarations.remove("font-weight") {
+            let outer = dom.parent_element(parent).ok()??;
+            let mut edges = [(text, 0), (text, editing::len(dom, text))];
+            let middle = alignment::split_edge(dom, outer, text, false, &mut edges)?;
+            alignment::split_edge(dom, outer, text, true, &mut edges)?;
+            if declarations.is_empty() {
+                dom.remove_attribute(middle, "style").ok()?;
+            } else {
+                dom.set_attribute(middle, "style", &declarations.css_text()).ok()?;
+            }
+            parent = middle;
+            if !numeric_bold_weight(&layout.computed_style_value(dom, parent, "font-weight")) {
+                return Some(());
+            }
+        }
+    }
+
+    let carrier = if parent != host && dom.child_count(parent).ok()? == 1
+        && layout.computed_style_value(dom, parent, "display") == "inline"
+        && matches!(editing::local(dom, parent).as_str(), "span" | "i" | "em" | "u" | "s" | "strong" | "b")
+    {
+        parent
+    } else {
+        let doc = dom.node_document(text).ok()?;
+        let span = dom.create_element(doc, "span").ok()?;
+        dom.insert_before(parent, span, Some(text)).ok()?;
+        dom.append_child(span, text).ok()?;
+        span
+    };
+    let mut style = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
+    style.set("font-weight", "normal", false)?;
+    dom.set_attribute(carrier, "style", &style.css_text()).ok()?;
+    Some(())
+}
+
 /// Takes the selected text out of the elements named `names` (unlink,
 /// removeFormat, toggling bold off).
 fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &str) {
@@ -1594,6 +1702,9 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                     if ancestor_format(&dom, t, owner, names, true) == Some(a) {
                         break;
                     }
+                }
+                if input_type == "formatBold" && rich_node(&dom, t) {
+                    clear_remaining_bold(page, &mut dom, owner, t, first, last);
                 }
             }
             texts
