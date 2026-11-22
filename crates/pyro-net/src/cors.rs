@@ -139,10 +139,16 @@ pub fn preflight_request_headers(req: &Request, origin: &str) -> HeaderMap {
 
 /// Response CORS check.
 pub fn cors_check(headers: &HeaderMap, origin: &str, credentials: Credentials) -> Result<(), String> {
-    let acao = headers
-        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+    // Fetch "CORS check": the header's values combined, so several header lines
+    // (`*` and an origin) are one value equal to neither and fail.
+    let mut lines = headers.get_all(header::ACCESS_CONTROL_ALLOW_ORIGIN).iter();
+    let acao = lines
+        .next()
         .and_then(|v| v.to_str().ok())
         .ok_or("No 'Access-Control-Allow-Origin' header is present on the requested resource")?;
+    if lines.next().is_some() {
+        return Err("The 'Access-Control-Allow-Origin' header contains multiple values, but only one is allowed".into());
+    }
     if credentials != Credentials::Include && acao == "*" {
         return Ok(());
     }
