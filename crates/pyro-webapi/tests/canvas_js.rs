@@ -585,6 +585,29 @@ fn canvas_bitmaps_are_lazy_and_reported_for_rendering() {
 }
 
 #[test]
+fn image_decoder_frame_charge_lasts_until_last_clone_closes() {
+    let env = crate::support::network::Env::new("http://localhost:5173/");
+    let page = &env.page;
+    let budget = page.dom.borrow().document_data(page.document()).unwrap().raster_budget.clone();
+    let before = budget.used();
+    let png = pyro_canvas::Surface::new(2, 3).encode(pyro_canvas::Encoding::Png).unwrap();
+    let source = format!("new Uint8Array({png:?})");
+    env.eval(&format!(
+        "globalThis.done = false;
+         globalThis.decoder = new ImageDecoder({{type:'image/png', data:{source}}});
+         decoder.decode().then(r => {{globalThis.frame = r.image; globalThis.done = true;}});"
+    ));
+    env.until("done");
+    env.eval("decoder.close(); globalThis.clone1 = frame.clone(); globalThis.clone2 = new VideoFrame(clone1)");
+    assert_eq!(budget.used() - before, 2 * 3 * 4);
+    env.eval("frame.close(); frame.close(); clone1.close()");
+    assert_eq!(env.eval("clone2.codedWidth + 'x' + clone2.codedHeight"), "2x3");
+    assert_eq!(budget.used() - before, 2 * 3 * 4);
+    env.eval("clone2.close(); clone2.close()");
+    assert_eq!(budget.used(), before);
+}
+
+#[test]
 fn kept_image_bytes_are_counted_as_they_come_and_go() {
     let e = env("<!doctype html><canvas></canvas><img id=a src=/a.png><img id=b src=/b.png>");
     let page = &e.page;

@@ -354,8 +354,9 @@
       }
     }
   }
+  const decoderOwned = Symbol('decoder-owned frame bytes');
   class VideoFrame {
-    constructor(source, init = {}) {
+    constructor(source, init = {}, privateToken) {
       init = dictionary(init);
       let s;
       if (frames.has(source)) {
@@ -375,10 +376,14 @@
         if (input.size > bytes.length) invalid();
         const output = layoutOf(format, width, height);
         const rect = { x: 0, y: 0, width, height };
-        const data = new U8(output.size);
-        copyPlanes({ format, layout: input.layout, data: bytes }, rect, data, output.layout);
+        // Only decodedImage receives an exclusive, tightly packed native
+        // snapshot. Public buffer constructors always take their own copy.
+        const data = privateToken === decoderOwned ? bytes : new U8(output.size);
+        if (privateToken !== decoderOwned)
+          copyPlanes({ format, layout: input.layout, data: bytes }, rect, data, output.layout);
         s = {
           data,
+          imageLease: null,
           format,
           width,
           height,
@@ -430,6 +435,7 @@
         for (const entry of transfers) bufferGetters[0].call(entry);
         if (transfers.length) cloneBuffers(null, { transfer: transfers });
       }
+      if (s.imageLease) s.imageLease = s.imageLease(true);
       frames.set(this, s);
     }
     get timestamp() {
@@ -492,6 +498,10 @@
     }
     close() {
       const s = state(frames, this);
+      if (s.imageLease) {
+        s.imageLease(false);
+        s.imageLease = null;
+      }
       Object.assign(s, {
         data: null,
         layout: null,
@@ -551,5 +561,10 @@
     }
     return [5, oriented, outW, outH, rotated ? s.displayH : s.displayW, rotated ? s.displayW : s.displayH];
   }
-  return { VideoFrame, VideoColorSpace, canvasSource };
+  function decodedImage(bytes, init, lease) {
+    const frame = new VideoFrame(bytes, init, decoderOwned);
+    frames.get(frame).imageLease = lease;
+    return frame;
+  }
+  return { VideoFrame, VideoColorSpace, canvasSource, decodedImage };
 });

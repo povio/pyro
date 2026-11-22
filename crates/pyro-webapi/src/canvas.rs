@@ -62,7 +62,7 @@ pub(crate) static MODULE: LazyModule = LazyModule {
     natives: Some(natives),
 };
 
-static VIDEO_FRAMES: LazyModule = LazyModule {
+pub(crate) static VIDEO_FRAMES: LazyModule = LazyModule {
     key: "lpVideoFrames",
     source: include_str!("video_frame.js"),
     url: "pyro://internal/video_frame.js",
