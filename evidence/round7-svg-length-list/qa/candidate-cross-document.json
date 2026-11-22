@@ -1,0 +1,22 @@
+{
+  "surface": [
+    "function",
+    "function"
+  ],
+  "transferred": [
+    "10%",
+    30,
+    60,
+    60,
+    60
+  ],
+  "copied": [
+    "10%",
+    20,
+    60
+  ],
+  "font": [
+    "2em",
+    40
+  ]
+}
