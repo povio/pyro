@@ -195,6 +195,7 @@ impl Requester {
             _ => (self.base_url.clone(), Initiator::Link),
         };
         FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: None,

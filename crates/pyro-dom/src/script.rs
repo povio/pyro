@@ -34,6 +34,11 @@ pub struct ScriptInfo {
     pub integrity: Option<String>,
     /// The `referrerpolicy` content attribute.
     pub referrerpolicy: Option<String>,
+    /// The element (the target of its CSP violations).
+    pub node: NodeId,
+    /// Its cryptographic nonce: the one nonce hiding kept, else the `nonce` attribute (empty:
+    /// none), which CSP's nonce-sources match.
+    pub nonce: String,
 }
 
 const JS_MIME: &[&str] = &[
@@ -541,6 +546,12 @@ impl Dom {
             crossorigin: e.attr_local(&local_name!("crossorigin")).map(str::to_owned),
             integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
             referrerpolicy: e.attr_local(&markup5ever::LocalName::from("referrerpolicy")).map(str::to_owned),
+            node: script,
+            nonce: self
+                .hidden_nonce(script)
+                .or_else(|| e.attr_local(&local_name!("nonce")))
+                .unwrap_or_default()
+                .to_owned(),
         })
     }
 

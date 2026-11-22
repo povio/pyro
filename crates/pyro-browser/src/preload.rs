@@ -284,6 +284,7 @@ impl Browser {
             return;
         };
         let request = FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: None,

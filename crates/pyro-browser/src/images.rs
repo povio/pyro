@@ -568,6 +568,7 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -1052,6 +1053,7 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: None,

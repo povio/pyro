@@ -152,6 +152,10 @@ pub struct Request {
     /// document's blob URL store (the client has no access to it). A `blob:`
     /// request without one fails as for a revoked URL.
     pub blob: Option<BlobBody>,
+    /// The initiating context's Content Security Policy for this request: the client checks
+    /// every redirect target against it before following it, and fails the request with
+    /// [`crate::csp::BLOCKED_BY_CSP`] when an enforced policy blocks the hop. `None`: no policy.
+    pub csp: Option<std::sync::Arc<crate::csp::RequestCsp>>,
 }
 
 /// A `Blob` served for a `blob:` URL: its bytes and its `type`.
@@ -210,6 +214,7 @@ impl Request {
             cache: CacheMode::Default,
             skip_interception: false,
             blob: None,
+            csp: None,
         }
     }
 }

@@ -32,6 +32,7 @@ mod computed_properties;
 pub mod crypto;
 mod crypto_subtle;
 pub mod css;
+pub mod csp;
 pub mod custom;
 pub mod data_transfer;
 pub mod dom_parser;

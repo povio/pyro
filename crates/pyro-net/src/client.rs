@@ -2387,6 +2387,11 @@ impl Io {
                     if redirects > self.shared.config.max_redirects {
                         return Err(NetError::TooManyRedirects);
                     }
+                    // CSP3 "main fetch" on a redirect: the next hop is checked before it is
+                    // requested (path parts no longer match once redirected).
+                    if req.csp.as_ref().is_some_and(|csp| !csp.allows_redirect(&target)) {
+                        return Err(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into()));
+                    }
                     let cross_origin = !cors::same_origin(&url, &target);
                     crate::timing::note(|t| {
                         t.redirect_end = Some(Instant::now());

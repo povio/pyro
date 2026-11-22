@@ -8,6 +8,7 @@
 //   moduleGraph(url) -> id of the graph that fetched it (evaluate's `graph`), -1 for none
 //   awaitGraph(url) -> promise of such a module's graph (it and its imports fetched and evaluated, or
 //     failed), or null when the engine cannot wait for one
+//   moduleFetch() -> the next fetch() is the module's (CSP checks it as a "paintworklet" request)
 //   evaluate(source, url, credentials, graph) -> promise of the module's evaluation in the worklet
 //     global as graph `graph` (its imports recorded as that graph's),
 //     its imports fetched with `credentials`; one graph at a time (see `graphs`)
@@ -77,6 +78,7 @@
           const aborted = () => new DOMExceptionC('Unable to load a worklet\'s module.', 'AbortError');
           // Evaluated under the response's URL (after redirects), which import.meta.url and the module's
           // relative imports use.
+          native.moduleFetch();
           const loading = fetchC(url, { credentials, mode: 'cors' }).then(
             (response) => {
               if (!response.ok) throw aborted();

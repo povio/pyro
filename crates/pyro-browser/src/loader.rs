@@ -120,6 +120,9 @@ pub struct FetchRequest {
     /// Only part of the body is needed (a media element's headers):
     /// `Resource::partial` says when the body was cut.
     pub part: Option<pyro_webapi::BodyPart>,
+    /// The CSP guard of a request its initiator checked (`pyro_webapi::csp`): the client
+    /// checks each redirect against it. `None`: unchecked, or no policy.
+    pub csp: Option<std::sync::Arc<pyro_net::csp::RequestCsp>>,
 }
 
 impl FetchRequest {
@@ -388,6 +391,7 @@ impl ResourceLoader for NetLoader {
             .map(|document| (document.clone(), request.parser_priority));
         let mut req = pyro_net::Request::get(url, destination);
         req.parser_priority = request.parser_priority;
+        req.csp = request.csp.clone();
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
             if request.kind == ResourceKind::Document {
@@ -1205,6 +1209,13 @@ pub(crate) struct ScriptFetch {
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// The fetch's credentials mode, set by its initiator (a worklet's module graph).
     pub credentials: Option<pyro_net::Credentials>,
+    /// The script element (`None`: an import, a preload): the target of the request's CSP
+    /// violations, else its document.
+    pub element: Option<NodeId>,
+    /// The element's cryptographic nonce (CSP nonce-sources; empty: none).
+    pub nonce: String,
+    /// The element is parser-inserted (CSP `'strict-dynamic'` does not trust it).
+    pub parser_inserted: bool,
 }
 
 impl ScriptFetch {
@@ -1216,6 +1227,9 @@ impl ScriptFetch {
             module: None,
             referrer_policy: pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref()),
             credentials: None,
+            element: Some(info.node),
+            nonce: info.nonce.clone(),
+            parser_inserted: info.parser_inserted,
         }
     }
 }
@@ -1353,6 +1367,7 @@ impl Browser {
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
         }
         let req = FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: opts.post.clone(),
@@ -1616,8 +1631,13 @@ impl Browser {
         }
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
-        // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
-        if let Some(csp) = resource.header_csp.as_deref().filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp)) {
+        // A page that bypasses CSP (`Page.setBypassCSP`) records no policy, from a header or a
+        // `<meta>`.
+        let bypass_csp = self.page(page.page).is_some_and(|p| p.bypass_csp);
+        if bypass_csp {
+            let _ = dom.borrow_mut().set_csp_bypassed(doc, true);
+        }
+        if let Some(csp) = resource.header_csp.as_deref().filter(|_| !bypass_csp) {
             let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
             if !enforce.is_empty() {
                 let _ = dom.borrow_mut().set_header_csp(doc, true);
@@ -1957,11 +1977,44 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let ScriptFetch { integrity, crossorigin, module, referrer_policy, credentials, parser_priority } = opts;
+        let ScriptFetch {
+            integrity,
+            crossorigin,
+            module,
+            referrer_policy,
+            credentials,
+            parser_priority,
+            element,
+            nonce,
+            parser_inserted,
+        } = opts;
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
+        // CSP: the pre-request check of the script's request (`script-src-elem`; a JSON module:
+        // connect-src, a CSS one: style-src-elem), its violations at the element (else the
+        // document). Blocked, it fails as a network error. The guard checks its redirects.
+        let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        let mut csp_guard = None;
+        if let (Some(bindings), Ok(parsed)) = (&page_dom, url::Url::parse(&url)) {
+            let dest = module.map_or(pyro_net::csp::RequestDest::Script, pyro_webapi::csp::module_dest);
+            let mut check = pyro_net::csp::CspRequest::new(parsed, dest);
+            check.nonce = nonce;
+            // An import (no element) of a module graph: its root's nonce is not known here.
+            check.inherits_nonce = element.is_none() && kind == ResourceKind::ModuleScript;
+            check.parser_inserted = parser_inserted;
+            check.integrity = integrity.clone().unwrap_or_default();
+            match pyro_webapi::csp::check_request(bindings, check, element) {
+                Ok(guard) => csp_guard = guard,
+                Err(_) => {
+                    let error = format!("{} {url}", pyro_webapi::csp::BLOCKED_BY_CSP);
+                    self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+                    return;
+                }
+            }
+        }
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
         let req = FetchRequest {
+            csp: csp_guard.clone(),
             parser_priority,
             post: None,
             url,
@@ -1982,6 +2035,9 @@ impl Browser {
             &loader,
             req,
             Box::new(move |b, res| {
+                if let Some(bindings) = &page_dom {
+                    pyro_webapi::csp::report_guard(bindings, csp_guard.as_ref(), element);
+                }
                 let res = match res {
                     Ok(r) if (200..300).contains(&r.status) => {
                         let blocked = integrity
@@ -2292,6 +2348,7 @@ impl Browser {
                 let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
                 let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
                 let req = FetchRequest {
+                    csp: None,
                     parser_priority: false,
                     credentials: None,
                     post: None,
