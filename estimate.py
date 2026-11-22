@@ -78,6 +78,7 @@ def main(ledger,out):
     per[i]=(r['state'],pages,r)
   tiers={'implemented':('frozen','implemented-unbuilt','landed'),'in_progress':('claimed','active','reserved'),'queued':('validated','proposed')}
   res={'basis':'census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured','tiers':{}}
+  claimed_before=set()
   for t,states in tiers.items():
     u=set(); css=0; cssu=set(); byd=collections.Counter()
     for i,(st,pg,r) in per.items():
@@ -89,6 +90,7 @@ def main(ledger,out):
         try: css+=int(str(sp).split()[0])
         except: pass
       else: u|=pg
+    u-=claimed_before; claimed_before|=u
     adj=0; unl=0
     for i,(st,pg,r) in per.items():
       if st in states and pg is None and isinstance(r.get('est_pages_owner'),int) and not i.startswith(('SC-','S0')): unl+=r['est_pages_owner']
