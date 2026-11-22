@@ -453,11 +453,35 @@ fn script_carrier(page: &PageDom, dom: &Dom, node: NodeId, host: NodeId) -> Opti
     None
 }
 
+/// A typing override affects the insertion style on the immediate text
+/// container. A script higher in the inline tree remains observable there
+/// until typing actually splits the carrier.
+pub(super) fn caret_script_state(page: &PageDom, point: Point, tag: &str) -> Option<bool> {
+    let dom = page.dom.borrow();
+    if !editing::is_text(&dom, point.0) { return None; }
+    let host = editing::editing_host(&dom, point.0)?;
+    let container = dom.parent_element(point.0).ok()??;
+    let carrier = script_carrier(page, &dom, point.0, host);
+    let own = carrier.is_some_and(|(_, script)| script == tag);
+    Some(match toggle_state(page, (point, point), tag) {
+        Some(enabled) => enabled || carrier.is_some_and(|(node, script)| node != container && script == tag),
+        None => own,
+    })
+}
+
 /// Split just the script-bearing inline at the inserted text. Preserve
 /// unrelated CSS and attributes on that portion when removing the script.
 fn clear_script(page: &PageDom, dom: &mut Dom, typed: NodeId, host: NodeId) -> Option<bool> {
     let Some((carrier, _)) = script_carrier(page, dom, typed, host) else { return Some(true) };
-    if carrier == host || !matches!(editing::local(dom, carrier).as_str(), "sub" | "sup" | "span") {
+    let tag = editing::local(dom, carrier);
+    let authored = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
+    // Typing can remove a semantic tag or an inline declaration. A class
+    // rule continues to style the inserted text (including the other side
+    // of a split), unless another script is explicitly applied inside it.
+    if !matches!(tag.as_str(), "sub" | "sup") && authored.value("vertical-align").is_empty() {
+        return Some(true);
+    }
+    if carrier == host || !matches!(tag.as_str(), "sub" | "sup" | "span") {
         return Some(false);
     }
     let parent = dom.parent_element(carrier).ok()??;
@@ -475,11 +499,8 @@ fn clear_script(page: &PageDom, dom: &mut Dom, typed: NodeId, host: NodeId) -> O
     if dom.attributes(middle).ok()?.is_empty() {
         super::indentation::unwrap(dom, middle, &mut edges)?;
     } else {
-        let span = if editing::local(dom, middle) == "span" { middle }
-            else { super::indentation::rename(dom, middle, "span", &mut edges)? };
-        if script_carrier(page, dom, typed, host).is_some_and(|(n, _)| n == span) {
-            declarations.set("vertical-align", "baseline", false)?;
-            dom.set_attribute(span, "style", &declarations.css_text()).ok()?;
+        if editing::local(dom, middle) != "span" {
+            super::indentation::rename(dom, middle, "span", &mut edges)?;
         }
     }
     Some(true)

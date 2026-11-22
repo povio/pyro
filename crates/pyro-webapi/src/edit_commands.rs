@@ -1858,6 +1858,11 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
     let Some((start, end)) = editing::selection_range(page) else { return (false, false) };
     if start == end {
         if let Some((tag, _, _)) = format_of(command) {
+            if matches!(tag, "sub" | "sup") {
+                if let Some(active) = inline_value::caret_script_state(page, start, tag) {
+                    return (active, active);
+                }
+            }
             if let Some(active) = inline_value::toggle_state(page, (start, end), tag) {
                 return (active, active);
             }
