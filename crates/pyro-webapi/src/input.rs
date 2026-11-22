@@ -3260,9 +3260,10 @@ pub(crate) struct DragSession {
 
 use crate::data_transfer::{Mode, NativeTransfer};
 
-/// Nearest ancestor-or-self that is draggable: `draggable=true`, or a link
-/// with an href unless it says `draggable=false`. Images are not dragged:
-/// Chrome drags only decoded images and the engine decodes none.
+/// Nearest ancestor-or-self that is draggable: `draggable=true`, or, unless
+/// it says `draggable=false`, an `<img>` whose image has loaded (Chrome drags
+/// only available images) or a link with an href. As in Blink, an image is
+/// found before the link around it.
 fn drag_source(dom: &Dom, target: NodeId) -> Option<NodeId> {
     let mut cur = Some(target);
     while let Some(c) = cur {
@@ -3271,17 +3272,46 @@ fn drag_source(dom: &Dom, target: NodeId) -> Option<NodeId> {
             if draggable.is_some_and(|d| d.eq_ignore_ascii_case("true")) {
                 return Some(c);
             }
-            if e.is_html()
-                && *e.local_name() == *"a"
-                && e.attr("href").is_some()
-                && !draggable.is_some_and(|d| d.eq_ignore_ascii_case("false"))
-            {
+            let auto = !draggable.is_some_and(|d| d.eq_ignore_ascii_case("false"));
+            if auto && e.is_html() && *e.local_name() == *"img" && dom.natural_size(c).is_some() {
+                return Some(c);
+            }
+            if auto && e.is_html() && *e.local_name() == *"a" && e.attr("href").is_some() {
                 return Some(c);
             }
         }
         cur = dom.parent(c).ok().flatten();
     }
     None
+}
+
+/// Image drag data, as Chrome fills it before dragstart: the URL is the
+/// enclosing link's when the image is inside one, else the image's.
+fn image_items(page: &PageDom, img: NodeId) -> Vec<DragItem> {
+    let dom = page.dom.borrow();
+    let Ok(e) = dom.element(img) else { return Vec::new() };
+    if !(e.is_html() && *e.local_name() == *"img") {
+        return Vec::new();
+    }
+    let Some(src) = e.attr("src") else { return Vec::new() };
+    let mut url = crate::html::resolve_url(&dom, img, src);
+    let mut cur = dom.parent(img).ok().flatten();
+    while let Some(c) = cur {
+        if let Ok(a) = dom.element(c) {
+            if a.is_html() && *a.local_name() == *"a" {
+                if let Some(href) = a.attr("href") {
+                    url = crate::html::resolve_url(&dom, c, href);
+                    break;
+                }
+            }
+        }
+        cur = dom.parent(c).ok().flatten();
+    }
+    let html = dom.outer_html(img).unwrap_or_default();
+    vec![
+        DragItem { mime_type: "text/uri-list".into(), data: url.clone(), title: None, base_url: None },
+        DragItem { mime_type: "text/html".into(), data: html, title: None, base_url: Some(url) },
+    ]
 }
 
 fn mask_of(effect_allowed: &str) -> i64 {
@@ -3397,7 +3427,10 @@ fn start_drag(page: &Rc<PageDom>, pointer_target: NodeId, m: &MouseInput) -> Opt
     if !page.dom.borrow().is_connected(source).unwrap_or(false) {
         return None;
     }
-    let defaults = link_items(page, source);
+    let mut defaults = link_items(page, source);
+    if defaults.is_empty() {
+        defaults = image_items(page, source);
+    }
     let strings: Vec<_> = defaults.iter().map(|i| (i.mime_type.clone(), i.data.clone())).collect();
     let transfer = Rc::new(NativeTransfer::new(page, &strings, "uninitialized", Mode::ReadWrite)?);
     let doc = page.document();

@@ -1735,7 +1735,20 @@ impl JsClass for HtmlElement {
         define_focus_attributes(def);
         def.accessor(
             "draggable",
-            |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute(n.id, "draggable").js()? == Some("true"))),
+            // HTML: true and false are ASCII case-insensitive keywords; otherwise
+            // (the auto state) img elements and a elements with an href are draggable.
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                let draggable = match dom.get_attribute(n.id, "draggable").js()? {
+                    Some(v) if v.eq_ignore_ascii_case("true") => true,
+                    Some(v) if v.eq_ignore_ascii_case("false") => false,
+                    _ => {
+                        is_html(&dom, n.id, &["img"])
+                            || (is_html(&dom, n.id, &["a"]) && dom.get_attribute(n.id, "href").js()?.is_some())
+                    }
+                };
+                Ok(s.boolean(draggable))
+            },
             |_s, n, v| {
                 n.page()
                     .dom
