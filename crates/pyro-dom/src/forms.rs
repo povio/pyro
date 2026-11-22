@@ -356,6 +356,26 @@ fn sanitize(ty: InputType, v: &str) -> String {
     }
 }
 
+/// Whether a sign typed into a number input fits where it goes (as Chrome,
+/// which rejects the key otherwise): a `-` at the start, or a sign right
+/// after the exponent's `e`, and never before another sign. Other text is
+/// not checked here.
+fn number_sign_fits(before: &str, text: &str, after: &str) -> bool {
+    let sign = |c: char| c == '+' || c == '-';
+    let mut chars = text.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else { return true };
+    if !sign(c) {
+        return true;
+    }
+    if after.starts_with(sign) {
+        return false;
+    }
+    match before.chars().next_back() {
+        None => c == '-',
+        Some(p) => p == 'e' || p == 'E',
+    }
+}
+
 /// The email state's value sanitization, as Chrome's: one address has its
 /// newlines removed and its ASCII whitespace trimmed; with `multiple` each
 /// comma-separated address is trimmed. A non-ASCII domain is converted to
@@ -1968,6 +1988,10 @@ impl Dom {
             }
         }
         let (a, b) = utf16_range(&value, s, e - s)?;
+        let number = is_input && self.input_type_idx(i) == InputType::Number;
+        if number && !number_sign_fits(&value[..a], &text, &value[b..]) {
+            return Ok(false);
+        }
         self.edit_value_ranges(i, &value, a..b, &text);
         value.replace_range(a..b, &text);
         let caret = s + utf16_len(&text);
