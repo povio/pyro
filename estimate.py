@@ -24,7 +24,7 @@ SEL={
  'P02':[r'^html/browsers/history/the-history-interface/00[12]\.html$'],
  'P03':[r'^workers/modules/(dedicated|shared)-worker-(options-credentials|import-referrer|import-blob-url)'],
  'P04':[r'^html/semantics/forms/the-input-element/show-picker-(disabled-readonly|user-gesture)\.html$'],
- 'P05':[r'^html/semantics/interactive-elements/the-dialog-element/dialog-(closedby|popover-closedby)'],
+ 'P05':[],
  'P06':[r'^scheduler/tentative/yield/'],
  'P07':[r'^fetch/content-encoding/zstd/(zstd-body|big-zstd-body|zstd-navigation)'],
  'P08':[r'^html/syntax/parsing/html5lib_'],

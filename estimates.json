@@ -15,57 +15,60 @@
    }
   },
   "in_progress": {
-   "distinct_census_pages": 439,
+   "distinct_census_pages": 600,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
-    "html/semantics": 233,
+    "html/semantics": 251,
     "html/interaction": 108,
-    "html/canvas": 35,
+    "html/canvas": 45,
     "html/syntax": 34,
+    "dom/events": 21,
     "scheduler": 19,
+    "html/dom": 17,
+    "scroll-animations": 17,
+    "pointerevents": 11,
     "fetch/content-encoding": 9,
-    "svg/styling": 1
+    "shadow-dom": 7,
+    "selection": 7,
+    "navigation-api": 6,
+    "html/editing": 5,
+    "intersection-observer": 5,
+    "uievents": 5,
+    "svg/types": 4,
+    "event-timing": 3,
+    "mathml": 3,
+    "close-watcher": 3,
+    "inert": 3,
+    "svg/animations": 2,
+    "fetch/fetch-later": 2,
+    "dom/nodes": 2,
+    "resource-timing": 2,
+    "html/rendering": 2,
+    "soft-navigation-heuristics": 2,
+    "document-picture-in-picture": 1,
+    "svg/styling": 1,
+    "pointerlock": 1,
+    "editing": 1,
+    "html/browsers": 1
    }
   },
   "queued": {
-   "distinct_census_pages": 760,
+   "distinct_census_pages": 596,
    "studio_css_reported_pages_not_deduped": 122,
    "by_dir": {
     "svg/animations": 229,
     "referrer-policy": 114,
-    "html/canvas": 103,
+    "html/canvas": 93,
     "content-security-policy": 72,
-    "intersection-observer": 41,
-    "html/semantics": 23,
-    "dom/events": 21,
+    "intersection-observer": 36,
     "webidl": 19,
-    "html/dom": 17,
-    "scroll-animations": 17,
     "workers": 12,
-    "pointerevents": 11,
     "html/syntax": 8,
-    "shadow-dom": 7,
-    "selection": 7,
-    "navigation-api": 6,
-    "uievents": 5,
     "fetch/api": 5,
-    "html/editing": 5,
     "svg/path": 4,
-    "svg/types": 4,
-    "event-timing": 3,
-    "dom/nodes": 3,
-    "close-watcher": 3,
-    "mathml": 3,
-    "html/browsers": 3,
-    "inert": 3,
-    "resource-timing": 2,
-    "html/rendering": 2,
-    "soft-navigation-heuristics": 2,
-    "fetch/fetch-later": 2,
-    "document-picture-in-picture": 1,
-    "custom-elements": 1,
-    "pointerlock": 1,
-    "editing": 1
+    "html/browsers": 2,
+    "dom/nodes": 1,
+    "custom-elements": 1
    }
   }
  },
@@ -75,7 +78,7 @@
    "pages": 4
   },
   "Q01": {
-   "state": "proposed",
+   "state": "claimed",
    "pages": 161
   },
   "Q02": {
@@ -372,7 +375,7 @@
   },
   "P05": {
    "state": "proposed",
-   "pages": 5
+   "pages": 0
   },
   "P06": {
    "state": "active",
