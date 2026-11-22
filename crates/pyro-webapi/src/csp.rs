@@ -44,8 +44,8 @@ pub use pyro_net::csp::{InlineKind, ScriptInitiator, BLOCKED_BY_CSP};
 pub struct Blocked;
 
 /// The nonce CSP may match for `el`: its \[\[CryptographicNonce\]\] slot when `el` is nonceable
-/// (HTML "is element nonceable": no attribute name or value holds `<script` or `<style`, the
-/// dangling-markup case), else empty.
+/// (CSP3 "is element nonceable": no attribute name or value holds `<script` or `<style`, nor
+/// `<link` as in Chrome, the dangling-markup case), else empty.
 pub fn element_nonce(page: &PageDom, el: NodeId) -> String {
     let nonce = page.cryptographic_nonce(el);
     if nonce.is_empty() || !nonceable(page, el) {
@@ -57,11 +57,14 @@ pub fn element_nonce(page: &PageDom, el: NodeId) -> String {
 fn nonceable(page: &PageDom, el: NodeId) -> bool {
     let dom = page.dom.borrow();
     let Ok(attrs) = dom.attributes(el) else { return false };
-    let markup = |text: &str| {
-        let lower = text.to_ascii_lowercase();
-        lower.contains("<script") || lower.contains("<style")
-    };
-    !attrs.iter().any(|a| markup(&a.name.local) || markup(&a.value))
+    !attrs.iter().any(|a| holds_markup(&a.name.local) || holds_markup(&a.value))
+}
+
+/// Whether an attribute name or value holds the start of a `<script`, `<style` or (Chrome's
+/// `ContentSecurityPolicy::IsNonceableElement` addition) `<link` tag, ASCII case-insensitively.
+fn holds_markup(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("<script") || lower.contains("<style") || lower.contains("<link")
 }
 
 /// The initiator of a request `el` makes (`parser_inserted`: its parser metadata), with its
@@ -231,5 +234,22 @@ pub fn module_dest(ty: pyro_js::ModuleType) -> RequestDest {
         pyro_js::ModuleType::Json | pyro_js::ModuleType::Text => RequestDest::Json,
         pyro_js::ModuleType::Css => RequestDest::Style,
         _ => RequestDest::Script,
+    }
+}
+
+#[cfg(test)]
+mod nonceable_tests {
+    use super::holds_markup;
+
+    /// content-security-policy/script-src/non-nonceable-elements{,-attr-name}.html: `<script`,
+    /// `<style` and `<link` anywhere in a name or value, any ASCII case.
+    #[test]
+    fn markup_in_attribute_text() {
+        for text in ["<script", "<sCRIpt", "<stYlE", "<LinK", "aaa<sCripTbb", "aa<sTylEbbb", "cc<lInKddd"] {
+            assert!(holds_markup(text), "{text}");
+        }
+        for text in ["", "secret-script", "a < b", "<scrip", "<lin k", "script", "link"] {
+            assert!(!holds_markup(text), "{text}");
+        }
     }
 }
