@@ -2175,7 +2175,7 @@
   // ----- Helpers for streams.rs ------------------------------------------
 
   // Every chunk of a body stream, concatenated; non-Uint8Array chunks reject.
-  // The stream's bytes, as a promise of \`{bytes}\`.
+  // The stream's bytes, as a promise of `{bytes}`.
   const collect = (st) => {
     const rd = newReader(st);
     const chunks = [];
@@ -2202,7 +2202,7 @@
             offset += chunks[i].length;
           }
           // Boxed without a prototype: resolving with the bytes themselves
-          // would look up a \`then\` script put on Object.prototype.
+          // would look up a `then` script put on Object.prototype.
           d.resolve({ __proto__: null, bytes: out });
         },
         error: (e) => d.reject(e),
