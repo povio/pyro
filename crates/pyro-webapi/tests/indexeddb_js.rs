@@ -246,6 +246,43 @@ fn key_paths_generators_and_constraints() {
 }
 
 #[test]
+fn terminal_events_precede_waiting_transaction_events() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('terminal-order', 1, db => db.createObjectStore('rows'));
+        const events = [];
+        for (const abort of [false, true]) {
+          const writer = db.transaction('rows', 'readwrite');
+          const terminal = done(writer).then(() => events.push('commit'), e => events.push(e.name));
+          const rows = writer.objectStore('rows');
+          await req(rows.put(abort ? 'temporary' : 'saved', 1));
+          const first = db.transaction('rows');
+          const empty = done(first).then(() => events.push('empty'));
+          const second = db.transaction('rows');
+          const read = req(second.objectStore('rows').get(1)).then(value => events.push(value));
+          const finished = done(second);
+          if (abort) {
+            const duplicate = rows.add('bad', 1);
+            duplicate.onerror = () => events.push('error');
+          } else {
+            await req(rows.put('also saved', 2));
+          }
+          await Promise.all([terminal, empty, read, finished]);
+        }
+        db.close();
+        const reopened = await openDb('terminal-order', 1);
+        events.push(await req(reopened.transaction('rows').objectStore('rows').count()));
+        out = events.join('|');
+        "#,
+    );
+    assert_eq!(got, "commit|empty|saved|error|ConstraintError|empty|saved|2");
+}
+
+#[test]
 fn array_key_conversion_rejects_proxies_without_traps() {
     let env = Env::new();
     let doc = env.doc("http://idb.test/");
