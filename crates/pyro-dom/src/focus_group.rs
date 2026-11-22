@@ -15,7 +15,9 @@
 //! not looking into opted-out subtrees nor into nested owners (a focusable
 //! nested owner is itself an item of the outer group). Directional input
 //! only moves between items that are sequentially focusable (tabindex not
-//! negative); a focused tabindex=-1 item still navigates away.
+//! negative); a focused tabindex=-1 item still navigates away. Top-layer
+//! elements (showing popovers, modal dialogs) and their subtrees belong to
+//! no ancestor focusgroup.
 
 
 use crate::dom::Dom;
@@ -114,6 +116,11 @@ impl Dom {
         self.focusgroup_idx(self.check(el).ok()?)
     }
 
+    /// An element in the top layer: a showing popover or a modal dialog.
+    fn focusgroup_top_layer(&self, i: u32) -> bool {
+        self.is_popover_showing_idx(i) || self.is_modal_idx(i) || self.is_dialog_in_top_layer_idx(i)
+    }
+
     /// The parent element in the flat tree: a slottable's slot, a shadow
     /// root's host, else the parent element.
     fn focusgroup_flat_parent(&self, i: u32) -> u32 {
@@ -163,6 +170,11 @@ impl Dom {
                 Some(Focusgroup::Owner(flags)) => return Some((self.id_of(a), flags)),
                 None => {}
             }
+            // A top-layer element (open popover, modal dialog) is cut off
+            // from ancestor focusgroups.
+            if self.focusgroup_top_layer(a) {
+                return None;
+            }
             a = self.focusgroup_flat_parent(a);
         }
         None
@@ -180,7 +192,7 @@ impl Dom {
                 continue;
             }
             let fg = self.focusgroup_idx(i);
-            if fg == Some(Focusgroup::OptOut) {
+            if fg == Some(Focusgroup::OptOut) || self.focusgroup_top_layer(i) {
                 continue;
             }
             if area(self.id_of(i)) {
