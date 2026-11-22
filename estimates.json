@@ -27,8 +27,8 @@
     "html/browsers": 36,
     "fetch/fetch-later": 29,
     "html/dom": 24,
-    "html/webappapis": 21,
     "fetch/content-encoding": 21,
+    "html/webappapis": 21,
     "html/infrastructure": 20,
     "scheduler": 19,
     "html/syntax": 12,
@@ -39,13 +39,13 @@
     "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
-    "svg/styling": 1,
+    "IndexedDB": 1,
     "html/rendering": 1,
     "quirks": 1,
-    "IndexedDB": 1
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -67,37 +67,52 @@
     "html/semantics": 172,
     "html/canvas": 167,
     "html/syntax": 30,
+    "html/webappapis": 5,
     "html/dom": 5,
     "fetch/api": 5,
-    "html/webappapis": 5,
     "html/browsers": 2
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 29,
+    "macbook_in_scope": 83,
     "studio_in_scope": 142,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 76,
+   "distinct_census_pages": 130,
    "owner_reported_unlisted": 0,
-   "selector_union": 100,
-   "owner_estimate_reduction": 24,
-   "of_which_tentative": 5,
+   "selector_union": 176,
+   "owner_estimate_reduction": 46,
+   "of_which_tentative": 24,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/browsers": 36,
+    "fetch/metadata": 27,
     "content-security-policy": 20,
     "webidl": 19,
     "html/semantics": 10,
+    "fetch/fetch-later": 10,
+    "fetch/compression-dictionary": 8,
+    "IndexedDB": 6,
+    "fetch/corb": 6,
     "html/interaction": 5,
+    "fetch/security": 5,
     "svg/path": 4,
+    "fetch/api": 4,
     "workers": 3,
+    "fetch/cross-origin-resource-policy": 2,
     "html/rendering": 2,
-    "dom/nodes": 1
+    "fetch/orb": 2,
+    "fetch/redirect-navigate": 1,
+    "fetch/http-cache": 1,
+    "fetch/content-type": 1,
+    "dom/nodes": 1,
+    "fetch/redirects": 1,
+    "fetch/images": 1,
+    "fetch/range": 1
    }
   }
  },
@@ -1977,6 +1992,48 @@
    "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 1
+  },
+  "R-FETCH-META": {
+   "state": "proposed",
+   "in_scope_pages": 27,
+   "out_of_scope_pages": 0,
+   "pages": 27,
+   "tentative": 1
+  },
+  "R-FETCH-LATER-C": {
+   "state": "proposed",
+   "in_scope_pages": 10,
+   "out_of_scope_pages": 0,
+   "pages": 10,
+   "tentative": 0
+  },
+  "R-FETCH-ORB": {
+   "state": "proposed",
+   "in_scope_pages": 8,
+   "out_of_scope_pages": 0,
+   "pages": 8,
+   "tentative": 6
+  },
+  "R-FETCH-DICT": {
+   "state": "proposed",
+   "in_scope_pages": 8,
+   "out_of_scope_pages": 0,
+   "pages": 8,
+   "tentative": 8
+  },
+  "R-FETCH-MISC": {
+   "state": "proposed",
+   "in_scope_pages": 17,
+   "out_of_scope_pages": 0,
+   "pages": 17,
+   "tentative": 4
+  },
+  "R-IDB-3": {
+   "state": "proposed",
+   "in_scope_pages": 6,
+   "out_of_scope_pages": 0,
+   "pages": 6,
+   "tentative": 0
   }
  },
  "implemented_total_estimate": 1241,
