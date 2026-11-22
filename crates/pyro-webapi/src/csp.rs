@@ -20,8 +20,10 @@
 //! keyed by the referring script the engine names); everything else is unattributed and
 //! matches no nonce-source.
 //!
-//! Not covered (explicitly): WebAssembly compilation (`wasm_eval_check` exists, nothing calls
-//! it); `report-uri` / `report-to` delivery (violation records only); local-scheme documents
+//! WebAssembly compilation ([`wasm_allowed`]) is gated at the JS level (install.js
+//! `wasmStreaming`, armed by [`sync_wasm_gate`] in realms whose policies need it).
+//!
+//! Not covered (explicitly): `report-uri` / `report-to` delivery (violation records only); local-scheme documents
 //! (`about:blank`, `about:srcdoc`, `data:` frames) do not inherit their creator's policies;
 //! `frame-src` is checked against the parent's policies (a `javascript:` navigation against its
 //! initiator's, [`NavigationInitiator`]); `Page.setBypassCSP` applies from
@@ -191,6 +193,44 @@ pub fn eval_allowed(page: &Rc<PageDom>, source: &str) -> bool {
     let outcome = list.eval_check(source);
     report(page, outcome.violations, None);
     !outcome.blocked
+}
+
+/// CSP3 "EnsureCSPDoesNotBlockWasmByteCompilation" for `page` (a window's document or a worker's):
+/// `script-src` (or `default-src`) without `'wasm-unsafe-eval'` or `'unsafe-eval'` blocks
+/// WebAssembly compilation, reported with blockedURI `wasm-eval` at the document (a worker's
+/// global). Whether it may compile.
+pub fn wasm_allowed(page: &Rc<PageDom>) -> bool {
+    let Some(list) = policy_list(page) else { return true };
+    let outcome = list.wasm_eval_check();
+    report(page, outcome.violations, None);
+    !outcome.blocked
+}
+
+/// The hidden slot on a realm's global holding install.js `wasmStreaming`'s `arm` until it ran.
+pub(crate) const WASM_GATE: &str = "lpWasmGateArm";
+
+/// Before `page`'s scripts run in its realm `s` (a window's classic scripts, a worker's main
+/// script): once a policy would check WebAssembly compilation (any `script-src` without
+/// `'wasm-unsafe-eval'` or `'unsafe-eval'`, enforced or report-only), WebAssembly.compile,
+/// instantiate and the Module constructor are replaced with ones that ask
+/// [`wasm_allowed`] (install.js `wasmStreaming`; the streaming ones ask already). A realm
+/// without such a policy keeps the natives untouched. Once armed it stays so (policies only
+/// accumulate).
+pub fn sync_wasm_gate(s: &Scope<'_>, page: &PageDom) {
+    if page.dom.borrow().csp_policies(page.document()).is_empty() {
+        return;
+    }
+    let global = s.global();
+    let Ok(Some(arm)) = s.get_hidden(global, WASM_GATE) else { return };
+    let Some(arm) = arm.as_object() else { return };
+    let checked = policy_list(page).is_some_and(|list| !list.wasm_eval_check().violations.is_empty());
+    if !checked {
+        return;
+    }
+    let _ = s.set_hidden(global, WASM_GATE, s.undefined());
+    if let Err(e) = arm.call(None, &[]) {
+        s.report_exception(&e);
+    }
 }
 
 /// Whether `page`'s policies make string compilation need a check: 2 when an enforced policy

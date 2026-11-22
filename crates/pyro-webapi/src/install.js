@@ -429,33 +429,116 @@
   // so the namespace lacks both). `read(response, method)` checks the
   // Response (MIME type, CORS-same-origin, ok status) and consumes its body as
   // an ArrayBuffer (response.rs `read_for_wasm`); the bytes then go through
-  // the realm's own WebAssembly.compile and instantiate, captured here, so
-  // every check those make applies to them as well.
-  const wasmStreaming = (read) => {
+  // the realm's own WebAssembly.compile and instantiate, captured here.
+  //
+  // CSP3 "EnsureCSPDoesNotBlockWasmByteCompilation" (csp.rs): `allowed()` (the
+  // native cspWasm) runs the realm's wasm-eval check and reports its
+  // violations. The returned `arm` (csp.rs `sync_wasm_gate`, once the realm's
+  // policies lack 'wasm-unsafe-eval' and 'unsafe-eval') replaces compile,
+  // instantiate and the Module constructor with gated ones, the property
+  // descriptors kept; a realm without such a policy never sees a wrapper.
+  // Armed, compiling bytes throws (rejects with) a CompileError before
+  // anything else (as V8: before the argument is read, the streaming ones
+  // before the source is), and instantiate with a compiled Module passes.
+  const wasmStreaming = (read, allowed) => {
     const wasm = typeof WebAssembly === 'object' && WebAssembly !== null ? WebAssembly : undefined;
-    if (wasm === undefined || 'compileStreaming' in wasm) return;
+    if (wasm === undefined) return undefined;
     const compile = wasm.compile, instantiate = wasm.instantiate;
-    const Promise_ = Promise, then = Promise.prototype.then;
-    // Spec: "a promise resolved with source", then the response's bytes.
-    const bytesOf = (source, method) =>
-      apply(then, new Promise_(resolve => resolve(source)), [response => read(response, method)]);
-    const methods = {
-      compileStreaming(source, options) {
-        return apply(then, bytesOf(source, 'compileStreaming'),
-          [bytes => apply(compile, wasm, options === undefined ? [bytes] : [bytes, options])]);
-      },
-      instantiateStreaming(source, importObject, options) {
-        if (importObject !== undefined && (importObject === null || (typeof importObject !== 'object' && typeof importObject !== 'function')))
-          return new Promise_((_, reject) => reject(new TypeError_("Failed to execute 'instantiateStreaming' on 'WebAssembly': Argument 1 must be an object")));
-        return apply(then, bytesOf(source, 'instantiateStreaming'),
-          [bytes => apply(instantiate, wasm, options === undefined ? [bytes, importObject] : [bytes, importObject, options])]);
-      },
+    const Module = wasm.Module, CompileError = wasm.CompileError;
+    const moduleExports = typeof Module === 'function' ? Module.exports : undefined;
+    const Promise_ = Promise, then = Promise.prototype.then, construct = Reflect.construct;
+    let armed = false;
+    const refusal = (method) => new CompileError(
+      `${method}: Refused to compile or instantiate WebAssembly module because neither 'wasm-unsafe-eval' nor 'unsafe-eval' is an allowed source of script in the Content Security Policy`);
+    const rejection = (method) => {
+      const error = refusal(method);
+      return new Promise_((_, reject) => reject(error));
     };
-    for (const name of ['compileStreaming', 'instantiateStreaming']) {
-      const method = methods[name];
-      defineProperty(method, 'length', { value: 1, configurable: true });
-      defineProperty(wasm, name, { value: method, writable: true, enumerable: true, configurable: true });
+    const blocked = () => armed && !allowed();
+    // A WebAssembly.Module (Module.exports is its brand check).
+    const isModule = (value) => {
+      if (moduleExports === undefined || value === null || typeof value !== 'object') return false;
+      try { apply(moduleExports, Module, [value]); return true; } catch (_) { return false; }
+    };
+
+    if (!('compileStreaming' in wasm)) {
+      // Spec: "a promise resolved with source", then the response's bytes.
+      const bytesOf = (source, method) =>
+        apply(then, new Promise_(resolve => resolve(source)), [response => read(response, method)]);
+      const methods = {
+        compileStreaming(source, options) {
+          if (blocked()) return rejection('WebAssembly.compileStreaming()');
+          return apply(then, bytesOf(source, 'compileStreaming'),
+            [bytes => apply(compile, wasm, options === undefined ? [bytes] : [bytes, options])]);
+        },
+        instantiateStreaming(source, importObject, options) {
+          if (blocked()) return rejection('WebAssembly.instantiateStreaming()');
+          if (importObject !== undefined && (importObject === null || (typeof importObject !== 'object' && typeof importObject !== 'function')))
+            return new Promise_((_, reject) => reject(new TypeError_("Failed to execute 'instantiateStreaming' on 'WebAssembly': Argument 1 must be an object")));
+          return apply(then, bytesOf(source, 'instantiateStreaming'),
+            [bytes => apply(instantiate, wasm, options === undefined ? [bytes, importObject] : [bytes, importObject, options])]);
+        },
+      };
+      for (const name of ['compileStreaming', 'instantiateStreaming']) {
+        const method = methods[name];
+        defineProperty(method, 'length', { value: 1, configurable: true });
+        defineProperty(wasm, name, { value: method, writable: true, enumerable: true, configurable: true });
+      }
     }
+
+    // `replacement` in `object[name]`'s place, with its name and length and
+    // the descriptor of the property it replaces.
+    const replace = (object, name, original, replacement) => {
+      const own = getOwnPropertyDescriptor(object, name);
+      if (own === undefined || own.value !== original) return false;
+      defineProperty(replacement, 'length', { __proto__: null, value: original.length, configurable: true });
+      defineProperty(replacement, 'name', { __proto__: null, value: original.name, configurable: true });
+      defineProperty(object, name, { __proto__: null, value: replacement, writable: own.writable, enumerable: own.enumerable, configurable: own.configurable });
+      return true;
+    };
+    return () => {
+      if (armed) return;
+      armed = true;
+      if (typeof compile === 'function') {
+        replace(wasm, 'compile', compile, {
+          compile() {
+            if (blocked()) return rejection('WebAssembly.compile()');
+            return apply(compile, this, arguments);
+          },
+        }.compile);
+      }
+      if (typeof instantiate === 'function') {
+        replace(wasm, 'instantiate', instantiate, {
+          instantiate(source) {
+            if (!isModule(source) && blocked()) return rejection('WebAssembly.instantiate()');
+            return apply(instantiate, this, arguments);
+          },
+        }.instantiate);
+      }
+      if (typeof Module === 'function') {
+        const prototype = Module.prototype;
+        const Gated = function (bytes) {
+          'use strict';
+          // Called without new: the native's TypeError.
+          if (new.target === undefined) return apply(Module, this, arguments);
+          if (blocked()) throw refusal('WebAssembly.Module()');
+          return construct(Module, arguments, new.target);
+        };
+        // The statics (exports, imports, customSections) and prototype, as
+        // the native has them, so instanceof and the IDL checks hold.
+        for (const key of ownKeys(Module)) {
+          if (key === 'length' || key === 'name') continue;
+          const descriptor = getOwnPropertyDescriptor(Module, key);
+          descriptor.__proto__ = null;
+          defineProperty(Gated, key, descriptor);
+        }
+        if (replace(wasm, 'Module', Module, Gated) && prototype !== null && typeof prototype === 'object') {
+          const own = getOwnPropertyDescriptor(prototype, 'constructor');
+          if (own !== undefined && own.value === Module)
+            defineProperty(prototype, 'constructor', { __proto__: null, value: Gated, writable: own.writable, enumerable: own.enumerable, configurable: own.configurable });
+        }
+      }
+    };
   };
 
   return {

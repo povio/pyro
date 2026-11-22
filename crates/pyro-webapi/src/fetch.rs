@@ -1079,11 +1079,23 @@ fn fetch_call<'s>(
 
 /// WebAssembly.compileStreaming and instantiateStreaming on the realm's `WebAssembly` namespace
 /// (install.js `wasmStreaming`, given as `factory`), with [`crate::response::read_for_wasm`] as
-/// the step that takes a Response's bytes.
+/// the step that takes a Response's bytes, and the realm's CSP gate on WebAssembly compilation:
+/// `cspWasm` ([`crate::csp::wasm_allowed`]) and the step that arms the gate, kept for
+/// [`crate::csp::sync_wasm_gate`] (armed now when the policies are already known).
 pub(crate) fn install_wasm_streaming(s: &Scope<'_>, factory: Value<'_>) -> JsResult<()> {
     let read = s.function("readWasmResponse", |s, _, a| crate::response::read_for_wasm(s, a.get(0), a.get(1)))?;
+    let allowed = s.function("cspWasm", |s, _, _| {
+        let allowed = crate::target::page_of(s).map_or(true, |page| crate::csp::wasm_allowed(&page));
+        Ok(s.boolean(allowed))
+    })?;
     let factory = factory.as_object().ok_or_else(|| JsError::Type("install.js wasmStreaming".into()))?;
-    factory.call(None, &[read.value()])?;
+    let arm = factory.call(None, &[read.value(), allowed.value()])?;
+    if arm.as_object().is_some() {
+        s.set_hidden(s.global(), crate::csp::WASM_GATE, arm)?;
+        if let Ok(page) = crate::target::page_of(s) {
+            crate::csp::sync_wasm_gate(s, &page);
+        }
+    }
     Ok(())
 }
 
