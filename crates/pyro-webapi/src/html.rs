@@ -3098,6 +3098,39 @@ fn table_ensure_child<'s>(s: &Scope<'s>, n: &NodeData, tag: &str) -> JsResult<Va
     Ok(wrap_node(s, n.page(), el)?.value())
 }
 
+/// The `caption` / `tHead` / `tFoot` setters. A value that is not an `HTMLTableCaptionElement`
+/// (caption) or `HTMLTableSectionElement` (thead, tfoot) is a TypeError, a section of another
+/// kind a "HierarchyRequestError". Otherwise the table's first `tag` child is removed and the new
+/// value inserted where HTML puts it (a caption first, a thead before the first child element
+/// that is neither a caption nor a colgroup, a tfoot at the end); the insertion's exception
+/// propagates.
+fn table_set_child(s: &Scope<'_>, n: &NodeData, v: Value<'_>, tag: &str) -> JsResult<()> {
+    let interface = if tag == "caption" { "HTMLTableCaptionElement" } else { "HTMLTableSectionElement" };
+    let type_error = || JsError::type_error(format!("The provided value is not of type '{interface}'."));
+    let new = if v.is_nullish() { None } else { Some(crate::node::node_arg(s, v, "set").map_err(|_| type_error())?) };
+    let mut dom = n.page().dom.borrow_mut();
+    if let Some(el) = new {
+        let kinds: &[&str] = if tag == "caption" { &["caption"] } else { &["thead", "tbody", "tfoot"] };
+        if !is_html(&dom, el, kinds) {
+            return Err(type_error());
+        }
+        if !is_html(&dom, el, &[tag]) {
+            return Err(JsError::dom("HierarchyRequestError", format!("The provided element is not a {tag} element.")));
+        }
+    }
+    let old = dom.element_children(n.id).js()?.find(|&c| is_html(&dom, c, &[tag]));
+    if let Some(old) = old {
+        dom.remove_node(old).js()?;
+    }
+    let Some(el) = new else { return Ok(()) };
+    let before = match tag {
+        "caption" => dom.first_child(n.id).js()?,
+        "thead" => dom.element_children(n.id).js()?.find(|&c| !is_html(&dom, c, &["caption", "colgroup"])),
+        _ => None,
+    };
+    dom.insert_before(n.id, el, before).js()
+}
+
 /// `deleteCaption()` / `deleteTHead()` / `deleteTFoot()`.
 fn table_delete_child(n: &NodeData, tag: &str) -> JsResult<()> {
     let mut dom = n.page().dom.borrow_mut();
@@ -3162,9 +3195,9 @@ fn insert_member<'s>(
 simple_class!(HtmlTableElement, "HTMLTableElement", HtmlElement, |def| {
     def.getter("rows", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::TableRows)?.value()));
     def.getter("tBodies", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::TableBodies)?.value()));
-    def.getter("tHead", |s, n| table_section(s, n, "thead"));
-    def.getter("tFoot", |s, n| table_section(s, n, "tfoot"));
-    def.getter("caption", |s, n| table_section(s, n, "caption"));
+    def.accessor("tHead", |s, n| table_section(s, n, "thead"), |s, n, v| table_set_child(s, n, v, "thead"));
+    def.accessor("tFoot", |s, n| table_section(s, n, "tfoot"), |s, n, v| table_set_child(s, n, v, "tfoot"));
+    def.accessor("caption", |s, n| table_section(s, n, "caption"), |s, n, v| table_set_child(s, n, v, "caption"));
     def.method("createCaption", 0, |s, n, _a| table_ensure_child(s, n, "caption"));
     def.method("deleteCaption", 0, |s, n, _a| table_delete_child(n, "caption").map(|()| s.undefined()));
     def.method("createTHead", 0, |s, n, _a| table_ensure_child(s, n, "thead"));
@@ -3269,8 +3302,17 @@ simple_class!(HtmlTableRowElement, "HTMLTableRowElement", HtmlElement, |def| {
     });
     def.getter("sectionRowIndex", |s, n| {
         let dom = n.page().dom.borrow();
+        // HTML: the index in the parent's `rows` when the parent is a table or a table
+        // section, else -1.
         let Some(p) = dom.parent(n.id).js()? else { return Ok(s.number(-1.0)) };
-        let rows = table_collection(&dom, p, &CollectionKind::SectionRows);
+        let kind = if is_html(&dom, p, &["table"]) {
+            CollectionKind::TableRows
+        } else if is_html(&dom, p, &["thead", "tbody", "tfoot"]) {
+            CollectionKind::SectionRows
+        } else {
+            return Ok(s.number(-1.0));
+        };
+        let rows = table_collection(&dom, p, &kind);
         Ok(s.number(rows.iter().position(|&r| r == n.id).map_or(-1.0, |i| i as f64)))
     });
 });
