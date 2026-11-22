@@ -144,6 +144,10 @@ pub struct PageNav {
     /// A navigation that navigation.js started (and fired `navigate` for)
     /// is running: the native paths fire no event of their own.
     navigation_api_call: Cell<bool>,
+    /// Chrome's navigation rate limiter (crbug.com/1038223): the start of
+    /// the current period and the history updates and navigations counted
+    /// in it.
+    rate_limit: Cell<(Instant, u32)>,
 }
 
 /// What the listeners of a Navigation API `navigate` event decided.
@@ -207,6 +211,7 @@ impl PageNav {
             timeline_watchers: RefCell::new(Vec::new()),
             navigation_hooks: RefCell::new(Vec::new()),
             navigation_api_call: Cell::new(false),
+            rate_limit: Cell::new((Instant::now(), 0)),
         })
     }
 
@@ -547,6 +552,38 @@ impl PageNav {
     fn traversal_pending(&self, doc: u64) -> bool {
         let st = self.state.borrow();
         st.doc_seq == doc && st.entries.get(st.index).is_some_and(|e| e.doc != doc)
+    }
+
+    /// Counts a history update or navigation of the frame: false when it is
+    /// to be ignored, past 200 in 10 seconds, as Chrome's
+    /// NavigationRateLimiter does (HTML lets user agents limit them).
+    fn rate_limit_allows(&self) -> bool {
+        const LIMIT: u32 = 200;
+        const PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
+        let (start, count) = self.rate_limit.get();
+        let count = count.saturating_add(1);
+        if count <= LIMIT {
+            self.rate_limit.set((start, count));
+            return true;
+        }
+        let now = Instant::now();
+        if now.saturating_duration_since(start) > PERIOD {
+            self.rate_limit.set((now, 1));
+            return true;
+        }
+        self.rate_limit.set((start, count));
+        false
+    }
+
+    /// Whether the active document is fully active (HTML): its frame not
+    /// removed, the document not navigated away from. A navigation state
+    /// never bound to a document counts as active.
+    pub(crate) fn fully_active(&self) -> bool {
+        let page = self.page_dom.borrow();
+        match page.upgrade() {
+            Some(page) => page.is_fully_active(),
+            None => page.ptr_eq(&std::rc::Weak::new()),
+        }
     }
 
     fn traverse(&self, delta: i64) {
@@ -1131,7 +1168,9 @@ fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
     // HTML "Location-object navigate": a document that has not completely
     // loaded, with no user gesture, replaces its entry.
     let loading = nav.page_dom.borrow().upgrade().is_some_and(|page| page.navigates_by_replacing());
-    navigate_to(nav, target, replace || loading);
+    if nav.rate_limit_allows() {
+        navigate_to(nav, target, replace || loading);
+    }
     Ok(())
 }
 
@@ -1146,7 +1185,7 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
         .base_url(base.as_ref())
         .parse(&href)
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))?;
-    if target.scheme() != "javascript" {
+    if target.scheme() != "javascript" && nav.rate_limit_allows() {
         navigate_to(nav, target, replace);
     }
     Ok(())
@@ -1380,23 +1419,48 @@ impl JsClass for History {
         def.method("pushState", 2, |s, n, a| change_state(s, n, a, SameDocumentKind::Push));
         def.method("replaceState", 2, |s, n, a| change_state(s, n, a, SameDocumentKind::Replace));
         def.method("back", 0, |s, n, _a| {
-            n.traverse(-1);
+            require_fully_active(n, "back")?;
+            if n.rate_limit_allows() {
+                n.traverse(-1);
+            }
             Ok(s.undefined())
         });
         def.method("forward", 0, |s, n, _a| {
-            n.traverse(1);
+            require_fully_active(n, "forward")?;
+            if n.rate_limit_allows() {
+                n.traverse(1);
+            }
             Ok(s.undefined())
         });
         def.method("go", 0, |s, n, a| {
             let d = a.get(0).to_number()?;
-            n.traverse(if d.is_finite() { d.trunc() as i64 } else { 0 });
+            require_fully_active(n, "go")?;
+            if n.rate_limit_allows() {
+                n.traverse(if d.is_finite() { d.trunc() as i64 } else { 0 });
+            }
             Ok(s.undefined())
         });
     }
 }
 
+/// HTML: History's methods throw a SecurityError for a document that is not
+/// fully active (checked before the rate limit).
+fn require_fully_active(n: &PageNav, method: &str) -> JsResult<()> {
+    if n.fully_active() {
+        return Ok(());
+    }
+    Err(JsError::dom(
+        "SecurityError",
+        format!(
+            "Failed to execute '{method}' on 'History': May not use a History object associated with a Document that is not fully active"
+        ),
+    ))
+}
+
 fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: SameDocumentKind) -> JsResult<Value<'s>> {
-    a.require(2, if kind == SameDocumentKind::Push { "pushState" } else { "replaceState" })?;
+    let method = if kind == SameDocumentKind::Push { "pushState" } else { "replaceState" };
+    a.require(2, method)?;
+    require_fully_active(n, method)?;
     // StructuredSerializeForStorage: functions, DOM nodes and ports throw
     // DataCloneError; Date, Map, Set, typed arrays, cycles, Blob, ... survive.
     let state = match a.get(0) {
@@ -1431,6 +1495,10 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: Same
         }
         None => n.url(),
     };
+    // After the state, the URL and whether it may be set were checked.
+    if !n.rate_limit_allows() {
+        return Ok(s.undefined());
+    }
     let navigation_type = if kind == SameDocumentKind::Push { "push" } else { "replace" };
     if n.navigate_event(navigation_type, &url, true) == NavigateDecision::Cancel {
         return Ok(s.undefined());
