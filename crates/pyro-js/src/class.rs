@@ -3034,7 +3034,12 @@ unsafe fn refused_delete(
             Ok(f(scope, hc.header, units)?.is_some())
         };
         let supported = match hc.foreign_realm(scope) {
-            Some(realm) => in_receiver_realm(realm, supported)?,
+            Some(realm) => match in_receiver_realm(realm, supported) {
+                // A closed realm's collection has no members to protect: the
+                // ordinary [[Delete]] runs, as it did before.
+                Err(JsError::ContextDestroyed) => false,
+                result => result?,
+            },
             None => supported(scope)?,
         };
         // An own property (an expando set before the name became supported)
