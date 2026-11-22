@@ -2107,7 +2107,12 @@ mod expand_tests {
 #[inline(always)]
 fn percentage_track_size(fraction: f32, size: f32) -> f32 {
     let product = fraction * size;
-    let floored = (product * 64.0).floor() / 64.0;
+    // Whole layout units (1/64 px), floored as Chrome does; a product within float noise of a
+    // unit boundary is that boundary (13% of 900 is 116.99999 in f32, which Chrome lays out at 117).
+    let units = product * 64.0;
+    let nearest = units.round();
+    let snapped = if (units - nearest).abs() <= units.abs() * 1e-6 + 1e-4 { nearest } else { units.floor() };
+    let floored = snapped / 64.0;
     if floored.is_finite() {
         floored
     } else {
