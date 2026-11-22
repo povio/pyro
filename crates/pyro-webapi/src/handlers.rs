@@ -224,7 +224,6 @@ pub(crate) fn compile_handler<'s>(
     body: &str,
 ) -> JsResult<Value<'s>> {
     let ctor = s.global().get_atom("Function")?;
-    let scoped = format!("with(this.ownerDocument||document){{with(this.form||{{}}){{with(this){{{body}\n}}}}}}");
     // An SVG element's handler names its argument `evt` (SVG 2, as browsers do).
     let svg = {
         let dom = page.dom.borrow();
@@ -239,6 +238,14 @@ pub(crate) fn compile_handler<'s>(
     } else {
         &["event"]
     };
+    // The document, form owner and element are on the scope chain outside
+    // the function, so its parameters come first (`event` in a
+    // `<script onerror>` is the event, not `HTMLScriptElement.event`).
+    let scoped = format!(
+        "with(this.ownerDocument||document){{with(this.form||{{}}){{with(this){{\
+         return (function({}){{{body}\n}}).apply(this,arguments)}}}}}}",
+        params.join(",")
+    );
     let mut args: Vec<Value<'_>> = params.iter().map(|p| s.string(p)).collect();
     args.push(s.string(&scoped));
     // The body passed the Trusted Types attribute check already.
