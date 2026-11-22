@@ -1060,7 +1060,11 @@ impl Browser {
 }
 
 fn parse(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
-    let href = input.to_string()?;
+    parse_str(nav, &input.to_string()?)
+}
+
+/// Parses `href` against the document's base URL.
+fn parse_str(nav: &PageNav, href: &str) -> JsResult<Url> {
     let base_url = nav
         .document
         .borrow()
@@ -1070,7 +1074,7 @@ fn parse(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
     let base = Url::parse(&base_url).ok();
     Url::options()
         .base_url(base.as_ref())
-        .parse(&href)
+        .parse(href)
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))
 }
 
@@ -1382,8 +1386,14 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: Same
         v if v.is_nullish() => None,
         v => Some(HistoryState(Rc::new(pyro_webapi::serialize_for_storage(s, v)?))),
     };
-    let url = match a.opt(2).filter(|v| !v.is_nullish()) {
-        Some(v) => {
+    // HTML (whatwg/html#9343): a null or empty-string URL keeps the
+    // document's URL, fragment included, whatever the base URL is.
+    let href = match a.opt(2).filter(|v| !v.is_nullish()) {
+        Some(v) => Some(v.to_string()?).filter(|h| !h.is_empty()),
+        None => None,
+    };
+    let url = match href {
+        Some(href) => {
             let document = n.url();
             let current = Url::parse(&document).ok();
             let rejected = |target: &str| {
@@ -1396,7 +1406,7 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: Same
                 )
             };
             // HTML: a URL that fails to parse is a SecurityError here.
-            let target = parse(n, v).map_err(|_| rejected(&v.to_string().unwrap_or_default()))?;
+            let target = parse_str(n, &href).map_err(|_| rejected(&href))?;
             if !current.as_ref().is_some_and(|c| can_rewrite_url(c, &target)) {
                 return Err(rejected(target.as_str()));
             }
