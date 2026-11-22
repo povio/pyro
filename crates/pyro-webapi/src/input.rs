@@ -2529,6 +2529,11 @@ fn dispatch_boundary_events(
     let prev_connected = prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
     let (left, entered) = boundary_chains(page, prev, target);
     let prev_key = prev.and_then(|p| key_of(page, p));
+    // The new `:hover` state comes first: the boundary events observe it, as in Chrome (WPT
+    // css/selectors `hover-boundary-events`: `#a` no longer matches during its `mouseout`).
+    let doc = page.document();
+    let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
+    page.set_hovered(Some(target));
     // An event nobody listens for is not made (see `fire_mouse`).
     let boundary = |iface: EventInterface, ty: &str, at: TargetKey, cancelable: bool, related: Option<TargetKey>| {
         if crate::target::unheard(page, ty) {
@@ -2560,9 +2565,6 @@ fn dispatch_boundary_events(
             }
         }
     }
-    let doc = page.document();
-    let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
-    page.set_hovered(Some(target));
 }
 
 /// Delay of the hover update after the hovered element is removed: Chromium

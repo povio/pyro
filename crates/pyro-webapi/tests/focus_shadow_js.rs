@@ -678,3 +678,24 @@ fn a_non_primary_press_activates_active() {
     }
     assert_eq!(eval(r, "held.join()"), "true,true");
 }
+
+/// The boundary events of a move observe the new `:hover` state (Chrome; WPT css/selectors
+/// `hover-boundary-events`).
+#[test]
+fn boundary_events_see_the_new_hover_state() {
+    let e = env("<!DOCTYPE html><style>body{margin:0} div{position:absolute;width:50px;height:50px;top:0}</style>\
+         <body><div id=a style='left:0'></div><div id=b style='left:100px'></div></body>");
+    let r = &e.main;
+    mouse(&e.page, input::MouseKind::Moved, 10.0, 10.0, 0);
+    eval(
+        r,
+        "window.seen = []; const note = ev => seen.push(ev.type + ':' + a.matches(':hover') + ',' + b.matches(':hover')); \
+         for (const t of ['mouseout', 'mouseleave', 'pointerout']) a.addEventListener(t, note); \
+         for (const t of ['mouseover', 'mouseenter', 'pointerover']) b.addEventListener(t, note);",
+    );
+    mouse(&e.page, input::MouseKind::Moved, 110.0, 10.0, 0);
+    assert_eq!(
+        eval(r, "seen.join(' ')"),
+        "pointerout:false,true pointerover:false,true mouseout:false,true mouseleave:false,true mouseover:false,true mouseenter:false,true"
+    );
+}
