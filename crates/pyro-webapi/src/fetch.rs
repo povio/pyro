@@ -818,6 +818,71 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: pyro_net::Url,
     Ok(true)
 }
 
+/// HTML hyperlink auditing: a `PING` POST to each of a followed `<a>` or
+/// `<area>`'s `ping` URLs. It holds nothing up and, like a beacon, is not one
+/// of the document's fetches. `document` is the link's document URL,
+/// `target` the URL followed, `policy` the link's referrer policy.
+pub(crate) fn send_pings(
+    page: &Rc<PageDom>,
+    pings: Vec<pyro_net::Url>,
+    document: Option<pyro_net::Url>,
+    target: &str,
+    policy: pyro_net::ReferrerPolicy,
+) {
+    use pyro_net::ReferrerPolicy as P;
+    let Some(net) = page.net.borrow().clone() else { return };
+    let context = page.request_context();
+    let document_origin = document.as_ref().map(|u| u.origin()).filter(|o| o.is_tuple());
+    let encrypted = document.as_ref().is_some_and(|u| u.scheme() == "https");
+    for url in pings {
+        let Some(guard) = reserve_keepalive(&page.fetch_state.keepalive_bytes, 4) else { return };
+        let same_origin = document_origin.as_ref().is_some_and(|o| *o == url.origin());
+        let downgrade = encrypted && url.scheme() == "http";
+        let mut request = Request::get(url, Destination::Beacon);
+        request.method = Method::POST;
+        request.credentials = Credentials::Include;
+        request.mode = RequestMode::NoCors;
+        request.headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/ping"));
+        if let Ok(v) = HeaderValue::from_str(target) {
+            request.headers.insert(HeaderName::from_static("ping-to"), v);
+        }
+        // Ping-From for a same-origin ping, or any from a document not
+        // fetched over an encrypted connection.
+        if same_origin || !encrypted {
+            if let Some(v) = document.as_ref().and_then(|u| HeaderValue::from_str(u.as_str()).ok()) {
+                request.headers.insert(HeaderName::from_static("ping-from"), v);
+            }
+        }
+        request.body = Some(Bytes::from_static(b"PING"));
+        // Fetch "serializing a request origin" under the link's policy.
+        let null_origin = match policy {
+            P::NoReferrer => true,
+            P::SameOrigin => !same_origin,
+            P::NoReferrerWhenDowngrade | P::StrictOrigin | P::StrictOriginWhenCrossOrigin => downgrade,
+            P::Origin | P::OriginWhenCrossOrigin | P::UnsafeUrl => false,
+        };
+        request.origin = Some(match (&document_origin, null_origin) {
+            (Some(origin), false) => origin.ascii_serialization(),
+            _ => "null".into(),
+        });
+        // The request's referrer is no-referrer: Ping-From names the document.
+        request.referrer = None;
+        request.referrer_policy = P::NoReferrer;
+        request.frame_id = context.frame_id.clone();
+        request.loader_id = context.loader_id.clone();
+        page.apply_request_defaults(&mut request);
+        let mut guard = Some(guard);
+        net.fetch(
+            request,
+            Box::new(move |event| {
+                if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                    guard.take();
+                }
+            }),
+        );
+    }
+}
+
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let function = s.function("fetch", |s, _this, args| {
         let deferred = s.deferred()?;

@@ -921,12 +921,13 @@ fn keyboard_click(page: &Rc<PageDom>, el: NodeId) {
 }
 
 fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
-    let (url, target, opener, referrer_policy) = {
+    let (url, target, opener, referrer_policy, pings) = {
         let dom = page.dom.borrow();
         let Some(href) = dom.get_attribute(el, "href").ok().flatten().or_else(|| svg_link_href(&dom, el)) else {
             return;
         };
         let url = crate::html::resolve_url(&dom, el, href);
+        let pings = hyperlink_pings(&dom, el);
         // HTML "download the hyperlink": a `download` link to a blob:, data:
         // or same-origin URL downloads instead of navigating (browsers ignore
         // the attribute cross-origin).
@@ -952,6 +953,9 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
                     None
                 };
                 drop(dom);
+                if let Some(pings) = pings {
+                    send_pings(page, pings, &url, None);
+                }
                 page.download(crate::page::DownloadRequest { url, filename, data });
                 return;
             }
@@ -969,8 +973,11 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
             dom.get_attribute(el, "rel").ok().flatten(),
             dom.get_attribute(el, "referrerpolicy").ok().flatten(),
         );
-        (url, target, opener, referrer_policy)
+        (url, target, opener, referrer_policy, pings)
     };
+    if let Some(pings) = pings {
+        send_pings(page, pings, &url, referrer_policy);
+    }
     page.navigate(crate::page::NavigationRequest {
         url,
         target,
@@ -985,6 +992,38 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         form_entries: None,
         replace: false,
     });
+}
+
+/// An HTML `<a>` or `<area>`'s `ping` URLs (http(s) only, resolved against
+/// its base URL) and its document's URL; `None` without any.
+fn hyperlink_pings(dom: &Dom, el: NodeId) -> Option<(Vec<pyro_net::Url>, Option<pyro_net::Url>)> {
+    let e = dom.element(el).ok()?;
+    if !e.is_html() || !matches!(&*e.name.local, "a" | "area") {
+        return None;
+    }
+    let urls: Vec<pyro_net::Url> = e
+        .attr("ping")?
+        .split_ascii_whitespace()
+        .filter_map(|token| pyro_net::Url::parse(&crate::html::resolve_url(dom, el, token)).ok())
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .collect();
+    if urls.is_empty() {
+        return None;
+    }
+    let document = dom.node_document(el).ok().and_then(|d| dom.document_url_parsed(d).ok().flatten().cloned());
+    Some((urls, document))
+}
+
+/// Hyperlink auditing for a followed link (`policy`: the link's own referrer
+/// policy, else its document's).
+fn send_pings(
+    page: &Rc<PageDom>,
+    (urls, document): (Vec<pyro_net::Url>, Option<pyro_net::Url>),
+    target: &str,
+    policy: Option<pyro_net::ReferrerPolicy>,
+) {
+    let policy = policy.unwrap_or_else(|| page.referrer_policy());
+    crate::fetch::send_pings(page, urls, document, target, policy);
 }
 
 // ----- forms ------------------------------------------------------------------
