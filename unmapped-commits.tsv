@@ -5,15 +5,12 @@ f30736ec2	fix(navigation): a cross-origin initiator's navigation to a frame's ow
 4dcfc5aab	fix(editing): turning designMode on keeps an existing selection
 1dce34479	feat(fetch): <link rel=compression-dictionary> fetches its dictionary
 c0d4f513b	fix(popup): a popup's opener is the window of the frame that opened it
-0729192ae	Revert mixed-content blocking (EXCL area, 0 credit)
 066dec316	fix(navigation): window.stop() drops a script navigation that has not started
 ecf4666d2	fix(file): a form's formdata event and DataTransfer.files keep the script's File objects
 ca09913e3	fix(images): an <img> insertion alone keeps its request instead of resolving src again
 7aa109627	fix(iframe): a javascript: src holds the parent's load until its script has run
 d67374261	fix(navigation): fragment navigations of the initial about:blank document replace and keep it initial
 e4f609340	fix(navigation): a target naming the current or the top-level window navigates it
-b061fffe0	fix(forms): text control cursor after child changes, type changes and reset
-5526cff79	fix(forms): a number input rejects a typed sign that cannot fit
 28b24967f	fix(navigation): beforeunload fires synchronously for Location navigations; a frame cannot navigate from its own unload handlers
 1c2853fef	fix(navigation): a Location navigation of a document in its unload listeners is ignored
 12d84f4cf	fix(parser): the <meta> charset scan skips raw text and reads past 1 KB while the head lasts
@@ -21,7 +18,6 @@ b061fffe0	fix(forms): text control cursor after child changes, type changes and 
 bf58cbacc	fix(dom): an element of an XML document serializes innerHTML as XML
 6be956923	A form, fieldset or select restyles its :valid/:invalid when its children change
 50bd6c198	An invalid writingsuggestions value is the true state, not inherited
-f27581dc4	fix(forms): textarea hard wrapping inserts LF into the entry
 8f92c1072	feat(navigation): window.stop() cancels the navigation and aborts the document
 20b27a0ee	fix(location): a Location navigation's referrer is the calling script's document
 f86a2669b	fix(links): an editable link does not navigate when clicked
@@ -36,7 +32,6 @@ e275a4bb2	execCommand and queryCommand*() throw outside HTML and XHTML documents
 064ce6736	fix(file): input.files and DataTransfer.files return the same FileList
 6c5b6fdda	fix(window): animation frame handles are their own sequence from 1
 08ed02e14	fix(fetch): a multipart close delimiter must end the body or a line
-07194d15f	fix(clone): length-tracking TypedArrays and DataViews stay length-tracking
 a57c70cbe	fix(fetch): Body methods reject on a bad receiver; forEach and fetch lengths
 5f0b469a8	fix(parser): foster parenting into a table's template element parent goes to its contents
 15a1b2a33	Block downloads from documents sandboxed without allow-downloads
@@ -49,24 +44,12 @@ dbfde500e	fix(net): a response's MIME type is Fetch's "extract a MIME type"
 63b205937	fix(canvas): fontKerning 'none' turns kerning off
 23f5b7774	Revert "Reflect HTMLElement.autocorrect and autocapitalize with form inheritance"
 64660c26d	Reflect HTMLElement.autocorrect and autocapitalize with form inheritance
-3890fbc19	fix(forms): stepping an empty number input clamps to its minimum
-317a53021	fix(clone): VideoFrame is serializable and transferable
-068aca623	fix(forms): email value sanitization follows multiple and converts IDN domains
-b5245bbbf	fix(forms): a pattern that does not compile alone applies no constraint
-3c82e094d	fix(forms): stepMismatch is decided in decimal, as Chrome does
 f09e4e33e	fix(forms): form="" gives no form owner; a disconnected control uses its ancestor form
 856d4b777	fix(navigation): about:blank with a query or fragment commits a blank document
-194d5c78a	fix(clone): a transfer list's detached objects fail only after the value serialized
 f2fcc6efe	fix(history): history traversals from beforeunload or unload listeners are ignored
-1812d34a3	fix(clone): QuotaExceededError is serializable with its quota and requested
 31ee13280	fix(forms): a checked radio joining a group unchecks the rest of it
-dca25d3de	fix(forms): the selection attributes do not apply to email inputs
 86d2744a8	fix(forms): fieldset.elements is the fieldset's listed descendants
 578d954b9	fix(history): a same-document traversal restores the scroll position after popstate
-44b6364ba	fix(location): a Location without a browsing context ignores navigation
-ab1639abf	fix(history): scrollRestoration belongs to the session history entry
-33413ebc8	fix(history): length, state and scrollRestoration need a fully active document
-b61b40bc7	feat(events): PopStateEvent.hasUAVisualTransition
 d40b25d70	fix(canvas): a failed updateElementGeometry leaves the element unhittable
 8c373d12f	fix(location): ancestorOrigins masks every occurrence of the embedder's origin
 e5c2cd131	fix(wright): scrollIntoViewIfNeeded scrolls instantly
