@@ -28,61 +28,62 @@
     "fetch/fetch-later": 29,
     "html/dom": 24,
     "fetch/content-encoding": 21,
-    "html/webappapis": 20,
     "html/infrastructure": 20,
+    "html/webappapis": 20,
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
     "xhr": 2,
-    "IndexedDB": 1,
-    "svg/styling": 1,
     "quirks": 1,
-    "html/rendering": 1
+    "html/rendering": 1,
+    "svg/styling": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 152,
+    "macbook_in_scope": 161,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 15,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 142,
+   "distinct_census_pages": 151,
    "owner_reported_unlisted": 0,
-   "selector_union": 396,
+   "selector_union": 405,
    "owner_estimate_reduction": 254,
    "of_which_tentative": 229,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
+    "html/semantics": 169,
     "html/canvas": 167,
-    "html/semantics": 163,
     "html/syntax": 30,
     "html/browsers": 26,
     "fetch/api": 5,
-    "html/dom": 5
+    "html/dom": 5,
+    "html/webappapis": 3
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 43,
+    "macbook_in_scope": 34,
     "studio_in_scope": 142,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 90,
+   "distinct_census_pages": 81,
    "owner_reported_unlisted": 0,
-   "selector_union": 114,
+   "selector_union": 105,
    "owner_estimate_reduction": 24,
    "of_which_tentative": 6,
    "studio_css_reported_pages_not_deduped": 122,
@@ -90,11 +91,10 @@
    "by_dir": {
     "html/browsers": 38,
     "content-security-policy": 20,
-    "html/semantics": 19,
     "webidl": 19,
+    "html/semantics": 13,
     "html/interaction": 5,
     "svg/path": 4,
-    "html/webappapis": 3,
     "workers": 3,
     "html/rendering": 2,
     "dom/nodes": 1
@@ -1447,7 +1447,7 @@
    "tentative": 0
   },
   "R-HTML-B-1b": {
-   "state": "proposed",
+   "state": "reserved",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
@@ -1804,14 +1804,14 @@
    "tentative": 0
   },
   "R-HTML-28": {
-   "state": "proposed",
+   "state": "reserved",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "R-HTML-29": {
-   "state": "proposed",
+   "state": "reserved",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
