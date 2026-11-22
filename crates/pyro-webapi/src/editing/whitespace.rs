@@ -500,6 +500,48 @@ pub(super) fn visible_before_deletion(dom: &Dom, from: Point, to: Point) -> bool
     true
 }
 
+/// A visible whitespace run can straddle two inline formatting elements.
+/// Deletion rebalances the edited text node locally; when its last
+/// character goes away, the leading run in the next node is exposed too.
+pub(super) fn delete_inline_space(page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Point) -> Option<Point> {
+    let node = from.0;
+    if node != to.0 || to.1.checked_sub(from.1) != Some(1) { return None; }
+    let text = dom.char_data(node).ok()?;
+    let (a, b) = pyro_dom::dom::utf16_range(text, from.1, 1).ok()?;
+    if !matches!(&text[a..b], " " | "\u{a0}") || text.len() == b - a { return None; }
+    let start = text[..a].trim_end_matches(space).len();
+    let end = text.len() - text[b..].trim_start_matches(space).len();
+    if start != 0 && end != text.len() { return None; }
+    if text[start..end].contains("  ") && collapses(page, dom, node) { return None; }
+    let edited_parent = dom.parent_element(node).ok()??;
+    let neighbor = |forward| {
+        let (n, preserved) = match adjacent(page, dom, host, node, forward) {
+            Next::Text(n) => (n, false),
+            Next::PreservedText(n) => (n, true),
+            _ => return None,
+        };
+        if dom.parent_element(n).ok()?? == edited_parent || !super::target_range::rendered(page, dom, n) { return None; }
+        let data = dom.char_data(n).ok()?;
+        let ch = if forward { data.chars().next()? } else { data.chars().next_back()? };
+        if (!space(ch) && !(preserved && forward)) || (ch == ' ' && !preserved && collapses(page, dom, node)
+            && if forward { text.ends_with(' ') } else { text.starts_with(' ') }) {
+            return None;
+        }
+        Some(n)
+    };
+    let left = (start == 0).then(|| neighbor(false)).flatten();
+    let right = (end == text.len()).then(|| neighbor(true)).flatten();
+    if left.is_none() && right.is_none() { return None; }
+    let expose_right = b == text.len();
+    dom.replace_data(node, from.1, 1, "").ok()?;
+    // Rebalance at the first position downstream of the deleted character.
+    // At the boundary this belongs to the following text, while the caret
+    // can still be represented at the end of the preceding text.
+    let point = right.filter(|_| expose_right).map_or(from, |n| (n, 0));
+    at(page, dom, host, point, Repair::RemovedBox);
+    Some(if let Some(n) = left.filter(|_| from.1 == 0) { (n, editing::len(dom, n)) } else { from })
+}
+
 /// Consecutive sibling text nodes form one visual text run. At a shared
 /// boundary the selection stays upstream while the downstream text is
 /// rebalanced. Preserve node identity on either side of the edit.
