@@ -221,11 +221,19 @@ pub(crate) fn content_attribute_changed(
                 let dom = target.page.dom.borrow();
                 dom.key_node(target.key).and_then(|n| dom.element(n).ok()).is_some_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg")
             };
-            let param = if svg { "evt" } else { "event" };
+            // The Window's onerror (OnErrorEventHandler, from <body onerror>)
+            // takes the five ErrorEvent arguments.
+            let params: &[&str] = if ty == "error" && target.page.is_window_key(target.key) {
+                &["event", "source", "lineno", "colno", "error"]
+            } else if svg {
+                &["evt"]
+            } else {
+                &["event"]
+            };
+            let mut args: Vec<Value<'_>> = params.iter().map(|p| s.string(p)).collect();
+            args.push(s.string(&scoped));
             // The body passed the Trusted Types attribute check already.
-            let f = s.compile_exempt(|| {
-                ctor.as_object().expect("Function constructor").construct(&[s.string(param), s.string(&scoped)])
-            })?;
+            let f = s.compile_exempt(|| ctor.as_object().expect("Function constructor").construct(&args))?;
             f.value()
         }
         None => s.null(),
