@@ -652,6 +652,12 @@ impl Layout {
         self.external.as_ref().and_then(|s| s.font_load(url))
     }
 
+    /// pyro: the bytes of this document's font at `url` once the geometry engine loaded them
+    /// ([`GeometrySource::font_bytes`]).
+    pub fn font_bytes(&self, url: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.external.as_ref().and_then(|s| s.font_bytes(url))
+    }
+
     /// pyro: whether web fonts the geometry engine uses are still loading (it starts them
     /// first, see [`Self::start_font_loads`]).
     pub fn fonts_pending(&self, dom: &Dom) -> bool {

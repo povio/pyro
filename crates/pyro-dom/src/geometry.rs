@@ -842,6 +842,12 @@ pub trait GeometrySource {
     fn font_load(&self, _url: &str) -> Option<FontLoad> {
         None
     }
+    /// pyro: the bytes of this document's font at `url` once its layout loaded them (the same
+    /// request as [`Self::font_load`]'s), `None` before, on failure, for an opaque response, or
+    /// when the engine loads no fonts. Canvas text draws with the document's web fonts.
+    fn font_bytes(&self, _url: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        None
+    }
     /// One element's computed style as of the last sync (`None`: the engine
     /// has none for it, and the document's own cascade answers).
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {

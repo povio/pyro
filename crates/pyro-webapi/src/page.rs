@@ -1642,6 +1642,12 @@ impl PageDom {
         }
     }
 
+    /// pyro: the bytes of the document's font at `url` once the layout engine loaded them (canvas
+    /// text draws with the document's web fonts).
+    pub fn font_url_bytes(&self, url: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.try_layout()?.font_bytes(url)
+    }
+
     /// The `@font-face` rules of the document's sheets: its CSS-connected `FontFace`s, in order
     /// (sheets in shadow trees left out, as in Chromium).
     pub fn css_font_faces(&self) -> Rc<Vec<pyro_dom::font_face::CssFace>> {

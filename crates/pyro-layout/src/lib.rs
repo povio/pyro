@@ -929,6 +929,20 @@ impl GeometrySource for BlitzGeometry {
         Some(loader.bodies().font_load(&key, loader.asked_fonts().as_deref()))
     }
 
+    /// pyro: by the same request key as [`Self::font_load`].
+    fn font_bytes(&self, url: &str) -> Option<Arc<Vec<u8>>> {
+        let loader = self.loader.borrow();
+        let loader = loader.as_ref()?;
+        let key = pyro_dom::layout::LayoutBodyKey::new(
+            &loader.document(),
+            url,
+            &Default::default(),
+            pyro_dom::layout::SubresourceKind::Font,
+        );
+        let body = loader.bodies().get(&key)?;
+        (!body.opaque).then(|| body.bytes.clone())
+    }
+
     fn sync(&self, dom: &Dom, layout: &Layout) {
         let t = profile::on().then(Instant::now);
         self.sync_inner(dom, layout.style(), false);
