@@ -955,6 +955,11 @@ fn delete_content(
     backward: bool,
     (from, to): (Point, Point),
 ) -> Point {
+    if start == end && from.0 != to.0 {
+        if let Some(join) = paragraph_join::NestedJoin::at(page, dom, host, start, backward) {
+            return join.apply(page, dom, host).unwrap_or(start);
+        }
+    }
     if start == end
         && backward
         && dom.parent(to.0).ok().flatten() == Some(from.0)

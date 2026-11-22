@@ -117,6 +117,100 @@ fn extract_line(dom: &mut Dom, root: NodeId, start: Point, end: LineEnd) -> Opti
     Some(fragment)
 }
 
+/// A nested paragraph beside an anonymous line in its containing paragraph.
+/// Limit the join to single-leaf lines so moving it cannot consume later lines
+/// or strip unrelated inline formatting.
+pub(super) struct NestedJoin {
+    outer: NodeId,
+    inner: NodeId,
+    left: NodeId,
+    right: NodeId,
+    inner_first: bool,
+}
+
+impl NestedJoin {
+    pub(super) fn at(page: &PageDom, dom: &Dom, host: NodeId, caret: Point, backward: bool) -> Option<Self> {
+        if is_text(dom, caret.0) && caret.1 != (if backward { 0 } else { len(dom, caret.0) }) {
+            return None;
+        }
+        let block = block_of(dom, caret.0, host);
+        for outer in [Some(block), dom.parent_element(block).ok().flatten()].into_iter().flatten() {
+            if outer == host || dom.child_count(outer).ok()? != 2 || !editable_paragraph(page, dom, outer, host) {
+                continue;
+            }
+            let a = dom.first_child(outer).ok()??;
+            let b = dom.last_child(outer).ok()??;
+            let inner_first = is_block(dom, a);
+            let (inner, anonymous) = if inner_first { (a, b) } else { (b, a) };
+            if !editable_paragraph(page, dom, inner, host) || dom.child_count(inner).ok()? != 1 {
+                continue;
+            }
+            let child = dom.first_child(inner).ok()??;
+            let (left, right) = if inner_first { (child, anonymous) } else { (anonymous, child) };
+            if [left, right].iter().any(|&n| {
+                !(is_text(dom, n) || local(dom, n) == "br")
+                    || editing_host(dom, n) != Some(host) || !target_range::rendered(page, dom, n)
+            }) { continue; }
+            // A styled source needs a formatting carrier when unwrapped.
+            // Keep the existing editing path for those joins.
+            if !inner_first && is_text(dom, child) && (
+                dom.attributes(inner).ok()?.len() != 0 ||
+                ["white-space", "color", "font-weight", "font-style", "font-family", "font-size"].iter().any(|p|
+                    page.layout().computed_style_value(dom, inner, p) != page.layout().computed_style_value(dom, outer, p))
+            ) { continue; }
+            let join = Self { outer, inner, left, right, inner_first };
+            let (from, to) = join.range(dom)?;
+            let edge = if backward { deep_forward(dom, caret) } else { deep_backward(dom, caret) };
+            if caret == (if backward { to } else { from }) || edge == (if backward { to } else { from }) {
+                return Some(join);
+            }
+        }
+        None
+    }
+
+    pub(super) fn range(&self, dom: &Dom) -> Option<(Point, Point)> {
+        let from = if is_text(dom, self.left) { (self.left, len(dom, self.left)) } else { before_node(dom, self.left)? };
+        let to = if is_text(dom, self.right) { (self.right, 0) } else { before_node(dom, self.right)? };
+        Some((from, to))
+    }
+
+    pub(super) fn apply(self, page: &PageDom, dom: &mut Dom, host: NodeId) -> Option<Point> {
+        let (from, to) = self.range(dom)?;
+        let outer_leaf = if self.inner_first { self.right } else { self.left };
+        let caret = if local(dom, outer_leaf) == "br" {
+            dom.remove_node(outer_leaf).ok()?;
+            if self.inner_first { from } else { to }
+        } else if local(dom, self.right) == "br" {
+            dom.remove_node(self.inner).ok()?;
+            from
+        } else {
+            let value = dom.char_data(self.right).ok()?.to_owned();
+            let destination = if is_text(dom, self.left) {
+                dom.replace_data(self.left, from.1, 0, &value).ok()?;
+                from
+            } else {
+                let text = dom.create_text(dom.node_document(self.inner).ok()?, &value).ok()?;
+                dom.replace_child(self.inner, text, self.left).ok()?;
+                (text, 0)
+            };
+            dom.remove_node(if self.inner_first { self.right } else { self.inner }).ok()?;
+            // At the host's sole anonymous paragraph the outer DIV no longer
+            // separates any lines. Keep attributed or neighboring blocks.
+            if local(dom, self.outer) == "div" && dom.attributes(self.outer).ok()?.is_empty()
+                && dom.parent(self.outer).ok()? == Some(host) && dom.child_count(host).ok()? == 1
+            {
+                while let Some(child) = dom.first_child(self.outer).ok()? {
+                    dom.insert_before(host, child, Some(self.outer)).ok()?;
+                }
+                dom.remove_node(self.outer).ok()?;
+            }
+            destination
+        };
+        whitespace::after_join(page, dom, host, caret);
+        Some(caret)
+    }
+}
+
 pub(super) fn at_boundary(
     page: &PageDom,
     dom: &mut Dom,

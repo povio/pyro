@@ -53,6 +53,9 @@ pub(super) fn deletion_plan(
     caret: Point,
     backward: bool,
 ) -> (Point, Option<(Point, Point)>) {
+    if let Some(join) = paragraph_join::NestedJoin::at(page, dom, host, caret, backward) {
+        return (caret, join.range(dom));
+    }
     let mut p = editable_edge(dom, caret, !backward);
     // Don't descend from a parent boundary into hidden content.
     if p != caret && !rendered(page, dom, p.0) {
