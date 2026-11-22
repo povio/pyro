@@ -1282,6 +1282,15 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         _ => {
             let Some((tag, carriers, input_type)) = format_of(&cmd) else { return false };
             let (start, end) = editing::host_range(page, host);
+            if touching_inline_text(page, &page.dom.borrow(), start, end) {
+                if matches!(tag, "u" | "strike") {
+                    inline_value::toggle_decoration(page, (start, end), tag);
+                } else {
+                    let enabled = !format_state(page, &cmd).1;
+                    inline_value::set_toggle(page, (start, end), tag, enabled);
+                }
+                return true;
+            }
             if matches!(tag, "u" | "strike") {
                 let pending = start == end || {
                     let dom = page.dom.borrow();
@@ -3223,6 +3232,32 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
 
 /// (any, all) of the selected text (or the caret's position) has the
 /// inline style of `command`, by computed style as Chromium reads it.
+/// Two DOM text endpoints can occupy the same insertion position across
+/// adjoining inline elements. Stop at any intervening sibling or block.
+pub(crate) fn touching_inline_text(page: &PageDom, dom: &Dom, start: Point, end: Point) -> bool {
+    if start.0 == end.0 || end.1 != 0 || !editing::is_text(dom, start.0) || !editing::is_text(dom, end.0)
+        || start.1 == 0 || start.1 != editing::len(dom, start.0) || editing::len(dom, end.0) == 0
+    { return false; }
+    let Some(host) = editing::editing_host(dom, start.0) else { return false };
+    if editing::editing_host(dom, end.0) != Some(host) || !rich_node(dom, start.0) || !rich_node(dom, end.0)
+        || !alignment::visible(page, dom, start.0) || !alignment::visible(page, dom, end.0) { return false; }
+    let inline = |n| dom.element(n).is_ok_and(|e| e.is_html())
+        && page.layout().computed_style_value(dom, n, "display") == "inline";
+    let mut left = start.0;
+    let mut right = loop {
+        if let Ok(Some(next)) = dom.next_sibling(left) { break next; }
+        let Some(parent) = dom.parent_element(left).ok().flatten() else { return false };
+        if parent == host || !inline(parent) { return false; }
+        left = parent;
+    };
+    while right != end.0 {
+        if !inline(right) { return false; }
+        let Some(child) = dom.first_child(right).ok().flatten() else { return false };
+        right = child;
+    }
+    true
+}
+
 /// A child range can enclose markup without covering a rendered character.
 /// Use the neighboring text to determine which visible caret it represents.
 fn empty_inline_caret(page: &PageDom, dom: &Dom, start: Point, end: Point) -> Option<(Point, NodeId)> {
@@ -3281,9 +3316,9 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
             return (active, active);
         }
     }
-    if start == end {
+    if start == end || touching_inline_text(page, &page.dom.borrow(), start, end) {
         if let Some((tag, _, _)) = format_of(command) {
-            if matches!(tag, "sub" | "sup") {
+            if start == end && matches!(tag, "sub" | "sup") {
                 if let Some(active) = inline_value::caret_script_state(page, start, tag) {
                     return (active, active);
                 }

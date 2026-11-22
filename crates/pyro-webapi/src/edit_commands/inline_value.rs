@@ -136,6 +136,11 @@ fn pending_at(slot: &mut Option<TypingValues>, range: (Point, Point)) -> &mut Ty
     slot.as_mut().unwrap()
 }
 
+pub(crate) fn has_pending_toggle(page: &PageDom, range: (Point, Point)) -> bool {
+    page.typing_values.borrow().as_ref().is_some_and(|p| p.range == range
+        && (p.decoration.is_some() || !p.toggles.is_empty()))
+}
+
 pub(super) fn toggle_state(page: &PageDom, range: (Point, Point), tag: &str) -> Option<bool> {
     let slot = page.typing_values.borrow();
     slot.as_ref().filter(|v| v.range == range)?.toggles.iter().find(|(t, _)| *t == tag).map(|(_, on)| *on)

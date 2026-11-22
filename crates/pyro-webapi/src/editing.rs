@@ -913,9 +913,11 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let empty_inline = crate::edit_commands::empty_bold_typing_point(page, &dom, start, end);
+            let touching = crate::edit_commands::inline_value::has_pending_toggle(page, (start, end))
+                && crate::edit_commands::touching_inline_text(page, &dom, start, end);
             let caret = if let Some(point) = empty_inline {
                 point
-            } else if start == end {
+            } else if start == end || touching {
                 start
             } else if let Some(plan) = child_line::Deletion::plan(page, &dom, host, start, end, false) {
                 plan.apply(page, &mut dom, host)
