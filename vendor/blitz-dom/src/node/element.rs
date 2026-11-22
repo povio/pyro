@@ -571,7 +571,9 @@ impl ElementData {
             .map(|value: &str| Atom::from(value));
         let classes = attrs
             .iter()
-            .find(|attr| &attr.name.local == "class")
+            // pyro: only the `class` attribute in no namespace gives classes (an XHTML-namespaced
+            // `xhtml:class` does not; WPT css/selectors/old-tests `css3-modsel-171`).
+            .find(|attr| &attr.name.local == "class" && attr.name.ns == markup5ever::ns!())
             .map(|attr| parse_classes(&attr.value))
             .unwrap_or_default();
 
