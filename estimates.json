@@ -2,19 +2,21 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 244,
+   "distinct_census_pages": 238,
+   "selector_union": 244,
+   "owner_estimate_reduction": 6,
    "of_which_tentative": 4,
    "studio_css_reported_pages_not_deduped": 0,
    "by_dir": {
     "html/canvas": 207,
     "html/syntax": 12,
     "html/semantics": 5,
-    "FileAPI": 4,
     "fetch/api": 4,
+    "FileAPI": 4,
     "fetch/data-urls": 3,
+    "mathml": 2,
     "encoding": 2,
     "xhr": 2,
-    "mathml": 2,
     "svg/styling": 1,
     "html/rendering": 1,
     "quirks": 1
@@ -22,6 +24,8 @@
   },
   "in_progress": {
    "distinct_census_pages": 618,
+   "selector_union": 618,
+   "owner_estimate_reduction": 0,
    "of_which_tentative": 196,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
@@ -31,35 +35,37 @@
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
     "shadow-dom": 7,
     "selection": 7,
     "navigation-api": 6,
-    "html/editing": 5,
-    "uievents": 5,
     "intersection-observer": 5,
+    "uievents": 5,
+    "html/editing": 5,
     "svg/types": 4,
     "mathml": 3,
-    "close-watcher": 3,
     "event-timing": 3,
     "inert": 3,
+    "close-watcher": 3,
     "html/rendering": 2,
-    "resource-timing": 2,
     "svg/animations": 2,
     "dom/nodes": 2,
     "fetch/fetch-later": 2,
     "soft-navigation-heuristics": 2,
+    "resource-timing": 2,
+    "editing": 1,
     "pointerlock": 1,
-    "html/browsers": 1,
     "document-picture-in-picture": 1,
-    "editing": 1
+    "html/browsers": 1
    }
   },
   "queued": {
    "distinct_census_pages": 566,
+   "selector_union": 566,
+   "owner_estimate_reduction": 0,
    "of_which_tentative": 22,
    "studio_css_reported_pages_not_deduped": 122,
    "by_dir": {
@@ -73,8 +79,8 @@
     "fetch/api": 5,
     "svg/path": 4,
     "html/browsers": 2,
-    "dom/nodes": 1,
-    "custom-elements": 1
+    "custom-elements": 1,
+    "dom/nodes": 1
    }
   }
  },
@@ -420,7 +426,7 @@
    "tentative": 0
   },
   "C02": {
-   "state": "frozen",
+   "state": "landed",
    "pages": 77,
    "tentative": 0
   },
@@ -595,6 +601,6 @@
    "tentative": null
   }
  },
- "implemented_total_estimate": 244,
+ "implemented_total_estimate": 238,
  "milestones_reached": []
 }

@@ -83,8 +83,11 @@ def main(ledger,out):
         try: css+=int(str(sp).split()[0])
         except: pass
       else: u|=pg
+    adj=0
+    for i,(st,pg,r) in per.items():
+      if st in states and pg is not None and isinstance(r.get('est_pages_owner'),int) and r['est_pages_owner']<len(pg): adj+=len(pg)-r['est_pages_owner']
     for p in u: byd['/'.join(p.split('/')[:2]) if p.split('/')[0] in('html','fetch','svg','dom') else p.split('/')[0]]+=1
-    res['tiers'][t]={'distinct_census_pages':len(u),'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'by_dir':dict(byd.most_common())}
+    res['tiers'][t]={'distinct_census_pages':len(u)-adj,'selector_union':len(u),'owner_estimate_reduction':adj,'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'by_dir':dict(byd.most_common())}
   res['per_brief']={i:{'state':st,'pages':(len(pg) if pg is not None else None),'tentative':(sum(1 for x in pg if 'tentative' in x) if pg is not None else None)} for i,(st,pg,r) in per.items()}
   cum=res['tiers']['implemented']['distinct_census_pages']+res['tiers']['implemented']['studio_css_reported_pages_not_deduped']
   res['implemented_total_estimate']=cum
