@@ -839,7 +839,7 @@ impl JsClass for BarProp {
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("visible", |s, page| Ok(s.boolean(page.upgrade().is_some_and(|p| p.bars_visible()))));
+        def.getter("visible", |s, page| Ok(s.boolean(page.upgrade().is_none_or(|p| p.bars_visible()))));
     }
 }
 

@@ -1141,7 +1141,8 @@ impl PageDom {
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
-        self.is_fully_active() && !self.window_chrome.get().0
+        // HTML BarProp.visible returns true when the browsing context is null.
+        !self.is_fully_active() || !self.window_chrome.get().0
     }
 
     pub fn is_disposed(&self) -> bool {
