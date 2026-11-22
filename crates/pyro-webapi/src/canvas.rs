@@ -335,6 +335,9 @@ pub(crate) struct State {
     /// pyro: `filter` resolved for drawing (`None` for `none`): its value and the markup of the
     /// document's elements it references (`canvas_filter`).
     filter_spec: Option<pyro_canvas::CanvasFilter>,
+    /// pyro: drawing with `filter` taints the canvas (a filter primitive
+    /// colored from a link's visited-dependent `currentcolor`).
+    filter_taints: bool,
     letter_spacing: String,
     word_spacing: String,
     /// pyro: `lang` (any string; `inherit` by default). Stored only: text is shaped without it.
@@ -373,6 +376,7 @@ impl State {
             image_smoothing_quality: "low",
             filter: "none".into(),
             filter_spec: None,
+            filter_taints: false,
             letter_spacing: "0px".into(),
             word_spacing: "0px".into(),
             lang: "inherit".into(),
@@ -487,11 +491,17 @@ fn font_parent_size(c: &ContextData) -> f64 {
 /// pyro: a canvas `filter` value for drawing: `None` for `none` (or nothing); else the value
 /// and the markup of the `<filter>` elements of the document its `url(#id)`s name (an `id` the
 /// document lacks is left out: the filter then names nothing, and draws nothing filtered).
-fn canvas_filter(page: &PageDom, value: &str) -> Option<pyro_canvas::CanvasFilter> {
+///
+/// The flag says whether drawing with it taints the canvas: as in Blink, a
+/// referenced `<filter>` inside a link (`<a href>`) whose flood or lighting
+/// color takes `currentcolor` paints with a color that `:visited` may decide,
+/// which a page must not read back.
+fn canvas_filter(page: &PageDom, value: &str) -> (Option<pyro_canvas::CanvasFilter>, bool) {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
-        return None;
+        return (None, false);
     }
+    let mut taints = false;
     let dom = page.dom.borrow();
     let doc = page.document();
     let mut defs = String::new();
@@ -501,18 +511,47 @@ fn canvas_filter(page: &PageDom, value: &str) -> Option<pyro_canvas::CanvasFilte
         let Some(end) = after.find(')') else { break };
         let reference = after[..end].trim().trim_matches(|c| c == '"' || c == '\'');
         if let Some(id) = reference.strip_prefix('#') {
-            if let Some(markup) = dom
-                .get_element_by_id(doc, id)
-                .ok()
-                .flatten()
-                .and_then(|el| dom.xml_serialize(el).ok())
-            {
-                defs.push_str(&markup);
+            if let Some(el) = dom.get_element_by_id(doc, id).ok().flatten() {
+                if let Ok(markup) = dom.xml_serialize(el) {
+                    taints |= visited_dependent_filter(&dom, el, &markup);
+                    defs.push_str(&markup);
+                }
             }
         }
         rest = &after[end + 1..];
     }
-    Some(pyro_canvas::CanvasFilter { page: dom.document_data(doc).ok()?.raster_budget.clone(), value: trimmed.to_string(), defs })
+    let Some(data) = dom.document_data(doc).ok() else { return (None, taints) };
+    let spec = pyro_canvas::CanvasFilter { page: data.raster_budget.clone(), value: trimmed.to_string(), defs };
+    (Some(spec), taints)
+}
+
+/// Whether the filter `el` (serialized as `markup`) has a flood or lighting
+/// color taken from `currentcolor` while inside a link, whose `color` the
+/// `:visited` state may set.
+fn visited_dependent_filter(dom: &pyro_dom::Dom, el: NodeId, markup: &str) -> bool {
+    let lower = markup.to_ascii_lowercase();
+    let colored = ["<feflood", "<fedropshadow", "<fediffuselighting", "<fespecularlighting"]
+        .iter()
+        .any(|primitive| lower.contains(primitive));
+    if !colored || !lower.contains("currentcolor") {
+        return false;
+    }
+    let mut node = dom.parent(el).ok().flatten();
+    let mut steps = 0;
+    while let Some(id) = node {
+        steps += 1;
+        if steps > 4096 {
+            break;
+        }
+        let link = dom.element(id).is_ok_and(|e| &*e.name.local == "a")
+            && (dom.get_attribute(id, "href").ok().flatten().is_some()
+                || dom.get_attribute_ns(id, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten().is_some());
+        if link {
+            return true;
+        }
+        node = dom.parent(id).ok().flatten();
+    }
+    false
 }
 
 /// A canvas element's bitmap size: its `width`/`height` attributes.
@@ -1270,7 +1309,7 @@ fn with_paint(
     // No page script runs while the state is borrowed: reading the style
     // object (canvas2d.js records) happens before.
     let Some((paint, clean)) = paint_of(s, c, &style)? else { return Ok(()) };
-    if !clean {
+    if !clean || c.state.borrow().filter_taints {
         c.clean.set(false);
     }
     let state = c.state.borrow();
@@ -1558,6 +1597,9 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     }
     c.sync_size();
     let state = c.state.borrow().clone();
+    if state.filter_taints {
+        c.clean.set(false);
+    }
     // A source with no bitmap yet (a canvas without a context) is drawn as
     // transparent black, which `copy`, `source-in`, ... do not ignore.
     let Some(image) = source.pixmap else {
@@ -2013,10 +2055,11 @@ impl ContextData {
                 {
                     return Ok(());
                 }
-                let spec = canvas_filter(&c.page, &value);
+                let (spec, taints) = canvas_filter(&c.page, &value);
                 let mut state = c.state.borrow_mut();
                 state.filter = value;
                 state.filter_spec = spec;
+                state.filter_taints = taints;
                 Ok(())
             },
         );
