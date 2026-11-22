@@ -718,6 +718,22 @@ fn a_later_list_item_decides_and_a_stale_running_transition_is_canceled() {
 }
 
 #[test]
+fn simultaneous_transitions_list_by_property_name() {
+    // WPT css-transitions Element-getAnimations: one style change event's transitions are listed
+    // by property name (Chrome), whatever order the `all` shorthand's longhands come in.
+    let (_t, root) = transition_page("#s { transform: translate(0px); opacity: 0; border-width: 0px; border-style: solid }");
+    eval(&root, "globalThis.s = el('s'); getComputedStyle(s).transform; 0");
+    assert_eq!(
+        eval(
+            &root,
+            "s.style.transition = 'all 100s'; s.style.transform = 'translate(100px)'; s.style.opacity = '1'; s.style.borderWidth = '1px';
+             s.getAnimations().map(a => a.transitionProperty).join(' ')"
+        ),
+        "border-bottom-width border-left-width border-right-width border-top-width opacity transform"
+    );
+}
+
+#[test]
 fn review_a_reversed_transition_cancels_and_runs_again() {
     let (mut t, root) = transition_page(".t { transition: width 300ms; width: 100px; height: 10px } .w { width: 200px }");
     eval(&root, "globalThis.a = el('a', 't'); a.offsetHeight; 0");

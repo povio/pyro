@@ -1847,6 +1847,9 @@
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
     a.cssName = name;
     a.cssId = id;
+    // A transition's generation: the time of the style change event that started it (one
+    // event's transitions share it, and list by property name).
+    a.cssGeneration = start;
     a.cssOwner = id == null ? null : target;
     a.cssPaused = held !== null;
     a.cssPseudoOrder = pseudo === '::marker' ? 1 : pseudo === '::before' ? 2 : pseudo === '::after' ? 3 : 0;
@@ -2283,8 +2286,11 @@
         const pos = apply(comparePosition, x.cssOwner, [y.cssOwner]);
         return pos & 1 ? x.seq - y.seq : pos & 4 ? -1 : 1;
       }
+      // (Transitions: by generation, then by property name in code point order, as Chrome;
+      // WPT css-transitions Element-getAnimations 'sorts simultaneous transitions by name'.)
       return x.cssPseudoOrder - y.cssPseudoOrder ||
-        (x.css === CSS_ANIMATION ? x.cssListOrder - y.cssListOrder : x.seq - y.seq);
+        (x.css === CSS_ANIMATION ? x.cssListOrder - y.cssListOrder :
+          (x.cssGeneration - y.cssGeneration) || (x.cssName < y.cssName ? -1 : x.cssName > y.cssName ? 1 : 0) || x.seq - y.seq);
     });
     return out.map(a => a.self);
   }
