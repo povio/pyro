@@ -893,7 +893,11 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
             page.popups.borrow().iter().find(|(n, p)| *n == target && !p.is_closed()).map(|(_, p)| p.clone());
         if let Some(popup) = existing {
             if url_given {
-                page.popup_command(popup.clone(), crate::popup::PopupCommand::Navigate(url));
+                page.popup_command(popup.clone(), crate::popup::PopupCommand::OpenNamed {
+                    url,
+                    referrer: page.client_referrer().map(Into::into),
+                    policy: page.referrer_policy(),
+                });
             }
             return crate::popup::wrap_popup(s, page, &popup);
         }

@@ -91,6 +91,18 @@ pub struct FrameInfo {
     pub unreachable_url: Option<String>,
 }
 
+/// A new top-level context starts with fresh target emulation settings; only
+/// the opener's window and screen geometry supplies its initial dimensions.
+pub(crate) fn popup_viewport(opener: &pyro_dom::media::Viewport) -> pyro_dom::media::Viewport {
+    pyro_dom::media::Viewport {
+        width: opener.width,
+        height: opener.height,
+        screen_width: opener.screen_width,
+        screen_height: opener.screen_height,
+        ..Default::default()
+    }
+}
+
 /// Fit the requested desktop window to its screen's available area. Keep the
 /// emulated screen independent of the smaller layout viewport of a popup.
 pub(crate) fn apply_window_features(
@@ -293,6 +305,7 @@ impl FrameHost {
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         let mut settings = self.settings.borrow().clone();
         settings.session = session;
+        settings.viewport = popup_viewport(&settings.viewport);
         settings.window_chrome = apply_window_features(&mut settings.viewport, features);
         settings.user_agent = None;
         settings.extra_headers = Default::default();

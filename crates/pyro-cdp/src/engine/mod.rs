@@ -1516,7 +1516,10 @@ impl Host for EngineHost {
                     .find(|(_, state)| state.popup_ticket.as_ref().is_some_and(|t| t.is_for(&popup)))?;
                 Some(match command {
                     pyro_webapi::PopupCommand::Close => PopupAction::Close(page),
-                    pyro_webapi::PopupCommand::Navigate(url) => PopupAction::Navigate(page, url),
+                    pyro_webapi::PopupCommand::Navigate(url) => PopupAction::Navigate(page, url, None),
+                    pyro_webapi::PopupCommand::OpenNamed { url, referrer, policy } => {
+                        PopupAction::Navigate(page, url, Some((referrer, policy)))
+                    }
                 })
             })
             .collect()
@@ -1611,6 +1614,12 @@ impl Host for EngineHost {
             }
         }
         self.create_page(context).map(|(page, id)| (page, id, false))
+    }
+
+    fn set_popup_navigation_referrer(&mut self, page: PageKey, referrer: Option<(Option<String>, pyro_net::ReferrerPolicy)>) {
+        if let Some(state) = self.pages.get_mut(&page) {
+            state.popup_referrer = referrer.map(|(source, policy)| (source, Some(policy)));
+        }
     }
 
     fn announce_initial_document(&mut self, page: PageKey) -> bool {

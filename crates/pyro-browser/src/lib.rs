@@ -1674,7 +1674,7 @@ impl Browser {
     /// Initialize the browser chrome and viewport of a newly created top-level
     /// context even when the initiating script requested no opener handle.
     pub fn configure_popup(&mut self, page: PageId, opener: PageId, features: pyro_webapi::window_features::WindowFeatures) {
-        let Some(mut viewport) = self.page(opener).map(|p| p.viewport.clone()) else { return };
+        let Some(mut viewport) = self.page(opener).map(|p| frames::popup_viewport(&p.viewport)) else { return };
         let chrome = frames::apply_window_features(&mut viewport, features);
         if let Some(p) = self.page_mut(page) {
             let mut settings = p.frames.settings.borrow_mut();
