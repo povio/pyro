@@ -176,6 +176,11 @@ impl Builder<'_> {
     /// `roundRect` with radii [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y].
     pub(crate) fn round_rect(&mut self, mut x: f64, mut y: f64, mut w: f64, mut h: f64, r: [f64; 8]) {
         let (mut tl, mut tr, mut br, mut bl) = ((r[0], r[1]), (r[2], r[3]), (r[4], r[5]), (r[6], r[7]));
+        // pyro: HTML traces the subpath with the signed width and height, so one negative side
+        // mirrors it and turns it counter-clockwise (WPT 2d.path.roundrect.winding); the new
+        // subpath after it starts at the (x, y) given.
+        let (x0, y0) = (x, y);
+        let reversed = (w < 0.0) != (h < 0.0);
         if w < 0.0 {
             x += w;
             w = -w;
@@ -197,16 +202,26 @@ impl Builder<'_> {
         let s = |c: (f64, f64)| (c.0 * scale, c.1 * scale);
         let (tl, tr, br, bl) = (s(tl), s(tr), s(br), s(bl));
         self.move_to(x + tl.0, y);
-        self.line_to(x + w - tr.0, y);
-        self.ellipse(x + w - tr.0, y + tr.1, tr.0, tr.1, 0.0, -FRAC_PI_2, 0.0, false);
-        self.line_to(x + w, y + h - br.1);
-        self.ellipse(x + w - br.0, y + h - br.1, br.0, br.1, 0.0, 0.0, FRAC_PI_2, false);
-        self.line_to(x + bl.0, y + h);
-        self.ellipse(x + bl.0, y + h - bl.1, bl.0, bl.1, 0.0, FRAC_PI_2, PI, false);
-        self.line_to(x, y + tl.1);
-        self.ellipse(x + tl.0, y + tl.1, tl.0, tl.1, 0.0, PI, PI + FRAC_PI_2, false);
+        if reversed {
+            self.ellipse(x + tl.0, y + tl.1, tl.0, tl.1, 0.0, PI + FRAC_PI_2, PI, true);
+            self.line_to(x, y + h - bl.1);
+            self.ellipse(x + bl.0, y + h - bl.1, bl.0, bl.1, 0.0, PI, FRAC_PI_2, true);
+            self.line_to(x + w - br.0, y + h);
+            self.ellipse(x + w - br.0, y + h - br.1, br.0, br.1, 0.0, FRAC_PI_2, 0.0, true);
+            self.line_to(x + w, y + tr.1);
+            self.ellipse(x + w - tr.0, y + tr.1, tr.0, tr.1, 0.0, 0.0, -FRAC_PI_2, true);
+        } else {
+            self.line_to(x + w - tr.0, y);
+            self.ellipse(x + w - tr.0, y + tr.1, tr.0, tr.1, 0.0, -FRAC_PI_2, 0.0, false);
+            self.line_to(x + w, y + h - br.1);
+            self.ellipse(x + w - br.0, y + h - br.1, br.0, br.1, 0.0, 0.0, FRAC_PI_2, false);
+            self.line_to(x + bl.0, y + h);
+            self.ellipse(x + bl.0, y + h - bl.1, bl.0, bl.1, 0.0, FRAC_PI_2, PI, false);
+            self.line_to(x, y + tl.1);
+            self.ellipse(x + tl.0, y + tl.1, tl.0, tl.1, 0.0, PI, PI + FRAC_PI_2, false);
+        }
         self.path.close();
-        self.move_to(x, y);
+        self.move_to(x0, y0);
     }
     pub(crate) fn svg(&mut self, data: &str) {
         // A path whose data has an error draws nothing here (HTML keeps the
