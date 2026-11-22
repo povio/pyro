@@ -177,6 +177,9 @@ pub(crate) struct EngineInner {
     retired_members: RefCell<Vec<RetiredMembers>>,
     /// Realms that linger (`Realm::linger`) until their global object dies.
     pub(crate) lingering: RefCell<Vec<Rc<RealmInner>>>,
+    /// The embedder's wake for the VM's deferred work ([`Engine::set_deferred_work_waker`]),
+    /// boxed twice so the engine hands JavaScriptCore one stable thin pointer.
+    deferred_waker: RefCell<Option<Box<DeferredWaker>>>,
     /// Garbage collections seen, for sweeping the realms' interned strings.
     pub(crate) collections: crate::interned::Collections,
     /// The property hooks' switches (see [`class::HookState`]).
@@ -652,6 +655,14 @@ impl EngineInner {
                     clear(self.group);
                 }
             }
+            // No callback runs once this returns (JavaScriptCore calls it under the lock that
+            // unregistering takes), so the waker can go.
+            if self.deferred_waker.borrow().is_some() {
+                if let Some(set) = sys::spi::get().set_deferred_work_callback {
+                    set(self.group, None, std::ptr::null_mut());
+                }
+            }
+            drop(self.deferred_waker.take());
             sys::JSGlobalContextRelease(self.root);
             sys::JSContextGroupRelease(self.group);
         }
@@ -683,6 +694,16 @@ impl EngineInner {
     fn is_current(&self) -> bool {
         CURRENT.try_with(|c| std::ptr::eq(c.borrow().as_ptr(), self)).unwrap_or(false)
     }
+}
+
+/// What [`Engine::set_deferred_work_waker`] keeps.
+type DeferredWaker = Box<dyn Fn() + Send + Sync>;
+
+/// Patch 0040's deferred work callback; `info` is the engine's [`DeferredWaker`].
+unsafe extern "C" fn deferred_work_wake(info: *mut std::ffi::c_void) {
+    // SAFETY: `info` is the waker `set_deferred_work_waker` registered, alive until unregistered.
+    let wake = unsafe { &*(info as *const DeferredWaker) };
+    wake();
 }
 
 impl Drop for EngineInner {
@@ -849,6 +870,7 @@ impl Engine {
             member_payloads: RefCell::new(Vec::new()),
             retired_members: RefCell::new(Vec::new()),
             lingering: RefCell::new(Vec::new()),
+            deferred_waker: RefCell::new(None),
             collections: crate::interned::Collections::new(),
             hook_state: class::HookState::default(),
             held: RefCell::new(crate::persistent::HeldValues::default()),
@@ -1181,6 +1203,34 @@ impl Engine {
     /// the GC marks its CodeBlock, which reaches that code's global object: a
     /// helper that tiered up shortly before its page closed keeps the closed realm
     /// alive through every collection in between. No-op on the system framework.
+    /// Patch 0040: `wake` is called whenever the VM schedules deferred work (the settling of
+    /// `WebAssembly.compile`, `instantiate` and their streaming forms, finished on a compilation
+    /// thread), from any thread and with JavaScriptCore locks held: it may only wake this engine's
+    /// loop, which then calls [`Engine::run_deferred_work`] between tasks. Replaces an earlier
+    /// waker. False (and nothing set) on an engine without the patch, whose deferred work only
+    /// a WTF run loop would run.
+    pub fn set_deferred_work_waker(&self, wake: impl Fn() + Send + Sync + 'static) -> bool {
+        let Some(set) = sys::spi::get().set_deferred_work_callback else { return false };
+        let waker: Box<DeferredWaker> = Box::new(Box::new(wake));
+        let info = &*waker as *const DeferredWaker as *mut std::ffi::c_void;
+        // SAFETY: the group is alive and used by this thread; `info` stays valid until the
+        // callback is replaced or removed (shutdown), the previous one only after this call.
+        unsafe { set(self.inner.group, Some(deferred_work_wake), info) };
+        *self.inner.deferred_waker.borrow_mut() = Some(waker);
+        true
+    }
+
+    /// Runs the VM's ready deferred work (promise reactions included), as a task of its own: call
+    /// it between tasks with no JavaScript of this thread on the stack. True while work is still
+    /// pending; false without patch 0040.
+    pub fn run_deferred_work(&self) -> bool {
+        match sys::spi::get().run_deferred_work {
+            // SAFETY: the group is alive and used by this thread only.
+            Some(run) => unsafe { run(self.inner.group) },
+            None => false,
+        }
+    }
+
     fn complete_jit_plans(&self, wait: bool) {
         if let Some(f) = sys::spi::get().complete_jit_plans {
             // SAFETY: the group is alive and used by this thread only.

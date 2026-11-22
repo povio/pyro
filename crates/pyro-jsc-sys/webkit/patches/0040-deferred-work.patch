@@ -1,0 +1,82 @@
+Pyro patch 0040: the embedder runs a VM's deferred work (WebAssembly promises).
+
+JavaScriptCore settles work that finishes off the JavaScript thread (WebAssembly.compile, instantiate,
+compileStreaming, instantiateStreaming) through the VM's DeferredWorkTimer, a JSRunLoopTimer that fires
+on the VM's WTF run loop. The JSCOnly build's generic run loop runs only when someone calls RunLoop::run
+or cycle; an embedder with its own event loop never does, so those promises never settled.
+JSContextGroupSetDeferredWorkCallback (JSForkPrivate.h) tells the embedder, through the timer's
+existing set-notification, whenever deferred work is scheduled (from any thread), and
+JSContextGroupRunDeferredWork runs the ready work on the VM's thread under the API lock
+(DeferredWorkTimer::doWork, which drains microtasks after each item). Nothing changes for an embedder
+that registers no callback.
+
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -24,6 +24,7 @@
+ #include <wtf/HashMap.h>
+ #include <wtf/Lock.h>
+ #include <wtf/NeverDestroyed.h>
++#include "DeferredWorkTimer.h"
+ #include "DeleteAllCodeEffort.h"
+ #include "InitializeThreading.h"
+ #include "IntlObject.h"
+@@ -122,6 +123,33 @@ void JSCompleteJITPlans(JSContextGroupRef group, bool wait)
+ #endif
+ }
+ 
++void JSContextGroupSetDeferredWorkCallback(JSContextGroupRef group, JSDeferredWorkCallback callback, void* info)
++{
++    VM& vm = *toJS(group);
++    JSLockHolder locker(vm);
++    // One notification per VM, so that a later call replaces it.
++    static Lock lock;
++    static NeverDestroyed<HashMap<VM*, JSRunLoopTimer::TimerNotificationCallback>> notifications;
++    Locker notificationsLocker { lock };
++    if (auto previous = notifications->take(&vm))
++        vm.deferredWorkTimer->removeTimerSetNotification(previous);
++    if (!callback)
++        return;
++    JSRunLoopTimer::TimerNotificationCallback notification = createSharedTask<JSRunLoopTimer::TimerNotificationType>([callback, info] {
++        callback(info);
++    });
++    vm.deferredWorkTimer->addTimerSetNotification(notification);
++    notifications->add(&vm, WTF::move(notification));
++}
++
++bool JSContextGroupRunDeferredWork(JSContextGroupRef group)
++{
++    VM& vm = *toJS(group);
++    JSLockHolder locker(vm);
++    vm.deferredWorkTimer->doWork(vm);
++    return vm.deferredWorkTimer->hasAnyPendingWork();
++}
++
+ void JSAddImpureProperty(JSContextRef ctx, JSStringRef propertyName)
+ {
+     JSGlobalObject* globalObject = toJS(ctx);
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -50,6 +50,21 @@ JS_EXPORT void JSGlobalContextReseedRandom(JSGlobalContextRef ctx);
+    realms; with no other thread running JavaScript in `group`. */
+ JS_EXPORT void JSCompleteJITPlans(JSContextGroupRef group, bool wait);
+ 
++/* Pyro patch 0040: the deferred work of `group`'s VM (its DeferredWorkTimer), which settles
++   asynchronous work that finishes off the JavaScript thread: WebAssembly.compile, instantiate,
++   compileStreaming and instantiateStreaming promises, among others. JavaScriptCore runs it from
++   the VM's WTF run loop, which an embedder with an event loop of its own never runs.
++   `callback(info)` is called whenever such work is scheduled, from any thread (a compilation
++   thread included) and with JavaScriptCore locks held: it may only wake the embedder's loop, which
++   then calls JSContextGroupRunDeferredWork on the VM's thread between tasks. A later call
++   replaces the callback; NULL removes it. */
++typedef void (*JSDeferredWorkCallback)(void* info);
++JS_EXPORT void JSContextGroupSetDeferredWorkCallback(JSContextGroupRef group, JSDeferredWorkCallback callback, void* info);
++
++/* Runs `group`'s deferred work that is ready (draining microtasks after each item), with no
++   JavaScript of this thread on the stack. Returns whether work is still pending. */
++JS_EXPORT bool JSContextGroupRunDeferredWork(JSContextGroupRef group);
++
+ /* Whether a name, in Latin-1 or UTF-16 code units, may be a named property of the
+    global of `ctx`. Runs on every lookup that misses the global: it must be cheap, and
+    must not call into JavaScriptCore. */

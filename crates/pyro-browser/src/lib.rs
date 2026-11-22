@@ -1024,6 +1024,21 @@ impl BrowserThread {
             completions: std::collections::HashMap::new(),
             ready_responses: Default::default(),
         };
+        // The VM's deferred work (WebAssembly.compile/instantiate settling, finished on a
+        // compilation thread) runs in a task of this loop: JavaScriptCore would run it from a WTF
+        // run loop nothing runs here. One task per wake while none is queued.
+        let handle = event_loop.handle();
+        let queued = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        browser.engine.set_deferred_work_waker(move || {
+            if queued.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                return;
+            }
+            let queued = queued.clone();
+            let _ = handle.post(move |b: &mut Browser| {
+                queued.store(false, std::sync::atomic::Ordering::Release);
+                b.engine.run_deferred_work();
+            });
+        });
         BrowserThread { event_loop, browser }
     }
 

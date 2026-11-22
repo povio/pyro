@@ -645,6 +645,16 @@ pub mod spi {
         operations: std::os::raw::c_uint,
     ) -> bool;
 
+    /// Patch 0040: called whenever a VM's deferred work (the settling of WebAssembly.compile,
+    /// instantiate and their streaming forms) is scheduled, from any thread and with JavaScriptCore
+    /// locks held: it may only wake the embedder's loop.
+    pub type JSDeferredWorkCallback = unsafe extern "C" fn(info: *mut c_void);
+    /// A later call replaces the callback; `None` removes it.
+    pub type JSContextGroupSetDeferredWorkCallbackFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, callback: Option<JSDeferredWorkCallback>, info: *mut c_void);
+    /// Runs the group's ready deferred work on its VM's thread; true while work is still pending.
+    pub type JSContextGroupRunDeferredWorkFn = unsafe extern "C" fn(group: JSContextGroupRef) -> bool;
+
     /// A custom accessor's getter (patched JSC, `JSObjectSetCustomAccessor`):
     /// called by inline caches with the receiver as `this_value` (any value,
     /// not only objects of the class) and the property name's unique string
@@ -1024,6 +1034,9 @@ pub mod spi {
         pub set_trusted_types_enforcement: Option<JSGlobalContextSetTrustedTypesEnforcementFn>,
         /// Patch 0036: the promise rejection tracker (Reject and Handle).
         pub set_promise_rejection_tracker: Option<JSGlobalContextSetPromiseRejectionTrackerFn>,
+        /// Patch 0040: the VM's deferred work, which settles WebAssembly promises.
+        pub set_deferred_work_callback: Option<JSContextGroupSetDeferredWorkCallbackFn>,
+        pub run_deferred_work: Option<JSContextGroupRunDeferredWorkFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
         pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
@@ -1232,6 +1245,14 @@ pub mod spi {
             set_promise_rejection_tracker: resolve!("JSGlobalContextSetPromiseRejectionTracker"),
             #[cfg(not(any(pyro_jsc_rejection_tracker, not(pyro_jsc_static))))]
             set_promise_rejection_tracker: None,
+            #[cfg(any(pyro_jsc_deferred_work, not(pyro_jsc_static)))]
+            set_deferred_work_callback: resolve!("JSContextGroupSetDeferredWorkCallback"),
+            #[cfg(not(any(pyro_jsc_deferred_work, not(pyro_jsc_static))))]
+            set_deferred_work_callback: None,
+            #[cfg(any(pyro_jsc_deferred_work, not(pyro_jsc_static)))]
+            run_deferred_work: resolve!("JSContextGroupRunDeferredWork"),
+            #[cfg(not(any(pyro_jsc_deferred_work, not(pyro_jsc_static))))]
+            run_deferred_work: None,
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
             set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),
