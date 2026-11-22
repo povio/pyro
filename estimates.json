@@ -3,21 +3,21 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 1121,
+    "macbook_in_scope": 1125,
     "studio_in_scope": 504,
     "other_dirs_out_of_scope": 35,
-    "macbook_worker_variants_if_enabled": 217,
+    "macbook_worker_variants_if_enabled": 219,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1483,
+   "distinct_census_pages": 1489,
    "owner_reported_unlisted": 14,
-   "selector_union": 1711,
+   "selector_union": 1717,
    "owner_estimate_reduction": 242,
    "of_which_tentative": 213,
    "studio_css_reported_pages_not_deduped": 355,
    "studio_css_listed_distinct": 40,
    "by_dir": {
-    "html/canvas": 464,
+    "html/canvas": 470,
     "html/semantics": 448,
     "html/interaction": 117,
     "html/browsers": 116,
@@ -30,30 +30,30 @@
     "html/dom": 27,
     "fetch/content-encoding": 21,
     "scheduler": 19,
-    "html/infrastructure": 18,
     "html/rendering": 18,
+    "html/infrastructure": 18,
     "html/syntax": 15,
     "imagebitmap-renderingcontext": 14,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
     "fetch/range": 6,
-    "fetch/data-urls": 6,
     "fetch/corb": 6,
+    "fetch/data-urls": 6,
     "fetch/stale-while-revalidate": 5,
     "html/obsolete": 4,
     "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "xhr": 2,
     "fetch/orb": 2,
-    "svg/styling": 1,
-    "fetch/images": 1,
-    "fetch/redirect-navigate": 1,
-    "IndexedDB": 1,
-    "fetch/security": 1,
+    "xhr": 2,
     "fetch/redirects": 1,
-    "quirks": 1
+    "fetch/images": 1,
+    "quirks": 1,
+    "svg/styling": 1,
+    "fetch/security": 1,
+    "fetch/redirect-navigate": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
@@ -77,18 +77,18 @@
     "html/browsers": 78,
     "html/syntax": 40,
     "html/webappapis": 24,
-    "html/infrastructure": 8,
     "fetch/compression-dictionary": 8,
+    "html/infrastructure": 8,
     "html/interaction": 5,
-    "fetch/api": 5,
     "html/dom": 5,
+    "fetch/api": 5,
     "fetch/security": 4,
     "html/user-activation": 3,
-    "html/the-xhtml-syntax": 1,
-    "html/scripting": 1,
-    "fetch/content-type": 1,
+    "html/select": 1,
     "fetch/http-cache": 1,
-    "html/select": 1
+    "fetch/content-type": 1,
+    "html/the-xhtml-syntax": 1,
+    "html/scripting": 1
    }
   },
   "queued": {
@@ -617,6 +617,13 @@
    "in_scope_pages": 75,
    "out_of_scope_pages": 0,
    "pages": 75,
+   "tentative": 0
+  },
+  "C02-rect-shadow": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 6,
+   "out_of_scope_pages": 0,
+   "pages": 6,
    "tentative": 0
   },
   "C03": {
@@ -2958,14 +2965,14 @@
    "tentative": null
   }
  },
- "implemented_total_estimate": 1878,
+ "implemented_total_estimate": 1884,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 1121,
+ "macbook_in_scope_implemented": 1125,
  "macbook_in_scope_milestones": [
   100,
   200,
