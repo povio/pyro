@@ -544,6 +544,17 @@ pub(crate) fn window_storage<'s>(s: &Scope<'s>, page: &Rc<PageDom>, session: boo
             (area, Some(Source { page: Rc::downgrade(page), session, origin }))
         }
         None if page.is_disposed() => return Err(JsError::ContextDestroyed),
+        // A sandboxed document (opaque origin, no `allow-same-origin`) has no storage, as in
+        // Chromium (HTML "obtain a storage bottle map" fails for an opaque origin).
+        None if page.has_opaque_origin() => {
+            return Err(JsError::dom(
+                "SecurityError",
+                format!(
+                    "Failed to read the '{}' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.",
+                    if session { "sessionStorage" } else { "localStorage" }
+                ),
+            ));
+        }
         // Opaque-origin areas belong to one document: no other document sees them.
         None => (page.opaque_storage.area(page, session), None),
     };
