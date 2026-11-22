@@ -140,9 +140,9 @@
   async function writeChunk(lease, chunk) {
     try {
       const command = chunk instanceof Command ? chunk : convertChunk(chunk);
-      // Conversion precedes queued storage I/O even when Streams can call
-      // the sink immediately; a mutable buffer is copied by the I/O step.
-      await undefined;
+      // FS "write a chunk": command validation and the BufferSource copy
+      // run in a storage task, after the caller's microtask checkpoint.
+      await ops.storageTask();
       if (command.type === 'seek') {
         if (command.position === null) throw new TypeErrorC('Seek requires a position.');
         ops.seek(lease, command.position);
