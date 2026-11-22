@@ -939,6 +939,10 @@ impl JsClass for Selection {
                     Some(false) => "forward",
                     None => "none",
                 },
+                Some((a, f)) if {
+                    let dom = sel.page.dom.borrow();
+                    editing::inside_select(&dom, a.0) && editing::inside_select(&dom, f.0)
+                } => "none",
                 Some((a, f)) if composed_order(&sel.page.dom.borrow(), a, f)? <= 0 => "forward",
                 Some(_) => "backward",
             }))

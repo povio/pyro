@@ -839,10 +839,20 @@ fn link_typing_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) -> P
     (parent, index + u32::from(last))
 }
 
+/// DOM endpoints below a select do not expose a rendered selection direction.
+pub(crate) fn inside_select(dom: &Dom, mut node: NodeId) -> bool {
+    while let Ok(Some(parent)) = dom.parent_element(node) {
+        if html_select(dom, parent) { return true; }
+        node = parent;
+    }
+    false
+}
+
 /// DOM selections can reach option text that has no caret position in the
 /// rendered editor. Keep edits outside the control, and treat a selection
 /// of its entire contents as a selection of the atomic box.
-fn select_edit_range(dom: &Dom, host: NodeId, start: Point, end: Point) -> Option<(Point, Point)> {
+fn select_edit_range(page: &PageDom, host: NodeId, start: Point, end: Point) -> Option<(Point, Point)> {
+    let dom = &*page.dom.borrow();
     let in_control = |mut node| loop {
         if dom.element(node).is_ok_and(|el| el.is_html()
             && matches!(el.local_name().as_ref(), "option" | "optgroup" | "select")) {
@@ -859,14 +869,14 @@ fn select_edit_range(dom: &Dom, host: NodeId, start: Point, end: Point) -> Optio
         let index = dom.index_in_parent(start.0).ok()?;
         return Some(((parent, index), (parent, index + 1)));
     }
-    if in_control(start.0) { return None; }
+    if in_control(start.0) || selection(page).is_some_and(|(anchor, _)| inside_select(dom, anchor.0)) { return None; }
     Some((start, if in_control(end.0) { start } else { end }))
 }
 
 /// insertText (typing, `Input.insertText`): replaces the selection.
 pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
     let (start, end) = host_range(page, host);
-    let Some((start, end)) = select_edit_range(&page.dom.borrow(), host, start, end) else { return };
+    let Some((start, end)) = select_edit_range(page, host, start, end) else { return };
     // Replacement and continued typing form one edit. Keep typing inside
     // the link when that edit began on selected link text.
     let keep_link = if start == end {
@@ -960,7 +970,7 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
         let Some(host) = current_owner else { return };
         (host, start, end)
     };
-    let Some((start, end)) = select_edit_range(&page.dom.borrow(), host, start, end) else { return };
+    let Some((start, end)) = select_edit_range(page, host, start, end) else { return };
     let child_line = child_line::Deletion::plan(page, &page.dom.borrow(), host, start, end, backward);
     let (start, end, span) = if let Some(plan) = &child_line {
         (start, end, Some(plan.range))
