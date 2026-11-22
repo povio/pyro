@@ -2888,3 +2888,11 @@ what it lays out itself: a grid's explicit tracks of a fixed size and the gaps b
 multi-column container's `column-count` columns of `column-width` and their gaps. Both were 0 wide and tall (WPT
 css-contain `contain-size-grid-002`, `contain-size-multicol-001`, `-002`). Horizontal writing modes only. Test
 `a_size_contained_grid_or_multicol_container_keeps_its_tracks_and_columns` (pyro-render).
+
+## Block-end margin trimming of nested blocks
+
+`layout/mod.rs`, `compute_block_child_layout`: a block laid out with taffy's `BlockContext::trims_block_end` (its
+parent's `margin-trim: block-end` reaching the margins that collapse through its bottom edge; vendor/taffy
+README.pyro.md) is laid out afresh and its layout cache cleared after it, as for a block among floats: the cache
+does not key on the flag. WPT css-box `margin-trim/block-container-block-end-self-collapsing-children-nested-*`.
+Test `block_end_trims_self_collapsing_boxes_nested_at_the_bottom` (pyro-render).
