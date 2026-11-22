@@ -754,6 +754,23 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
                     .map(scroll_target_node)
                     .collect()
             });
+            // HTML: then "run the focusing steps for target, with the Document's viewport as the
+            // fallback target": a focusable target takes focus (focus events fire), else the
+            // viewport does, which leaves the document without a focused element (WPT
+            // focus-changes-after-scroll-to-fragment).
+            let focusable = {
+                let layout = page.layout();
+                let dom = page.dom.borrow();
+                crate::input::is_focusable_area(&layout, &dom, el)
+            };
+            if focusable {
+                crate::input::focus_element(page, el);
+            } else {
+                let focused = page.dom.borrow().focused(doc).ok().flatten();
+                if let Some(focused) = focused {
+                    crate::input::blur_element(page, focused);
+                }
+            }
         }
         None if fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
             perform_scroll(page, ScrollBehavior::Auto, &[None], |dom, layout| {
