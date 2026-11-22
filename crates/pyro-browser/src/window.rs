@@ -91,7 +91,11 @@ pub struct WindowData {
     /// Pending `requestAnimationFrame` callbacks, in registration order, and
     /// the loop timer of the frame that will run them.
     animation: RefCell<AnimationFrame>,
+    /// The next timer handle (`setTimeout`, `setInterval`).
     next_handle: Cell<u32>,
+    /// The next animation frame callback handle: its own sequence from 1 (HTML "animation
+    /// frame callback identifier"), unaffected by timers.
+    next_frame_handle: Cell<u32>,
     frames: std::rc::Weak<crate::frames::FrameHost>,
     frame: Option<crate::frames::FrameKey>,
     frame_definer: RefCell<Option<Persistent>>,
@@ -145,6 +149,7 @@ impl WindowData {
             timers: RefCell::new(HashMap::new()),
             animation: RefCell::new(AnimationFrame::default()),
             next_handle: Cell::new(1),
+            next_frame_handle: Cell::new(1),
             frames: std::rc::Weak::new(),
             frame: None,
             frame_definer: RefCell::new(None),
@@ -170,6 +175,7 @@ impl WindowData {
         *to.nested_timer_call.borrow_mut() = self.nested_timer_call.take();
         *to.location_install.borrow_mut() = self.location_install.take();
         to.next_handle.set(self.next_handle.get());
+        to.next_frame_handle.set(self.next_frame_handle.get());
     }
     pub(crate) fn for_frame(
         sched: Scheduler<Browser>,
@@ -215,7 +221,7 @@ impl WindowData {
     /// frame it requests (the handles given out): two equal readings mean it
     /// asked for neither between them.
     pub fn handles_issued(&self) -> u32 {
-        self.next_handle.get()
+        self.next_handle.get().wrapping_add(self.next_frame_handle.get())
     }
 }
 
@@ -299,7 +305,7 @@ impl JsClass for Window {
             })?;
             request_animation_frame(s, w, Persistent::new(s, cb.value()))
         });
-        def.method("cancelAnimationFrame", 1, clear_timer);
+        def.method("cancelAnimationFrame", 1, cancel_animation_frame);
         // Chrome's prefixed aliases. Each call first reports its deprecation (once per realm),
         // to ReportingObservers and the document's `default` endpoint.
         def.method("webkitRequestAnimationFrame", 1, |s, w, a| {
@@ -324,7 +330,7 @@ impl JsClass for Window {
                 "PrefixedCancelAnimationFrame",
                 "webkitCancelAnimationFrame is vendor-specific. Please use the standard cancelAnimationFrame instead.",
             );
-            clear_timer(s, w, a)
+            cancel_animation_frame(s, w, a)
         });
         def.method("requestIdleCallback", 1, idle::request);
         def.method("cancelIdleCallback", 1, idle::cancel);
@@ -795,8 +801,8 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
     if w.target.page.scripting_disabled() {
         return Ok(s.number(0.0));
     }
-    let handle = w.next_handle.get();
-    w.next_handle.set(handle.wrapping_add(1).max(1));
+    let handle = w.next_frame_handle.get();
+    w.next_frame_handle.set(handle.wrapping_add(1).max(1));
     let mut frame = w.animation.borrow_mut();
     let depth = frame.running.map_or(0, |d| d.saturating_add(1));
     frame.callbacks.push((handle, cb, depth));
@@ -976,16 +982,23 @@ fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value
         let handle = n as u32;
         if let Some((id, _)) = w.timers.borrow_mut().remove(&handle) {
             w.sched.clear_timer(id);
-        } else {
-            // Timer and animation frame handles share one sequence, so either
-            // clear function cancels either kind (as before).
-            let mut frame = w.animation.borrow_mut();
-            if let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) {
-                frame.callbacks.remove(i);
-                if frame.callbacks.is_empty() && frame.native_callbacks.is_empty() {
-                    for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
-                        w.sched.clear_timer(id);
-                    }
+        }
+    }
+    Ok(s.undefined())
+}
+
+/// `cancelAnimationFrame(handle)`: animation frame handles are their own sequence, so only an
+/// animation frame callback is cancelled (and `clearTimeout` never cancels one).
+fn cancel_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let n = a.get(0).to_number()?;
+    if n.is_finite() && n >= 1.0 && n <= u32::MAX as f64 {
+        let handle = n as u32;
+        let mut frame = w.animation.borrow_mut();
+        if let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) {
+            frame.callbacks.remove(i);
+            if frame.callbacks.is_empty() && frame.native_callbacks.is_empty() {
+                for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
+                    w.sched.clear_timer(id);
                 }
             }
         }
