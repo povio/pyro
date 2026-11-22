@@ -1,0 +1,290 @@
+[
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">[bar]</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">[bar]</s>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">[bar]</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">[bar]</s>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">b[a]r</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">b[a]r</s>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">[bar]</u>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">[bar]</u>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">b[a]r</u>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">[bar]</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">[bar]</s>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">[bar]</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">[bar]</s>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">b[a]r</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">b[a]r</s>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">[bar]</u>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">[bar]</u>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/strikethrough.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">b[a]r</u>baz\" queryCommandState(\"strikethrough\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">[bar]</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">[bar]</s>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">b[a]r</s>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">[bar]</u>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">b[a]r</u>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<u style=\\\"text-decoration: overline\\\">[bar]</u>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<u style=\\\"text-decoration: overline\\\">b[a]r</u>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">[bar]</s>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">[bar]</s>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: underline\\\">b[a]r</s>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">[bar]</u>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<u style=\\\"text-decoration: line-through\\\">b[a]r</u>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<u style=\\\"text-decoration: overline\\\">[bar]</u>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/underline.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<u style=\\\"text-decoration: overline\\\">b[a]r</u>baz\" queryCommandState(\"underline\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]
