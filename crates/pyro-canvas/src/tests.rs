@@ -287,3 +287,53 @@ fn clear_operator_within_the_clip() {
     assert_eq!(px(&mut s, 1, 1), [0, 0, 0, 0]);
     assert_eq!(px(&mut s, 4, 1), [0, 255, 0, 255]);
 }
+
+#[test]
+fn transparent_image_source() {
+    let dst = Rect::new(0.0, 0.0, 5.0, 5.0);
+    let whole = Rect::new(0.0, 0.0, 5.0, 5.0);
+    // Operators a transparent source leaves alone: nothing changes, nothing
+    // is allocated.
+    let mut s = Surface::new(10, 10);
+    s.draw_transparent_image(5, 5, whole, dst, &state(&[]));
+    assert!(!s.is_allocated());
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &Paint::Color(Color::from_rgba8(0, 255, 255, 128)), &state(&[]));
+    for op in [Composite::SourceOver, Composite::DestinationOut, Composite::Xor, Composite::Lighter, Composite::Multiply] {
+        let mut st = state(&[]);
+        st.composite = op;
+        s.draw_transparent_image(5, 5, whole, dst, &st);
+        assert_eq!(px(&mut s, 2, 2), [0, 255, 255, 128], "{op:?}");
+    }
+    // Those that don't: transparent black, over the whole bitmap as for any
+    // other source.
+    for op in [Composite::Copy, Composite::SourceIn, Composite::SourceOut, Composite::DestinationIn] {
+        let mut s = Surface::new(10, 10);
+        s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &Paint::Color(Color::from_rgba8(0, 255, 255, 128)), &state(&[]));
+        let mut st = state(&[]);
+        st.composite = op;
+        s.draw_transparent_image(5, 5, whole, dst, &st);
+        assert_eq!(px(&mut s, 2, 2), [0, 0, 0, 0], "{op:?}");
+        assert_eq!(px(&mut s, 7, 7), [0, 0, 0, 0], "{op:?}");
+    }
+    // destination-atop keeps the destination where the source is transparent
+    // (Fa = 1 - aB, Fb = aA = 0): transparent black too.
+    let mut s = Surface::new(10, 10);
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &Paint::Color(Color::from_rgba8(0, 255, 255, 128)), &state(&[]));
+    let mut st = state(&[]);
+    st.composite = Composite::DestinationAtop;
+    s.draw_transparent_image(5, 5, whole, dst, &st);
+    assert_eq!(px(&mut s, 2, 2), [0, 0, 0, 0]);
+    // The clip still applies, and a source rectangle off the image draws nothing.
+    let mut s = Surface::new(10, 10);
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &rgb(0, 255, 0), &state(&[]));
+    let clip = [ClipPath { path: rect(0.0, 0.0, 3.0, 10.0), evenodd: false }];
+    let mut st = state(&clip);
+    st.composite = Composite::Copy;
+    s.draw_transparent_image(5, 5, whole, dst, &st);
+    assert_eq!(px(&mut s, 1, 1), [0, 0, 0, 0]);
+    assert_eq!(px(&mut s, 7, 7), [0, 255, 0, 255]);
+    let mut st = state(&[]);
+    st.composite = Composite::Copy;
+    s.draw_transparent_image(5, 5, Rect::new(6.0, 6.0, 8.0, 8.0), dst, &st);
+    assert_eq!(px(&mut s, 7, 7), [0, 255, 0, 255]);
+}

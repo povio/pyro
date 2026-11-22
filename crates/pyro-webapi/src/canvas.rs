@@ -1273,13 +1273,18 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     if !source.clean {
         c.clean.set(false);
     }
-    let Some(image) = source.pixmap else { return Ok(s.undefined()) };
+    c.sync_size();
+    let state = c.state.borrow().clone();
+    // A source with no bitmap yet (a canvas without a context) is drawn as
+    // transparent black, which `copy`, `source-in`, ... do not ignore.
+    let Some(image) = source.pixmap else {
+        c.surface.borrow_mut().draw_transparent_image(source.width, source.height, src, dst, &state.draw_state());
+        return Ok(s.undefined());
+    };
     // The source's size may differ from its pixels' (a canvas snapshot is
     // its bitmap); map the source rectangle onto the pixels.
     let (px, py) = (f64::from(image.width()) / sw.max(1.0), f64::from(image.height()) / sh.max(1.0));
     let src = Rect::new(src.x0 * px, src.y0 * py, src.x1 * px, src.y1 * py);
-    c.sync_size();
-    let state = c.state.borrow().clone();
     c.surface.borrow_mut().draw_image(&image, src, dst, &state.draw_state());
     Ok(s.undefined())
 }
