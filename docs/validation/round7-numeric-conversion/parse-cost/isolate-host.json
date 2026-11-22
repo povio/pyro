@@ -1,0 +1,363 @@
+{
+ "start": "2026-11-22T00:17:33.004Z",
+ "end": "2026-11-22T00:17:37.516Z",
+ "preciseHost": {
+  "durationSeconds": 4.512,
+  "hostBusyPct": 19.168
+ },
+ "perArm": {
+  "numeric-convert-base-cc4f21a5e": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 2.135,
+   "weightedHostBusyPct": 19.13
+  },
+  "numeric-convert-381839e90": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 2.375,
+   "weightedHostBusyPct": 19.21
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:17:33.004Z",
+   "end": "2026-11-22T00:17:33.656Z",
+   "durationSeconds": 0.652,
+   "hostBusyPct": 21.5
+  },
+  {
+   "order": 2,
+   "binary": "numeric-convert-381839e90",
+   "start": "2026-11-22T00:17:33.656Z",
+   "end": "2026-11-22T00:17:34.320Z",
+   "durationSeconds": 0.664,
+   "hostBusyPct": 15.302
+  },
+  {
+   "order": 3,
+   "binary": "numeric-convert-381839e90",
+   "start": "2026-11-22T00:17:34.320Z",
+   "end": "2026-11-22T00:17:34.885Z",
+   "durationSeconds": 0.565,
+   "hostBusyPct": 14.955
+  },
+  {
+   "order": 4,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:17:34.886Z",
+   "end": "2026-11-22T00:17:35.371Z",
+   "durationSeconds": 0.485,
+   "hostBusyPct": 14.7
+  },
+  {
+   "order": 5,
+   "binary": "numeric-convert-381839e90",
+   "start": "2026-11-22T00:17:35.372Z",
+   "end": "2026-11-22T00:17:35.931Z",
+   "durationSeconds": 0.559,
+   "hostBusyPct": 15.235
+  },
+  {
+   "order": 6,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:17:35.931Z",
+   "end": "2026-11-22T00:17:36.422Z",
+   "durationSeconds": 0.491,
+   "hostBusyPct": 15.9
+  },
+  {
+   "order": 7,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:17:36.422Z",
+   "end": "2026-11-22T00:17:36.929Z",
+   "durationSeconds": 0.507,
+   "hostBusyPct": 23.438
+  },
+  {
+   "order": 8,
+   "binary": "numeric-convert-381839e90",
+   "start": "2026-11-22T00:17:36.929Z",
+   "end": "2026-11-22T00:17:37.516Z",
+   "durationSeconds": 0.587,
+   "hostBusyPct": 31.5
+  }
+ ],
+ "benchmarkSHA256": "8ce0ce662ed818d77a28f7869639bc4fd39e22972415cde9e9728aca37bef51d",
+ "minOneSecondBusyPct": 14.7,
+ "maxOneSecondBusyPct": 31.5,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-22T00:17:32.675Z",
+   "end": "2026-11-22T00:17:33.677Z",
+   "cpuBusyPct": 21.5
+  },
+  {
+   "start": "2026-11-22T00:17:33.677Z",
+   "end": "2026-11-22T00:17:34.680Z",
+   "cpuBusyPct": 15.1
+  },
+  {
+   "start": "2026-11-22T00:17:34.680Z",
+   "end": "2026-11-22T00:17:35.682Z",
+   "cpuBusyPct": 14.7
+  },
+  {
+   "start": "2026-11-22T00:17:35.682Z",
+   "end": "2026-11-22T00:17:36.684Z",
+   "cpuBusyPct": 15.9
+  },
+  {
+   "start": "2026-11-22T00:17:36.684Z",
+   "end": "2026-11-22T00:17:37.686Z",
+   "cpuBusyPct": 31.5
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-22T00:17:46.068Z",
+   "elapsedMs": 30002,
+   "cpuBusyPct": 29.4,
+   "load": [
+    10.99072265625,
+    21.2197265625,
+    22.4052734375
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1129,
+     "pctCpu": 77.2,
+     "rssMiB": 35600
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 104
+    },
+    "independent-feature": {
+     "n": 21,
+     "pctCpu": 1.7,
+     "rssMiB": 1133
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-22T00:17:16.017Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:16:13.100907+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 1,
+    "css": 0,
+    "qa": 0,
+    "diagnostics": 1,
+    "ordinary": 1,
+    "policy": "Numeric final perf and both independent QA workers released. Complete host receipt records 85.14%, actual IDB/owner-native/ordinary-WPT overlap. Window-feature parent ran 29 URLs, 63/209 observed names, 19 complete/10 timeout, zero restart/watchdog; direct controls complete. Sole corrected b4ae59083 Cargo proceeds, editing native and IDB existing measured slots."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [
+      {
+       "pid": 83337,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 83380,
+       "state": "R",
+       "kind": "ld",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 270.7
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 81871,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 83359,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 75.3
+    },
+    "idb": {
+     "processes": [
+      {
+       "pid": 83356,
+       "state": "S",
+       "kind": "rustc",
+       "jobs": null
+      },
+      {
+       "pid": 83377,
+       "state": "S",
+       "kind": "clang",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 19
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T00:17:46.015Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:16:13.100907+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 1,
+    "css": 0,
+    "qa": 0,
+    "diagnostics": 1,
+    "ordinary": 1,
+    "policy": "Numeric final perf and both independent QA workers released. Complete host receipt records 85.14%, actual IDB/owner-native/ordinary-WPT overlap. Window-feature parent ran 29 URLs, 63/209 observed names, 19 complete/10 timeout, zero restart/watchdog; direct controls complete. Sole corrected b4ae59083 Cargo proceeds, editing native and IDB existing measured slots."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 84668,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 84673,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 84720,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 2.6
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-22T00:12:59.333088+00:00",
+ "qaEnd": "2026-11-22T00:12:59.603088+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "measuredLogWindows": [
+  {
+   "path": "round7-window-features/candidate.log",
+   "start": "2026-11-22T00:17:18.276Z",
+   "through": "2026-11-22T00:18:11.320Z",
+   "overlapSeconds": 4.512
+  }
+ ],
+ "workloadNotes": "Separate diagnostic of parse-only versus to() applied to previously parsed input. Other CSS conversion runs are kept as independently timed receipts."
+}
