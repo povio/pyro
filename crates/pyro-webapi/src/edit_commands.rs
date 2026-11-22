@@ -1518,9 +1518,46 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
     }
 }
 
+/// Remove an explicitly authored paragraph weight while keeping its original
+/// value and priority on the unselected text. More complex paragraphs can
+/// retain the block declaration and override just the selected inline run.
+fn distribute_block_weight(page: &PageDom, dom: &mut Dom, block: NodeId, first: Point, last: Point) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let mut style = DeclarationBlock::parse(dom.get_attribute(block, "style").ok()??);
+    let weight = style.value("font-weight");
+    if !weight.eq_ignore_ascii_case("bold") && !numeric_bold_weight(&weight) { return None; }
+    let important = style.important("font-weight");
+    let children: Vec<_> = dom.children(block).ok()?.collect();
+    if !children.iter().all(|&n| editing::is_text(dom, n)) { return None; }
+    style.remove("font-weight");
+    if style.is_empty() { dom.remove_attribute(block, "style").ok()?; }
+    else { dom.set_attribute(block, "style", &style.css_text()).ok()?; }
+    let doc = dom.node_document(block).ok()?;
+    let css = dom.document_data(doc).ok()?.style_with_css;
+    let parent_weight = page.layout().computed_style_value(dom, block, "font-weight");
+    for child in children {
+        let before = crate::range::compare_boundary_points_dom(dom, (child, editing::len(dom, child)), first) <= 0;
+        let after = crate::range::compare_boundary_points_dom(dom, last, (child, 0)) <= 0;
+        if !before && !after { continue; }
+        // The trailing run can use the legacy bold tag when it reproduces
+        // the authored weight. Numeric weights such as 600 or 900 need CSS.
+        let legacy = after && !css && !important && matches!(weight.as_str(), "bold" | "700")
+            && parent_weight == "400";
+        let span = dom.create_element(doc, if legacy { "b" } else { "span" }).ok()?;
+        if !legacy {
+            let mut retained = DeclarationBlock::parse("");
+            retained.set("font-weight", &weight, important)?;
+            dom.set_attribute(span, "style", &retained.css_text()).ok()?;
+        }
+        dom.insert_before(block, span, Some(child)).ok()?;
+        dom.append_child(span, child).ok()?;
+    }
+    Some(())
+}
+
 /// Keep the paragraph and unrelated styling when the selected text is still
 /// bold after removable formatting tags have been taken out.
-fn clear_remaining_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId) -> Option<()> {
+fn clear_remaining_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, first: Point, last: Point) -> Option<()> {
     use pyro_dom::stylo::declarations::DeclarationBlock;
     let parent = dom.parent_element(text).ok()??;
     let layout = page.layout();
@@ -1528,6 +1565,12 @@ fn clear_remaining_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeI
         return Some(());
     }
 
+    if parent != host && editing::is_block(dom, parent) {
+        distribute_block_weight(page, dom, parent, first, last);
+        if !numeric_bold_weight(&layout.computed_style_value(dom, parent, "font-weight")) {
+            return Some(());
+        }
+    }
     let mut parent = parent;
     if parent != host && editing::local(dom, parent) == "span" {
         let mut declarations = DeclarationBlock::parse(dom.get_attribute(parent, "style").ok()?.unwrap_or(""));
@@ -1644,7 +1687,7 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                     }
                 }
                 if input_type == "formatBold" && rich_node(&dom, t) {
-                    clear_remaining_bold(page, &mut dom, owner, t);
+                    clear_remaining_bold(page, &mut dom, owner, t, first, last);
                 }
             }
             texts

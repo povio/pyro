@@ -587,7 +587,7 @@ pub(crate) fn format_typed(
                 }
             }
             if tag == "b" {
-                super::clear_remaining_bold(page, dom, host, typed)?;
+                super::clear_remaining_bold(page, dom, host, typed, (typed, 0), (typed, units))?;
                 continue;
             }
             let parent = dom.parent_element(typed).ok()??;
