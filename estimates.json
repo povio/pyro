@@ -36,56 +36,56 @@
     "encoding": 7,
     "html/infrastructure": 7,
     "fetch/data-urls": 6,
-    "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "FileAPI": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
     "xhr": 2,
-    "IndexedDB": 1,
-    "svg/styling": 1,
+    "html/rendering": 1,
     "quirks": 1,
-    "html/rendering": 1
+    "IndexedDB": 1,
+    "svg/styling": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 191,
+    "macbook_in_scope": 206,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 15,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 181,
+   "distinct_census_pages": 196,
    "owner_reported_unlisted": 0,
-   "selector_union": 427,
-   "owner_estimate_reduction": 246,
-   "of_which_tentative": 200,
+   "selector_union": 454,
+   "owner_estimate_reduction": 258,
+   "of_which_tentative": 205,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 160,
-    "html/semantics": 97,
-    "html/browsers": 42,
+    "html/semantics": 115,
+    "html/browsers": 50,
     "html/syntax": 30,
     "fetch/metadata": 27,
     "html/infrastructure": 13,
     "fetch/fetch-later": 10,
     "fetch/api": 9,
     "IndexedDB": 6,
+    "html/webappapis": 6,
     "fetch/corb": 6,
-    "fetch/security": 5,
-    "html/webappapis": 5,
     "html/dom": 5,
-    "fetch/orb": 2,
+    "fetch/security": 5,
     "html/rendering": 2,
+    "fetch/orb": 2,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/content-type": 1,
-    "fetch/range": 1,
-    "fetch/redirects": 1,
-    "fetch/http-cache": 1,
     "fetch/redirect-navigate": 1,
-    "fetch/images": 1
+    "fetch/range": 1,
+    "fetch/http-cache": 1,
+    "fetch/redirects": 1,
+    "fetch/images": 1,
+    "fetch/content-type": 1
    }
   },
   "queued": {
@@ -1965,7 +1965,7 @@
    "tentative": 0
   },
   "R-HTML-26r": {
-   "state": "reserved",
+   "state": "active",
    "in_scope_pages": 16,
    "out_of_scope_pages": 0,
    "pages": 16,
@@ -2180,6 +2180,13 @@
    "out_of_scope_pages": 0,
    "pages": 0,
    "tentative": 0
+  },
+  "R-HTML-SANDBOX": {
+   "state": "reserved",
+   "in_scope_pages": 27,
+   "out_of_scope_pages": 0,
+   "pages": 27,
+   "tentative": 5
   }
  },
  "implemented_total_estimate": 1272,
