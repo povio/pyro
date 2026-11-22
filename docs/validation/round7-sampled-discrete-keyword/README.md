@@ -1,0 +1,7 @@
+# Studio discrete keyword QA
+
+Studio ran only development candidate `3fcadfa647f9695ea1d5c7b17c1986f43681cc71` once against WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`. Downloaded archive SHA-256 `276df4ef7fa363dfaa0e9f4d3c0d9b83f177f24b2952e420d0d33efe6d24ae1a`; extracted executable SHA-256 `c31c7a3ae94980ea63547c724ffb8c1a0846935f585ae6768cacdc3854a734fb`. All internal checksums verified. The included native test log is from the MacBook build, not a second Studio execution.
+
+All 13 harnesses completed OK, with no restarts or watchdog kills. All eight retained arms and the signed Chrome 158 reference matched the candidate’s 3,303 occurrence keys. Relative to direct parent `c2b2b954f`, 12 failures became signed-matched passes; all other 3,291 statuses held. Height max-content → stretch and width auto → fit-content each recovered the three pre-switch samples (−0.3, 0, 0.3) under both allow-discrete property selections. Later samples, CSS Animations and Web Animations were unchanged. Relative to the original frozen arm: +320/−0. Candidate 2,985 pass, 318 fail; Chrome passes 317 of the remaining failures and fails the other one. No production claim or baseline replay.
+
+Run `python3 compare.py` in this checkout to reproduce `comparison.json` from the raw candidate and pinned historical receipts. The comparison records every change with within-name ordinal and signed status. `SHA256SUMS` is the original build manifest for uncompressed artifacts.
