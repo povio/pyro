@@ -474,6 +474,10 @@ fn construct<'s>(
                 ));
             }
             if r.script_stream.get() {
+                // Checked before the stream moves, so a refused input keeps its body.
+                if fields.mode == "no-cors" {
+                    return Err(no_cors_stream());
+                }
                 // The input's stream moves: the input's body is used from now on.
                 if r.used.replace(true) {
                     return Err(JsError::Type("Failed to construct 'Request': Request body is already used".into()));
@@ -490,7 +494,7 @@ fn construct<'s>(
         body_mime = ct.clone();
     }
     if stream_body.is_some() && fields.mode == "no-cors" {
-        return Err(JsError::Type("Failed to construct 'Request': A no-cors request cannot have a streaming body".into()));
+        return Err(no_cors_stream());
     }
     let headers = HeadersData::from_pairs(headers, false).guard_request(fields.mode == "no-cors");
     let request = wrap(s, new_target, fields, headers, body_bytes, body_mime, signal)?;
@@ -498,6 +502,10 @@ fn construct<'s>(
         adopt_stream(s, request, stream)?;
     }
     Ok(request)
+}
+
+fn no_cors_stream() -> JsError {
+    JsError::Type("Failed to construct 'Request': A no-cors request cannot have a streaming body".into())
 }
 
 /// Makes `stream`, a script's ReadableStream, the body of the Request `request`.
