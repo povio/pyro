@@ -812,7 +812,7 @@ impl FrameHost {
         debug_assert_eq!(child_of_frame_id(&fid.0), Some(id));
         let lid = LoaderId(format!("{:032X}", self.next()));
         let origin = if sandbox.opaque { "null".into() } else { ancestor.origin.clone() };
-        let nav = PageNav::new(self.page, fid.clone(), self.sched.clone(), self.observer.clone());
+        let nav = PageNav::new_child(&self.root_nav, self.page, fid.clone(), self.sched.clone(), self.observer.clone());
         let frame = Frame {
             id: fid.clone(),
             parent: Some(ancestor.id.clone()),

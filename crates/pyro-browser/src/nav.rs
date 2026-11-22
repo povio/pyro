@@ -62,6 +62,69 @@ struct Entry {
     key: u64,
     /// Navigation API state (`JSON.stringify`; `None` = undefined).
     nav_state: Option<String>,
+    /// HTML "step": where the entry sits on its page's joint session history
+    /// ([`JointHistory`]), shared by the entries of all its frames.
+    step: u64,
+}
+
+/// HTML session history of a traversable (a page and its frames): each frame
+/// keeps its own entry list ([`NavState`]), and an entry's `step` places it
+/// on the page's timeline. `history.length` counts the steps of all the
+/// page's frames, a push in any frame clears the forward steps of all of
+/// them, and a traversal moves every frame whose entry at the target step
+/// differs (an iframe's `history.back()` from the top document).
+#[derive(Default)]
+pub(crate) struct JointHistory {
+    /// The last step given out.
+    last_step: Cell<u64>,
+    /// The traversable's current session history step.
+    current: Cell<u64>,
+    /// The navigation states of the page's frames.
+    members: RefCell<Vec<std::rc::Weak<PageNav>>>,
+}
+
+impl JointHistory {
+    /// A push: the step after every other, now the current one, and the
+    /// step it was pushed from.
+    fn begin_push(&self) -> (u64, u64) {
+        let from = self.current.get();
+        let step = self.last_step.get() + 1;
+        self.last_step.set(step);
+        self.current.set(step);
+        (from, step)
+    }
+
+    /// The frames whose documents are fully active (a removed frame's
+    /// entries, or those of a document navigated away from, are gone).
+    fn members(&self) -> Vec<Rc<PageNav>> {
+        let mut members = self.members.borrow_mut();
+        members.retain(|m| m.strong_count() > 0);
+        members.iter().filter_map(std::rc::Weak::upgrade).filter(|m| m.fully_active()).collect()
+    }
+
+    /// The steps of `members`' entries, in order.
+    fn steps(members: &[Rc<PageNav>]) -> Vec<u64> {
+        let mut steps: Vec<u64> = Vec::new();
+        for m in members {
+            steps.extend(m.state.borrow().entries.iter().map(|e| e.step));
+        }
+        steps.sort_unstable();
+        steps.dedup();
+        steps
+    }
+
+    /// HTML "clear the forward session history" after a push from step
+    /// `from` in frame `except` (which dropped its own forward entries).
+    fn prune_forward(&self, except: &PageNav, from: u64) {
+        for m in self.members() {
+            if std::ptr::eq(Rc::as_ptr(&m), except) {
+                continue;
+            }
+            let mut st = m.state.borrow_mut();
+            let keep = st.entries.iter().position(|e| e.step > from).unwrap_or(st.entries.len()).max(st.index + 1);
+            st.entries.truncate(keep);
+        }
+    }
 }
 
 /// A session-history entry as reported to automation clients.
@@ -148,6 +211,8 @@ pub struct PageNav {
     /// the current period and the history updates and navigations counted
     /// in it.
     rate_limit: Cell<(Instant, u32)>,
+    /// The joint session history of the page this frame belongs to.
+    joint: Rc<JointHistory>,
 }
 
 /// What the listeners of a Navigation API `navigate` event decided.
@@ -175,13 +240,37 @@ pub(crate) struct NavigateSource {
 }
 
 impl PageNav {
+    /// The navigation state of a page's top-level frame, with a joint
+    /// session history of its own.
     pub(crate) fn new(
         page: PageId,
         frame_id: FrameId,
         sched: Scheduler<Browser>,
         observer: ObserverCell,
     ) -> Rc<PageNav> {
-        Rc::new(PageNav {
+        Self::with_joint(page, frame_id, sched, observer, Rc::default())
+    }
+
+    /// The navigation state of a child frame of the page whose top-level
+    /// frame's state is `top`: their session histories are joint.
+    pub(crate) fn new_child(
+        top: &PageNav,
+        page: PageId,
+        frame_id: FrameId,
+        sched: Scheduler<Browser>,
+        observer: ObserverCell,
+    ) -> Rc<PageNav> {
+        Self::with_joint(page, frame_id, sched, observer, top.joint.clone())
+    }
+
+    fn with_joint(
+        page: PageId,
+        frame_id: FrameId,
+        sched: Scheduler<Browser>,
+        observer: ObserverCell,
+        joint: Rc<JointHistory>,
+    ) -> Rc<PageNav> {
+        let nav = Rc::new(PageNav {
             page,
             frame_id,
             observer,
@@ -212,15 +301,23 @@ impl PageNav {
             navigation_hooks: RefCell::new(Vec::new()),
             navigation_api_call: Cell::new(false),
             rate_limit: Cell::new((Instant::now(), 0)),
-        })
+            joint,
+        });
+        nav.joint.members.borrow_mut().push(Rc::downgrade(&nav));
+        nav
     }
 
     pub fn url(&self) -> String {
         self.state.borrow().url.clone()
     }
 
+    /// `history.length`: the steps of the page's joint session history.
     pub fn history_length(&self) -> usize {
-        self.state.borrow().entries.len().max(1)
+        let members = self.joint.members();
+        if members.is_empty() {
+            return self.state.borrow().entries.len().max(1);
+        }
+        JointHistory::steps(&members).len().max(1)
     }
 
     /// The session history and the index of the current entry.
@@ -303,9 +400,19 @@ impl PageNav {
             Some(current) if replaces => current.key,
             _ => st.next_entry_id(),
         };
-        let entry = Entry { url: entry_url.to_string(), state: None, doc: st.doc_seq, id, key, nav_state: None };
+        let current_step = st.entries.get(st.index).map_or(self.joint.current.get(), |e| e.step);
+        let mut entry = Entry {
+            url: entry_url.to_string(),
+            state: None,
+            doc: st.doc_seq,
+            id,
+            key,
+            nav_state: None,
+            step: current_step,
+        };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
+        let mut pushed_from = None;
         match history {
             _ if st.entries.is_empty() => {
                 st.initial = url == "about:blank";
@@ -334,6 +441,9 @@ impl PageNav {
                 st.entries[i] = entry;
             }
             HistoryHandling::Push => {
+                let (from, step) = self.joint.begin_push();
+                entry.step = step;
+                pushed_from = Some(from);
                 let i = st.index + 1;
                 st.entries.truncate(i);
                 st.entries.push(entry);
@@ -342,6 +452,9 @@ impl PageNav {
         }
         st.url = url.to_string();
         drop(st);
+        if let Some(from) = pushed_from {
+            self.joint.prune_forward(self, from);
+        }
         *self.document.borrow_mut() = document;
         // The previous document's realms are disposed with it: drop their
         // hooks now, so a frame whose later documents never fire an event
@@ -450,6 +563,7 @@ impl PageNav {
     /// Same-document navigation (pushState/replaceState/fragment).
     fn same_document(&self, url: &str, state: Option<HistoryState>, kind: SameDocumentKind) {
         self.persist_scroll();
+        let mut pushed_from = None;
         {
             let mut st = self.state.borrow_mut();
             st.state_version += 1;
@@ -463,7 +577,8 @@ impl PageNav {
                 Some(e) if kind == SameDocumentKind::Replace => e.key,
                 _ => st.next_entry_id(),
             };
-            let entry = Entry { url: url.to_string(), state, doc, id, key, nav_state };
+            let step = current.map_or(self.joint.current.get(), |e| e.step);
+            let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step };
             st.initial = false;
             if st.entries.is_empty() {
                 st.entries.push(entry);
@@ -471,11 +586,17 @@ impl PageNav {
                 let i = st.index;
                 st.entries[i] = entry;
             } else {
+                let (from, step) = self.joint.begin_push();
+                entry.step = step;
+                pushed_from = Some(from);
                 let i = st.index + 1;
                 st.entries.truncate(i);
                 st.entries.push(entry);
                 st.index = i;
             }
+        }
+        if let Some(from) = pushed_from {
+            self.joint.prune_forward(self, from);
         }
         self.set_url_sync(url);
         // Reported synchronously, like browsers: anything the client observes
@@ -592,6 +713,8 @@ impl PageNav {
         }
     }
 
+    /// A traversal of this frame alone by `delta` of its own entries
+    /// (`navigation.traverseTo()`; 0 reloads).
     fn traverse(&self, delta: i64) {
         let target = {
             let st = self.state.borrow();
@@ -614,60 +737,60 @@ impl PageNav {
         // Traversal is queued as a task, like browsers do.
         let page = self.page;
         let frame_id = self.frame_id.clone();
+        let joint = self.joint.clone();
         self.sched.post(TaskSource::Navigation, move |b| {
-            let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
-            let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
-            // While a traversal to another document is under way, later
-            // traversals are ignored, as in Chrome: of `go(-3); go(-2)` in one
-            // task the first wins (the active entry already belongs to the
-            // next document).
-            if nav.traversal_pending(current_doc) {
+            let step = entry.step;
+            if apply_traversal(b, page, &frame_id, index, entry, current_doc) {
+                joint.current.set(step);
+            }
+        });
+    }
+
+    /// `history.go(delta)` (and back, forward) on any frame of the page: HTML
+    /// "traverse the history by a delta" over the page's joint session
+    /// history. Every frame whose entry at the target step differs from its
+    /// current one traverses to it, in a task.
+    fn traverse_joint(&self, delta: i64) {
+        if delta == 0 {
+            self.traverse(0);
+            return;
+        }
+        let joint = self.joint.clone();
+        let from = joint.current.get();
+        let target = {
+            let members = joint.members();
+            let steps = JointHistory::steps(&members);
+            // The current step, or the last one before it (a step only a
+            // removed frame had).
+            steps.iter().rposition(|s| *s <= from).and_then(|p| {
+                let t = p as i128 + i128::from(delta);
+                (t >= 0 && t < steps.len() as i128).then(|| steps[t as usize])
+            })
+        };
+        let Some(target) = target else { return };
+        self.sched.post(TaskSource::Navigation, move |b| {
+            // A traversal (or push) applied since this one was asked for
+            // wins, as does one still loading another document: of
+            // `go(-3); go(-2)` in one task the first wins, as in Chrome.
+            if joint.current.get() != from {
                 return;
             }
-            if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
-                // Only a same-document traversal can be canceled or intercepted.
-                let same = entry.doc == current_doc;
-                let source = NavigateSource::default();
-                if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source)
-                    == NavigateDecision::Cancel
-                    && same
-                {
-                    return;
-                }
+            let members = joint.members();
+            if members.iter().any(|m| m.traversal_pending(m.state.borrow().doc_seq)) {
+                return;
             }
-            nav.persist_scroll();
-            {
-                let mut state = nav.state.borrow_mut();
-                // Navigation can replace the document, or pushState can replace
-                // a forward entry, while this task waits. Never apply an obsolete
-                // entry or write an index that is no longer in the history list.
-                if state.doc_seq != current_doc || state.entries.get(index) != Some(&entry) {
-                    return;
-                }
-                if state.entries.get(state.index).is_some_and(|e| e.doc != current_doc) {
-                    return;
-                }
-                state.index = index;
-                state.state_version += 1;
-            }
-            if entry.doc == current_doc {
-                let old_url = nav.url();
-                nav.set_url_sync(&entry.url);
-                nav.restore_scroll(&entry);
-                b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
-                nav.navigation_committed("traverse");
-                b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
-            } else {
-                let opts = NavigateOpts {
-                    post: None,
-                    url: entry.url.clone(),
-                    reason: NavigationReason::History,
-                    cdp_request_id: None,
-                    referrer: None,
-                    referrer_policy: None,
+            joint.current.set(target);
+            for nav in members {
+                let change = {
+                    let st = nav.state.borrow();
+                    st.entries
+                        .iter()
+                        .rposition(|e| e.step <= target)
+                        .filter(|i| *i != st.index)
+                        .map(|i| (i, st.entries[i].clone(), st.doc_seq))
                 };
-                if let Err(e) = b.navigate_frame_with_handling(page, opts, HistoryHandling::Traverse) {
-                    b.report_navigation_error(page, &e);
+                if let Some((index, entry, current_doc)) = change {
+                    apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc);
                 }
             }
         });
@@ -1119,6 +1242,75 @@ impl Browser {
     }
 }
 
+/// Makes entry `index` (`entry`) of the frame `frame_id` of `page` its
+/// current one, as the traversal task of document `current_doc` asked:
+/// same-document at once (`popstate`), otherwise by loading it. False when
+/// the frame or its history changed since, or a same-document traversal was
+/// canceled.
+fn apply_traversal(
+    b: &mut Browser,
+    page: PageId,
+    frame_id: &FrameId,
+    index: usize,
+    entry: Entry,
+    current_doc: u64,
+) -> bool {
+    let Some(page) = b.page(page).and_then(|p| p.frames.key(frame_id)) else { return false };
+    let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return false };
+    // While a traversal to another document is under way, later traversals
+    // are ignored, as in Chrome (the active entry already belongs to the next
+    // document).
+    if nav.traversal_pending(current_doc) {
+        return false;
+    }
+    if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
+        // Only a same-document traversal can be canceled or intercepted.
+        let same = entry.doc == current_doc;
+        let source = NavigateSource::default();
+        if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source) == NavigateDecision::Cancel
+            && same
+        {
+            return false;
+        }
+    }
+    nav.persist_scroll();
+    {
+        let mut state = nav.state.borrow_mut();
+        // Navigation can replace the document, or pushState can replace a
+        // forward entry, while this task waits. Never apply an obsolete entry
+        // or write an index that is no longer in the history list.
+        if state.doc_seq != current_doc || state.entries.get(index) != Some(&entry) {
+            return false;
+        }
+        if state.entries.get(state.index).is_some_and(|e| e.doc != current_doc) {
+            return false;
+        }
+        state.index = index;
+        state.state_version += 1;
+    }
+    if entry.doc == current_doc {
+        let old_url = nav.url();
+        nav.set_url_sync(&entry.url);
+        nav.restore_scroll(&entry);
+        b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
+        nav.navigation_committed("traverse");
+        b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
+    } else {
+        let opts = NavigateOpts {
+            post: None,
+            url: entry.url.clone(),
+            reason: NavigationReason::History,
+            cdp_request_id: None,
+            referrer: None,
+            referrer_policy: None,
+        };
+        if let Err(e) = b.navigate_frame_with_handling(page, opts, HistoryHandling::Traverse) {
+            b.report_navigation_error(page, &e);
+        }
+    }
+    true
+}
+
 fn parse(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
     parse_str(nav, &input.to_string()?)
 }
@@ -1427,14 +1619,14 @@ impl JsClass for History {
         def.method("back", 0, |s, n, _a| {
             require_fully_active(n, "back")?;
             if n.rate_limit_allows() {
-                n.traverse(-1);
+                n.traverse_joint(-1);
             }
             Ok(s.undefined())
         });
         def.method("forward", 0, |s, n, _a| {
             require_fully_active(n, "forward")?;
             if n.rate_limit_allows() {
-                n.traverse(1);
+                n.traverse_joint(1);
             }
             Ok(s.undefined())
         });
@@ -1442,7 +1634,7 @@ impl JsClass for History {
             let d = a.get(0).to_number()?;
             require_fully_active(n, "go")?;
             if n.rate_limit_allows() {
-                n.traverse(if d.is_finite() { d.trunc() as i64 } else { 0 });
+                n.traverse_joint(if d.is_finite() { d.trunc() as i64 } else { 0 });
             }
             Ok(s.undefined())
         });
