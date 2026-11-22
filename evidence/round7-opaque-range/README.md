@@ -58,3 +58,16 @@ The candidate added 125 observed named passes, including one neighboring select-
 Seven direct groups matched signed Chrome exactly: primary state/identity, prototype ownership, Web IDL, normalized/nested direct text, form reset, BigInt conversion and textarea default-value replacement. In the two other groups the sole differences are the same current-draft choice for clean input defaultValue: LP collapses prior offsets on a changed relevant value; the signed browser preserves them even when they exceed the new value length.
 
 Thirteen final native checks passed: nine forms value tests, the merged hierarchy/IDL regression, ordinary form reset, form-associated custom element reset and UTF-16 selection behavior on value changes. Independent QA repeated the frozen 39-page corpus on 7d235ed4b, verified both entire ledgers including occurrence keys and strict/lifecycle pages, and reproduced all nine direct-control outputs. The comparison records standalone source revision, tree and executable hashes for the final measurements.
+
+### Clean input defaultValue and range boundaries
+
+The input IDL defaultValue setter reflects the value content attribute. Open HTML PR #11741 explicitly adds full replacement steps when changing that attribute changes a supported control’s clean relevant value. Its full-replacement algorithm uses offset zero, old length and new length, and its range-adjustment rules collapse prior endpoints in the old span to zero. Both of the following direct cases are specified by those proposed steps.
+
+| Clean input case | Candidate | Signed Chrome 158 |
+| --- | --- | --- |
+| Change defaultValue from abcdef to abXYZef, tracking collapsed offsets 0 through 6 | [0,0,0,0,0,0,0] | [0,1,2,3,4,5,6] |
+| Shorten defaultValue from abcdef to ab with range [3,6] | value ab, range [0,0], collapsed | value ab, range [3,6], uncollapsed |
+
+These results are input attribute reflection observations. The separate form.reset control passes in both engines: canceled reset preserves the current value/range, successful reset restores the default and collapses the live changed-value range. The textarea.defaultValue control independently checks the standardized string-replace-all setter: an identical string replaces the Text child (one mutation record) and collapses the clean live range in both engines.
+
+[HTML proposal at the measured head](https://github.com/stephanieyzhang/html/blob/5e7135632eb7d1d09c288b19f78037433d0f950f/source) · [Proposed text-control integration](https://github.com/whatwg/html/pull/11741/files) · [HTML textarea defaultValue](https://html.spec.whatwg.org/multipage/form-elements.html#dom-textarea-defaultvalue)
