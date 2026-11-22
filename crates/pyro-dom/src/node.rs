@@ -169,6 +169,9 @@ pub struct DocumentData {
     /// The language its response's `Content-Language` header gave
     /// (`Dom::set_content_language`): the last fallback of `:lang()`.
     pub(crate) content_language: Option<Box<str>>,
+    /// HTML's pragma-set default language: the last `<meta http-equiv="content-language">`
+    /// processed (inserted into the document); removing that element keeps it.
+    pub(crate) pragma_language: Option<Box<str>>,
 }
 
 #[derive(Debug, Clone)]

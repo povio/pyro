@@ -239,7 +239,10 @@ impl Dom {
         let doc = self.n(idx).owner_doc;
         match &self.n(doc).kind {
             NodeKind::Document(d) => {
-                self.pragma_language(d.head).or_else(|| d.content_language.as_deref()).map(str::to_owned)
+                self.pragma_language(d.head)
+                    .or(d.pragma_language.as_deref())
+                    .or_else(|| d.content_language.as_deref())
+                    .map(str::to_owned)
             }
             _ => None,
         }

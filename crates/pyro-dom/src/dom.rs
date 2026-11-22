@@ -1031,6 +1031,7 @@ impl Dom {
             responsive_embedded: false,
             responsive_embedding_policy: None,
             content_language: None,
+            pragma_language: None,
         };
         let idx = self.alloc(NodeKind::Document(Box::new(data)), NIL);
         // A document owns itself, and is connected.
@@ -1171,6 +1172,21 @@ impl Dom {
             return;
         }
         let Some(e) = n.element() else { return };
+        // HTML "Content language state": the pragma-set default language, kept after the
+        // element is removed.
+        if e.attr_local(&local_name!("http-equiv")).is_some_and(|v| v.trim().eq_ignore_ascii_case("content-language")) {
+            let lang = e
+                .attr_local(&local_name!("content"))
+                .filter(|v| !v.contains(','))
+                .and_then(|v| v.split_ascii_whitespace().next())
+                .map(Box::<str>::from);
+            if let Some(lang) = lang {
+                let doc = n.owner_doc;
+                self.doc_data_mut(doc).pragma_language = Some(lang);
+                self.bump();
+            }
+            return;
+        }
         // HTML "Content security policy state" of a `<meta http-equiv>` child of the head: its
         // policy joins the document's CSP list.
         if e.attr_local(&local_name!("http-equiv")).is_some_and(|v| v.eq_ignore_ascii_case("content-security-policy")) {
