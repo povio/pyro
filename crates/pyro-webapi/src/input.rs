@@ -1049,7 +1049,7 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
         let dom = page.dom.borrow();
         let mut out = Vec::new();
         for n in dom.owned_form_elements(form).unwrap_or_default() {
-            if matches!(local(&dom, n).as_deref(), Some("input" | "select" | "textarea")) {
+            if matches!(local(&dom, n).as_deref(), Some("input" | "select" | "textarea" | "output")) {
                 out.push(n);
                 if local(&dom, n).as_deref() == Some("select") {
                     out.extend(dom.select_options(n).unwrap_or_default());
@@ -1060,6 +1060,11 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
     };
     let mut dom = page.dom.borrow_mut();
     for &c in &controls {
+        // `<output>`'s reset: its text becomes its default value.
+        if local(&dom, c).as_deref() == Some("output") {
+            let _ = dom.reset_output(c);
+            continue;
+        }
         let _ = dom.reset_control(c);
         // A file input's selected files are emptied.
         if dom.input_type(c).ok() == Some(InputType::File) && local(&dom, c).as_deref() == Some("input") {

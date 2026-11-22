@@ -3499,15 +3499,25 @@ simple_class!(HtmlMeterElement, "HTMLMeterElement", HtmlElement, |def| {
 });
 simple_class!(HtmlOutputElement, "HTMLOutputElement", HtmlElement, |def| {
     define_labels(def);
+    define_validation(def);
     reflect_str!(def, "name", "name");
     reflect_tokens!(def, "htmlFor", "for");
     def.getter("form", form_value);
+    def.getter("type", |s, _n| Ok(s.string("output")));
+    def.accessor(
+        "defaultValue",
+        |s, n| Ok(s.string(&n.page().dom.borrow().output_default_value(n.id).js()?)),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_output_default_value(n.id, &arg0).js()
+        },
+    );
     def.accessor(
         "value",
         |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
         |_s, n, v| {
             let arg0 = dom_string(v)?;
-            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+            n.page().dom.borrow_mut().set_output_value(n.id, &arg0).js()
         },
     );
 });
@@ -3549,6 +3559,7 @@ simple_class!(HtmlBaseElement, "HTMLBaseElement", HtmlElement, |def| {
     reflect_str!(def, "target", "target");
 });
 simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {
+    define_validation(def);
     def.getter("form", form_value);
     reflect_url!(def, "data", "data");
     reflect_str!(def, "type", "type");

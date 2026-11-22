@@ -368,6 +368,9 @@ pub struct ControlState {
     /// from (`Some(NIL)`: emptied; `None`: never filled), so an update that
     /// leaves the selected option as it was mutates nothing.
     pub(crate) selectedcontent_option: Option<u32>,
+    /// `<output>`: its "default value override" (`None`: its default value is its descendant
+    /// text content; set while script has set `value`).
+    pub(crate) output_default_override: Option<String>,
 }
 
 /// Atoms of ids and class names: Stylo's, which the cascade and both

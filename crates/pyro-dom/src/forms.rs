@@ -151,6 +151,45 @@ impl Dom {
         }
     }
 
+    /// `<output>`'s `defaultValue`: its default value override, else its descendant text content.
+    pub fn output_default_value(&self, id: NodeId) -> DomResult<String> {
+        match self.control_state(id)?.and_then(|c| c.output_default_override.clone()) {
+            Some(value) => Ok(value),
+            None => Ok(self.text_content(id)?.unwrap_or_default()),
+        }
+    }
+
+    /// Setting `<output>`'s `defaultValue`: without an override it replaces the element's
+    /// children (string replace all), else it becomes the override.
+    pub fn set_output_default_value(&mut self, id: NodeId, value: &str) -> DomResult<()> {
+        if self.control_state(id)?.is_some_and(|c| c.output_default_override.is_some()) {
+            self.control_state_mut(id)?.output_default_override = Some(value.to_owned());
+            return Ok(());
+        }
+        self.set_text_content(id, value)
+    }
+
+    /// Setting `<output>`'s `value`: the default value is kept as the override first, then
+    /// the value replaces the element's children.
+    pub fn set_output_value(&mut self, id: NodeId, value: &str) -> DomResult<()> {
+        if !self.control_state(id)?.is_some_and(|c| c.output_default_override.is_some()) {
+            let current = self.text_content(id)?.unwrap_or_default();
+            self.control_state_mut(id)?.output_default_override = Some(current);
+        }
+        self.set_text_content(id, value)
+    }
+
+    /// `<output>`'s reset algorithm: its children become its default value and the override
+    /// is cleared.
+    pub fn reset_output(&mut self, id: NodeId) -> DomResult<()> {
+        let default = self.output_default_value(id)?;
+        self.set_text_content(id, &default)?;
+        if self.control_state(id)?.is_some_and(|c| c.output_default_override.is_some()) {
+            self.control_state_mut(id)?.output_default_override = None;
+        }
+        Ok(())
+    }
+
     /// Restore default value, checkedness and selectedness while retaining
     /// custom validity. A changed relevant value is a wholesale replacement.
     pub fn reset_control(&mut self, id: NodeId) -> DomResult<()> {
@@ -1983,6 +2022,11 @@ impl Dom {
             return Ok(if self.will_validate(id)? { self.face_validity_idx(i) } else { v });
         }
         let Some(local) = self.html_local(i) else { return Ok(v) };
+        let e = self.n(i).element().unwrap();
+        // Any element with `setCustomValidity` suffers from a custom error, also one that is
+        // never a candidate (`<output>`, `<object>`, `<fieldset>`, a hidden input).
+        v.custom_error =
+            e.control.as_ref().is_some_and(|c| c.custom_validity.as_deref().is_some_and(|m| !m.is_empty()));
         let listed = match &**local {
             "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
             "select" | "textarea" => true,
@@ -1992,11 +2036,8 @@ impl Dom {
         if !listed {
             return Ok(v);
         }
-        let e = self.n(i).element().unwrap();
         let mutable = !self.is_disabled_idx(i) && !(e.attr_local(&local_name!("readonly")).is_some() && &**local != "select");
         let local = self.html_local(i).map(|l| l.to_string()).unwrap_or_default();
-        v.custom_error =
-            e.control.as_ref().is_some_and(|c| c.custom_validity.as_deref().is_some_and(|m| !m.is_empty()));
         let required = mutable && e.attr_local(&local_name!("required")).is_some();
         let value = self.value(id)?;
         match local.as_str() {

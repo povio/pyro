@@ -3413,7 +3413,13 @@ impl Dom {
                 let attrs = e.attr_state();
                 let control = e.control.as_ref().map(|c| {
                     // Clone steps copy value/checkedness for input elements.
-                    Box::new(ControlState { selection: (0, 0), selectedcontent_option: None, ..(**c).clone() })
+                    Box::new(ControlState {
+                        selection: (0, 0),
+                        selectedcontent_option: None,
+                        // `<output>` has no cloning steps: a clone's default value is its text.
+                        output_default_override: None,
+                        ..(**c).clone()
+                    })
                 });
                 // HTML script cloning steps: "already started" is copied.
                 let started = e.flags & crate::node::element_flags::SCRIPT_ALREADY_STARTED;
