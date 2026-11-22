@@ -1,0 +1,1 @@
+{"audiobuffersource-channels.html":{"status":0,"tests":[["validate .buffer: Validation of AudioBuffer in .buffer attribute setter",1,"assert_throws_dom: source.buffer = buffer again function \"() => {\n        source.buffer = buffer;\n      }\" did not throw"]]},"audiobuffersource-null.html":{"status":0,"tests":[["ABSN with null buffer",0]]}}
