@@ -2243,9 +2243,9 @@ impl StyleEngine {
         Some(crate::gecko_only::value(dom, &rules, el, name, &inline))
     }
 
-    /// Resolve an SVG DOM font-metric unit from the element's current computed
+    /// Resolve an SVG DOM font or viewport unit from the element's current computed
     /// font and writing mode. A detached SVGLength uses the initial style.
-    pub fn svg_font_unit(&self, dom: &Dom, el: Option<NodeId>, unit: &str) -> f64 {
+    pub fn svg_relative_unit(&self, dom: &Dom, el: Option<NodeId>, unit: &str) -> f64 {
         use style::context::TreeCountingCaches;
         use style::dom::DummyElementContext;
         use style::properties::StyleBuilder;
@@ -2254,14 +2254,7 @@ impl StyleEngine {
         use style::values::computed::Context;
         use style::values::specified::length::{FontBaseSize, LengthUnit, LineHeightBase, NoCalcLength};
 
-        let unit = match unit {
-            "ex" => LengthUnit::Ex,
-            "ch" => LengthUnit::Ch,
-            "cap" => LengthUnit::Cap,
-            "ic" => LengthUnit::Ic,
-            "lh" => LengthUnit::Lh,
-            _ => unreachable!("expected an SVG font-metric unit"),
-        };
+        let unit = LengthUnit::from_str(unit).expect("validated SVG relative length unit");
         let computed = el.and_then(|el| self.stylo_style(dom, el));
         let device = self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport));
         let style = computed.as_deref().unwrap_or_else(|| device.default_computed_values());

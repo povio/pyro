@@ -2125,7 +2125,7 @@ impl SvgLengthData {
             3 => context.map_or(16.0, |(id, _)| {
                 page.layout().style().computed_font_size(&page.dom.borrow(), Some(id))
             }),
-            4 | 17..=20 => page.layout().style().svg_font_unit(
+            4 | 17..=20 => page.layout().style().svg_relative_unit(
                 &page.dom.borrow(), context.map(|(id, _)| id), LENGTH_UNITS[usize::from(kind)],
             ),
             6 => 96.0 / 2.54,
@@ -2151,14 +2151,17 @@ impl SvgLengthData {
                 }
             }
             16 => 96.0 / 2.54 / 40.0,
-            21 => {
+            21..=25 => {
                 let dom = page.dom.borrow();
                 let root = context.and_then(|(id, _)| dom.node_document(id).ok())
                     .and_then(|doc| dom.document_element(doc).ok().flatten());
-                page.layout().style().svg_font_unit(&dom, root, "lh")
+                // Root font-relative units use the corresponding metric of
+                // the root element, or the initial font for a detached item.
+                page.layout().style().svg_relative_unit(&dom, root, &LENGTH_UNITS[usize::from(kind)][1..])
             }
-            _ => unreachable!("unrecognized SVG length unit"),
-
+            _ => page.layout().style().svg_relative_unit(
+                &page.dom.borrow(), context.map(|(id, _)| id), LENGTH_UNITS[usize::from(kind)],
+            ),
         }
     }
     /// One percent of the nearest `svg` ancestor's viewport: its `viewBox`, else its absolute

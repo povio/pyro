@@ -235,8 +235,12 @@ pub type LengthLists = ListStorage<(f64, u16)>;
 
 /// Unit suffixes indexed by the internal kind. Kinds 1 through 10 are
 /// SVGLength's public constants; the remaining units report UNKNOWN.
-pub const LENGTH_UNITS: [&str; 21] =
-    ["", "", "%", "em", "ex", "px", "cm", "mm", "in", "pt", "pc", "rem", "vw", "vh", "vmin", "vmax", "q", "ch", "cap", "ic", "lh"];
+pub const LENGTH_UNITS: &[&str] = &[
+    "", "", "%", "em", "ex", "px", "cm", "mm", "in", "pt", "pc", "rem", "vw", "vh", "vmin", "vmax", "q",
+    "ch", "cap", "ic", "lh", "rlh", "rex", "rch", "rcap", "ric", "vi", "vb",
+    "svw", "svh", "svmin", "svmax", "svi", "svb", "lvw", "lvh", "lvmin", "lvmax", "lvi", "lvb",
+    "dvw", "dvh", "dvmin", "dvmax", "dvi", "dvb",
+];
 
 impl LengthItem {
     /// The current list supplies the viewport, direction and font for unit
