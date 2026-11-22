@@ -2031,8 +2031,10 @@ impl Dom {
         let doc = self.node_document(root)?;
         let candidate = self.focused(doc)?.and_then(|f| self.retarget_node(f, root));
         let in_tree = candidate.filter(|&c| self.root_node(c, false).is_ok_and(|r| r == root));
+        // Nothing focused: the body, or null without one (as Chromium, which does not fall back to
+        // the document element: WPT html/editing/focus focusing-disconnected-noop).
         if root == doc {
-            return Ok(in_tree.or(self.body(doc)?).or(self.document_element(doc)?));
+            return Ok(in_tree.or(self.body(doc)?));
         }
         Ok(in_tree)
     }
