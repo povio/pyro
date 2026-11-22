@@ -1,0 +1,830 @@
+{
+  "base": {
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/designmode-plaintext/base",
+    "jobs": 1,
+    "server": "wptserve",
+    "testdriver": true,
+    "restarts": 0,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "pages": [
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?nowrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 147,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 132,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 132,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 132,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 32,
+        "total": 50
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 32,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 32,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 32,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/nested-with-contenteditable-true.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 24,
+        "total": 56
+      },
+      {
+        "url": "editing/plaintext-only/plaintext-only-in-designMode.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 3
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/run/formatblock.html?4001-5000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 931,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserthtml.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1482,
+        "total": 1565
+      },
+      {
+        "url": "editing/run/inserttext.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 964,
+        "total": 1000
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 636,
+        "total": 688
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 642,
+        "total": 688
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 646,
+        "total": 688
+      }
+    ]
+  },
+  "head": {
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/designmode-plaintext/pyro",
+    "jobs": 1,
+    "server": "wptserve",
+    "testdriver": true,
+    "restarts": 0,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "pages": [
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?nowrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 136,
+        "total": 138
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 147,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 132,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 132,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 132,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 32,
+        "total": 50
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 32,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 32,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 32,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/nested-with-contenteditable-true.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 24,
+        "total": 56
+      },
+      {
+        "url": "editing/plaintext-only/plaintext-only-in-designMode.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 3
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/run/formatblock.html?4001-5000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 931,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserthtml.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1482,
+        "total": 1565
+      },
+      {
+        "url": "editing/run/inserttext.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 964,
+        "total": 1000
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 636,
+        "total": 688
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 642,
+        "total": 688
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 646,
+        "total": 688
+      }
+    ]
+  },
+  "chrome": {
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/launch-158",
+    "jobs": 1,
+    "server": "wptserve",
+    "testdriver": true,
+    "restarts": 0,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "pages": [
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?nowrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 138,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 126,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 126,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 126,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 126,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 126,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 126,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 126,
+        "total": 138
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 126,
+        "total": 138
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 8,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 13,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 12,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertHTML.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 13,
+        "total": 20
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 93,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 129,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 129,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 129,
+        "total": 147
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 10,
+        "total": 10
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 24,
+        "total": 50
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 34,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 54
+      },
+      {
+        "url": "editing/plaintext-only/nested-with-contenteditable-true.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 56
+      },
+      {
+        "url": "editing/plaintext-only/plaintext-only-in-designMode.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 3
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/run/formatblock.html?4001-5000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 935,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserthtml.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1504,
+        "total": 1565
+      },
+      {
+        "url": "editing/run/inserttext.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 985,
+        "total": 1000
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 632,
+        "total": 688
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 642,
+        "total": 688
+      },
+      {
+        "url": "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 648,
+        "total": 688
+      }
+    ]
+  }
+}

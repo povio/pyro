@@ -1,0 +1,202 @@
+{
+  "previous-provenance": {
+    "guard-history-001": {
+      "configSHA256": "dad39e75e758f666e78a858fc338785173c4939985365e2522b44cd26cab69db",
+      "logSHA256": "39ec9587d8dbeec412cb45b31bff880d81fd09115d82da0da6ccf085ad4094e5",
+      "ports": {
+        "dns": [],
+        "h2": [
+          53326
+        ],
+        "http": [
+          53316,
+          53317
+        ],
+        "http-local": [
+          53320
+        ],
+        "http-public": [
+          53321
+        ],
+        "https": [
+          53318,
+          53319
+        ],
+        "https-local": [
+          53322
+        ],
+        "https-public": [
+          53323
+        ],
+        "webtransport-h3": [],
+        "ws": [
+          53324
+        ],
+        "wss": [
+          53325
+        ]
+      },
+      "receiptSHA256": "c47a3518ba0c0a3d3393a95de39130f7b1ad9eb9a4bb3cacfefe4eb8bf3d8abf",
+      "restarts": 0,
+      "selectionSHA256": "43b0bc9207cec8580af6f62179cf468a5d837deaf1cf60daee334359138208b0",
+      "watchdogKills": 0
+    },
+    "guard-main-004": {
+      "configSHA256": "3e0e5aa2c1773004ed778c53e8f365cd212ce50185e5a8c61c4465fe290388b1",
+      "logSHA256": "d5be705f7575a6bc7f1de57ff6650fcd79230d39bc8e9ccc7604a7961d4a87e0",
+      "ports": {
+        "dns": [],
+        "h2": [
+          65306
+        ],
+        "http": [
+          65296,
+          65297
+        ],
+        "http-local": [
+          65300
+        ],
+        "http-public": [
+          65301
+        ],
+        "https": [
+          65298,
+          65299
+        ],
+        "https-local": [
+          65302
+        ],
+        "https-public": [
+          65303
+        ],
+        "webtransport-h3": [],
+        "ws": [
+          65304
+        ],
+        "wss": [
+          65305
+        ]
+      },
+      "receiptSHA256": "67ad1cd3acf4729ff984e68df6790766a7afc5bd73fd9410e5c9b6e89505e565",
+      "restarts": 0,
+      "selectionSHA256": "5297bcba841ab12616a14653b7ca9d73a905582315e1d62ae3c39ce0521cd2c7",
+      "watchdogKills": 0
+    }
+  },
+  "current-provenance": {
+    "guard-history-001": {
+      "chromeReceiptKeys": [
+        "guard-history-001"
+      ],
+      "count": 55,
+      "historicalDemonstration": false,
+      "index": 2,
+      "key": "guard-history-001",
+      "launchRecordSHA256": "8a2da8cb1a0cbcf1c607e9274576c2543f6e594d2596c5ec53277c9c2e6c4d93",
+      "logSHA256": "0f65d1e73d14614709885205934842490822c729ddc765c9086cb82cbd6a49e2",
+      "machine": {
+        "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-local/census-c3372ad21/pyro",
+        "binarySHA256": "0f7889deca17cb4f8ff7bfd7756903728eec127a340b1b7a88ec6af6c2049bc2",
+        "buildEnd": "Sun Nov 22 02:29:42 UTC 2026",
+        "buildSeconds": 236,
+        "buildStart": "Sun Nov 22 02:25:44 UTC 2026",
+        "effectiveManifestSHA256": "4a3badc8428aa0743c1747b1aecf70082d30e1a69cd9e6a17d8ce200eeb6a63e",
+        "head": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+        "host": "Urbans-MacBook-Pro.local",
+        "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+        "jscSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+        "machine": "local",
+        "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+        "originalTasksSHA256": "db88ec59be1a3dd7395c14d4e6c08d5d1d88918d38959811c242d76a4437eadd",
+        "planDirectory": "plans-v2",
+        "platform": "macOS-27.2.1-arm64-arm-64bit",
+        "profile": "wptiter release-fast no-LTO 16-codegen-units incremental render",
+        "runnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+        "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)\nbinary: rustc\ncommit-hash: 0ef1bc386059596dada8fb65b50425aab2ea637a\ncommit-date: 2026-11-09\nhost: aarch64-apple-darwin\nrelease: 1.100.0\nLLVM version: 23.1.5\n",
+        "tree": "c4d45b20c3ea5429596bd4e7b7f2ca33c32065db",
+        "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+      },
+      "machineProvenanceSHA256": "c15aca38c11c7821b82dc99fc7a73be3211c72a74a999e088a70b49f69b60a23",
+      "owner": "local",
+      "portProofSHA256": "b5e3a2410e2cc77da6e3dca1c138df2946334bb297fdc2a811efeced51cdf574",
+      "previousReceiptKeys": [
+        "guard-history-001"
+      ],
+      "receiptSHA256": "43d4257fc3fa89cf044cd5d6003c067b9bb74c02e1a53dcce82ee0cf7951510e",
+      "restarts": 0,
+      "selectionSHA256": "43b0bc9207cec8580af6f62179cf468a5d837deaf1cf60daee334359138208b0",
+      "serverConfigSHA256": "ac601393b803d407f24ef7a2833db468ca31549e5e73141cf4322951797bf7fb",
+      "transportGzipSHA256": null,
+      "wallMs": 8834,
+      "watchdogKills": 0
+    },
+    "guard-main-004": {
+      "chromeReceiptKeys": [
+        "guard-main-004"
+      ],
+      "count": 91,
+      "historicalDemonstration": false,
+      "index": 8,
+      "key": "guard-main-004",
+      "launchRecordSHA256": "6286b852a017adb997f43dc6df104df11d6202956c0f3db2e23c12e380f89127",
+      "logSHA256": "42fdd79b2ad4b3443d3ac5563b75fbb6afdcfe63108b0d986b1539af711bc4a0",
+      "machine": {
+        "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-local/census-c3372ad21/pyro",
+        "binarySHA256": "0f7889deca17cb4f8ff7bfd7756903728eec127a340b1b7a88ec6af6c2049bc2",
+        "buildEnd": "Sun Nov 22 02:29:42 UTC 2026",
+        "buildSeconds": 236,
+        "buildStart": "Sun Nov 22 02:25:44 UTC 2026",
+        "effectiveManifestSHA256": "4a3badc8428aa0743c1747b1aecf70082d30e1a69cd9e6a17d8ce200eeb6a63e",
+        "head": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+        "host": "Urbans-MacBook-Pro.local",
+        "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+        "jscSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+        "machine": "local",
+        "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+        "originalTasksSHA256": "db88ec59be1a3dd7395c14d4e6c08d5d1d88918d38959811c242d76a4437eadd",
+        "planDirectory": "plans-v2",
+        "platform": "macOS-27.2.1-arm64-arm-64bit",
+        "profile": "wptiter release-fast no-LTO 16-codegen-units incremental render",
+        "runnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+        "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)\nbinary: rustc\ncommit-hash: 0ef1bc386059596dada8fb65b50425aab2ea637a\ncommit-date: 2026-11-09\nhost: aarch64-apple-darwin\nrelease: 1.100.0\nLLVM version: 23.1.5\n",
+        "tree": "c4d45b20c3ea5429596bd4e7b7f2ca33c32065db",
+        "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+      },
+      "machineProvenanceSHA256": "c15aca38c11c7821b82dc99fc7a73be3211c72a74a999e088a70b49f69b60a23",
+      "owner": "local",
+      "portProofSHA256": "7fe355cb834b2367242f9127a131cce2e2bb345c9b7f6326c06b6491e58adb5e",
+      "previousReceiptKeys": [
+        "guard-main-004"
+      ],
+      "receiptSHA256": "71e7222723e68ff1b99995eba1d5ee6fc9e16f1fac9ea5871992304531326cfa",
+      "restarts": 0,
+      "selectionSHA256": "5297bcba841ab12616a14653b7ca9d73a905582315e1d62ae3c39ce0521cd2c7",
+      "serverConfigSHA256": "04d8c6c6ab78b4b9c1f1ac307adf2a20b85364bf77cf0cad73333abfc40e3121",
+      "transportGzipSHA256": null,
+      "wallMs": 46710,
+      "watchdogKills": 0
+    }
+  },
+  "chrome-provenance": {
+    "guard-history-001": {
+      "configurationSHA256": "1e30a01904c0d7355b2be96d8a387c8225272bc54149675252e9e5a9fa0ec383",
+      "jobs": 4,
+      "launchCount": 1,
+      "logSHA256": "bb3b63ead2d9a09bca9980e2400074ed40918053d26053cb3a3e27379e86dc27",
+      "rawSHA256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+      "restarts": 0,
+      "selectionSHA256": "43b0bc9207cec8580af6f62179cf468a5d837deaf1cf60daee334359138208b0",
+      "watchdogKills": 0
+    },
+    "guard-main-004": {
+      "configurationSHA256": "38065e8ae9f4e6072dd3f3458618b3bf650f0cfb3888e0bb1b142fe61140b570",
+      "jobs": 4,
+      "launchCount": 1,
+      "logSHA256": "1583fac7feae3720b45bf39afff7f8ef810f56aa4f0e7fbdab338e49011372f8",
+      "rawSHA256": "e24b33a657f83ef43ba54917b782f0a06129a706514c026e5c46dd2d689012ce",
+      "restarts": 0,
+      "selectionSHA256": "5297bcba841ab12616a14653b7ca9d73a905582315e1d62ae3c39ce0521cd2c7",
+      "watchdogKills": 0
+    }
+  }
+}
