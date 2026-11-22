@@ -36,15 +36,15 @@
     "encoding": 7,
     "html/infrastructure": 7,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
     "quirks": 1,
-    "IndexedDB": 1,
     "svg/styling": 1,
+    "IndexedDB": 1,
     "html/rendering": 1
    }
   },
@@ -74,16 +74,16 @@
     "fetch/api": 9,
     "IndexedDB": 6,
     "html/webappapis": 5,
-    "fetch/security": 5,
     "html/dom": 5,
-    "html/rendering": 2,
+    "fetch/security": 5,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/redirects": 1,
-    "fetch/http-cache": 1,
+    "html/rendering": 2,
     "fetch/images": 1,
-    "fetch/range": 1,
     "fetch/content-type": 1,
-    "fetch/redirect-navigate": 1
+    "fetch/http-cache": 1,
+    "fetch/redirect-navigate": 1,
+    "fetch/redirects": 1,
+    "fetch/range": 1
    }
   },
   "queued": {
@@ -108,9 +108,9 @@
     "fetch/corb": 6,
     "html/interaction": 5,
     "svg/path": 4,
+    "html/browsers": 3,
     "workers": 3,
     "html/semantics": 3,
-    "html/browsers": 3,
     "fetch/orb": 2,
     "dom/nodes": 1
    }
@@ -1841,9 +1841,16 @@
   },
   "R-HTML-19": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 7,
+   "in_scope_pages": 4,
    "out_of_scope_pages": 0,
-   "pages": 7,
+   "pages": 4,
+   "tentative": 0
+  },
+  "R-HTML-19a": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
    "tentative": 0
   },
   "R-HTML-20": {
