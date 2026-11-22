@@ -926,6 +926,7 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
                     let Some(point) = typing_point(page, &dom, host, caret) else { return };
                     let point = if index == 0 && !keep_link { link_typing_point(page, &dom, host, point) } else { point };
                     whitespace::consume_padding_lf(page, &mut dom, host, point);
+                    let point = whitespace::trim_leading_space_for_typing(page, &mut dom, point);
                     let inserted_end = insert_at_point(&mut dom, point, part, true);
                     whitespace::inserted(page, &mut dom, host, inserted_end, part);
                     caret = crate::edit_commands::inline_value::format_typed(

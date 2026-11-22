@@ -296,6 +296,22 @@ pub(super) fn prepare_paragraph_split(
     Some(((node, begin + before as u32), None))
 }
 
+/// Typing at the first visible position replaces the collapsed leading
+/// spaces. This also applies when the caret was placed by Selection API.
+pub(super) fn trim_leading_space_for_typing(page: &PageDom, dom: &mut Dom, caret: Point) -> Point {
+    let (node, offset) = caret;
+    let Ok(text) = dom.char_data(node) else { return caret };
+    let lead = text.len() - text.trim_start_matches(' ').len();
+    if lead == 0 || lead == text.len() || offset as usize > lead { return caret; }
+    let Some(parent) = dom.parent_element(node).ok().flatten() else { return caret };
+    if dom.child_count(parent).ok() != Some(1) || !matches!(editing::local(dom, parent).as_str(), "p" | "div")
+        || page.layout().computed_style_value(dom, parent, "display") != "block" || !collapses(page, dom, node)
+    {
+        return caret;
+    }
+    if dom.replace_data(node, 0, lead as u32, "").is_ok() { (node, 0) } else { caret }
+}
+
 fn wraps(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     let Some(el) = dom.parent_element(node).ok().flatten() else {
         return false;
