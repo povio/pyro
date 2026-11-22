@@ -2691,6 +2691,10 @@ impl Browser {
         if let Some(load) = &mut state.load {
             load.dcl_fired = false;
             load.load_fired = false;
+            // HTML "abort" the document: the old document's deferred scripts
+            // never run (they would run in the new one, and fire its
+            // DOMContentLoaded before close()).
+            load.deferred.clear();
         }
         drop(state);
         self.sync_root(page.page);

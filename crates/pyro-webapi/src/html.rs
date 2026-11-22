@@ -4659,9 +4659,10 @@ fn html_document(page: &PageDom, doc: NodeId) -> JsResult<()> {
 fn network_parser_active(page: &PageDom, doc: NodeId) -> bool {
     // An about:blank document (a new iframe's initial one, still "loading"
     // until its load task) has no network parser: it can be opened at once,
-    // as in Chrome.
+    // as in Chrome. Once the network parser stopped ("interactive": from
+    // DOMContentLoaded until load) the document can be opened too.
     !page.script_parser_active.get()
-        && page.ready_state(doc) != "complete"
+        && page.ready_state(doc) == "loading"
         && !page.dom.borrow().document_data(doc).is_ok_and(|d| &*d.url == "about:blank")
 }
 
