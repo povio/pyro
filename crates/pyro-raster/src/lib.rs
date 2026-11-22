@@ -1,6 +1,7 @@
 pub mod capture;
 mod gif;
 mod icc;
+pub use icc::to_srgb as apply_icc_to_srgb;
 mod webp;
 
 use image::{metadata::Orientation, ImageDecoder, ImageError, ImageResult, Limits};
@@ -52,7 +53,7 @@ pub fn with_test_budget<T>(bytes: usize, run: impl FnOnce() -> T) -> (T, usize) 
 }
 
 pub fn decode_jpeg(bytes: &[u8]) -> ImageResult<(image::DynamicImage, Orientation)> {
-    decode_jpeg_with_budget(bytes, usize::MAX)
+    decode_jpeg_with_budget(bytes, usize::MAX, true)
 }
 
 pub fn jpeg_geometry(bytes: &[u8]) -> ImageResult<(u32, u32, u8)> {
@@ -79,7 +80,9 @@ pub fn unturn(orientation: u8, width: u32, height: u32) -> [f64; 6] {
     }
 }
 
-fn decode_jpeg_with_budget(bytes: &[u8], available: usize) -> ImageResult<(image::DynamicImage, Orientation)> {
+/// Decode stored JPEG pixels within the caller's scratch budget. Orientation
+/// is returned separately; color conversion can be disabled by WebCodecs.
+pub fn decode_jpeg_with_budget(bytes: &[u8], available: usize, color_convert: bool) -> ImageResult<(image::DynamicImage, Orientation)> {
     use libjpeg_turbo_rs::{DecodeLimits, Decoder, PixelFormat};
     let limits = DecodeLimits { max_memory: Some((available as u64).min(Limits::default().max_alloc.unwrap_or(u64::MAX))), ..Default::default() };
     let error = |err| ImageError::Decoding(image::error::DecodingError::new(image::ImageFormat::Jpeg.into(), err));
@@ -100,8 +103,10 @@ fn decode_jpeg_with_budget(bytes: &[u8], available: usize) -> ImageResult<(image
     let orientation = decoded.exif_orientation().and_then(Orientation::from_exif).unwrap_or(Orientation::NoTransforms);
     let mut pixels =
         image::RgbaImage::from_raw(decoded.width as u32, decoded.height as u32, decoded.data).ok_or_else(limit)?;
-    if let Some(profile) = decoded.icc_profile {
-        icc::to_srgb(&profile, &mut pixels);
+    if color_convert {
+        if let Some(profile) = decoded.icc_profile {
+            icc::to_srgb(&profile, &mut pixels);
+        }
     }
     Ok((pixels.into(), orientation))
 }
@@ -253,7 +258,7 @@ impl PageRasters {
 fn decode_reserved(format: image::ImageFormat, bytes: &[u8], charge: Reservation, scratch: &Reservation) -> ImageResult<Raster> {
     let available = charge.1;
     let (mut image, profile, orientation) = if bytes.starts_with(&[0xff, 0xd8]) {
-        let (image, orientation) = decode_jpeg_with_budget(bytes, available + scratch.1)?;
+        let (image, orientation) = decode_jpeg_with_budget(bytes, available + scratch.1, true)?;
         if rgba_bytes(image.width().into(), image.height().into())? != available { return Err(limit()); }
         (image, None, orientation)
     } else {
