@@ -154,8 +154,9 @@ fn evaluate<'s>(
     match ws.load_module_graph(source, url) {
         // Loaded (every import fetched, the graph parsed): link and run it.
         Ok(Some(loading)) => {
+            let loaded = loaded_or_threw(&ws, loading)?;
             let url = url.to_owned();
-            settle.when(s, &ws, loading, move |ws, _| Some(run_module(ws, &url)))?
+            settle.when(s, &ws, loaded, move |ws, _| Some(run_module(ws, &url)))?
         }
         // An engine without module graph phases (JavaScriptCore without patch 0037): one promise for
         // the graph's load and its evaluation, which cannot tell an evaluation error from a failed
@@ -176,7 +177,18 @@ fn evaluate<'s>(
 /// reported rather than rejecting it. (Chrome 158 and WPT worklets/resources/import-tests.js:
 /// "Importing a script which throws should still resolve the given promise".)
 fn run_module<'w>(ws: &Scope<'w>, url: &str) -> JsResult<Value<'w>> {
-    let evaluation = ws.link_and_evaluate_module(url)?;
+    let evaluation = match ws.link_and_evaluate_module(url) {
+        Ok(evaluation) => evaluation,
+        // JavaScriptCore throws the [[EvaluationError]] of a graph without top-level await
+        // synchronously (JSModuleLoader::linkAndEvaluateModule rethrows the entry's error), also when
+        // a module of the graph threw before: the module ran, so report it and fulfill.
+        Err(pyro_js::JsError::Thrown(e)) if !is_link_error(ws, e.get(ws)) => {
+            ws.note_module_evaluation_error(e.get(ws));
+            ws.report_exception(&pyro_js::JsError::Thrown(e));
+            return Ok(ws.undefined());
+        }
+        Err(e) => return Err(e),
+    };
     let deferred = Rc::new(ws.deferred()?);
     let promise = deferred.promise.get(ws);
     let (ran, threw) = (deferred.clone(), deferred);
@@ -186,8 +198,44 @@ fn run_module<'w>(ws: &Scope<'w>, url: &str) -> JsResult<Value<'w>> {
             let _ = ran.resolve(ws, ws.undefined());
         },
         move |ws, error| {
+            ws.note_module_evaluation_error(error);
             ws.report_exception(&pyro_js::JsError::thrown(Persistent::new(ws, error)));
             let _ = threw.resolve(ws, ws.undefined());
+        },
+    )?;
+    Ok(promise)
+}
+
+/// Whether `error`, which linking and evaluating a graph threw, failed its link rather than its
+/// evaluation: a `SyntaxError` (an unresolvable or ambiguous import) that is no module's recorded
+/// evaluation error. A heuristic, as `module_graph_has_script` in pyro-browser's loader: a module
+/// that throws a `SyntaxError` of its own reads as a link error.
+fn is_link_error(ws: &Scope<'_>, error: Value<'_>) -> bool {
+    let Some(object) = error.as_object() else { return false };
+    !ws.is_module_evaluation_error(error)
+        && object.get_atom("name").ok().and_then(|n| n.as_string()).as_deref() == Some("SyntaxError")
+}
+
+/// `loading`, a graph load of the worklet realm `ws`, as a promise of `ws` that fulfills when it
+/// fulfills and also when it rejects with a module's recorded evaluation error: JavaScriptCore
+/// rejects a load that reaches a module whose evaluation threw (JSModuleLoader::loadModule), but
+/// that graph did load; `run_module` then reports the error again, as HTML's rerun does. Any other
+/// rejection (a failed fetch, a parse error) rejects it.
+fn loaded_or_threw<'w>(ws: &Scope<'w>, loading: Value<'_>) -> JsResult<Value<'w>> {
+    let deferred = Rc::new(ws.deferred()?);
+    let promise = deferred.promise.get(ws);
+    let (loaded, failed) = (deferred.clone(), deferred);
+    ws.then(
+        loading,
+        move |ws, value| {
+            let _ = loaded.resolve(ws, value);
+        },
+        move |ws, error| {
+            let _ = if ws.is_module_evaluation_error(error) {
+                failed.resolve(ws, ws.undefined())
+            } else {
+                failed.reject(ws, error)
+            };
         },
     )?;
     Ok(promise)
@@ -210,10 +258,12 @@ fn await_graph<'s>(s: &Scope<'s>, page: &Rc<PageDom>, url: &str) -> JsResult<Val
     let deferred = s.deferred()?;
     let promise = deferred.promise.get(s);
     let settle = Settle::new(s, deferred);
-    // Loaded: link and evaluate it (a no-op for a module that already ran), whose promise ends it;
-    // an evaluation error (also one the module threw before) is reported and fulfills it.
+    // Loaded (or reached a module that threw before): link and evaluate it (a no-op for a module that
+    // already ran), whose promise ends it; an evaluation error (also one a module threw before, which
+    // JavaScriptCore throws again) is reported and fulfills it.
+    let loaded = loaded_or_threw(&ws, loading)?;
     let url = url.to_owned();
-    settle.when(s, &ws, loading, move |ws, _| Some(run_module(ws, &url)))?;
+    settle.when(s, &ws, loaded, move |ws, _| Some(run_module(ws, &url)))?;
     Ok(promise)
 }
 
