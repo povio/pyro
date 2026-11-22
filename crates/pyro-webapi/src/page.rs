@@ -278,6 +278,9 @@ pub struct PageDom {
     /// Named popups this document opened (`window.open(url, name)`): a
     /// later open with the same name reuses the popup while it is open.
     pub(crate) popups: RefCell<Vec<(String, Rc<crate::popup::PopupState>)>>,
+    /// Messages this document's scripts posted (`postMessage` to any window) whose delivery task
+    /// has not run yet: its `load` waits for them, as HTML queues `load` as a task after them.
+    pub(crate) outgoing_messages: std::cell::Cell<u32>,
     /// `URL.createObjectURL` store: blob URL -> (bytes, type). Owned by the
     /// creating document; revocation, document replacement and disposal drop
     /// the entries (and their bytes).
@@ -1041,6 +1044,7 @@ impl PageDom {
             session_storage: RefCell::new(Default::default()),
             opaque_storage: Default::default(),
             popups: RefCell::new(Vec::new()),
+            outgoing_messages: std::cell::Cell::new(0),
             blob_urls: RefCell::new(FxHashMap::default()),
             referrer: Default::default(),
             last_modified: std::cell::Cell::new(None),
@@ -2698,6 +2702,12 @@ impl PageDom {
         if let Some(h) = self.hooks() {
             h.navigate(req);
         }
+    }
+    /// A message this document posted is still to be delivered: its `load` waits (HTML queues
+    /// the `load` task after the message tasks its parsing queued; the embedder fires `load` at a
+    /// checkpoint, after them only when it waits for them).
+    pub fn messages_delay_load(&self) -> bool {
+        self.outgoing_messages.get() > 0
     }
     pub(crate) fn popup_command(&self, popup: Rc<crate::popup::PopupState>, command: crate::popup::PopupCommand) {
         if let Some(h) = self.hooks() {

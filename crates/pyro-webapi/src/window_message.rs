@@ -96,6 +96,27 @@ pub fn post_message_args<'s>(
 /// in the realm of `s`, the poster's scope (see `structured_clone::clone_into`).
 /// Without `deliver` (the target origin did not match) the message is still
 /// serialized, transferring what it lists, and then dropped.
+/// A posted message counted on its sender ([`PageDom::messages_delay_load`]) until its delivery
+/// task has run or been dropped.
+struct PendingMessage(Option<std::rc::Weak<PageDom>>);
+
+impl PendingMessage {
+    fn new(sender: Option<Rc<PageDom>>) -> Self {
+        if let Some(sender) = &sender {
+            sender.outgoing_messages.set(sender.outgoing_messages.get().saturating_add(1));
+        }
+        Self(sender.as_ref().map(Rc::downgrade))
+    }
+}
+
+impl Drop for PendingMessage {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0.as_ref().and_then(std::rc::Weak::upgrade) {
+            sender.outgoing_messages.set(sender.outgoing_messages.get().saturating_sub(1));
+        }
+    }
+}
+
 pub fn send_window_message<'s>(
     s: &Scope<'s>,
     message: Value<'s>,
@@ -115,9 +136,12 @@ pub fn send_window_message<'s>(
     if !deliver {
         return Ok(());
     }
+    // The sending document's `load` waits until this message is delivered (or dropped).
+    let pending = PendingMessage::new(crate::target::page_of(s).ok());
     let weak = Rc::downgrade(page);
     let realm = realm.downgrade();
     page.post_task(Box::new(move || {
+        let _pending = pending;
         let Some(page) = weak.upgrade() else { return };
         if page.is_disposed() {
             return;
