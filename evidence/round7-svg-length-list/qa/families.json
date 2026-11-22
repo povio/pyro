@@ -1,0 +1,30 @@
+{
+  "SMIL length-list animations": {
+    "matchedGain": 3,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 6,
+    "lpOnly": 0
+  },
+  "other assertions on target pages": {
+    "matchedGain": 13,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 496,
+    "lpOnly": 35
+  },
+  "explicit list interface": {
+    "matchedGain": 62,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 15
+  },
+  "neighboring guards": {
+    "matchedGain": 4,
+    "newPass": 14,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 3
+  }
+}

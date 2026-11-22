@@ -3897,6 +3897,10 @@ simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement
     def.constant("LENGTHADJUST_SPACINGANDGLYPHS", 2.0);
 });
 simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement, |def| {
+    def.getter("x", |s, n| collections::animated_length_list(s, n, "x"));
+    def.getter("y", |s, n| collections::animated_length_list(s, n, "y"));
+    def.getter("dx", |s, n| collections::animated_length_list(s, n, "dx"));
+    def.getter("dy", |s, n| collections::animated_length_list(s, n, "dy"));
     def.getter("rotate", |s, n| collections::animated_number_list(s, n, "rotate"));
 });
 simple_class!(SvgTextElement, "SVGTextElement", SvgTextPositioningElement);

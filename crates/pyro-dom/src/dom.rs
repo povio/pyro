@@ -246,6 +246,7 @@ pub struct Dom {
     /// `currentScale`): its translation and scale, when not the identity.
     pub(crate) svg_points: rustc_hash::FxHashMap<u32, std::rc::Weak<crate::svg_point_list::PointLists>>,
     pub(crate) svg_numbers: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::NumberLists>>>,
+    pub(crate) svg_lengths: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::LengthLists>>>,
     pub(crate) svg_strings: rustc_hash::FxHashMap<(u32, crate::svg_string_list::StringListAttribute), Vec<String>>,
     pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
@@ -359,6 +360,7 @@ impl Dom {
             frame_content_heights: Default::default(),
             svg_points: Default::default(),
             svg_numbers: Default::default(),
+            svg_lengths: Default::default(),
             svg_strings: Default::default(),
             svg_pans: Default::default(),
             frame_documents: Default::default(),
@@ -3734,6 +3736,11 @@ impl Dom {
                 lists.attribute_changed(&name.local, self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
             }
         }
+        if plain && !self.svg_lengths.is_empty() {
+            if let Some(lists) = self.svg_lengths.get(&i).and_then(|attrs| attrs.get(&*name.local)).and_then(std::rc::Weak::upgrade) {
+                lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
+            }
+        }
         if plain && name.local == local_name!("class") {
             self.resummarize(i);
         }
@@ -4635,6 +4642,7 @@ impl Dom {
         let owner = self.n(i).owner_doc;
         if !self.svg_points.is_empty() { self.svg_points.remove(&i); }
         if !self.svg_numbers.is_empty() { self.svg_numbers.remove(&i); }
+        if !self.svg_lengths.is_empty() { self.svg_lengths.remove(&i); }
         if !self.registry_associations.is_empty() { self.registry_associations.remove(&i); }
         if !self.custom_definition_owners.is_empty() { self.custom_definition_owners.remove(&i); }
         if !self.svg_strings.is_empty() {

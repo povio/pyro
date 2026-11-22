@@ -1,0 +1,22 @@
+{
+  "surface": [
+    "function",
+    "function"
+  ],
+  "explicit": [
+    20,
+    10
+  ],
+  "onlyWidth": [
+    20,
+    15
+  ],
+  "css": [
+    40,
+    20
+  ],
+  "viewBox": [
+    8,
+    5
+  ]
+}
