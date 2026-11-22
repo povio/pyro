@@ -625,7 +625,6 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         sched: event_loop.scheduler(),
         timers: RefCell::new(HashMap::new()),
         next_timer: Cell::new(1),
-        websocket_module: RefCell::new(None),
         module: start.module,
         started,
         origin_wall_ms,
@@ -906,8 +905,6 @@ pub struct ScopeData {
     sched: Scheduler<WorkerLoop>,
     timers: RefCell<HashMap<u32, TimerId>>,
     next_timer: Cell<u32>,
-    /// websocket.js's module, made on the scope's first use of `WebSocket`.
-    pub(crate) websocket_module: RefCell<Option<Persistent>>,
     /// A module worker: `importScripts` throws.
     module: bool,
     /// The time origin (`performance`), and its wall-clock time.

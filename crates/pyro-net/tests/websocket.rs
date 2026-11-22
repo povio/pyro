@@ -227,6 +227,49 @@ fn websocket_echoes_text_and_binary_and_closes_cleanly() {
     }
 }
 
+fn open_stream(client: &NetClient, req: WebSocketRequest) -> (WebSocketHandle, mpsc::Receiver<WsEvent>) {
+    let (tx, rx) = mpsc::channel();
+    let (_, ws) = client.websocket_stream(req, Box::new(move |event| { let _ = tx.send(event); }));
+    assert!(matches!(next(&rx), WsEvent::Open { .. }));
+    (ws, rx)
+}
+
+#[test]
+fn stream_data_is_delivered_one_message_per_pull_and_empty_writes_are_acknowledged() {
+    let server = start_ws_server();
+    let client = NetClient::new(Default::default()).unwrap();
+    let (ws, rx) = open_stream(&client, request(server.port, "/echo", &[]));
+    ws.send_text("first".into());
+    ws.send_binary(Vec::new().into());
+    assert!(matches!(next(&rx), WsEvent::Sent(5)));
+    assert!(matches!(next(&rx), WsEvent::Sent(0)));
+
+    ws.pull();
+    assert!(matches!(next(&rx), WsEvent::Text(text) if text == "first"));
+    // A write still completes with zero read credit. An unregulated read
+    // would deliver the already echoed empty message ahead of this receipt.
+    ws.send_text("last".into());
+    assert!(matches!(next(&rx), WsEvent::Sent(4)));
+    ws.pull();
+    assert!(matches!(next(&rx), WsEvent::Binary(bytes) if bytes.is_empty()));
+    ws.pull();
+    assert!(matches!(next(&rx), WsEvent::Text(text) if text == "last"));
+
+    // Now leave one ordinary echo unread. A local close must still finish.
+    ws.send_text("unread".into());
+    assert!(matches!(next(&rx), WsEvent::Sent(6)));
+    ws.close(Some(1000), "done".into());
+    assert!(matches!(next(&rx), WsEvent::Closed { clean: true, code: 1000, reason, .. } if reason == "done"));
+}
+
+#[test]
+fn stream_remote_close_needs_no_read_credit() {
+    let server = start_ws_server();
+    let client = NetClient::new(Default::default()).unwrap();
+    let (_ws, rx) = open_stream(&client, request(server.port, "/server-close", &[]));
+    assert!(matches!(next(&rx), WsEvent::Closed { clean: true, code: 4001, reason, .. } if reason == "bye"));
+}
+
 #[test]
 fn websocket_server_close_and_handshake_failures() {
     let server = start_ws_server();
