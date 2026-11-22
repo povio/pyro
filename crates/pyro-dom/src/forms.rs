@@ -1987,6 +1987,8 @@ impl Dom {
                 // the focus (customizable select).
                 "button" => !self.is_select_button_idx(i),
                 "select" | "textarea" | "iframe" => true,
+                // An object showing a document is a navigable container, focusable as an iframe.
+                "object" => self.is_document_object(id),
                 // An option is focusable while its select's picker is open.
                 "option" => {
                     let select = self.option_nearest_ancestor_select(i);
