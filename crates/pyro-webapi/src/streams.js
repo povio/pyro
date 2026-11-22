@@ -2175,6 +2175,7 @@
   // ----- Helpers for streams.rs ------------------------------------------
 
   // Every chunk of a body stream, concatenated; non-Uint8Array chunks reject.
+  // The stream's bytes, as a promise of \`{bytes}\`.
   const collect = (st) => {
     const rd = newReader(st);
     const chunks = [];
@@ -2200,7 +2201,9 @@
             out.set(chunks[i], offset);
             offset += chunks[i].length;
           }
-          d.resolve(out);
+          // Boxed without a prototype: resolving with the bytes themselves
+          // would look up a \`then\` script put on Object.prototype.
+          d.resolve({ __proto__: null, bytes: out });
         },
         error: (e) => d.reject(e),
       });
@@ -2431,7 +2434,7 @@
     consume(stream, kind, packageBody) {
       const st = rsOf(stream);
       if (rsLocked(st) || st.disturbed) return rejected(new TypeErrorC('Response body has already been consumed'));
-      return then(collect(st), (bytes) => {
+      return then(collect(st), ({ bytes }) => {
         switch (kind) {
           case 'text': return apply(decode, new TextDecoderC(), [bytes]);
           case 'json': return parseJSON(apply(decode, new TextDecoderC(), [bytes]));
@@ -2446,7 +2449,7 @@
     fetchBuffered(input, init, stream) {
       const st = rsOf(stream);
       if (rsLocked(st) || st.disturbed) return rejected(new TypeErrorC('Failed to execute \'fetch\' on \'Window\': The body stream is locked or disturbed'));
-      return then(collect(st), (bytes) => {
+      return then(collect(st), ({ bytes }) => {
         const copy = {};
         for (const key of Reflect.ownKeys(init)) copy[key] = init[key];
         copy.body = bytes;

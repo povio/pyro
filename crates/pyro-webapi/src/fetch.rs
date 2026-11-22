@@ -217,6 +217,16 @@ pub(crate) fn package_body<'s>(
         _ => unreachable!("only Blob and FormData consume MIME metadata"),
     }
 }
+/// A native body read's `{value, done}`, with no prototype: resolving the
+/// read's promise with it cannot find a `then` that script put on
+/// `Object.prototype` (the body stream's chunks stay the body's bytes).
+fn read_result<'s>(s: &Scope<'s>, value: Value<'s>, done: bool) -> JsResult<Value<'s>> {
+    let result = s.object();
+    result.set_prototype(s.null());
+    result.set_atom("value", value)?;
+    result.set_atom("done", s.boolean(done))?;
+    Ok(result.value())
+}
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
     visible_terminal: RefCell<Option<Result<(), NetError>>>,
@@ -1425,10 +1435,7 @@ impl Body {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
         if !self.stream_open.get() {
-            let result = s.object();
-            result.set_atom("value", s.undefined())?;
-            result.set_atom("done", s.boolean(true))?;
-            deferred.resolve(s, result.value())?;
+            deferred.resolve(s, read_result(s, s.undefined(), true)?)?;
             return Ok(promise);
         }
         self.stream_reads.borrow_mut().push((s.realm().downgrade(), deferred));
@@ -1486,18 +1493,13 @@ impl Body {
             }
             let settled = (|| -> JsResult<()> {
                 if let Some(bytes) = chunk.filter(|_| error.is_none()) {
-                    let result = s.object();
-                    result.set_atom("value", crate::encoding::uint8_array(&s, &bytes)?)?;
-                    result.set_atom("done", s.boolean(false))?;
-                    deferred.resolve(&s, result.value())?;
+                    let value = crate::encoding::uint8_array(&s, &bytes)?;
+                    deferred.resolve(&s, read_result(&s, value, false)?)?;
                 } else if let Some(error) = error {
                     deferred.reject(&s, error)?;
                     self.close_stream();
                 } else {
-                    let result = s.object();
-                    result.set_atom("value", s.undefined())?;
-                    result.set_atom("done", s.boolean(true))?;
-                    deferred.resolve(&s, result.value())?;
+                    deferred.resolve(&s, read_result(&s, s.undefined(), true)?)?;
                     self.close_stream();
                 }
                 Ok(())
