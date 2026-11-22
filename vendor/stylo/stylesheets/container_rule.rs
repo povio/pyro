@@ -147,6 +147,10 @@ pub struct ContainerCondition {
     condition: Option<QueryCondition>,
     #[css(skip)]
     flags: FeatureFlags,
+    /// pyro: the condition has an unknown feature (`QueryCondition::contains_unknown`): it
+    /// selects no query container, so it never matches.
+    #[css(skip)]
+    has_unknown: bool,
     #[css(skip)]
     attributes_referenced: AttrReferenceSet,
 }
@@ -240,10 +244,12 @@ impl ContainerCondition {
         let flags = condition
             .as_ref()
             .map_or(FeatureFlags::empty(), |c| c.cumulative_flags());
+        let has_unknown = condition.as_ref().is_some_and(|c| c.contains_unknown(context));
         Ok(Self {
             name,
             condition,
             flags,
+            has_unknown,
             attributes_referenced,
         })
     }
@@ -353,6 +359,11 @@ impl ContainerCondition {
         // element from not matching to matching.
         if self.flags.contains(FeatureFlags::STYLE) {
             invalidation_flags.insert(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY);
+        }
+        // pyro: CSS Conditional 5 § 7.1: a container query with unknown or unsupported features
+        // selects no query container (`((width) or (unknown))` is false, as in Chrome).
+        if self.has_unknown {
+            return KleeneValue::False;
         }
         let (container, info) = match result {
             Some(r) => (r.element, (r.info, r.style)),
