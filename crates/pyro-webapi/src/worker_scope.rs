@@ -637,6 +637,21 @@ fn run_collecting_when_quiet(event_loop: &mut EventLoop<WorkerLoop>, state: &mut
 /// The realm and, when it loaded, the script. A failed load was reported.
 fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(WorkerLoop, Option<(String, String)>)> {
     let engine = Engine::new()?;
+    // The VM's deferred work (WebAssembly.compile/instantiate settling, finished on a compilation
+    // thread) runs in a task of this loop, as on the browser thread (JSC patch 0040). One task per
+    // wake while none is queued.
+    let handle = event_loop.handle();
+    let queued = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    engine.set_deferred_work_waker(move || {
+        if queued.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let queued = queued.clone();
+        let _ = handle.post(move |state: &mut WorkerLoop| {
+            queued.store(false, Ordering::Release);
+            state.engine.run_deferred_work();
+        });
+    });
     *start.shared.terminate.lock().unwrap_or_else(|e| e.into_inner()) = Some(engine.terminate_handle()?);
     // `terminate()` may have run before the handle was there to act on it.
     if start.shared.closing.load(Ordering::Acquire) {
