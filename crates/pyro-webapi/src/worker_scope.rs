@@ -877,12 +877,22 @@ fn script_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// Before the worker's main script (classic, module or a shared worker's phased module graph):
+/// eval and Function follow the worker's own CSP list (its script's response's, or its owner's
+/// for a `data:` or `blob:` script, both recorded by `set_up`) and Trusted Types, as a window's
+/// classic scripts do (`trusted_types::sync_compile_strings`, which installs the compile hooks
+/// when a policy asks). Without this a worker's realm got the hooks only once it used
+/// `trustedTypes`, so a worker's string compilation went unchecked.
+/// It also arms WebAssembly's gate (`sync_compile_strings` calls `csp::sync_wasm_gate`).
+fn sync_compile_gate(s: &Scope<'_>, state: &WorkerLoop) {
+    crate::trusted_types::sync_compile_strings(s, &state.page);
+}
+
 /// Whether a classic script ran to its end (a module's evaluation is
 /// asynchronous: its failure is reported, and this says true).
 fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bool {
     let Ok(s) = state.realm.scope() else { return false };
-    // The worker's own policies (recorded by `set_up`) gate WebAssembly compilation.
-    crate::csp::sync_wasm_gate(&s, &state.page);
+    sync_compile_gate(&s, state);
     if !module {
         if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
             s.report_exception(&e);
@@ -933,7 +943,7 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
 /// The constructor admits module shared workers only with the two steps.
 fn start_module_graph(state: &WorkerLoop, script: &(String, String)) -> bool {
     let Ok(s) = state.realm.scope() else { return false };
-    crate::csp::sync_wasm_gate(&s, &state.page);
+    sync_compile_gate(&s, state);
     let id = state.id;
     state.starting.set(true);
     // The first step fetches the graph and runs nothing: every request until it settles is a
