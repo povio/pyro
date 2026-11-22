@@ -967,7 +967,10 @@ pub(crate) struct DocumentLoad {
     pub(crate) speculation: crate::speculate::Speculation,
     phase: ParsePhase,
     blocked: bool,
-    stylesheet_blocked_script: Option<Rc<ResourceNode>>,
+    /// A parser-blocking script waiting for blocking stylesheets, with the
+    /// child text content an inline one had at its end tag (HTML takes the
+    /// source text there; later changes to the element do not count).
+    stylesheet_blocked_script: Option<(Rc<ResourceNode>, Option<String>)>,
     deferred: VecDeque<Rc<RefCell<PendingScript>>>,
     /// A deferred module is evaluating; wait for its promise.
     awaiting_module: bool,
@@ -1847,7 +1850,9 @@ impl Browser {
         if blocks && !moved_away() && self.stylesheets_block_scripts(page) {
             let mut load = self.load_mut(page).expect("load");
             if load.dom.borrow_mut().add_ref(node).is_ok() {
-                load.stylesheet_blocked_script = Some(Rc::new(ResourceNode { dom: load.dom.clone(), node }));
+                let source =
+                    load.dom.borrow().script_info(node).ok().filter(|s| s.src.is_none()).map(|s| s.inline_text);
+                load.stylesheet_blocked_script = Some((Rc::new(ResourceNode { dom: load.dom.clone(), node }), source));
                 load.blocked = true;
                 drop(load);
                 // The script's fetch, and the requests after it, overlap the
@@ -1864,6 +1869,12 @@ impl Browser {
 
     /// "Prepare the script element" for a parser-inserted script.
     fn prepare_script(&mut self, page: FrameKey, node: NodeId) {
+        self.prepare_script_with(page, node, None);
+    }
+
+    /// [`Browser::prepare_script`] for a script whose inline source text was
+    /// taken at its end tag (`source`), before blocking stylesheets held it.
+    fn prepare_script_with(&mut self, page: FrameKey, node: NodeId, source: Option<String>) {
         let Some(load) = self.doc(page).and_then(|p| p.filter_map(|p| p.load.as_ref())) else { return };
         let dom = load.dom.clone();
         let base = load.url.clone();
@@ -1882,7 +1893,10 @@ impl Browser {
         let parser_document = self.doc(page).and_then(|p| p.main_frame.document);
         let info = {
             let mut d = dom.borrow_mut();
-            let Ok(info) = d.script_info(node) else { return };
+            let Ok(mut info) = d.script_info(node) else { return };
+            if let Some(source) = source {
+                info.inline_text = source;
+            }
             if info.already_started {
                 return;
             }
@@ -2744,9 +2758,9 @@ impl Browser {
         self.drain_dom_resources(page);
         if !self.stylesheets_block_scripts(page) {
             let pending = self.load_mut(page).and_then(|mut l| l.stylesheet_blocked_script.take());
-            if let Some(element) = pending {
+            if let Some((element, source)) = pending {
                 self.load_mut(page).expect("load").blocked = false;
-                self.prepare_script(page, element.node);
+                self.prepare_script_with(page, element.node, source);
                 self.continue_parsing(page);
             }
             self.run_deferred(page);
