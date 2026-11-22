@@ -1,0 +1,482 @@
+{
+  "base": {
+    "api": {
+      "pages": 76,
+      "observedNames": 635,
+      "namedPasses": 97,
+      "strict": 0,
+      "pageOutcome": {
+        "complete": 64,
+        "error": 7,
+        "timeout": 5
+      },
+      "harnessOutcome": {
+        "OK": 64,
+        "Error": 7,
+        "Timeout": 5
+      },
+      "nonOK": [
+        [
+          "cookiestore/cookieStore_delete_domain.sub.https.html",
+          "error",
+          "Error",
+          "Test named 'cookieStore.delete() with a domain removes only the cookie set on that domain' specified 1 'cleanup' function, and 1 failed.",
+          2
+        ],
+        [
+          "cookiestore/cookieStore_event_basic.https.window.html",
+          "error",
+          "Error",
+          "Unhandled rejection: Can't find variable: cookieStore",
+          1
+        ],
+        [
+          "cookiestore/cookieStore_event_delete.https.window.html",
+          "error",
+          "Error",
+          "Unhandled rejection: Can't find variable: cookieStore",
+          2
+        ],
+        [
+          "cookiestore/cookieStore_event_overwrite.https.window.html",
+          "error",
+          "Error",
+          "Unhandled rejection: Can't find variable: cookieStore",
+          1
+        ],
+        [
+          "cookiestore/cookieStore_get_set_ordering.https.any.html",
+          "error",
+          "Error",
+          "Test named 'Set three simple origin session cookies sequentially and ensure they all end up in the cookie jar in order.' specified 1 'cleanup' function, and 1 failed.",
+          2
+        ],
+        [
+          "cookiestore/cookieStore_delete.sub.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          1
+        ],
+        [
+          "cookiestore/cookieStore_get_set_across_origins.sub.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          4
+        ],
+        [
+          "cookiestore/httponly_cookies.https.window.html",
+          "error",
+          "Error",
+          "Unhandled rejection: Can't find variable: cookieStore",
+          4
+        ],
+        [
+          "cookiestore/cookieStore_get_set_creation_url.sub.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          2
+        ],
+        [
+          "cookiestore/cookieStore_get_set_ordering.https.any.serviceworker.html",
+          "error",
+          "Error",
+          "Test named 'Set three simple origin session cookies sequentially and ensure they all end up in the cookie jar in order.' specified 1 'cleanup' function, and 1 failed.",
+          2
+        ],
+        [
+          "cookiestore/cookieStore_set_domain_parsing.tentative.sub.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          1
+        ],
+        [
+          "cookiestore/serviceworker_cookieStore_cross_origin.https.sub.html",
+          "timeout",
+          "Timeout",
+          null,
+          1
+        ]
+      ]
+    },
+    "legacy": {
+      "pages": 89,
+      "observedNames": 1156,
+      "namedPasses": 1089,
+      "strict": 49,
+      "pageOutcome": {
+        "complete": 71,
+        "timeout": 16,
+        "error": 2
+      },
+      "harnessOutcome": {
+        "OK": 71,
+        "None": 11,
+        "Error": 2,
+        "Timeout": 5
+      },
+      "nonOK": [
+        [
+          "cookies/attributes/domain.sub.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/ordering/ordering.sub.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/partitioned-cookies/partitioned-cookies.tentative.https.html",
+          "timeout",
+          null,
+          null,
+          4
+        ],
+        [
+          "cookies/samesite/fetch.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/samesite/form-get-blank.https.html",
+          "timeout",
+          null,
+          null,
+          0
+        ],
+        [
+          "cookies/samesite/form-post-blank.https.html",
+          "timeout",
+          null,
+          null,
+          0
+        ],
+        [
+          "cookies/samesite/iframe-reload.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/samesite/iframe.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/third-party-cookies/third-party-cookie-heuristics.tentative.https.html",
+          "error",
+          "Error",
+          "Uncaught SecurityError: Blocked cross-origin frame access",
+          3
+        ],
+        [
+          "cookies/samesite/form-get-blank-reload.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          3
+        ],
+        [
+          "cookies/samesite/form-post-blank-reload.https.html",
+          "error",
+          "Error",
+          "Uncaught Error: Not supported by this engine build: form POST to a new window and cross-frame navigation targets",
+          3
+        ],
+        [
+          "cookies/samesite/sandbox-allow-same-site-none-cookies-value.tentative.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          2
+        ],
+        [
+          "cookies/samesite/img.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/samesite/setcookie-lax.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          2
+        ],
+        [
+          "cookies/samesite/window-open.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/third-party-cookies/third-party-cookies.tentative.https.html",
+          "timeout",
+          null,
+          null,
+          5
+        ],
+        [
+          "cookies/samesite/window-open-reload.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          3
+        ],
+        [
+          "cookies/schemeful-same-site/schemeful-iframe-subresource.tentative.html",
+          "timeout",
+          "Timeout",
+          null,
+          1
+        ]
+      ]
+    }
+  },
+  "candidate": {
+    "api": {
+      "pages": 76,
+      "observedNames": 635,
+      "namedPasses": 611,
+      "strict": 69,
+      "pageOutcome": {
+        "complete": 75,
+        "timeout": 1
+      },
+      "harnessOutcome": {
+        "OK": 75,
+        "Timeout": 1
+      },
+      "nonOK": [
+        [
+          "cookiestore/cookieStore_set_domain_parsing.tentative.sub.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          1
+        ]
+      ],
+      "delta": {
+        "gained": 514,
+        "matchedGain": 514,
+        "gainChromePass": 497,
+        "gainChromeFail": 17
+      }
+    },
+    "legacy": {
+      "pages": 89,
+      "observedNames": 1158,
+      "namedPasses": 1106,
+      "strict": 55,
+      "pageOutcome": {
+        "complete": 71,
+        "timeout": 16,
+        "error": 2
+      },
+      "harnessOutcome": {
+        "OK": 71,
+        "None": 11,
+        "Error": 2,
+        "Timeout": 5
+      },
+      "nonOK": [
+        [
+          "cookies/attributes/domain.sub.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/ordering/ordering.sub.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/partitioned-cookies/partitioned-cookies.tentative.https.html",
+          "timeout",
+          null,
+          null,
+          5
+        ],
+        [
+          "cookies/samesite/fetch.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/samesite/form-get-blank.https.html",
+          "timeout",
+          null,
+          null,
+          0
+        ],
+        [
+          "cookies/samesite/form-post-blank.https.html",
+          "timeout",
+          null,
+          null,
+          0
+        ],
+        [
+          "cookies/samesite/iframe-reload.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/samesite/iframe.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/third-party-cookies/third-party-cookie-heuristics.tentative.https.html",
+          "error",
+          "Error",
+          "Uncaught SecurityError: Blocked cross-origin frame access",
+          3
+        ],
+        [
+          "cookies/samesite/form-get-blank-reload.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          3
+        ],
+        [
+          "cookies/samesite/form-post-blank-reload.https.html",
+          "error",
+          "Error",
+          "Uncaught Error: Not supported by this engine build: form POST to a new window and cross-frame navigation targets",
+          3
+        ],
+        [
+          "cookies/samesite/sandbox-allow-same-site-none-cookies-value.tentative.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          2
+        ],
+        [
+          "cookies/samesite/img.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/samesite/window-open.https.html",
+          "timeout",
+          null,
+          null,
+          1
+        ],
+        [
+          "cookies/third-party-cookies/third-party-cookies.tentative.https.html",
+          "timeout",
+          null,
+          null,
+          6
+        ],
+        [
+          "cookies/samesite/setcookie-lax.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          2
+        ],
+        [
+          "cookies/samesite/window-open-reload.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          3
+        ],
+        [
+          "cookies/schemeful-same-site/schemeful-iframe-subresource.tentative.html",
+          "timeout",
+          "Timeout",
+          null,
+          1
+        ]
+      ],
+      "delta": {
+        "gained": 17,
+        "matchedGain": 15,
+        "gainChromePass": 17,
+        "newPass": 2,
+        "newName": 2
+      }
+    }
+  },
+  "chrome158": {
+    "api": {
+      "pages": 76,
+      "observedNames": 635,
+      "namedPasses": 602,
+      "strict": 65,
+      "pageOutcome": {
+        "complete": 75,
+        "timeout": 1
+      },
+      "harnessOutcome": {
+        "OK": 75,
+        "Timeout": 1
+      },
+      "nonOK": [
+        [
+          "cookiestore/cookieStore_set_domain_parsing.tentative.sub.https.html",
+          "timeout",
+          "Timeout",
+          null,
+          1
+        ]
+      ]
+    },
+    "legacy": {
+      "pages": 89,
+      "observedNames": 1305,
+      "namedPasses": 1250,
+      "strict": 68,
+      "pageOutcome": {
+        "complete": 88,
+        "timeout": 1
+      },
+      "harnessOutcome": {
+        "OK": 88,
+        "None": 1
+      },
+      "nonOK": [
+        [
+          "cookies/third-party-cookies/third-party-cookie-heuristics.tentative.https.html",
+          "timeout",
+          null,
+          null,
+          5
+        ]
+      ]
+    }
+  }
+}

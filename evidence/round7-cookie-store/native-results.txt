@@ -1,0 +1,47 @@
+running 1 test
+test service_worker::cookie_subscriptions_survive_update_and_allow_cleanup_after_unregister ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 553 filtered out; finished in 0.09s
+running 1 test
+test child_frames::cookie_partition_and_site_for_cookies_follow_the_whole_frame_chain ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 553 filtered out; finished in 0.06s
+running 1 test
+test service_worker::shared_workers_are_shared_between_documents_by_url_and_name ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 553 filtered out; finished in 0.14s
+running 1 test
+test service_worker::service_worker_keeps_working_after_the_registering_page_navigates ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 553 filtered out; finished in 0.08s
+running 1 test
+test service_worker::service_worker_answers_navigations_and_subresources ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 553 filtered out; finished in 0.10s
+running 1 test
+test events_misc_js::cookie_changes_deliver_trusted_frozen_lists_after_the_mutation ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 705 filtered out; finished in 0.02s
+running 1 test
+test events_misc_js::cookie_change_listener_registered_after_mutation_in_the_same_turn_receives_the_event ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 705 filtered out; finished in 0.01s
+running 1 test
+test events_misc_js::cookie_changes_to_one_name_in_a_turn_dispatch_separate_ordered_events ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 705 filtered out; finished in 0.01s
+running 1 test
+test indexeddb_js::window_indexeddb_is_an_own_readonly_accessor ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 705 filtered out; finished in 0.01s
+running 12 tests
+test cookies::tests::cookie_dates_follow_rfc_6265 ... ok
+test cookies::tests::all_cookies_excludes_expired_records ... ok
+test cookies::tests::direct_cookie_invalid_inputs_are_atomic ... ok
+test cookies::tests::expires_and_max_age_parsing ... ok
+test cookies::tests::cookie_store_dictionary_normalization_validation_and_http_only ... ok
+test cookies::tests::psl_sites_and_private_suffixes_are_distinct ... ok
+test cookies::tests::direct_cookie_canonicalization_session_and_expiry_deletion ... ok
+test cookies::tests::review_matching_on_empty_and_trailing_dot_hosts_and_expiry ... ok
+test cookies::tests::cookie_store_partition_and_same_site_are_both_enforced ... ok
+test cookies::tests::cookie_store_changes_include_http_and_script_and_skip_nonchanges ... ok
+test cookies::tests::nameless_cookies_and_lenient_attributes ... ok
+test cookies::tests::expired_domain_buckets_are_reclaimed ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.00s
+running 1 test
+test client::cookie_tests::response_cookie_site_distinguishes_subresources_and_top_level_navigation ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 74 filtered out; finished in 0.00s
+running 1 test
+test cookie_store::subscriptions::tests::subscription_list_preserves_scope_order_and_registration_lifetime ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.00s
