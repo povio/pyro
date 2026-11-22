@@ -2391,8 +2391,20 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
             None => None,
         }
     };
-    if let Some(n) = next {
-        focus_element(page, n);
+    match next {
+        Some(n) => focus_element(page, n),
+        // Past the last (or first) focusable area focus moves to the
+        // browser's UI (the page keeps its focused element): a Space held
+        // on the control no longer activates it, as when it blurs.
+        None => {
+            if page.space_target.take().is_some() {
+                let doc = page.document();
+                let current = page.dom.borrow().focused(doc).ok().flatten();
+                if current.is_some() && page.dom.borrow().activated(doc) == current {
+                    set_active(page, doc, None);
+                }
+            }
+        }
     }
 }
 
