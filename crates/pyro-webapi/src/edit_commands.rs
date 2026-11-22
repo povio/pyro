@@ -15,6 +15,7 @@
 //! by edits the user (or execCommand) makes.
 
 mod alignment;
+mod decoration;
 mod indentation;
 pub(crate) mod inline_value;
 
@@ -1272,6 +1273,10 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         _ => {
             let Some((tag, carriers, input_type)) = format_of(&cmd) else { return false };
             let (start, end) = editing::host_range(page, host);
+            if start == end && matches!(tag, "u" | "strike") {
+                inline_value::toggle_decoration(page, start, tag);
+                return true;
+            }
             if start == end && matches!(tag, "b" | "i" | "sub" | "sup") {
                 let enabled = !format_state(page, &cmd).1;
                 inline_value::set_toggle(page, (start, end), tag, enabled);
@@ -1858,6 +1863,11 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
     let Some((start, end)) = editing::selection_range(page) else { return (false, false) };
     if start == end {
         if let Some((tag, _, _)) = format_of(command) {
+            if matches!(tag, "u" | "strike") {
+                if let Some(active) = inline_value::decoration_state(page, start, tag) {
+                    return (active, active);
+                }
+            }
             if matches!(tag, "sub" | "sup") {
                 if let Some(active) = inline_value::caret_script_state(page, start, tag) {
                     return (active, active);
