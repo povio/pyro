@@ -283,6 +283,16 @@ impl Dom {
         self.top_layer.invokers.get(&el).copied()
     }
 
+    /// Whether any showing popover has an invoker (sequential focus navigation's fast path).
+    pub(crate) fn has_popover_invokers(&self) -> bool {
+        !self.top_layer.invokers.is_empty()
+    }
+
+    /// Each showing popover with an invoker, and that invoker.
+    pub(crate) fn popover_invoker_pairs(&self) -> Vec<(NodeId, NodeId)> {
+        self.top_layer.invokers.iter().map(|(&popover, &invoker)| (popover, invoker)).collect()
+    }
+
     pub fn popover_anchor_keys(&self) -> Vec<(u64, u64)> {
         use crate::snapshot::render_key;
         self.top_layer.invokers.iter().map(|(&popover, &source)| (render_key(popover), render_key(source))).collect()

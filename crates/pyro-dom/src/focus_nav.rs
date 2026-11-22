@@ -9,6 +9,12 @@
 //! and continues after the owner once a nested scope is exhausted, as
 //! Chrome's `FocusController` does.
 //!
+//! A showing popover that has a popover invoker owns a scope too, and its
+//! place in sequential order is right after its invoker rather than at its
+//! position in the tree (HTML "popover invoker"; Chrome's FocusController):
+//! Tab from the invoker enters the popover, and leaving the popover's scope
+//! continues after the invoker.
+//!
 //! Layout is not visible here: callers pass `area`, the "focusable area"
 //! test (focusable, not inert, being rendered). Only Tab and `focus()` on a
 //! `delegatesFocus` host run this code; nothing is kept between calls.
@@ -262,6 +268,53 @@ impl<'a> FocusNavigation<'a> {
         self.n(i).element().is_some_and(|e| e.shadow_root != NIL) || self.is_slot(i)
             || self.flow(i) != ReadingFlow::Normal || self.flow(self.n(i).parent) != ReadingFlow::Normal
             || self.flow(self.flat_parent(i)) == ReadingFlow::GridOrder
+            || self.invoked_popover(i).is_some()
+    }
+
+    /// The invoker of `i` when `i` is a showing popover whose sequential place is right after
+    /// its invoker: a connected element of the same document, outside the popover.
+    fn invoked_popover(&self, i: u32) -> Option<u32> {
+        if !self.has_popover_invokers() {
+            return None;
+        }
+        let invoker = self.check(self.popover_invoker(self.id_of(i))?).ok()?;
+        (self.n(invoker).is_element()
+            && self.is_connected_idx(invoker)
+            && self.n(invoker).owner_doc == self.n(i).owner_doc
+            && !self.shadow_including_inclusive_ancestor(i, invoker))
+        .then_some(invoker)
+    }
+
+    /// Moves each invoked popover of `items` (a scope's list) out of its tree position, and
+    /// each invoked popover whose invoker is in `items` to right after that invoker.
+    fn place_invoked_popovers(&self, mut items: Vec<u32>) -> Vec<u32> {
+        if !self.has_popover_invokers() {
+            return items;
+        }
+        let mut invoked: Vec<(u32, u32)> = self
+            .popover_invoker_pairs()
+            .into_iter()
+            .filter_map(|(popover, _)| {
+                let p = self.check(popover).ok()?;
+                Some((p, self.invoked_popover(p)?))
+            })
+            .collect();
+        if invoked.is_empty() {
+            return items;
+        }
+        // Several popovers of one invoker follow it in tree order.
+        invoked.sort_by(|a, b| match (a.0 == b.0, self.tree_order_before(a.0, b.0)) {
+            (true, _) => std::cmp::Ordering::Equal,
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => std::cmp::Ordering::Greater,
+        });
+        items.retain(|i| !invoked.iter().any(|&(p, _)| p == *i));
+        let mut out = Vec::with_capacity(items.len() + invoked.len());
+        for i in items {
+            out.push(i);
+            out.extend(invoked.iter().filter(|&&(_, invoker)| invoker == i).map(|&(p, _)| p));
+        }
+        out
     }
 
     /// The elements of `owner`'s scope, tabindex-ordered.
@@ -285,7 +338,7 @@ impl<'a> FocusNavigation<'a> {
             // their reading-flow parent. Shadow and assigned roots can have a
             // different DOM parent and still need the regular scope walk.
             if roots.iter().all(|&i| self.n(i).parent == owner) {
-                return roots;
+                return self.place_invoked_popovers(roots);
             }
         }
         let mut out = Vec::new();
@@ -302,17 +355,26 @@ impl<'a> FocusNavigation<'a> {
             }
         }
         // Stable: equal keys keep tree order.
-        if flow != ReadingFlow::Normal { return out; }
+        if flow != ReadingFlow::Normal { return self.place_invoked_popovers(out); }
         out.sort_by_key(|&i| match self.tabindex_attr(i) {
             Some(t) if t > 0 => (0, t),
             _ => (1, 0),
         });
-        out
+        self.place_invoked_popovers(out)
     }
 
     /// The scope owner whose scope lists `el`, if `el` is in one at all
     /// (an unassigned child of a shadow host is not).
     fn scope_of(&self, el: u32) -> Option<u32> {
+        // An invoked popover is listed in its invoker's scope (a chain of popovers invoked by
+        // popovers is followed, a cycle of them is not).
+        let mut el = el;
+        for _ in 0..32 {
+            match self.invoked_popover(el) {
+                Some(invoker) => el = invoker,
+                None => break,
+            }
+        }
         let mut x = el;
         loop {
             if let Some(slot) = self.find_slot(x, false) {
@@ -524,5 +586,28 @@ mod tests {
         let next = d.sequential_focus_target(doc, Some(hidden), false, &area).unwrap();
         assert_eq!(next, d.focus_delegate(ids(&d, doc, &["df"])[0], &area).unwrap());
         assert!(d.focus_delegate(ids(&d, doc, &["host"])[0], &area).is_none());
+    }
+
+    /// A showing popover with an invoker is navigated right after its invoker
+    /// (html/semantics/popovers/popover-focus-2.html).
+    #[test]
+    fn invoked_popover_follows_its_invoker() {
+        let dom = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(
+            &dom,
+            "about:blank",
+            "<button id=b1></button><div popover id=p><button id=in1></button><button id=in2></button></div>\
+             <button id=b2></button><button id=inv></button><button id=b3></button>",
+        );
+        let [p, inv] = ids(&dom.borrow(), doc, &["p", "inv"])[..] else { unreachable!() };
+        dom.borrow_mut().set_popover_showing(p, true).unwrap();
+        dom.borrow_mut().set_popover_invoker(p, Some(inv));
+        let d = dom.borrow();
+        assert_eq!(order(&d, doc, false), ["b1", "b2", "inv", "in1", "in2", "b3"]);
+        assert_eq!(order(&d, doc, true), ["b3", "in2", "in1", "inv", "b2", "b1"]);
+        drop(d);
+        // Without an invoker the popover keeps its tree position.
+        dom.borrow_mut().set_popover_invoker(p, None);
+        assert_eq!(order(&dom.borrow(), doc, false), ["b1", "in1", "in2", "b2", "inv", "b3"]);
     }
 }
