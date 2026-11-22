@@ -28,9 +28,9 @@
     "fetch/data-urls": 3,
     "IndexedDB": 3,
     "xhr": 2,
-    "svg/styling": 1,
     "html/rendering": 1,
-    "quirks": 1
+    "quirks": 1,
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -87,13 +87,13 @@
     "html/browsers": 5,
     "svg/path": 4,
     "IndexedDB": 3,
+    "fetch/data-urls": 3,
     "fetch/http-cache": 3,
     "encoding": 3,
-    "fetch/data-urls": 3,
     "fetch/nosniff": 2,
-    "fetch/api": 1,
+    "dom/nodes": 1,
     "fetch/corb": 1,
-    "dom/nodes": 1
+    "fetch/api": 1
    }
   }
  },
