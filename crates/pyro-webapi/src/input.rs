@@ -950,7 +950,15 @@ fn forward_click(page: &Rc<PageDom>, el: NodeId, from: &EventData) {
 }
 
 fn click_like(page: &Rc<PageDom>, el: NodeId, trusted: bool, from: Option<&EventData>) {
-    if page.dom.borrow().is_disabled(el).unwrap_or(false) {
+    // HTML click(): a disabled form control does nothing. As in Chromium, a disabled
+    // `<fieldset>` is not one here: its click is dispatched (WPT disabled-elements
+    // fieldset-event-propagation).
+    let disabled_control = {
+        let dom = page.dom.borrow();
+        dom.is_disabled(el).unwrap_or(false)
+            && !dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "fieldset")
+    };
+    if disabled_control {
         return;
     }
     if !page.begin_click(el) {
