@@ -1685,7 +1685,11 @@ impl StyleEngine {
     }
 
     fn inactive(sheet: &Sheet, dom: &Dom) -> bool {
-        Self::is_off(sheet, dom) || link_not_stylesheet(dom, sheet.owner) || dom.sheet_outside_preferred_set(sheet.owner)
+        Self::is_off(sheet, dom)
+            || link_not_stylesheet(dom, sheet.owner)
+            || dom.sheet_outside_preferred_set(sheet.owner)
+            // pyro: a `<style>` whose type is not CSS has no sheet (HTML "update a style block").
+            || dom.style_type_not_css(sheet.owner)
     }
 
     /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.

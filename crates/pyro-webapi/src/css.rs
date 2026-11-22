@@ -3096,6 +3096,10 @@ pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'
     if disabled_link {
         return Ok(s.null());
     }
+    // pyro: a `<style>` whose type is not CSS has no sheet (HTML "update a style block").
+    if n.page().dom.borrow().style_type_not_css(n.id) {
+        return Ok(s.null());
+    }
     sheet_object(s, n.page(), n.id)
 }
 
@@ -3123,7 +3127,11 @@ impl StyleSheetList {
         nodes
             .filter(|&n| {
                 dom.element(n).is_ok_and(|e| match &*e.name.local {
-                    "style" => e.is_html() || e.namespace() == &markup5ever::ns!(svg),
+                    // pyro: a `<style>` whose type is not CSS has no sheet.
+                    "style" => {
+                        (e.is_html() || e.namespace() == &markup5ever::ns!(svg))
+                            && pyro_dom::Dom::style_type_is_css(e.attr("type"))
+                    }
                     "link" => {
                         e.is_html()
                             && e.attr("rel").is_some_and(|rel| {

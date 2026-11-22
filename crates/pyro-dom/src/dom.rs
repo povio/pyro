@@ -3885,11 +3885,27 @@ impl Dom {
         r
     }
 
+    /// pyro: whether a `<style>` (HTML or SVG) with this `type` attribute is CSS and makes a sheet
+    /// (HTML "update a style block"): no type, the empty string, or ASCII case-insensitively
+    /// `text/css`, nothing else (no whitespace around it, no parameters).
+    pub fn style_type_is_css(kind: Option<&str>) -> bool {
+        kind.is_none_or(|kind| kind.is_empty() || kind.eq_ignore_ascii_case("text/css"))
+    }
+
+    /// pyro: whether `owner`, if it is a `<style>` element (HTML or SVG), has a type that makes no
+    /// sheet ([`Dom::style_type_is_css`]); false for anything else.
+    pub fn style_type_not_css(&self, owner: NodeId) -> bool {
+        let Ok(node) = self.node(owner) else { return false };
+        let Some(element) = node.element() else { return false };
+        (element.is_html() || element.name.ns == ns!(svg))
+            && element.name.local == local_name!("style")
+            && !Self::style_type_is_css(element.attr("type"))
+    }
+
     pub(crate) fn note_preferred_style(&mut self, idx: u32) {
         let node = self.n(idx);
         let Some(element) = node.element() else { return };
-        if !element.is_html() || element.name.local != local_name!("style")
-            || element.attr("type").is_some_and(|kind| !kind.is_empty() && !kind.eq_ignore_ascii_case("text/css"))
+        if !element.is_html() || element.name.local != local_name!("style") || !Self::style_type_is_css(element.attr("type"))
         {
             return;
         }

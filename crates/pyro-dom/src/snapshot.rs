@@ -908,6 +908,11 @@ impl Dom {
                         stack.push(Step::Synthetic(n, text, TextKind::Style));
                         continue;
                     }
+                    // pyro: an SVG `<style>` whose type is not CSS has no sheet: the renderer gets it
+                    // empty (an HTML one's text says so through `style_text`).
+                    if local == "style" && e.name.ns == ns!(svg) && !Dom::style_type_is_css(e.attr("type")) {
+                        continue;
+                    }
                     if html && local == "textarea" {
                         stack.push(Step::Synthetic(n, self.value(id).unwrap_or_default(), TextKind::Textarea));
                         continue;
