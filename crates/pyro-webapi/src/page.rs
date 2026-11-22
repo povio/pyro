@@ -1428,10 +1428,16 @@ impl PageDom {
         self.opaque_origin.get()
     }
 
-    /// Marks the classic script at `url` as fetched CORS-cross-origin: an exception thrown from
-    /// it is reported with muted errors (`lifecycle::report_exception`).
-    pub fn mute_script_errors(&self, url: &str) {
-        self.muted_scripts.borrow_mut().insert(url.to_owned());
+    /// Records whether the classic script at `url` was last fetched CORS-cross-origin (`muted`):
+    /// an exception thrown from such a script is reported with muted errors
+    /// (`lifecycle::report_exception`); a CORS-same-origin fetch of the URL unmutes it.
+    pub fn set_script_errors_muted(&self, url: &str, muted: bool) {
+        let mut scripts = self.muted_scripts.borrow_mut();
+        if muted {
+            scripts.insert(url.to_owned());
+        } else {
+            scripts.remove(url);
+        }
     }
 
     /// Whether exceptions from the script at `url` are reported with muted errors.

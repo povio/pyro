@@ -2259,13 +2259,14 @@ impl Browser {
                             None if module.is_some() => Ok(pyro_webapi::module_script::utf8_decode(&r.body)),
                             None => {
                                 // HTML "fetch a classic script": a response that is not CORS-same-origin
-                                // makes the script's errors muted.
+                                // makes the script's errors muted. The URL's latest fetch decides, so a
+                                // later CORS (`crossorigin`) fetch of a URL fetched no-cors before is
+                                // not muted.
                                 if let Some(state) = b.doc(page) {
-                                    if is_opaque(&r, cors, &state.main_frame.origin) {
-                                        if let Some(bindings) = &state.main_frame.page_dom {
-                                            bindings.mute_script_errors(&r.url);
-                                            bindings.mute_script_errors(&request_url);
-                                        }
+                                    if let Some(bindings) = &state.main_frame.page_dom {
+                                        let muted = is_opaque(&r, cors, &state.main_frame.origin);
+                                        bindings.set_script_errors_muted(&r.url, muted);
+                                        bindings.set_script_errors_muted(&request_url, muted);
                                     }
                                 }
                                 Ok(pyro_net::decode_text_first(
