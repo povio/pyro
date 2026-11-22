@@ -827,6 +827,9 @@ fn run_activation_behavior(
                 if forwarded {
                     let trusted = ev.state.borrow().is_trusted;
                     click_with_trust(page, c, trusted);
+                    // Chrome focuses the labeled control with the mouse focus type: no
+                    // `:focus-visible` on a checkbox (WPT css/selectors `focus-visible-026`).
+                    page.pointer_modality.set(true);
                     focus_element(page, c);
                 }
             }
