@@ -1330,7 +1330,8 @@ impl Dom {
         let undefined = !e.is_defined();
         // pyro: the scope of an active element-scoped view transition (`Dom::set_view_transition_scope`).
         let scope = self.view_transition_scope_idx(n);
-        if !kind && !editable && natural.is_none() && auto_dir.is_none() && !undefined && scope.is_none() {
+        let fullscreen = self.is_fullscreen_idx(n);
+        if !kind && !editable && natural.is_none() && auto_dir.is_none() && !undefined && scope.is_none() && !fullscreen {
             return None;
         }
         let mut out = String::new();
@@ -1387,6 +1388,13 @@ impl Dom {
                 out.push(' ');
             }
             out.push_str("dialog-in-top-layer");
+        }
+        if fullscreen {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            // `:modal` matches an element in fullscreen too.
+            out.push_str("fullscreen modal");
         }
         if let Some(contained) = scope {
             if !out.is_empty() {

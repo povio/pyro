@@ -54,6 +54,8 @@ pub enum PopoverStack {
 pub(crate) struct TopLayer {
     /// Dialogs shown with `showModal()`.
     modal: FxHashSet<NodeId>,
+    /// Elements whose fullscreen flag is set (`:fullscreen`; the embedder keeps the stack).
+    fullscreen: FxHashSet<NodeId>,
     /// Popovers whose visibility state is "showing".
     popovers: FxHashSet<NodeId>,
     /// Showing elements whose popover attribute changed state during a DOM write.
@@ -150,6 +152,27 @@ impl Dom {
             self.bump();
         }
         Ok(())
+    }
+
+    /// Sets or clears an element's fullscreen flag (Fullscreen: `:fullscreen` matches it).
+    pub fn set_fullscreen(&mut self, el: NodeId, fullscreen: bool) -> DomResult<()> {
+        self.check(el)?;
+        let changed =
+            if fullscreen { self.top_layer.fullscreen.insert(el) } else { self.top_layer.fullscreen.remove(&el) };
+        if changed {
+            // Styles that read `:fullscreen` start over.
+            self.bump();
+        }
+        Ok(())
+    }
+
+    /// Whether the element's fullscreen flag is set.
+    pub fn is_fullscreen(&self, el: NodeId) -> bool {
+        self.top_layer.fullscreen.contains(&el)
+    }
+
+    pub(crate) fn is_fullscreen_idx(&self, idx: u32) -> bool {
+        !self.top_layer.fullscreen.is_empty() && self.top_layer.fullscreen.contains(&self.id_of(idx))
     }
 
     /// Whether the dialog was shown with `showModal()` and not closed since.
@@ -465,11 +488,17 @@ impl Dom {
             && self.top_layer.popovers.is_empty()
             && self.top_layer.pending.is_empty()
             && self.top_layer.pickers.is_empty()
+            && self.top_layer.fullscreen.is_empty()
         {
             return;
         }
         for i in self.shadow_including_subtree(node) {
             let id = self.id_of(i);
+            // Fullscreen "removing steps": a removed element is no longer fullscreen (its
+            // document's fullscreen stack drops it when next read).
+            if self.top_layer.fullscreen.remove(&id) {
+                self.bump();
+            }
             // A removed select's picker closes.
             if self.top_layer.pickers.contains(&id) {
                 let _ = self.set_select_picker_open(id, false);

@@ -931,7 +931,7 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::Focus => self.element_state().contains(ElementState::FOCUS),
             NonTSPseudoClass::FocusWithin => self.element_state().contains(ElementState::FOCUS_WITHIN),
             NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUSRING),
-            NonTSPseudoClass::Fullscreen => false,
+            NonTSPseudoClass::Fullscreen => self.element_state().contains(ElementState::FULLSCREEN),
             NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
             NonTSPseudoClass::Indeterminate => {
                 self.element_state().contains(ElementState::INDETERMINATE)

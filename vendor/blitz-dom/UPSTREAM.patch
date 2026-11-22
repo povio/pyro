@@ -6965,7 +6965,7 @@ diff --git a/packages/blitz-dom/src/has_invalidation.rs b/packages/blitz-dom/src
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/has_invalidation.rs
-@@ -0,0 +1,353 @@
+@@ -0,0 +1,356 @@
 +//! pyro: `:has()` invalidation through Stylo's relative selector
 +//! invalidation, as Gecko runs it on every state and attribute change.
 +//!
@@ -7029,7 +7029,8 @@ new file mode 100644
 +    .union(ElementState::USER_VALID)
 +    .union(ElementState::USER_INVALID)
 +    .union(ElementState::DEFINED)
-+    .union(ElementState::ACTIVE_VIEW_TRANSITION);
++    .union(ElementState::ACTIVE_VIEW_TRANSITION)
++    .union(ElementState::FULLSCREEN);
 +
 +/// The element states a [`PYRO_STATE_NS`] `state` attribute value (`None`: no
 +/// such attribute) stands for. An element is `:read-only` unless the value
@@ -7054,6 +7055,8 @@ new file mode 100644
 +            // (`:-moz-topmost-modal` in the UA sheet).
 +            "dialog-in-top-layer" => ElementState::TOPMOST_MODAL,
 +            "popover-open" => ElementState::POPOVER_OPEN,
++            // pyro: an element whose fullscreen flag is set (`:fullscreen`).
++            "fullscreen" => ElementState::FULLSCREEN,
 +            // pyro: the scope of an active element-scoped view transition
 +            // (`:-pyro-active-view-transition-scope` in the UA sheet).
 +            "view-transition-scope" => ElementState::ACTIVE_VIEW_TRANSITION,
@@ -57304,9 +57307,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -                self.element_state().contains(ElementState::FOCUS_WITHIN)
 -            }
 -            NonTSPseudoClass::FocusVisible => false,
+-            NonTSPseudoClass::Fullscreen => false,
 +            NonTSPseudoClass::FocusWithin => self.element_state().contains(ElementState::FOCUS_WITHIN),
 +            NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUSRING),
-             NonTSPseudoClass::Fullscreen => false,
++            NonTSPseudoClass::Fullscreen => self.element_state().contains(ElementState::FULLSCREEN),
              NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
 -            NonTSPseudoClass::Indeterminate => false,
 -            NonTSPseudoClass::Lang(_) => false,

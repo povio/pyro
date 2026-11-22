@@ -481,7 +481,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
         use NonTSPseudoClass as N;
         match pc {
             N::Active => self.matches(PseudoClass::Active),
-            N::Visited | N::Fullscreen | N::Autofill => false,
+            N::Visited | N::Autofill => false,
+            N::Fullscreen => self.cx().dom.is_fullscreen_idx(self.i()),
             N::Target => self.matches(PseudoClass::Target),
             N::AnyLink | N::Link => self.matches(PseudoClass::Link),
             N::Checked => self.matches(PseudoClass::Checked),
@@ -502,7 +503,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::Valid => self.matches(PseudoClass::Valid),
             N::Invalid => self.matches(PseudoClass::Invalid),
             N::Open => self.matches(PseudoClass::Open),
-            N::Modal => self.matches(PseudoClass::Modal),
+            // A modal dialog, or (Fullscreen) an element in fullscreen.
+            N::Modal => self.matches(PseudoClass::Modal) || self.cx().dom.is_fullscreen_idx(self.i()),
             N::MozTopmostModal => self.cx().dom.is_dialog_in_top_layer_idx(self.i()),
             N::PyroActiveViewTransitionScope => self.cx().dom.view_transition_scope_idx(self.i()).is_some(),
             N::PopoverOpen => self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen),
@@ -694,6 +696,10 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         }
         if self.cx().dom.view_transition_scope_idx(self.i()).is_some() {
             s |= ElementState::ACTIVE_VIEW_TRANSITION;
+        }
+        // Fullscreen: `:fullscreen`, and `:modal` too.
+        if self.cx().dom.is_fullscreen_idx(self.i()) {
+            s |= ElementState::FULLSCREEN | ElementState::MODAL;
         }
         s
     }

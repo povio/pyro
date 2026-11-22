@@ -61,7 +61,8 @@ pub(crate) const PYRO_STATES: ElementState = ElementState::VALID
     .union(ElementState::USER_VALID)
     .union(ElementState::USER_INVALID)
     .union(ElementState::DEFINED)
-    .union(ElementState::ACTIVE_VIEW_TRANSITION);
+    .union(ElementState::ACTIVE_VIEW_TRANSITION)
+    .union(ElementState::FULLSCREEN);
 
 /// The element states a [`PYRO_STATE_NS`] `state` attribute value (`None`: no
 /// such attribute) stands for. An element is `:read-only` unless the value
@@ -86,6 +87,8 @@ pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
             // (`:-moz-topmost-modal` in the UA sheet).
             "dialog-in-top-layer" => ElementState::TOPMOST_MODAL,
             "popover-open" => ElementState::POPOVER_OPEN,
+            // pyro: an element whose fullscreen flag is set (`:fullscreen`).
+            "fullscreen" => ElementState::FULLSCREEN,
             // pyro: the scope of an active element-scoped view transition
             // (`:-pyro-active-view-transition-scope` in the UA sheet).
             "view-transition-scope" => ElementState::ACTIVE_VIEW_TRANSITION,
