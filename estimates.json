@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 940,
-    "studio_in_scope": 157,
+    "studio_in_scope": 179,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -14,7 +14,7 @@
    "selector_union": 1507,
    "owner_estimate_reduction": 233,
    "of_which_tentative": 170,
-   "studio_css_reported_pages_not_deduped": 8,
+   "studio_css_reported_pages_not_deduped": 30,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 430,
@@ -23,8 +23,8 @@
     "referrer-policy": 114,
     "html/browsers": 100,
     "fetch/api": 74,
-    "content-security-policy": 52,
     "html/editing": 52,
+    "content-security-policy": 52,
     "fetch/fetch-later": 29,
     "html/dom": 24,
     "html/webappapis": 23,
@@ -35,8 +35,8 @@
     "workers": 9,
     "html/infrastructure": 9,
     "encoding": 7,
-    "fetch/data-urls": 6,
     "fetch/corb": 6,
+    "fetch/data-urls": 6,
     "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
@@ -46,10 +46,10 @@
     "xhr": 2,
     "fetch/orb": 2,
     "IndexedDB": 1,
-    "fetch/security": 1,
+    "fetch/redirect-navigate": 1,
     "quirks": 1,
     "svg/styling": 1,
-    "fetch/redirect-navigate": 1
+    "fetch/security": 1
    }
   },
   "in_progress": {
@@ -82,11 +82,11 @@
     "html/dom": 5,
     "fetch/security": 4,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/images": 1,
-    "fetch/http-cache": 1,
-    "fetch/redirects": 1,
+    "fetch/content-type": 1,
     "fetch/range": 1,
-    "fetch/content-type": 1
+    "fetch/redirects": 1,
+    "fetch/images": 1,
+    "fetch/http-cache": 1
    }
   },
   "queued": {
@@ -2403,9 +2403,30 @@
    "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
+  },
+  "SC-grid-track-sizing": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-transitions-cancel": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-selectors-user-action": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
   }
  },
- "implemented_total_estimate": 1336,
+ "implemented_total_estimate": 1358,
  "milestones_reached": [
   250,
   500,
