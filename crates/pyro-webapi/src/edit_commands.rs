@@ -1854,6 +1854,42 @@ fn mixed_italic_unit(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, 
     Some(parent)
 }
 
+/// Add a selected leading fragment of an already-formatted sibling to the
+/// new wrapper. A partial semantic carrier can absorb the new wrapper only
+/// when they are the same element; a wholly selected carrier is replaceable.
+fn extend_mixed_inline(dom: &mut Dom, wrapper: NodeId, text: NodeId, tag: &str, css: bool) -> Option<NodeId> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let carrier = dom.parent_element(text).ok()??;
+    if dom.next_sibling(wrapper).ok()? != Some(carrier) || dom.first_child(carrier).ok()? != Some(text)
+        || !dom.element(carrier).ok()?.is_html() { return None; }
+    let name = editing::local(dom, carrier);
+    let attrs = dom.attributes(carrier).ok()?;
+    let semantic = attrs.is_empty() && (name == tag || tag == "strike" && name == "s");
+    let styled = if name == "span" && attrs.len() == 1 && attrs[0].name.local == markup5ever::local_name!("style") {
+        let style = DeclarationBlock::parse(&attrs[0].value);
+        let (property, value) = match tag {
+            "b" => ("font-weight", "bold"),
+            "i" => ("font-style", "italic"),
+            "u" => ("text-decoration-line", "underline"),
+            "strike" => ("text-decoration-line", "line-through"),
+            _ => return None,
+        };
+        let decls = crate::css::parse_declarations(&attrs[0].value);
+        matches!(decls.as_slice(), [d] if (d.name == property || property == "text-decoration-line" && d.name == "text-decoration") && d.value == value)
+            && style.value(property) == value
+    } else { false };
+    if !semantic && !styled { return None; }
+    let whole = dom.child_count(carrier).ok()? == 1;
+    if !whole && semantic {
+        if css || name != tag { return None; }
+        merge_inline_siblings(dom, wrapper, carrier);
+        return Some(carrier);
+    }
+    dom.append_child(wrapper, text).ok()?;
+    if whole { dom.remove_node(carrier).ok()?; }
+    Some(wrapper)
+}
+
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
@@ -1891,6 +1927,21 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             };
             let mut last_wrapper: Option<NodeId> = None;
             let use_css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
+            let mixed_run = matches!(tag, "b" | "i" | "u" | "strike") && texts.first().zip(texts.get(1)).is_some_and(|(&first, &next)| {
+                if !editing::is_text(&dom, first) { return false; }
+                let Some(sibling) = dom.next_sibling(first).ok().flatten() else { return false };
+                if !dom.contains(sibling, next).unwrap_or(false) { return false; }
+                let name = editing::local(&dom, sibling);
+                if carriers.contains(&name.as_str()) { return true; }
+                if name != "span" { return false; }
+                let style = pyro_dom::stylo::declarations::DeclarationBlock::parse(dom.get_attribute(sibling, "style").ok().flatten().unwrap_or(""));
+                match tag {
+                    "b" => style.value("font-weight") == "bold",
+                    "i" => style.value("font-style") == "italic",
+                    "u" => style.value("text-decoration-line").split_whitespace().any(|v| v == "underline"),
+                    _ => style.value("text-decoration-line").split_whitespace().any(|v| v == "line-through"),
+                }
+            });
             let single_link = href.and_then(|_| {
                 let link = ancestor_named(&dom, *texts.first()?, host, &["a"])?;
                 dom.contains(link, *texts.last()?).ok()?.then_some(link)
@@ -1899,6 +1950,12 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 if let Some(value) = href.filter(|_| !collapsed) {
                     if let Some(link) = relink_text(&mut dom, host, t, value, single_link) {
                         last_wrapper = Some(link);
+                        continue;
+                    }
+                }
+                if mixed_run {
+                    if let Some(w) = last_wrapper.and_then(|wrapper| extend_mixed_inline(&mut dom, wrapper, t, tag, use_css)) {
+                        last_wrapper = Some(w);
                         continue;
                     }
                 }
@@ -1941,7 +1998,9 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                         continue;
                     }
                 }
-                let style = if use_css { inline_css(tag) } else { None };
+                let style = if !use_css { None } else if mixed_run && matches!(tag, "strike" | "u") {
+                    Some(("text-decoration-line", if tag == "u" { "underline" } else { "line-through" }))
+                } else { inline_css(tag) };
                 let Ok(w) = dom.create_element(doc, if style.is_some() { "span" } else { tag }) else {
                     continue;
                 };
@@ -2021,7 +2080,7 @@ fn ancestor_format(dom: &Dom, node: NodeId, host: NodeId, names: &[&str], removi
                     return false;
                 };
                 names.iter().filter_map(|tag| inline_css(tag)).any(|(property, value)| {
-                    declaration.name.eq_ignore_ascii_case(property)
+                    (declaration.name.eq_ignore_ascii_case(property) || property == "text-decoration" && declaration.name == "text-decoration-line")
                             && (declaration.value.eq_ignore_ascii_case(value)
                                 || removing && property == "font-weight" && numeric_bold_weight(&declaration.value)
                                 || removing && property == "font-style" && FontToggle::Italic.active(&declaration.value))
