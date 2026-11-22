@@ -1684,7 +1684,7 @@ impl StyleEngine {
             Some(sheet) if Self::inactive(sheet, dom) => Some(""),
             Some(sheet) => sheet.supplied_text(dom),
             None if dom.element(owner).is_ok_and(|el| el.name.local == local_name!("style"))
-                && dom.sheet_outside_preferred_set(owner) => Some(""),
+                && (dom.sheet_outside_preferred_set(owner) || dom.style_element_blocked(owner)) => Some(""),
             None => None,
         }
     }
@@ -1715,6 +1715,8 @@ impl StyleEngine {
             || dom.sheet_outside_preferred_set(sheet.owner)
             // pyro: a `<style>` whose type is not CSS has no sheet (HTML "update a style block").
             || dom.style_type_not_css(sheet.owner)
+            // pyro: nor one CSP blocked (`style-src-elem`).
+            || dom.style_element_blocked(sheet.owner)
     }
 
     /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.
@@ -2105,6 +2107,9 @@ impl StyleEngine {
     /// The element's inline declaration of `name` (the `el.style` view),
     /// without the cascade check.
     pub fn inline_declared_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<(String, bool)> {
+        if dom.style_attribute_blocked(el) {
+            return None;
+        }
         let style = dom.element(el).ok()?.attr("style")?;
         InlineStyle::parse(style).get(name)
     }

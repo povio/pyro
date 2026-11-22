@@ -734,7 +734,9 @@ impl Dom {
                     let plain = |local: &str| Cow::Owned(QualName::new(None, ns!(), local.into()));
                     // Keep the reflected attribute available to CSS attribute selectors.
                     // Only the declaration parser consumes this private snapshot value.
-                    if let Some(style) = e.semantic_inline_style() {
+                    // pyro: a `style` attribute CSP blocked declares nothing in the renderer too.
+                    let blocked_style = self.style_attribute_blocked_idx(n);
+                    if let Some(style) = if blocked_style { Some("") } else { e.semantic_inline_style() } {
                         attrs.push(RAttr {
                             name: Cow::Owned(QualName::new(None, STATE_NS.into(), "inline-declarations".into())),
                             value: Cow::Borrowed(style),

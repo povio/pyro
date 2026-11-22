@@ -631,6 +631,10 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
         let text = self.style_attribute_source()?;
         let (cx, i) = (self.cx(), self.i());
+        // pyro: a `style` attribute CSP blocked declares nothing (`style-src-attr`).
+        if cx.dom.style_attribute_blocked_idx(i) {
+            return None;
+        }
         // SAFETY: styling is sequential, and only this element's own style
         // computation reads its parsed style attribute.
         let cached = unsafe { cx.store.style_attr(i, cx.dom.generation_at(i)) };

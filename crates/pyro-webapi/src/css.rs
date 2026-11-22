@@ -424,7 +424,13 @@ impl StyleData {
     fn text_and_backing(&self) -> (String, Option<bool>, Option<TypedStyleValues>) {
         match &self.source {
             StyleSource::Inline(el) => {
+                // pyro: a `style` attribute CSP blocked declares nothing (as Chrome: the element's
+                // inline style is empty), from the moment it was set.
+                crate::csp::resolve_inline_styles(&el.page);
                 let dom = el.page.dom.borrow();
+                if dom.style_attribute_blocked(el.id) {
+                    return (String::new(), None, None);
+                }
                 let Ok(e) = dom.element(el.id) else { return (String::new(), None, None) };
                 (e.semantic_inline_style().or_else(|| e.attr_local(&markup5ever::local_name!("style")))
                     .unwrap_or("").to_owned(), e.checked_inline_style_backing(), e.typed_style_values().cloned())
@@ -3100,6 +3106,11 @@ pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'
     if n.page().dom.borrow().style_type_not_css(n.id) {
         return Ok(s.null());
     }
+    // pyro: nor one CSP blocked (`style-src-elem`, as Chrome).
+    crate::csp::resolve_inline_styles(n.page());
+    if n.page().dom.borrow().style_element_blocked(n.id) {
+        return Ok(s.null());
+    }
     sheet_object(s, n.page(), n.id)
 }
 
@@ -3118,6 +3129,8 @@ pub struct StyleSheetList;
 
 impl StyleSheetList {
     fn owners(root: &NodeHold) -> Vec<NodeId> {
+        // pyro: a `<style>` CSP blocks has no sheet, from the moment it was inserted or changed.
+        crate::csp::resolve_inline_styles(&root.page);
         let dom = root.page.dom.borrow();
         // A disconnected shadow root's `<style>`s have no sheets.
         if !dom.is_connected(root.id).unwrap_or(false) {
@@ -3131,6 +3144,8 @@ impl StyleSheetList {
                     "style" => {
                         (e.is_html() || e.namespace() == &markup5ever::ns!(svg))
                             && pyro_dom::Dom::style_type_is_css(e.attr("type"))
+                            // pyro: nor one CSP blocked (`style-src-elem`).
+                            && !dom.style_element_blocked(n)
                     }
                     "link" => {
                         e.is_html()

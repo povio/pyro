@@ -515,6 +515,7 @@ impl Load {
             let (id, target) = create(dom, node.kind, owner);
             if self.live {
                 dom.note_inline_handlers(id);
+                dom.note_inline_style(id);
                 dom.append_parsed(id, parent);
             } else {
                 dom.link_raw(id, parent, NIL);
@@ -539,6 +540,7 @@ impl Load {
             dom.descendants(self.document).map(|d| d.map(|n| n.index()).collect()).unwrap_or_default();
         for i in elements {
             dom.note_inline_handlers(i);
+            dom.note_inline_style(i);
         }
         let top: Vec<u32> = dom.child_idx_iter(self.document.index()).collect();
         for node in top {
