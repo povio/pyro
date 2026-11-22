@@ -479,11 +479,47 @@ impl Dom {
                 self.bump();
             }
             let was_modal = self.top_layer.modal.remove(&id);
+            // HTML "hide popover" (no events) of a removed showing popover closes the popovers
+            // above it in its stack first.
+            if self.top_layer.popovers.contains(&id) {
+                for which in [PopoverStack::Auto, PopoverStack::Hint] {
+                    let stack = self.top_layer.stack(which);
+                    if let Some(at) = stack.iter().position(|&e| e == id) {
+                        let above: Vec<NodeId> = stack[at + 1..].to_vec();
+                        for el in above.into_iter().rev() {
+                            self.top_layer.popovers.remove(&el);
+                            self.top_layer.leave(el);
+                        }
+                    }
+                }
+            }
             let was_showing = self.top_layer.popovers.remove(&id);
             if was_modal || was_showing {
                 self.top_layer.leave(id);
                 self.bump();
             }
+        }
+        // Popovers invoked from inside the removed subtree (a hint whose invoker was in a removed
+        // auto popover) are hidden with it, and those invoked from them.
+        loop {
+            let invoked: Vec<NodeId> = self
+                .top_layer
+                .invokers
+                .iter()
+                .filter(|(_, invoker)| {
+                    self.check(**invoker).is_ok_and(|inv| self.shadow_including_inclusive_ancestor(node, inv))
+                })
+                .map(|(popover, _)| *popover)
+                .filter(|popover| self.top_layer.popovers.contains(popover))
+                .collect();
+            if invoked.is_empty() {
+                break;
+            }
+            for el in invoked {
+                self.top_layer.popovers.remove(&el);
+                self.top_layer.leave(el);
+            }
+            self.bump();
         }
     }
 }
