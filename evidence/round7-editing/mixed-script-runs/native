@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+cache="$HOME/Library/Caches/lightningpanda"
+export PYRO_JSC_DIR="$cache/jsc/$(scripts/jsc/cache-key.sh)" CARGO_TARGET_DIR="$cache/round7-editing/plaintext-enter/verified/target"
+export CARGO_PROFILE_WPTITER_INHERITS=release-fast CARGO_PROFILE_WPTITER_LTO=false CARGO_PROFILE_WPTITER_CODEGEN_UNITS=16 CARGO_PROFILE_WPTITER_INCREMENTAL=true CARGO_BUILD_JOBS=1
+exec cargo test --profile wptiter -p pyro-webapi --test integration editing_js::collapsed_script_commands_format_only_new_text -- --exact

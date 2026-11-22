@@ -1,0 +1,962 @@
+[
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair",
+      "css": false,
+      "reverse": false
+    },
+    "stage": "after",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair",
+      "css": false,
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair-full",
+      "css": false,
+      "reverse": false
+    },
+    "stage": "restored",
+    "field": "originalText",
+    "arms": {
+      "parent": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ],
+      "candidate": [
+        "foo",
+        "",
+        "abcd",
+        "baz"
+      ],
+      "signed": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "opposite",
+      "css": false,
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair",
+      "css": false,
+      "reverse": false
+    },
+    "stage": "after",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair",
+      "css": false,
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair-full",
+      "css": false,
+      "reverse": false
+    },
+    "stage": "restored",
+    "field": "originalText",
+    "arms": {
+      "parent": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ],
+      "candidate": [
+        "foo",
+        "",
+        "abcd",
+        "baz"
+      ],
+      "signed": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "opposite",
+      "css": false,
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair",
+      "css": false,
+      "reverse": true
+    },
+    "stage": "after",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair",
+      "css": false,
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair-full",
+      "css": false,
+      "reverse": true
+    },
+    "stage": "restored",
+    "field": "originalText",
+    "arms": {
+      "parent": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ],
+      "candidate": [
+        "foo",
+        "",
+        "abcd",
+        "baz"
+      ],
+      "signed": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "opposite",
+      "css": false,
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair",
+      "css": false,
+      "reverse": true
+    },
+    "stage": "after",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair",
+      "css": false,
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair-full",
+      "css": false,
+      "reverse": true
+    },
+    "stage": "restored",
+    "field": "originalText",
+    "arms": {
+      "parent": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ],
+      "candidate": [
+        "foo",
+        "",
+        "abcd",
+        "baz"
+      ],
+      "signed": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "opposite",
+      "css": false,
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair",
+      "css": true,
+      "reverse": false
+    },
+    "stage": "after",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair",
+      "css": true,
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair-full",
+      "css": true,
+      "reverse": false
+    },
+    "stage": "restored",
+    "field": "originalText",
+    "arms": {
+      "parent": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ],
+      "candidate": [
+        "foo",
+        "",
+        "abcd",
+        "baz"
+      ],
+      "signed": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "opposite",
+      "css": true,
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair",
+      "css": true,
+      "reverse": false
+    },
+    "stage": "after",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair",
+      "css": true,
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair-full",
+      "css": true,
+      "reverse": false
+    },
+    "stage": "restored",
+    "field": "originalText",
+    "arms": {
+      "parent": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ],
+      "candidate": [
+        "foo",
+        "",
+        "abcd",
+        "baz"
+      ],
+      "signed": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "opposite",
+      "css": true,
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair",
+      "css": true,
+      "reverse": true
+    },
+    "stage": "after",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair",
+      "css": true,
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "pair-full",
+      "css": true,
+      "reverse": true
+    },
+    "stage": "restored",
+    "field": "originalText",
+    "arms": {
+      "parent": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ],
+      "candidate": [
+        "foo",
+        "",
+        "abcd",
+        "baz"
+      ],
+      "signed": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "subscript",
+      "shape": "opposite",
+      "css": true,
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair",
+      "css": true,
+      "reverse": true
+    },
+    "stage": "after",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair",
+      "css": true,
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "pair-full",
+      "css": true,
+      "reverse": true
+    },
+    "stage": "restored",
+    "field": "originalText",
+    "arms": {
+      "parent": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ],
+      "candidate": [
+        "foo",
+        "",
+        "abcd",
+        "baz"
+      ],
+      "signed": [
+        "foo",
+        "abcd",
+        "abcd",
+        "baz"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "cmd": "superscript",
+      "shape": "opposite",
+      "css": true,
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "connected",
+    "arms": {
+      "parent": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "candidate": [
+        true,
+        false,
+        true,
+        true
+      ],
+      "signed": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  }
+]

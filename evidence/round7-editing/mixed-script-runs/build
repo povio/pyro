@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+cache="$HOME/Library/Caches/lightningpanda"
+out="$cache/round7-editing/mixed-script-runs"
+target="$cache/round7-editing/plaintext-enter/verified/target"
+base=57fea406e1503e2fb8006e31c02ef00d53446590
+candidate=ed70d150f13b4cbc3ea5efed084619473ff4fc93
+name="$1"
+case "$name" in
+base) commit="$base";;
+pyro) commit="$candidate";;
+*) exit 1;;
+esac
+test "$(git rev-parse HEAD)" = "$(git rev-parse "$commit")"
+test -z "$(git status --porcelain --untracked-files=no)"
+PYRO_BUILD_JOBS=1 "$cache/round6-noncss-measure/build-exact" "$target" > "$out/$name-build.log" 2>&1
+cp -c "$target/wptiter/pyro" "$out/$name"
+{
+git rev-parse HEAD 'HEAD^{tree}'
+git status --porcelain
+echo "Clean status required before build; profile wptiter, features render, LTO false, 16 codegen units, incremental true, PYRO_BUILD_JOBS=1."
+
+rustc -Vv
+shasum -a 256 "$out/$name" "$cache/jsc/$(scripts/jsc/cache-key.sh)/lib/libJavaScriptCore.a"
+} > "$out/$name-provenance.txt"
+cat "$out/$name-provenance.txt"
