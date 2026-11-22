@@ -2,32 +2,92 @@
 //! compressed sine-wave fixtures also used by the whole-file decoder.
 use std::io::Cursor;
 
-use pyro_media::audio::packet::PacketDecoder;
+use bytes::Bytes;
+use pyro_media::audio::packet::{PacketAudio, PacketDecoder, PacketOutput, PcmFormat};
+use pyro_media::audio::Decoded;
 use symphonia::core::formats::{probe::Hint, TrackType};
 use symphonia::core::io::MediaSourceStream;
 
-#[test]
-fn pcm_packets_preserve_channel_order_and_signed_sample_values() {
-    let mut decoder = PacketDecoder::new("pcm-s16", 44100, 2, None).unwrap();
-    let bytes: Vec<_> = [i16::MIN, 16384, 0, -16384].iter().flat_map(|x| x.to_le_bytes()).collect();
-    let out = decoder.decode(-1200, &bytes).unwrap().unwrap();
-    assert_eq!(out.timestamp, -1200);
-    assert_eq!(out.audio.sample_rate, 44100);
-    assert_eq!(out.audio.channels, [vec![-1.0, 0.0], vec![0.5, -0.5]]);
-    assert!(decoder.decode(0, &bytes[..3]).is_err());
-    decoder.flush().unwrap();
-    assert_eq!(decoder.decode(123, &bytes).unwrap().unwrap().audio.channels, out.audio.channels);
+fn planes(output: PacketOutput) -> Decoded {
+    match output.audio {
+        PacketAudio::Planar(audio) => audio,
+        PacketAudio::Pcm { .. } => panic!("expected decoded float planes"),
+    }
+}
 
+#[test]
+fn pcm_packets_preserve_formats_integer_precision_and_channel_order() {
+    let s16 = [i16::MIN, -1, 0, 1, 8192, i16::MAX];
+    let s32 = [i32::MIN, -16777217, -1, 0, 16777217, i32::MAX];
+    // Preserve the exact f32 bit pattern while transposing stereo L/R into two planes.
+    let f32_bits = [0x80000000u32, 0x40000000, 0x7fc12345, 0xbf800000];
+    for (codec, format, channels, raw, expected) in [
+        ("pcm-u8", PcmFormat::U8, 1, vec![0, 1, 127, 128, 254, 255], vec![0, 1, 127, 128, 254, 255]),
+        (
+            "pcm-s16",
+            PcmFormat::S16,
+            2,
+            s16.iter().flat_map(|v| v.to_le_bytes()).collect(),
+            s16.iter().flat_map(|v| v.to_ne_bytes()).collect(),
+        ),
+        (
+            "pcm-s24",
+            PcmFormat::S32,
+            1,
+            vec![0, 0, 128, 255, 255, 255, 1, 0, 0, 255, 255, 127],
+            [i32::MIN, -256, 256, 0x7fffff00].iter().flat_map(|v| v.to_ne_bytes()).collect(),
+        ),
+        (
+            "pcm-s32",
+            PcmFormat::S32,
+            2,
+            s32.iter().flat_map(|v| v.to_le_bytes()).collect(),
+            s32.iter().flat_map(|v| v.to_ne_bytes()).collect(),
+        ),
+        (
+            "pcm-f32",
+            PcmFormat::F32Planar,
+            2,
+            f32_bits.iter().flat_map(|v| v.to_le_bytes()).collect(),
+            [f32_bits[0], f32_bits[2], f32_bits[1], f32_bits[3]].iter().flat_map(|v| v.to_ne_bytes()).collect(),
+        ),
+    ] {
+        let frames_per_packet = match codec {
+            "pcm-u8" => 6,
+            "pcm-s16" | "pcm-s32" => 3,
+            "pcm-s24" => 4,
+            _ => 2,
+        };
+        let mut decoder = PacketDecoder::new(codec, 44100, channels, None).unwrap();
+        let raw = Bytes::from(raw);
+        for timestamp in [-1200, 123] {
+            let output = decoder.decode(timestamp, raw.clone()).unwrap().unwrap();
+            assert_eq!(output.timestamp, timestamp);
+            let PacketAudio::Pcm { format: actual, sample_rate, channels: count, frames, data } = output.audio else {
+                panic!("expected typed PCM for {codec}");
+            };
+            assert_eq!((actual, sample_rate, count, frames), (format, 44100, channels, frames_per_packet), "{codec}");
+            assert_eq!(data.as_ref(), &expected[..], "{codec}");
+            if cfg!(target_endian = "little") && matches!(codec, "pcm-u8" | "pcm-s16" | "pcm-s32") {
+                assert_eq!(data.as_ptr(), raw.as_ptr(), "{codec} should share the chunk’s bytes");
+            }
+            decoder.flush().unwrap();
+        }
+        if channels > 1 {
+            assert!(decoder.decode(0, raw.slice(1..)).is_err());
+        }
+    }
+}
+
+#[test]
+fn g711_packets_expand_to_linear_samples() {
     for (codec, data, expected) in [
-        ("pcm-u8", &b"\x00\x80"[..], vec![-1.0, 0.0]),
-        ("pcm-s24", &b"\x00\x00\x80\x00\x00\x40"[..], vec![-1.0, 0.5]),
-        ("pcm-s32", &b"\x00\x00\x00\x80\x00\x00\x00\x40"[..], vec![-1.0, 0.5]),
-        ("pcm-f32", &b"\x00\x00\x80\xbf\x00\x00\x00\x3f"[..], vec![-1.0, 0.5]),
         ("ulaw", &b"\xff\x80\x00"[..], vec![0.0, 32124.0 / 32768.0, -32124.0 / 32768.0]),
         ("alaw", &b"\xd5\x55"[..], vec![8.0 / 32768.0, -8.0 / 32768.0]),
     ] {
         let mut decoder = PacketDecoder::new(codec, 8000, 1, None).unwrap();
-        assert_eq!(decoder.decode(0, data).unwrap().unwrap().audio.channels[0], expected, "{codec}");
+        let out = planes(decoder.decode(0, Bytes::from_static(data)).unwrap().unwrap());
+        assert_eq!(out.channels[0], expected, "{codec}");
     }
 }
 
@@ -38,11 +98,14 @@ fn opus_header_priming_uses_the_decoder_rate_and_survives_flush() {
     // output timestamp by 6.5 ms, including at a nonnegative origin.
     for pts in [-42, 42] {
         let mut decoder = PacketDecoder::new("opus", 44100, 1, Some(&head)).unwrap();
-        let out = decoder.decode(pts, &[0xf8, 0xff, 0xfe]).unwrap().unwrap();
-        assert_eq!((out.timestamp, out.audio.sample_rate, out.audio.len()), (pts + 6500, 48000, 648));
+        let out = decoder.decode(pts, Bytes::from_static(&[0xf8, 0xff, 0xfe])).unwrap().unwrap();
+        assert_eq!(out.timestamp, pts + 6500);
+        let audio = planes(out);
+        assert_eq!((audio.sample_rate, audio.len()), (48000, 648));
         decoder.flush().unwrap();
-        let out = decoder.decode(pts, &[0xf8, 0xff, 0xfe]).unwrap().unwrap();
-        assert_eq!((out.timestamp, out.audio.len()), (pts, 960));
+        let out = decoder.decode(pts, Bytes::from_static(&[0xf8, 0xff, 0xfe])).unwrap().unwrap();
+        assert_eq!(out.timestamp, pts);
+        assert_eq!(planes(out).len(), 960);
     }
     head[9] = 3;
     assert!(PacketDecoder::new("opus", 48000, 3, Some(&head)).is_err());
@@ -56,7 +119,7 @@ fn codec_specific_configuration_and_packet_boundaries_are_checked() {
     assert!(PacketDecoder::new("flac", 48000, 1, None).is_err());
     assert!(PacketDecoder::new("vorbis", 48000, 1, None).is_err());
     let mut decoder = PacketDecoder::new("mp4a.40.2", 48000, 1, None).unwrap();
-    assert!(decoder.decode(0, &[]).is_err());
+    assert!(decoder.decode(0, Bytes::new()).is_err());
 }
 
 #[test]
@@ -124,10 +187,11 @@ fn compressed_packets_decode_to_the_fixture_tone() {
             } else {
                 packet.data.into_vec()
             };
-            if let Some(out) = decoder.decode(0, &data).unwrap_or_else(|e| panic!("{codec}: {e}")) {
-                assert_eq!(out.audio.sample_rate, expected_rate, "{codec}");
-                assert_eq!(out.audio.channels.len(), if codec == "vorbis" { 2 } else { 1 }, "{codec}");
-                samples.extend_from_slice(&out.audio.channels[0]);
+            if let Some(out) = decoder.decode(0, Bytes::from(data)).unwrap_or_else(|e| panic!("{codec}: {e}")) {
+                let audio = planes(out);
+                assert_eq!(audio.sample_rate, expected_rate, "{codec}");
+                assert_eq!(audio.channels.len(), if codec == "vorbis" { 2 } else { 1 }, "{codec}");
+                samples.extend_from_slice(&audio.channels[0]);
             }
         }
         assert!(samples.len() >= 20000, "{codec}: {} samples", samples.len());

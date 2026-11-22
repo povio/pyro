@@ -2,6 +2,7 @@
 //! parsing stays in the whole-file decoder; packet descriptions supply the
 //! headers that a container demuxer would otherwise have extracted.
 
+use bytes::Bytes;
 use symphonia::core::audio::Channels as ChannelLayout;
 use symphonia::core::codecs::audio::{well_known::*, AudioCodecId, AudioCodecParameters, AudioDecoder};
 use symphonia::core::packet::PacketRef;
@@ -9,15 +10,37 @@ use symphonia::core::units::{Duration, Timestamp};
 
 use super::{Channels, Decoded, MAX_CHANNELS, MAX_FRAMES};
 
-/// One output, with timestamp in microseconds and one float plane per channel.
+/// One output with a timestamp in microseconds.
 pub struct PacketOutput {
     pub timestamp: i64,
-    pub audio: Decoded,
+    pub audio: PacketAudio,
+}
+
+pub enum PacketAudio {
+    Planar(Decoded),
+    /// Native-endian sample bytes. Integer samples are interleaved and
+    /// floating point samples are planar.
+    Pcm {
+        format: PcmFormat,
+        sample_rate: u32,
+        channels: u32,
+        frames: u32,
+        data: Bytes,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PcmFormat {
+    U8,
+    S16,
+    S32,
+    F32Planar,
 }
 
 #[derive(Clone, Copy)]
 enum Codec {
-    Pcm { id: AudioCodecId, bytes_per_sample: usize },
+    Linear { format: PcmFormat, width: usize },
+    G711(AudioCodecId),
     Aac,
     Mp3,
     Flac,
@@ -27,15 +50,15 @@ enum Codec {
 
 impl Codec {
     fn parse(name: &str) -> Option<Self> {
-        let pcm = |id, bytes_per_sample| Self::Pcm { id, bytes_per_sample };
+        let pcm = |format, width| Self::Linear { format, width };
         Some(match name {
-            "pcm-u8" => pcm(CODEC_ID_PCM_U8, 1),
-            "pcm-s16" => pcm(CODEC_ID_PCM_S16LE, 2),
-            "pcm-s24" => pcm(CODEC_ID_PCM_S24LE, 3),
-            "pcm-s32" => pcm(CODEC_ID_PCM_S32LE, 4),
-            "pcm-f32" => pcm(CODEC_ID_PCM_F32LE, 4),
-            "alaw" => pcm(CODEC_ID_PCM_ALAW, 1),
-            "ulaw" => pcm(CODEC_ID_PCM_MULAW, 1),
+            "pcm-u8" => pcm(PcmFormat::U8, 1),
+            "pcm-s16" => pcm(PcmFormat::S16, 2),
+            "pcm-s24" => pcm(PcmFormat::S32, 3),
+            "pcm-s32" => pcm(PcmFormat::S32, 4),
+            "pcm-f32" => pcm(PcmFormat::F32Planar, 4),
+            "alaw" => Self::G711(CODEC_ID_PCM_ALAW),
+            "ulaw" => Self::G711(CODEC_ID_PCM_MULAW),
             "mp4a.40.2" | "mp4a.40.02" | "mp4a.67" => Self::Aac,
             "mp3" | "mp4a.69" | "mp4a.6B" => Self::Mp3,
             "flac" => Self::Flac,
@@ -47,6 +70,7 @@ impl Codec {
 }
 
 enum Backend {
+    Linear { format: PcmFormat, width: usize, rate: u32, channels: u32 },
     Audio(Box<dyn AudioDecoder>),
     // Without a description, each AAC packet has a self-describing ADTS
     // header. Retain the decoder between frames with the same configuration.
@@ -69,7 +93,7 @@ impl PacketDecoder {
             return false;
         }
         match Codec::parse(codec) {
-            Some(Codec::Pcm { .. }) => channels as usize <= MAX_CHANNELS,
+            Some(Codec::Linear { .. } | Codec::G711(_)) => channels as usize <= MAX_CHANNELS,
             Some(Codec::Opus) => channels <= 8,
             Some(_) => true,
             None => false,
@@ -84,13 +108,14 @@ impl PacketDecoder {
         let mut pcm_frame_bytes = None;
         let mut priming_frames = 0;
         let backend = match codec {
-            Codec::Pcm { id, bytes_per_sample } => {
+            Codec::Linear { format, width } => Backend::Linear { format, width, rate: sample_rate, channels },
+            Codec::G711(id) => {
                 let mut params = AudioCodecParameters::new();
                 params
                     .for_codec(id)
                     .with_sample_rate(sample_rate)
                     .with_channels(ChannelLayout::Discrete(channels as u16));
-                pcm_frame_bytes = Some(bytes_per_sample * channels as usize);
+                pcm_frame_bytes = Some(channels as usize);
                 Backend::Audio(make_decoder(&params)?)
             }
             Codec::Aac => match description {
@@ -148,7 +173,7 @@ impl PacketDecoder {
 
     /// A packet may only prime the decoder's overlap window and emit no
     /// frames. Every output carries its decoded sample rate and channel count.
-    pub fn decode(&mut self, timestamp: i64, data: &[u8]) -> Result<Option<PacketOutput>, String> {
+    pub fn decode(&mut self, timestamp: i64, data: Bytes) -> Result<Option<PacketOutput>, String> {
         if data.is_empty() {
             return Err("empty audio packet".into());
         }
@@ -158,9 +183,13 @@ impl PacketDecoder {
             }
         }
         let mut audio = match &mut self.backend {
-            Backend::Audio(decoder) => decode_symphonia(decoder.as_mut(), data)?,
+            Backend::Linear { format, width, rate, channels } => {
+                let audio = linear_pcm(*format, *width, *rate, *channels, data)?;
+                return Ok(Some(PacketOutput { timestamp, audio }));
+            }
+            Backend::Audio(decoder) => decode_symphonia(decoder.as_mut(), &data)?,
             Backend::Adts(active) => {
-                let (asc, payload) = adts_frame(data)?;
+                let (asc, payload) = adts_frame(&data)?;
                 if active.as_ref().is_none_or(|(config, _)| *config != asc) {
                     *active = Some((asc, decoder_with_header(CODEC_ID_AAC, &asc)?));
                 }
@@ -168,7 +197,7 @@ impl PacketDecoder {
                 decode_symphonia(decoder.as_mut(), payload)?
             }
             Backend::Opus { decoder, channels, gain, scratch } => {
-                let frames = decoder.decode(data, 5760, scratch).map_err(|e| e.to_string())?;
+                let frames = decoder.decode(&data, 5760, scratch).map_err(|e| e.to_string())?;
                 let pcm = &mut scratch[..frames * *channels];
                 if *gain != 1.0 {
                     pcm.iter_mut().for_each(|sample| *sample *= *gain);
@@ -179,7 +208,7 @@ impl PacketDecoder {
             }
         };
         if std::mem::take(&mut self.first_mp3) {
-            if let Some(delay) = mp3_encoder_delay(data) {
+            if let Some(delay) = mp3_encoder_delay(&data) {
                 self.priming_frames = delay;
                 // A Xing/Info frame is metadata, preceding the audio frames.
                 return Ok(None);
@@ -195,7 +224,7 @@ impl PacketDecoder {
         }
         let rate = i64::from(audio.sample_rate);
         let micros = (discard as i64 * 1_000_000 + rate / 2) / rate;
-        Ok(Some(PacketOutput { timestamp: timestamp.saturating_add(micros), audio }))
+        Ok(Some(PacketOutput { timestamp: timestamp.saturating_add(micros), audio: PacketAudio::Planar(audio) }))
     }
 
     /// These decoders have no delayed PCM to drain. Flush resets overlap
@@ -203,12 +232,63 @@ impl PacketDecoder {
     /// priming is not reapplied.
     pub fn flush(&mut self) -> Result<(), String> {
         match &mut self.backend {
+            Backend::Linear { .. } => (),
             Backend::Audio(decoder) => decoder.reset(),
             Backend::Adts(active) => *active = None,
             Backend::Opus { decoder, .. } => decoder.reset_state().map_err(|e| e.to_string())?,
         }
         Ok(())
     }
+}
+
+/// Linear PCM is already decoded. In particular, converting interleaved s32
+/// to float here would irreversibly discard low bits before AudioData.copyTo.
+fn linear_pcm(
+    format: PcmFormat,
+    width: usize,
+    sample_rate: u32,
+    channels: u32,
+    data: Bytes,
+) -> Result<PacketAudio, String> {
+    let frame_bytes = width * channels as usize;
+    let frames = data.len() / frame_bytes;
+    if data.len() % frame_bytes != 0 || frames > MAX_FRAMES {
+        return Err("PCM packet does not contain a supported number of complete frames".into());
+    }
+
+    let bytes = if width == 3 {
+        // WebCodecs has no s24 AudioSampleFormat. Align the original bits to
+        // the high end of s32: e.g. signed 24-bit -1 becomes signed 32-bit -256.
+        let capacity = (data.len() / 3).checked_mul(4).ok_or("decoded PCM is too large")?;
+        let mut widened = Vec::new();
+        widened.try_reserve_exact(capacity).map_err(|_| "decoded PCM is too large")?;
+        for sample in data.chunks_exact(3) {
+            let v = i32::from_le_bytes([0, sample[0], sample[1], sample[2]]);
+            widened.extend_from_slice(&v.to_ne_bytes());
+        }
+        Bytes::from(widened)
+    } else if format == PcmFormat::F32Planar && channels > 1 {
+        let mut planes = Vec::new();
+        planes.try_reserve_exact(data.len()).map_err(|_| "decoded PCM is too large")?;
+        for channel in 0..channels as usize {
+            for frame in data.chunks_exact(frame_bytes) {
+                let offset = channel * 4;
+                let word = u32::from_le_bytes(frame[offset..offset + 4].try_into().expect("whole f32 sample"));
+                planes.extend_from_slice(&word.to_ne_bytes());
+            }
+        }
+        Bytes::from(planes)
+    } else if cfg!(target_endian = "big") && width > 1 {
+        let mut native = Vec::new();
+        native.try_reserve_exact(data.len()).map_err(|_| "decoded PCM is too large")?;
+        for sample in data.chunks_exact(width) {
+            native.extend(sample.iter().rev().copied());
+        }
+        Bytes::from(native)
+    } else {
+        data
+    };
+    Ok(PacketAudio::Pcm { format, sample_rate, channels, frames: frames as u32, data: bytes })
 }
 
 fn make_decoder(params: &AudioCodecParameters) -> Result<Box<dyn AudioDecoder>, String> {
