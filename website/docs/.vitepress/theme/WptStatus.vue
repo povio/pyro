@@ -118,7 +118,7 @@ const shownTests = computed(() => tests.value.slice(0, SHOWN));
 const kindTests = computed(() => (page.value?.tests ?? []).filter((t) => t.k === kind.value).length);
 
 const result = (t: Test) => {
-  if (t.s === null) return { text: 'not run', cls: 'notrun' };
+  if (t.s === null) return { text: 'no CI result', cls: 'notrun' };
   if (passes(t)) return { text: 'pass', cls: 'pass' };
   if (t.s !== 'complete') return { text: t.s, cls: 'fail' };
   return { text: 'fail', cls: 'fail' };
@@ -199,6 +199,12 @@ const chart = computed(() => {
         </button>
       </div>
 
+      <p class="meta">
+        Main CI recorded results for {{ num(counts[1]) }} of {{ num(counts[0]) }} pages at
+        <code>{{ page.sha.slice(0, 10) }}</code>. A missing result leaves the outcome unknown for this snapshot.
+        Separate release-candidate measurements appear in the
+        <a :href="withBase('/reference/round-seven.html')">round seven report</a>.
+      </p>
       <div class="stats">
         <div class="stat">
           <div class="big">{{ pct(counts[2], counts[0]) }}</div>
@@ -206,7 +212,7 @@ const chart = computed(() => {
         </div>
         <div class="stat">
           <div class="big">{{ num(counts[0] - counts[1]) }}</div>
-          <div class="label">not run yet ({{ pct(counts[0] - counts[1], counts[0]) }})</div>
+          <div class="label">without a CI result ({{ pct(counts[0] - counts[1], counts[0]) }})</div>
         </div>
         <div v-if="kind === 'testharness'" class="stat">
           <div class="big">{{ pct(counts[3], counts[4]) }}</div>
@@ -246,7 +252,7 @@ const chart = computed(() => {
       </section>
 
       <p class="meta">
-        Data from commit <code>{{ page.sha.slice(0, 10) }}</code> ({{ page.date.slice(0, 10) }}) · WPT <code>{{ page.wpt.slice(0, 10) }}</code>
+        Main CI snapshot at commit <code>{{ page.sha.slice(0, 10) }}</code> ({{ page.date.slice(0, 10) }}) · WPT <code>{{ page.wpt.slice(0, 10) }}</code>
         <template v-if="page.chrome"> · Chrome {{ page.chrome.version }} on wpt.fyi at WPT <code>{{ page.chrome.revision.slice(0, 10) }}</code></template>
       </p>
 
@@ -256,7 +262,7 @@ const chart = computed(() => {
           <table>
             <thead>
               <tr>
-                <th>Area</th><th class="r">Passed / tests</th><th class="r">Test %</th><th class="r">Not run</th>
+                <th>Area</th><th class="r">Passed / tests</th><th class="r">Test %</th><th class="r">No CI result</th>
                 <th v-if="kind === 'testharness'" class="r">Subtests passed / total</th>
                 <th v-if="kind === 'testharness'" class="r">Subtest %</th>
                 <th v-if="page.chrome" class="r">Chrome</th>
@@ -280,7 +286,7 @@ const chart = computed(() => {
       <section v-if="kindTests">
         <h2>Tests in this directory</h2>
         <div class="filters">
-          <button v-for="f in (['all', 'fail', 'pass', 'notrun'] as const)" :key="f" :class="{ on: filter === f }" @click="filter = f">{{ { all: 'All', fail: 'Failing', pass: 'Passing', notrun: 'Not run' }[f] }}</button>
+          <button v-for="f in (['all', 'fail', 'pass', 'notrun'] as const)" :key="f" :class="{ on: filter === f }" @click="filter = f">{{ { all: 'All', fail: 'Failing', pass: 'Passing', notrun: 'No CI result' }[f] }}</button>
           <input v-model="query" type="search" placeholder="Filter by name" aria-label="Filter tests by name" />
         </div>
         <div class="scroll">

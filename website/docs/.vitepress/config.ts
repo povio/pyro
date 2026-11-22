@@ -143,6 +143,7 @@ const reference = [
       { text: 'Pyro CDP domain', link: '/reference/cdp-domain' },
       { text: 'CDP coverage', link: '/reference/cdp' },
       { text: 'Web platform support', link: '/reference/web-platform' },
+      { text: 'Round seven compatibility progress', link: '/reference/round-seven' },
       { text: 'Round six compatibility progress', link: '/reference/round-six' },
       { text: 'Changelog and versions', link: '/reference/versions' },
     ],
