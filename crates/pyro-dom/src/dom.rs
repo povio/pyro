@@ -1889,10 +1889,10 @@ impl Dom {
     pub fn set_interest_for_element(&mut self, invoker: NodeId, target: Option<NodeId>) -> DomResult<()> {
         if let Some(target) = target {
             self.element(target)?;
-            self.set_attribute(invoker, "interestfor", "")?;
+            self.set_attribute_ns(invoker, None, "interestfor", "")?;
             self.interest_for_elements.insert(invoker.idx, target);
         } else {
-            self.remove_attribute(invoker, "interestfor")?;
+            self.remove_attribute_ns(invoker, None, "interestfor")?;
         }
         Ok(())
     }
@@ -3701,6 +3701,9 @@ impl Dom {
     /// follows.
     pub(crate) fn edit_attrs<R>(&mut self, i: u32, name: &QualName, f: impl FnOnce(&mut ElementData) -> R) -> R {
         let plain = name.ns == ns!();
+        if plain && !self.interest_for_elements.is_empty() && &*name.local == "interestfor" {
+            self.interest_for_elements.remove(&i);
+        }
         if plain && !self.svg_strings.is_empty() {
             if let Some(kind) = crate::svg_string_list::StringListAttribute::from_name(&name.local) {
                 self.svg_strings.remove(&(i, kind));

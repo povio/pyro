@@ -2041,7 +2041,7 @@ fn define_interest_invoker<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 let element = s.unwrap::<Element>(v).ok_or_else(|| JsError::Type("Expected an Element".into()))?;
                 if !Rc::ptr_eq(&element.page().dom, &n.page().dom) {
                     // Separate DOM stores cannot share a shadow-including ancestor.
-                    n.page().dom.borrow_mut().set_attribute(n.id, "interestfor", "").js()?;
+                    n.page().dom.borrow_mut().set_attribute_ns(n.id, None, "interestfor", "").js()?;
                     return Ok(());
                 }
                 Some(element.id)
