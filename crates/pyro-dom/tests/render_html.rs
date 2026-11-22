@@ -68,10 +68,11 @@ fn script_text_handlers_and_comments_are_dropped() {
         "<iframe src=\"/frame\"></iframe><p>kept</p></body></html>",
     ));
     let html = render(&dom.borrow(), d);
-    // A script stays (without its text): it counts for sibling selectors (WPT CSS2 `content-072`).
+    // A script, noscript and template stay without their content: they count for sibling
+    // selectors (WPT CSS2 `content-072`) and have a computed style (`display: none`).
     assert_eq!(
         html,
-        "<!DOCTYPE html><html><head><script></script></head><body><iframe></iframe><p>kept</p></body></html>"
+        "<!DOCTYPE html><html><head><script></script></head><body><noscript></noscript><template></template><iframe></iframe><p>kept</p></body></html>"
     );
 }
 

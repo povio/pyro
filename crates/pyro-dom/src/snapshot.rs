@@ -8,8 +8,9 @@
 //!   checkedness, a textarea's value, each option's selectedness;
 //! - `<style>` text and `<link rel=stylesheet>` URLs come from the caller
 //!   (the style engine holds the live text, CSSOM edits included);
-//! - a `<script>` is written without its text; `<noscript>` (scripting is on), `<template>`, comments and
-//!   processing instructions are left out, and so is an `<iframe>`'s `src`
+//! - a `<script>`, `<noscript>` (scripting is on) and `<template>` are written without their
+//!   content (the elements stay, `display: none`, so they count for selectors and have a computed
+//!   style); comments and processing instructions are left out, and so is an `<iframe>`'s `src`
 //!   (a frame shows the document [`Dom::set_frame_documents`] gave it, which the
 //!   renderer takes from the frame table, [`Dom::frame_table`], by the index the frame's
 //!   [`FRAME_ATTRIBUTE`] names; else nothing); a page attribute that would collide with
@@ -684,9 +685,11 @@ impl Dom {
                 NodeKind::Element(e) => {
                     let html = e.is_html();
                     let local: &str = &e.name.local;
-                    if html && matches!(local, "noscript" | "template") {
-                        continue;
-                    }
+                    // pyro: `<noscript>` and `<template>` are in the tree without their content, as a
+                    // script is: they have a computed style (`getComputedStyle`, WPT
+                    // html/rendering/bidi-rendering/unicode-bidi-ua-rules) and count for sibling and
+                    // structural selectors; the UA sheet gives them `display: none`.
+                    let childless = html && matches!(local, "noscript" | "template");
                     // pyro: a script element is in the tree, without its text: it counts for
                     // sibling and structural selectors, and `script { display: block }` boxes
                     // render (WPT CSS2 `content-072`, `-090`, `-138`).
@@ -755,6 +758,9 @@ impl Dom {
                                     html && self.frame_documents.contains_key(&n)
                                 }
                                 ("img", "src") => image_source.is_some(),
+                                // pyro: a script-made template's `shadowrootmode` would reparse as
+                                // a declarative shadow root of its parent in the renderer.
+                                ("template", "shadowrootmode") => html,
                                 _ => false,
                             };
                             if skip {
@@ -952,7 +958,7 @@ impl Dom {
                     }
                     tags.push(tag);
                     stack.push(Step::Close);
-                    if is_script {
+                    if is_script || childless {
                         continue;
                     }
                     if html && local == "style" {
@@ -1231,7 +1237,12 @@ impl Dom {
             let is_frame = matches!(&self.n(i).kind, NodeKind::Element(e)
                 if e.is_html() && (matches!(&*e.name.local, "iframe" | "frame")
                     || (matches!(&*e.name.local, "object" | "embed") && self.frame_documents.contains_key(&i))));
-            let own_attributes = is_style || is_frame || textarea_attributes.get(&i) == Some(&true);
+            // A script's, noscript's or template's own attributes (`dir`, `class`): the element,
+            // which is rendered though its content is not.
+            let is_childless = matches!(&self.n(i).kind, NodeKind::Element(e)
+                if (e.is_html() && matches!(&*e.name.local, "script" | "noscript" | "template"))
+                    || (e.name.ns == ns!(svg) && &*e.name.local == "script"));
+            let own_attributes = is_style || is_frame || is_childless || textarea_attributes.get(&i) == Some(&true);
             let place =
                 if own_attributes && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };
             match place {
@@ -1482,10 +1493,8 @@ impl Dom {
     fn render_child(&self, k: u32) -> bool {
         match &self.n(k).kind {
             NodeKind::Text(_) | NodeKind::CData(_) => true,
-            NodeKind::Element(e) => {
-                let local: &str = &e.name.local;
-                !(e.is_html() && matches!(local, "noscript" | "template"))
-            }
+            // pyro: every element, `<noscript>` and `<template>` included (without their content).
+            NodeKind::Element(_) => true,
             _ => false,
         }
     }
