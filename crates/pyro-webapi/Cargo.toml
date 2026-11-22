@@ -65,6 +65,8 @@ ring = { version = "0.17.14", default-features = false, features = ["alloc"] }
 rustc-hash = "2"
 sha1 = { version = "0.10", features = ["oid"] }
 sha2 = { version = "0.10", features = ["oid"] }
+# Report bodies (CSP violation reports, the Reporting API).
+serde_json.workspace = true
 # FontFace data checks (font_loading.rs); both already in the tree via blitz-dom.
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
 wuff = "0.2"
