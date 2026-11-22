@@ -57,23 +57,16 @@ impl pyro_js::NamedProperties for WindowNamedProperties {
     }
 }
 
-fn scroll_xy(a: &pyro_js::Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
-    if let Some(o) = a.get(0).as_object() {
-        let l = o.get_atom("left")?;
-        let t = o.get_atom("top")?;
-        Ok((
-            (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
-            (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
-        ))
-    } else if a.len() >= 2 {
-        Ok((Some(to_scroll_offset(a.get(0))?), Some(to_scroll_offset(a.get(1))?)))
-    } else {
-        Ok((None, None))
-    }
-}
-
-fn window_scroll(page: &Rc<PageDom>, a: &pyro_js::Args<'_>, by: bool) -> JsResult<()> {
-    let (l, t) = scroll_xy(a)?;
+/// `Window.scroll()`, `scrollTo()` (`operation`) and `scrollBy()` (`by`): returns a scroll
+/// promise (Chrome's `Promise<ScrollResult>`, `layout_api::scroll_promise`).
+fn window_scroll<'s>(
+    s: &pyro_js::Scope<'s>,
+    page: &Rc<PageDom>,
+    a: &pyro_js::Args<'_>,
+    operation: &str,
+    by: bool,
+) -> JsResult<pyro_js::Value<'s>> {
+    let (l, t, smooth) = crate::layout_api::scroll_options(a, operation, "Window", to_scroll_offset)?;
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
@@ -86,7 +79,7 @@ fn window_scroll(page: &Rc<PageDom>, a: &pyro_js::Args<'_>, by: bool) -> JsResul
     if moved {
         crate::layout_api::fire_scroll(page, None);
     }
-    Ok(())
+    crate::layout_api::window_scroll_promise(s, page, moved, smooth)
 }
 
 /// Setter of a [Replaceable] attribute of a window or worker global:
@@ -309,9 +302,11 @@ where
     def.getter("screenY", |s, w| Ok(s.number(f64::from(w.page().screen_position().1))));
     def.getter("screenLeft", |s, w| Ok(s.number(f64::from(w.page().screen_position().0))));
     def.getter("screenTop", |s, w| Ok(s.number(f64::from(w.page().screen_position().1))));
-    def.method("scroll", 0, |s, w, a| window_scroll(w.page(), &a, false).map(|_| s.undefined()));
-    def.method("scrollTo", 0, |s, w, a| window_scroll(w.page(), &a, false).map(|_| s.undefined()));
-    def.method("scrollBy", 0, |s, w, a| window_scroll(w.page(), &a, true).map(|_| s.undefined()));
+    // The scroll methods return promises (Chrome's `Promise<ScrollResult>`): a bad argument
+    // rejects.
+    def.promise_method("scroll", 0, |s, w, a| window_scroll(s, w.page(), &a, "scroll", false));
+    def.promise_method("scrollTo", 0, |s, w, a| window_scroll(s, w.page(), &a, "scrollTo", false));
+    def.promise_method("scrollBy", 0, |s, w, a| window_scroll(s, w.page(), &a, "scrollBy", true));
     def.method("atob", 1, |s, _w, a| Ok(s.string(&crate::encoding::atob(&arg_string(&a, 0, "Window.atob")?)?)));
     def.method("btoa", 1, |s, _w, a| Ok(s.string(&crate::encoding::btoa(&arg_string(&a, 0, "Window.btoa")?)?)));
     def.getter("frameElement", |s, _w| Ok(s.null()));

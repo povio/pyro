@@ -1362,12 +1362,14 @@ pub(crate) fn wrap_new_html_element<'s>(
 pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     def.method("getBoundingClientRect", 0, |s, n, _a| crate::layout_api::bounding_rect(s, n));
     def.method("getClientRects", 0, |s, n, _a| crate::layout_api::client_rects(s, n));
-    def.method("scrollIntoView", 0, |s, n, a| crate::layout_api::scroll_into_view(s, n, a));
+    // The scroll methods return promises (Chrome's `Promise<ScrollResult>`): a bad argument
+    // rejects.
+    def.promise_method("scrollIntoView", 0, |s, n, a| crate::layout_api::scroll_into_view(s, n, a));
     def.method("scrollIntoViewIfNeeded", 0, |s, n, a| crate::layout_api::scroll_into_view_if_needed(s, n, a));
     def.method("checkVisibility", 0, |s, n, a| crate::layout_api::check_visibility(s, n, a));
-    def.method("scroll", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, false));
-    def.method("scrollTo", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, false));
-    def.method("scrollBy", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, true));
+    def.promise_method("scroll", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, "scroll", false));
+    def.promise_method("scrollTo", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, "scrollTo", false));
+    def.promise_method("scrollBy", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, "scrollBy", true));
     def.accessor(
         "scrollTop",
         |s, n| crate::layout_api::scroll_get(s, n, true),

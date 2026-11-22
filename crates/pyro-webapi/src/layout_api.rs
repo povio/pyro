@@ -134,7 +134,113 @@ fn unite_node_rects(
 /// Queues the `scroll` event of a completed scroll of `target` (None: the
 /// viewport), followed by its `scrollend`.
 pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
+    *page.scroll_serials.borrow_mut().entry((page.document(), target)).or_default() += 1;
     queue_scroll(page, target, true);
+}
+
+/// pyro: how many completed scrolls have moved `target` (None: the viewport) of `doc`
+/// ([`fire_scroll`]).
+fn scroll_serial(page: &PageDom, doc: NodeId, target: Option<NodeId>) -> u64 {
+    page.scroll_serials.borrow().get(&(doc, target)).copied().unwrap_or(0)
+}
+
+/// The promise a scroll method returns (Chrome's `Promise<ScrollResult>`; WPT cssom-view
+/// `*-scroll-promises`, `*-scroll-promise-interruption`), fulfilled with `{interrupted}`.
+/// pyro scrolls instantly (no smooth scrolling), so an instant scroll resolves with
+/// `interrupted: false` at once. A `smooth` one, which in Chrome would still be running, resolves
+/// in a microtask, with `interrupted: true` when another scroll moved one of the scrollers it
+/// moved in the meantime (the synchronous script after the call: Chrome's animation would have
+/// been cut short).
+fn scroll_promise<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    targets: &[Option<NodeId>],
+    smooth: bool,
+) -> JsResult<Value<'s>> {
+    fn result<'s>(s: &Scope<'s>, interrupted: bool) -> JsResult<Value<'s>> {
+        let o = s.object();
+        o.set_atom("interrupted", s.boolean(interrupted))?;
+        Ok(o.value())
+    }
+    let deferred = s.deferred()?;
+    let promise = deferred.promise.get(s);
+    let doc = page.document();
+    let marks: Vec<(Option<NodeId>, u64)> =
+        if smooth { targets.iter().map(|&t| (t, scroll_serial(page, doc, t))).collect() } else { Vec::new() };
+    if marks.is_empty() {
+        deferred.resolve(s, result(s, false)?)?;
+        return Ok(promise);
+    }
+    let page = page.clone();
+    s.then(
+        s.undefined(),
+        move |s, _| {
+            let interrupted = marks.iter().any(|&(t, n)| scroll_serial(&page, doc, t) != n);
+            if let Ok(value) = result(s, interrupted) {
+                let _ = deferred.resolve(s, value);
+            }
+        },
+        |_, _| {},
+    )?;
+    Ok(promise)
+}
+
+/// The `behavior` member of a ScrollOptions dictionary `o` (a ScrollBehavior: "auto", "instant"
+/// or "smooth"): whether it asks for a smooth scroll; another value is a TypeError.
+fn scroll_behavior_smooth(o: &Object<'_>, operation: &str, interface: &str) -> JsResult<bool> {
+    let behavior = o.get("behavior")?;
+    if behavior.is_undefined() {
+        return Ok(false);
+    }
+    let b = dom_string(behavior)?;
+    match b.as_str() {
+        "smooth" => Ok(true),
+        "auto" | "instant" => Ok(false),
+        _ => Err(pyro_js::JsError::type_error(format!(
+            "Failed to execute '{operation}' on '{interface}': The provided value '{b}' is not a valid enum value of type ScrollBehavior."
+        ))),
+    }
+}
+
+/// The arguments of `scroll()`, `scrollTo()` and `scrollBy()` (`optional ScrollToOptions` or
+/// `unrestricted double x, unrestricted double y`): left, top and whether the scroll is smooth.
+/// A single argument converts to the dictionary, so a number there is a TypeError.
+pub(crate) fn scroll_options<T>(
+    a: &Args<'_>,
+    operation: &str,
+    interface: &str,
+    number: impl Fn(Value<'_>) -> JsResult<T>,
+) -> JsResult<(Option<T>, Option<T>, bool)> {
+    let arg = a.get(0);
+    if let Some(o) = arg.as_object() {
+        // Dictionary members in order: ScrollOptions' behavior, then left, top.
+        let smooth = scroll_behavior_smooth(&o, operation, interface)?;
+        let l = o.get_atom("left")?;
+        let t = o.get_atom("top")?;
+        Ok((
+            (!l.is_undefined()).then(|| number(l)).transpose()?,
+            (!t.is_undefined()).then(|| number(t)).transpose()?,
+            smooth,
+        ))
+    } else if a.len() >= 2 {
+        Ok((Some(number(a.get(0))?), Some(number(a.get(1))?), false))
+    } else if arg.is_undefined() || arg.is_null() {
+        Ok((None, None, false))
+    } else {
+        Err(pyro_js::JsError::type_error(format!(
+            "Failed to execute '{operation}' on '{interface}': The provided value is not of type 'ScrollToOptions'."
+        )))
+    }
+}
+
+/// Resolves the scroll promise of a window scroll ([`scroll_promise`] for the viewport).
+pub(crate) fn window_scroll_promise<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    moved: bool,
+    smooth: bool,
+) -> JsResult<Value<'s>> {
+    scroll_promise(s, page, moved.then_some(None).as_slice(), smooth)
 }
 
 fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
@@ -337,22 +443,16 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
 
 /// `scrollIntoView(arg)`: `(boolean or ScrollIntoViewOptions)`; `true`, a
 /// missing argument and `{}` align block start / inline nearest, `false`
-/// block end / inline nearest. `behavior` is accepted; scrolling is instant.
+/// block end / inline nearest. `behavior` is accepted; scrolling is instant. Returns a scroll
+/// promise ([`scroll_promise`]).
 pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     use pyro_dom::layout::ScrollAlign;
     let arg = a.get(0);
     let (mut block, mut inline) = (ScrollAlign::Start, ScrollAlign::Nearest);
+    let mut smooth = false;
     if let Some(o) = arg.as_object() {
         // Dictionary members in lexicographic order: behavior, block, inline.
-        let behavior = o.get("behavior")?;
-        if !behavior.is_undefined() {
-            let b = dom_string(behavior)?;
-            if !matches!(b.as_str(), "auto" | "instant" | "smooth") {
-                return Err(pyro_js::JsError::type_error(format!(
-                    "Failed to execute 'scrollIntoView' on 'Element': The provided value '{b}' is not a valid enum value of type ScrollBehavior."
-                )));
-            }
-        }
+        smooth = scroll_behavior_smooth(&o, "scrollIntoView", "Element")?;
         let position = |k: &str, out: &mut ScrollAlign| -> JsResult<()> {
             let v = o.get(k)?;
             if v.is_undefined() {
@@ -374,8 +474,16 @@ pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
     let page = n.page();
     let moved =
         page.layout.borrow_mut().scroll_into_view_aligned_script_targets(&page.dom.borrow(), n.id, block, inline);
+    let targets: Vec<Option<NodeId>> = moved.iter().map(scroll_target_node).collect();
     fire_scroll_targets(page, moved);
-    Ok(s.undefined())
+    scroll_promise(s, page, &targets, smooth)
+}
+
+fn scroll_target_node(target: &pyro_dom::layout::ScrollTarget) -> Option<NodeId> {
+    match *target {
+        pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
+        pyro_dom::layout::ScrollTarget::Viewport => None,
+    }
 }
 
 pub(crate) fn scroll_into_view_if_needed<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
@@ -450,13 +558,7 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
 
 fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<pyro_dom::layout::ScrollTarget>) {
     for target in moved {
-        fire_scroll(
-            page,
-            match target {
-                pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
-                pyro_dom::layout::ScrollTarget::Viewport => None,
-            },
-        );
+        fire_scroll(page, scroll_target_node(&target));
     }
 }
 
@@ -482,21 +584,6 @@ pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
     let page = n.page();
     let v = page.layout().check_visibility(&page.dom.borrow(), n.id, opts);
     Ok(s.boolean(v))
-}
-
-fn scroll_args(a: &Args<'_>) -> JsResult<(Option<f64>, Option<f64>)> {
-    if let Some(o) = a.get(0).as_object() {
-        let l = o.get_atom("left")?;
-        let t = o.get_atom("top")?;
-        Ok((
-            (!l.is_undefined()).then(|| to_scroll_number(l)).transpose()?,
-            (!t.is_undefined()).then(|| to_scroll_number(t)).transpose()?,
-        ))
-    } else if a.len() >= 2 {
-        Ok((Some(to_scroll_number(a.get(0))?), Some(to_scroll_number(a.get(1))?)))
-    } else {
-        Ok((None, None))
-    }
 }
 
 /// pyro: the effective `zoom` of the element `el` (1 without a style): its scroll offsets are
@@ -527,8 +614,16 @@ fn scrolls_viewport(page: &PageDom, el: NodeId) -> bool {
     scrolling.ok().flatten() == Some(el)
 }
 
-pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) -> JsResult<Value<'s>> {
-    let (l, t) = scroll_args(&a)?;
+/// `Element.scroll()`, `scrollTo()` (`operation`) and `scrollBy()` (`by`): returns a scroll
+/// promise ([`scroll_promise`]).
+pub(crate) fn scroll_to<'s>(
+    s: &Scope<'s>,
+    n: &NodeData,
+    a: Args<'s>,
+    operation: &str,
+    by: bool,
+) -> JsResult<Value<'s>> {
+    let (l, t, smooth) = scroll_options(&a, operation, "Element", to_scroll_number)?;
     let page = n.page();
     let viewport = scrolls_viewport(page, n.id);
     let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
@@ -549,10 +644,11 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
         }
         moved
     };
+    let target = (!viewport).then_some(n.id);
     if moved {
-        fire_scroll(page, (!viewport).then_some(n.id));
+        fire_scroll(page, target);
     }
-    Ok(s.undefined())
+    scroll_promise(s, page, moved.then_some(target).as_slice(), smooth)
 }
 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {

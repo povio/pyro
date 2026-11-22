@@ -234,6 +234,10 @@ pub struct PageDom {
     /// block the next document's events. The value: whether a `scrollend`
     /// follows (a scroll that ran to completion, not a layout clamp).
     pub(crate) pending_scrolls: RefCell<Vec<((NodeId, Option<NodeId>), bool, Rc<()>)>>,
+    /// pyro: completed scrolls per scroll target (document, element or None: the viewport), for
+    /// a smooth scroll's promise to tell whether a later scroll interrupted it
+    /// (`layout_api::scroll_promise`).
+    pub(crate) scroll_serials: RefCell<std::collections::HashMap<(NodeId, Option<NodeId>), u64>>,
     /// The DOM version scroll offsets were last re-clamped at, and whether a
     /// re-clamp is queued for the next frame (`layout_api::clamp_scrolls`).
     pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
@@ -976,6 +980,7 @@ impl PageDom {
             intersections: Default::default(),
             resizes: Default::default(),
             pending_scrolls: Default::default(),
+            scroll_serials: Default::default(),
             scroll_clamp: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),
