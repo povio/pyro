@@ -344,3 +344,32 @@ i {display:block;width:1px;height:1px}
     doc.resolve(0.0);
     assert_eq!(size(&doc, "#bi"), (1.0, 1.0));
 }
+
+/// pyro: an element that becomes a size container, or whose container-name changes, restyles its
+/// descendants: their queries select it (WPT css-conditional container-queries
+/// container-type-invalidation, container-name-invalidation, query-container-name-dynamic).
+#[test]
+fn becoming_a_container_or_renaming_one_restyles_descendants() {
+    const BECOME: &str = r#"<!doctype html><style>
+#outer {width:300px}
+#mid {width:250px}
+i {display:block;width:1px;height:1px}
+@container (min-width: 300px) {#a {width:20px}}
+@container named (min-width: 1px) {#a {height:20px}}
+</style><div id=outer><div id=mid><i id=a></i></div></div>"#;
+    let mut doc = HtmlDocument::from_html(BECOME, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (1.0, 1.0));
+    let outer = doc.query_selector("#outer").unwrap().unwrap();
+    doc.set_style_property(outer, "container-type", "inline-size");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (20.0, 1.0));
+    doc.set_style_property(outer, "container-name", "named");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (20.0, 20.0));
+    let mid = doc.query_selector("#mid").unwrap().unwrap();
+    doc.set_style_property(mid, "container-type", "inline-size");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (1.0, 20.0));
+}

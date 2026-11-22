@@ -491,3 +491,10 @@ without a style context (custom properties left as they are): pyro serializes a 
   false). Enclosed text with substitution references (`var()`, `attr()`, `env()`) is exempt: it is parsed again at
   match time (`matches_general`). WPT css-conditional `container-queries/query-evaluation`,
   `container-selection-unknown-features`.
+- Round 7 (css-conditional C3): `matching.rs` `finish_restyle` (servo): any change of `container-type` (also into a
+  size container, or between types) or of `container-name` restyles the element's subtree. Upstream left changes into
+  size containment to Gecko's post-layout `UpdateContainerQueryStyles` and gave a name change only
+  `RESTYLE_IF_AFFECTED_BY_NAMED_STYLE_CONTAINER`, which size and name-only queries ignore; servo has neither, and
+  blitz-dom's post-layout refresh revisits only containers already queried. WPT css-conditional container-queries
+  `container-type-invalidation`, `container-name-invalidation`, `comma-separated-invalidation`,
+  `query-container-name-dynamic`.

@@ -1399,7 +1399,7 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      if uses_viewport_units {
 diff -ruN a/matching.rs b/matching.rs
 --- a/matching.rs	2026-11-11 19:55:57
-+++ b/matching.rs	2026-11-20 12:39:19
++++ b/matching.rs	2026-11-22 20:31:17
 @@ -712,14 +712,14 @@
              context,
              old_values.as_deref(),
@@ -1425,7 +1425,28 @@ diff -ruN a/matching.rs b/matching.rs
  
          let new_primary_style = data.styles.primary.as_ref().unwrap();
  
-@@ -1131,6 +1132,12 @@
+@@ -1110,7 +1111,19 @@
+         }
+ 
+         let old_container_type = *old_primary_style.get_container_type();
+-        if old_container_type != new_container_type && !new_container_type.is_size_container_type()
++        // pyro: servo has no post-layout `UpdateContainerQueryStyles` step, and its post-layout
++        // container size refresh only revisits containers already queried, so any change of
++        // container-type (into a size container or between types too) re-evaluates the
++        // descendants' container queries and units, as does a change of container-name (named
++        // queries, including name-only ones on non-size containers, select another container).
++        #[cfg(feature = "servo")]
++        let type_or_name_changed = old_container_type != new_container_type
++            || old_primary_style.get_container_name() != new_primary_style.get_container_name();
++        #[cfg(not(feature = "servo"))]
++        let type_or_name_changed = false;
++        if type_or_name_changed {
++            child_restyle_hint |= RestyleHint::restyle_subtree();
++        } else if old_container_type != new_container_type && !new_container_type.is_size_container_type()
+         {
+             // Stopped being a size container. Re-evaluate container queries and units on all our descendants.
+             // Changes into and between different size containment is handled in `UpdateContainerQueryStyles`.
+@@ -1131,6 +1144,12 @@
              new_primary_style,
              None,
          );
