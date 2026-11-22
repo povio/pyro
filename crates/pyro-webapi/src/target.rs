@@ -1137,6 +1137,10 @@ fn store_event_handler(
                                 true
                             }
                             Some(_) => false,
+                            // An `onbeforeunload` handler's return value is a `DOMString?`: `false`
+                            // converts to "false", which is not `false`, so another event (a
+                            // CustomEvent named beforeunload) is not canceled.
+                            None if ty == "beforeunload" => false,
                             // Returning false cancels (mouseover is no longer special).
                             None => result.is_boolean() && !result.to_bool(),
                         }
