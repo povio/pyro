@@ -329,6 +329,10 @@ impl JsClass for Window {
         def.method("requestIdleCallback", 1, idle::request);
         def.method("cancelIdleCallback", 1, idle::cancel);
         def.accessor("IdleDeadline", idle::interface, idle::replace_interface);
+        // HTML obsolete APIs: they do nothing.
+        def.method("captureEvents", 0, |s, _w, _a| Ok(s.undefined()));
+        def.getter("external", |s, w| pyro_webapi::window::external(s, &w.target.page));
+        def.method("releaseEvents", 0, |s, _w, _a| Ok(s.undefined()));
         def.method_this("reportError", 1, |s, _w, this, a| {
             pyro_webapi::report_error::report_error(s, this, &a, "Window", true)
         });

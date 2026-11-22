@@ -924,6 +924,24 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     Ok(o.value())
 }
 
+/// `window.external` (HTML obsolete `External`): its search provider methods do nothing.
+pub struct External;
+impl JsClass for External {
+    const NAME: &'static str = "External";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.method("AddSearchProvider", 0, |s, _d, _a| Ok(s.undefined()));
+        def.method("IsSearchProviderInstalled", 0, |s, _d, _a| Ok(s.undefined()));
+    }
+}
+
+/// `window.external`, [SameObject].
+pub fn external<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+    let key = pyro_js::IdentityKey(page.id() | (1 << 57), 14);
+    same_object(s, page, key, || s.wrap::<External>((), Some(key)))
+}
+
 /// `navigator.plugins`: always empty (no PDF viewer).
 pub struct PluginArray;
 impl JsClass for PluginArray {
@@ -983,6 +1001,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<BarProp>();
     engine.register::<Navigator>();
     engine.register::<PluginArray>();
+    engine.register::<External>();
     engine.register::<MimeTypeArray>();
     engine.register::<crate::user_activation::UserActivation>();
     engine.register::<Screen>();

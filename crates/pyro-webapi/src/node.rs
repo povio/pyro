@@ -2162,6 +2162,10 @@ impl JsClass for Document {
             let names = arg_string(&a, 0, "getElementsByClassName")?;
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::ClassName(names))?.value())
         });
+        // HTML obsolete APIs: they do nothing.
+        for name in ["clear", "captureEvents", "releaseEvents"] {
+            def.method(name, 0, |s, _n, _a| Ok(s.undefined()));
+        }
         def.pure_method("getElementsByName", 1, |s, n, a| {
             let name = arg_string(&a, 0, "getElementsByName")?;
             Ok(collections::elements_by_name(s, n.page(), n.id, name)?.value())
