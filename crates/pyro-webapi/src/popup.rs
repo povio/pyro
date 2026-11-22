@@ -541,3 +541,21 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<PopupWindow>();
     engine.register::<PopupLocation>();
 }
+
+/// A link or form of `page` targeting window name `name` (HTML "rules for choosing a navigable":
+/// an existing navigable of that name), when `page` opened a popup of that name that is still open
+/// (`window.open(url, name)`): that popup navigates to `url`, as `window.open` with the same name
+/// does. False when there is none, and the caller opens a new window.
+pub fn navigate_named_popup(page: &Rc<PageDom>, name: &str, url: &str) -> bool {
+    let popup = page.popups.borrow().iter().find(|(n, p)| n.as_str() == name && !p.is_closed()).map(|(_, p)| p.clone());
+    let Some(popup) = popup else { return false };
+    page.popup_command(
+        popup,
+        PopupCommand::OpenNamed {
+            url: url.to_owned(),
+            referrer: page.client_referrer().map(Into::into),
+            policy: page.referrer_policy(),
+        },
+    );
+    true
+}

@@ -317,6 +317,26 @@ impl PageHooks for Hooks {
     fn navigate(&self, mut request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();
+        // A link or GET form targeting the name of a popup this document opened, and no frame of
+        // the page: that popup navigates (as `window.open` with the name does), instead of a new
+        // window opening.
+        if let (Some(name), Some(host)) = (request.target.as_deref(), self.frames.upgrade()) {
+            let named = !matches!(name.to_ascii_lowercase().as_str(), "" | "_blank" | "_self" | "_top" | "_parent");
+            if named
+                && !request.window_features.noopener
+                && request.method == "GET"
+                && request.body.is_none()
+                && !request.url.starts_with("javascript:")
+                && host.matches(page, &loader)
+                && host.named_frame(page, name).is_none()
+            {
+                if let Some(dom) = host.page_dom(page) {
+                    if pyro_webapi::navigate_named_popup(&dom, name, &request.url) {
+                        return;
+                    }
+                }
+            }
+        }
         // `window.open` of a new browsing context: HTML creates its initial
         // about:blank document now, so the opener can script it before the
         // embedder makes the page (`Browser::create_page_with`).
