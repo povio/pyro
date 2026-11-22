@@ -1055,11 +1055,27 @@
       return out;
     });
   }
+  function requestOperations(proto, owners, names) {
+    const operations = O.create(null);
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i], original = proto[name];
+      operations[name] = original;
+      const method = { [name]() {
+        const owner = owners.get(this);
+        if (!owner) throw new TE('Illegal invocation');
+        return apply(owner[name], this, arguments);
+      } }[name];
+      defineProperty(method, 'length', { value: original.length });
+      defineProperty(proto, name, { value: method });
+    }
+    return operations;
+  }
   class IDBObjectStore {
     #h;
     constructor(t = undefined, h) {
       if (t !== token) throw illegal();
       this.#h = h;
+      N.storeOperations.set(this, storeOperations);
     }
     static {
       storeOf = (s) => s.#h;
@@ -1216,6 +1232,9 @@
     'add', 'delete', 'clear', 'get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor',
     'openKeyCursor', 'index', 'createIndex', 'deleteIndex');
 
+  const storeOperations = requestOperations(IDBObjectStore.prototype, N.storeOperations,
+    ['put', 'add', 'delete', 'clear', 'get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor']);
+
   // ---- Indexes ----
   let indexOf;
   function indexHandle(store, h, im) {
@@ -1235,6 +1254,7 @@
     constructor(t = undefined, d) {
       if (t !== token) throw illegal();
       this.#d = d;
+      N.indexOperations.set(this, indexOperations);
     }
     static {
       indexOf = (i) => i.#d;
@@ -1313,6 +1333,9 @@
   }
   tag(IDBIndex, 'IDBIndex', 'name', 'objectStore', 'keyPath', 'multiEntry', 'unique', 'get', 'getKey', 'getAll',
     'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor');
+
+  const indexOperations = requestOperations(IDBIndex.prototype, N.indexOperations,
+    ['get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor']);
 
   // ---- Cursors ----
   function openCursor(source, h, index, query, dir, keyOnly) {

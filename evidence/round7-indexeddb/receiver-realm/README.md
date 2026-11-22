@@ -1,0 +1,7 @@
+# IndexedDB receiver-realm validation
+
+Independent macOS ARM64 validation compared candidate f2a061f41d062141464aafb7d4c7daa830ce809c with its direct parent 09ad5b7cc8b15cb02378bca5223c1b3a36e62148 on November 22, 2026, from 02:59:27 to 03:04:44 UTC. Each locked Cargo dev build used one job and the same pinned static JavaScriptCore archive. Source trees, binary hashes, and the JSC digest are recorded alongside the results. A full-byte search confirmed each binary contained its own idb.js and excluded the other revision's source.
+
+The two frozen Window WPT pages ran through wptserve with one worker, testdriver, HTTP/2 and the pinned manifest. The parent passed 0/7 index assertions and 0/11 object-store assertions. The candidate passed 7/7 and 11/11 on each of two runs. The archived signed Chrome 158 reference passed all 18. Every harness completed normally. The source map identifies the original Chrome reports, their hashes and the WPT revision.
+
+The parent checkout received only the candidate's native regression test. It failed there with a private-field TypeError and passed on the clean candidate. The test checked borrowed requests, cursor identity and data, transaction completion, and reading the committed record after reopening. Existing cursor/direction and navigation-persistence controls passed on each arm. The logs contain the native test output and the matched build and WPT invocations' results. This evidence commit packages the completed run.

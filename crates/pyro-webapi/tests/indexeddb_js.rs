@@ -128,6 +128,47 @@ const HELPERS: &str = r#"
 "#;
 
 #[test]
+fn borrowed_request_methods_use_receiver_realm_after_detach() {
+    let env = Env::new();
+    let owner = env.doc("http://idb.test/owner");
+    let lender = env.doc("http://idb.test/lender");
+    {
+        let source = lender.realm.scope().unwrap();
+        let dest = owner.realm.scope().unwrap();
+        let methods = source.eval("[IDBObjectStore.prototype.put, IDBIndex.prototype.openCursor]", None, 1).unwrap();
+        dest.global().set("borrowed", methods).unwrap();
+    }
+    lifecycle::realm_disposed(&lender.page, lender.realm.id());
+    lender.realm.dispose();
+    owner.eval(HELPERS);
+    let got = env.run(
+        &owner,
+        r#"
+        const db = await openDb('borrowed', 1, db => db.createObjectStore('s').createIndex('i', 'name'));
+        const tx = db.transaction('s', 'readwrite'), finished = done(tx);
+        const store = tx.objectStore('s'), index = store.index('i');
+        const [put, cursor] = borrowed;
+        for (const wrong of [index, Object.create(store), new Proxy(store, {})]) {
+          try { put.call(wrong, {}, 0); return out = 'accepted wrong receiver'; }
+          catch (e) { if (e.name !== 'TypeError') throw e; }
+        }
+        store.put = index.openCursor = () => { throw Error('looked up overridden method'); };
+        const write = put.call(store, {name:'abc'}, 3);
+        const read = cursor.call(index, IDBKeyRange.only('abc'));
+        const record = await req(read);
+        const checks = [write instanceof IDBRequest, write.source === store, write.transaction === tx,
+          read instanceof IDBRequest, read.source === index, record instanceof IDBCursorWithValue,
+          record.key, record.primaryKey, record.value.name, await finished];
+        db.close();
+        const reopened = await openDb('borrowed', 1);
+        checks.push((await req(reopened.transaction('s').objectStore('s').get(3))).name);
+        reopened.close(); out = checks.join('|');
+        "#,
+    );
+    assert_eq!(got, "true|true|true|true|true|true|abc|3|abc|complete|abc");
+}
+
+#[test]
 fn records_survive_navigation_and_appear_in_databases() {
     let env = Env::new();
     let a = env.doc("http://idb.test/a");
