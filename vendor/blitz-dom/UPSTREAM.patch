@@ -22883,7 +22883,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1882,694 @@
+@@ -488,126 +1882,697 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -23035,6 +23035,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                            |_, _| taffy::Size { width: 0.0, height: line_height },
 +                        ))
 +                    }
++                    // pyro: a fieldset establishes a block formatting context (HTML rendering
++                    // §15.3.13): it contains its floats (WPT `fieldset-block-formatting-context`).
++                    Display::Block if node.is_fieldset() => ChildLayout::FlowRoot,
 +                    Display::Block => ChildLayout::Block,
 +                    Display::FlowRoot => ChildLayout::FlowRoot,
 +                    Display::Flex => {
@@ -23667,7 +23670,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2629,21 @@
+@@ -667,7 +2632,21 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -23690,7 +23693,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2651,32 @@
+@@ -675,11 +2654,32 @@
      }
  
      #[inline(always)]
@@ -23723,7 +23726,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -693,22 +2690,379 @@
+@@ -693,22 +2693,379 @@
          Self: 'a;
  
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
@@ -24106,7 +24109,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -718,9 +3072,24 @@
+@@ -718,9 +3075,24 @@
              .borrow_mut()
              .extend(hoisted.iter().copied().map(dom_node_id));
          for &hoisted_id in hoisted {
@@ -24131,7 +24134,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +3101,148 @@
+@@ -732,6 +3104,148 @@
      }
  }
  
@@ -24280,7 +24283,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +3250,12 @@
+@@ -739,10 +3253,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -24297,7 +24300,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +3265,11 @@
+@@ -752,9 +3268,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -24312,7 +24315,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +3297,245 @@
+@@ -782,16 +3300,248 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -24352,6 +24355,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            // pyro: so is a column spanner (Multi-column Layout 1 §6), as wide as its
 +            // container, not its column (its lines are not broken at the column's width).
 +            || self.is_current_column_spanner(dom_node_id(child_node_id))
++            // pyro: and a fieldset (HTML rendering §15.3.13), which its parent places beside
++            // floats, not over them.
++            || self.node_from_id(child_node_id).is_fieldset()
 +    }
 +
 +    fn block_child_min_top(&self, child_node_id: NodeId) -> Option<f32> {
@@ -24562,7 +24568,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -806,6 +3550,18 @@
+@@ -806,6 +3556,18 @@
      where
          Self: 'a;
  
@@ -24581,7 +24587,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
          self.get_core_container_style(node_id)
      }
-@@ -844,6 +3600,30 @@
+@@ -844,6 +3606,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -24612,7 +24618,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3632,19 @@
+@@ -852,7 +3638,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -24633,7 +24639,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3660,30 @@
+@@ -868,6 +3666,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -24664,7 +24670,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3788,240 @@
+@@ -972,3 +3794,240 @@
          })
      }
  }

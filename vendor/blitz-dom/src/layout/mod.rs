@@ -1971,6 +1971,9 @@ impl LayoutPassState<'_> {
                             |_, _| taffy::Size { width: 0.0, height: line_height },
                         ))
                     }
+                    // pyro: a fieldset establishes a block formatting context (HTML rendering
+                    // §15.3.13): it contains its floats (WPT `fieldset-block-formatting-context`).
+                    Display::Block if node.is_fieldset() => ChildLayout::FlowRoot,
                     Display::Block => ChildLayout::Block,
                     Display::FlowRoot => ChildLayout::FlowRoot,
                     Display::Flex => {
@@ -3333,6 +3336,9 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             // pyro: so is a column spanner (Multi-column Layout 1 §6), as wide as its
             // container, not its column (its lines are not broken at the column's width).
             || self.is_current_column_spanner(dom_node_id(child_node_id))
+            // pyro: and a fieldset (HTML rendering §15.3.13), which its parent places beside
+            // floats, not over them.
+            || self.node_from_id(child_node_id).is_fieldset()
     }
 
     fn block_child_min_top(&self, child_node_id: NodeId) -> Option<f32> {
