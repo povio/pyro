@@ -7887,6 +7887,72 @@ fn oversized_snap_reserves_smaller_targets_and_keeps_open_gaps_scrollable() {
 }
 
 #[test]
+fn scroll_by_snaps_only_ahead_of_its_direction() {
+    // CSS Scroll Snap 1 § 6.2: a relative scroll snaps by its intended direction and end position
+    // (WPT css-scroll-snap `snap-intended-direction`); an absolute one to the nearest position.
+    let e = env("<style>#s{position:relative;width:200px;height:100px;overflow:hidden;scroll-snap-type:x mandatory}\
+        .a{position:absolute;top:0;width:20px;height:100px;scroll-snap-align:start}</style>\
+        <div id=s><div style='position:absolute;width:2000px;height:100px'></div>\
+        <div class=a style='left:0'></div><div class=a style='left:100px'></div><div class=a style='left:120px'></div>\
+        <div class=a style='left:300px'></div><div class=a style='left:400px'></div></div>");
+    assert_eq!(
+        eval(&e.main, "const r=[];for(let i=0;i<3;i++){s.scrollBy(10,0);r.push(s.scrollLeft)}s.scrollBy(-10,0);r.push(s.scrollLeft);r.join(',')"),
+        "100,120,300,120"
+    );
+    assert_eq!(eval(&e.main, "s.scrollTo(130,0);String(s.scrollLeft)"), "120");
+    e.page.dispose();
+}
+
+#[test]
+fn scroll_by_stops_at_a_snap_stop_always_area_it_would_pass() {
+    // CSS Scroll Snap 1 § 5.2 (WPT css-scroll-snap `scroll-snap-stop-001`): scrollBy does not pass
+    // a `scroll-snap-stop: always` area, also past the end of the range; scrollTo does; an axis
+    // scrolled before its start with nothing ahead stays put.
+    let e = env("<style>#s{position:relative;width:400px;height:400px;overflow:hidden;scroll-snap-type:both mandatory}\
+        .t{position:absolute;top:0;width:50px;height:50px;scroll-snap-align:start}</style>\
+        <div id=s><div style='position:absolute;width:2100px;height:2100px'></div>\
+        <div class=t style='left:0'></div><div class=t style='left:100px;scroll-snap-stop:always'></div><div class=t style='left:200px'></div></div>");
+    let at = "[s.scrollLeft,s.scrollTop].join(',')";
+    assert_eq!(eval(&e.main, &format!("s.scrollTo(0,0);s.scrollBy(300,0);{at}")), "100,0");
+    assert_eq!(eval(&e.main, &format!("s.scrollTo(0,0);s.scrollTo(300,0);{at}")), "200,0");
+    assert_eq!(eval(&e.main, &format!("s.scrollTo(0,0);s.scrollBy(100000,0);{at}")), "100,0");
+    assert_eq!(eval(&e.main, &format!("s.scrollTo(0,0);s.scrollBy(300,-10);{at}")), "100,0");
+    e.page.dispose();
+}
+
+#[test]
+fn scroll_by_within_an_oversized_area_snaps_to_its_nearer_edge_when_past_it() {
+    // WPT css-scroll-snap `scroll-on-large-element-not-covering-snapport`.
+    let e = env("<style>#s{position:relative;width:100px;height:200px;overflow:hidden;scroll-snap-type:y mandatory}\
+        .a{position:absolute;left:0;width:100%;scroll-snap-align:start}</style>\
+        <div id=s><div style='height:2000px'></div>\
+        <div class=a style='top:0;height:40px'></div><div class=a style='top:40px;height:40px'></div>\
+        <div class=a style='top:80px;height:1000px'></div><div class=a style='top:1080px;height:40px'></div>\
+        <div class=a style='top:1120px;height:40px'></div></div>");
+    assert_eq!(
+        eval(&e.main, "const r=[];for(const d of [10,10,100,100,600,10,-10]){s.scrollBy(0,d);r.push(s.scrollTop)}r.join(',')"),
+        "40,80,180,280,880,1080,880"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn window_scroll_by_snaps_by_direction_and_snap_stop() {
+    // WPT css-scroll-snap `scroll-snap-stop-change` (the root's variant): the viewport's scrollBy
+    // carries its delta to snapping too.
+    let e = env("<html style='scroll-snap-type:x mandatory;overflow:scroll'><body style='margin:0'>\
+        <style>.a{scroll-snap-align:none start;width:100px;height:100px;margin:0}</style>\
+        <div class=a></div><div class=a style='margin-left:100px'></div>\
+        <div class=a style='margin-left:300px'></div><div class=a style='margin-left:500px'></div>\
+        <div style='width:2000px;height:2000px'></div></body></html>");
+    let set = |stop: &str| format!("document.querySelectorAll('.a').forEach(a=>a.style.scrollSnapStop='{stop}');");
+    assert_eq!(eval(&e.main, &format!("{}scrollBy(500,0);String(scrollX)", set("always"))), "100");
+    assert_eq!(eval(&e.main, &format!("{}scrollBy(500,0);String(scrollX)", set("normal"))), "500");
+    assert_eq!(eval(&e.main, &format!("{}scrollBy(-500,0);String(scrollX)", set("always"))), "300");
+    e.page.dispose();
+}
+
+#[test]
 fn logical_snap_axes_use_the_scroll_containers_writing_mode() {
     let e = env("<style>#s{position:relative;overflow:hidden;width:200px;height:150px;writing-mode:vertical-lr;scroll-snap-type:inline mandatory}\
         #space{width:800px;height:800px}#t{position:absolute;left:300px;top:280px;width:70px;height:50px;writing-mode:horizontal-tb;scroll-snap-align:start end}\

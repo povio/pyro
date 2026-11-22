@@ -217,6 +217,15 @@ impl ScrollWrite {
             ScrollWrite::By { .. } => current as i64 + value,
         })
     }
+
+    /// pyro: a relative write's per-axis delta (an axis it leaves alone moves by 0), the scroll's
+    /// direction for snapping (CSS Scroll Snap 1 § 6.2: intended direction and end position).
+    fn direction(self) -> Option<[i64; 2]> {
+        match self {
+            ScrollWrite::To { .. } => None,
+            ScrollWrite::By { left, top } => Some([left.unwrap_or(0) as i64, top.unwrap_or(0) as i64]),
+        }
+    }
 }
 
 /// What `resize` events report a change of ([`Layout::viewport_metrics`]):
@@ -2824,12 +2833,18 @@ impl Layout {
     /// origin whatever the document's size, so `scrollTo(0, 0)` (a router's
     /// scroll restoration on every navigation) lays nothing out.
     pub fn window_scroll_to(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
+        self.window_scroll_write(dom, left, top, None)
+    }
+
+    /// [`Self::window_scroll_to`] to the targets `left`, `top`; `dir`, a relative scroll's
+    /// per-axis delta, makes the snap directional ([`Self::snap_positions`]).
+    fn window_scroll_write(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>, dir: Option<[i64; 2]>) -> bool {
         // A scroll without a target (CSS Overflow 5 § 2.1).
         self.scroll_targets.remove(&None);
         // pyro: the viewport's snap positions (CSS Scroll Snap 1 § 6.2).
         let current = self.window_scroll;
         let (left, top) = {
-            let (l, t) = self.snap_scroll(dom, None, current, left.map(i64::from), top.map(i64::from));
+            let (l, t) = self.snap_scroll(dom, None, current, left.map(i64::from), top.map(i64::from), dir);
             (l.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32), t.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32))
         };
         // (Only an offset past the origin, in the direction the viewport scrolls, needs the range,
@@ -2852,12 +2867,14 @@ impl Layout {
         true
     }
 
-    /// `window.scrollBy` (Window.zig:853-860): relative, both axes written.
+    /// `window.scrollBy` (Window.zig:853-860): relative, both axes written. The delta goes on to
+    /// snapping, which then only lands ahead of the scroll (CSS Scroll Snap 1 § 6.2).
     pub fn window_scroll_by(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
         let abs = |cur: i32, d: Option<i32>| (cur as i64 + d.unwrap_or(0) as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         let x = abs(self.window_scroll.0, left);
         let y = abs(self.window_scroll.1, top);
-        self.window_scroll_to(dom, Some(x), Some(y))
+        let dir = [left.unwrap_or(0) as i64, top.unwrap_or(0) as i64];
+        self.window_scroll_write(dom, Some(x), Some(y), Some(dir))
     }
 
     // ----- element scroll ----------------------------------------------------
@@ -2986,7 +3003,7 @@ impl Layout {
         // programmatic scrolls.
         let tx = write.target(Axis::Width, current.0);
         let ty = write.target(Axis::Height, current.1);
-        let (tx, ty) = self.snap_scroll(dom, Some(el), current, tx, ty);
+        let (tx, ty) = self.snap_scroll(dom, Some(el), current, tx, ty, write.direction());
         if let Some(t) = tx {
             x = self.clamp_scroll(dom, el, Axis::Width, t);
         }
@@ -3008,6 +3025,8 @@ impl Layout {
     /// container it is (`scroll-snap-align` in the snapport, the scroll container's padding box
     /// less `scroll-padding`, their boxes grown by `scroll-margin`). `mandatory` always snaps;
     /// `proximity` within a third of the snapport, as Chromium. The targets as given otherwise.
+    /// `dir` (a relative scroll's per-axis delta) makes it directional: an axis that does not
+    /// move keeps the box it snapped to.
     fn snap_scroll(
         &mut self,
         dom: &Dom,
@@ -3015,8 +3034,17 @@ impl Layout {
         current: (i32, i32),
         tx: Option<i64>,
         ty: Option<i64>,
+        dir: Option<[i64; 2]>,
     ) -> (Option<i64>, Option<i64>) {
-        let (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None);
+        let (x, y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, None, dir);
+        if let Some(d) = dir {
+            let prior = self.snapped.get(&scroller).copied().unwrap_or([None, None]);
+            for axis in 0..2 {
+                if d[axis] == 0 {
+                    chosen[axis] = prior[axis];
+                }
+            }
+        }
         if chosen.iter().any(Option::is_some) {
             self.snapped.insert(scroller, chosen);
         } else {
@@ -3027,6 +3055,14 @@ impl Layout {
 
     /// [`Self::snap_scroll`]'s positions and the boxes they snap to on each axis; `only` limits
     /// an axis's candidates to one box (re-snapping to it).
+    ///
+    /// `dir`, a relative scroll's per-axis delta, snaps by its intended direction and end
+    /// position, as Chromium (CSS Scroll Snap 1 § 6.2; WPT css-scroll-snap
+    /// `snap-intended-direction`, `scroll-snap-stop-001`): an axis with no delta is not snapped;
+    /// only positions strictly ahead of `current` count (an area larger than the snapport, the
+    /// target clamped into its span), else (`mandatory`) the one nearest `current`; and the nearest
+    /// `scroll-snap-stop: always` position passed on the way is taken instead (§ 5.2).
+    #[allow(clippy::too_many_arguments)]
     fn snap_positions(
         &self,
         dom: &Dom,
@@ -3035,6 +3071,7 @@ impl Layout {
         tx: Option<i64>,
         ty: Option<i64>,
         only: Option<[Option<SnapBox>; 2]>,
+        dir: Option<[i64; 2]>,
     ) -> (Option<i64>, Option<i64>, [Option<SnapBox>; 2]) {
         let none = [None, None];
         let unchanged = (tx, ty, none);
@@ -3102,6 +3139,18 @@ impl Layout {
         };
         let reachable = |axis: usize, position: f64| position.clamp(ranges[axis].0, ranges[axis].1);
         let target = [tx.map(|v| reachable(0, v as f64)), ty.map(|v| reachable(1, v as f64))];
+        // A directional scroll (`dir`): the axes it does not move, and whether a position is
+        // ahead of the scroll offset now (rounded, as it lands).
+        let still = |axis: usize| dir.is_some_and(|d| d[axis] == 0);
+        let from = [current.0 as f64, current.1 as f64];
+        let ahead = |axis: usize, position: f64| match dir {
+            None => true,
+            Some(d) => (d[axis] > 0 && position.round() > from[axis]) || (d[axis] < 0 && position.round() < from[axis]),
+        };
+        // Nothing ahead: the position nearest the scroll offset now.
+        let mut fallback: [Option<(f64, SnapBox)>; 2] = [None, None];
+        // `scroll-snap-stop: always` positions on each axis.
+        let mut stops: [Vec<(f64, SnapBox)>; 2] = [Vec::new(), Vec::new()];
         let mut areas = Vec::new();
         let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return unchanged };
         for id in nodes {
@@ -3165,19 +3214,20 @@ impl Layout {
                 snap_y && bottom - top > height - pt - pb,
             ];
             let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
-            areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y]));
+            let always = dir.is_some() && value(id, "scroll-snap-stop") == "always";
+            areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y], always));
         }
-        for &(id, candidates, covering, spans, bounds, align) in &areas {
+        for &(id, candidates, covering, spans, bounds, align, always) in &areas {
             let mut mine = [None, None];
             for axis in 0..2 {
-                if only.is_some_and(|o| o[axis].is_some_and(|b| b != (id, None))) {
+                if only.is_some_and(|o| o[axis].is_some_and(|b| b != (id, None))) || still(axis) {
                     continue;
                 }
                 let (Some(mut c), Some(t)) = (candidates[axis], target[axis]) else { continue };
                 if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 {
                     let other = 1 - axis;
                     let (start, end) = bounds[axis];
-                    let mut occupied: Vec<_> = areas.iter().filter_map(|(_, points, _, _, rect, _)| {
+                    let mut occupied: Vec<_> = areas.iter().filter_map(|(_, points, _, _, rect, _, _)| {
                         let (lo, hi) = rect[axis];
                         (points[axis].is_some() && lo >= start && hi <= end && (lo > start || hi < end)
                             && rect[other].1 >= bounds[other].0 && rect[other].0 <= bounds[other].1).then_some((lo, hi))
@@ -3201,9 +3251,21 @@ impl Layout {
                         cursor = cursor.max(hi);
                     }
                     c = nearest.unwrap_or(c);
+                } else if dir.is_some() && covering[axis] {
+                    // A directional scroll past its span: the span's nearer end.
+                    c = t.clamp(spans[axis].0, spans[axis].1);
                 }
                 let c = reachable(axis, c);
                 mine[axis] = Some(c);
+                if let (true, Some(p)) = (always, candidates[axis]) {
+                    stops[axis].push((reachable(axis, p), (id, None)));
+                }
+                if !ahead(axis, c) {
+                    if fallback[axis].is_none_or(|(f, _)| (c - from[axis]).abs() < (f - from[axis]).abs()) {
+                        fallback[axis] = Some((c, (id, None)));
+                    }
+                    continue;
+                }
                 if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
                     best[axis] = Some((c, (id, None)));
                 }
@@ -3237,15 +3299,38 @@ impl Layout {
                         snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
                     ];
                     for axis in 0..2 {
-                        if only.is_some_and(|o| o[axis].is_some_and(|b| b != (container, Some(index)))) {
+                        if only.is_some_and(|o| o[axis].is_some_and(|b| b != (container, Some(index)))) || still(axis) {
                             continue;
                         }
                         let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
                         let c = reachable(axis, c);
+                        if !ahead(axis, c) {
+                            if fallback[axis].is_none_or(|(f, _)| (c - from[axis]).abs() < (f - from[axis]).abs()) {
+                                fallback[axis] = Some((c, (container, Some(index))));
+                            }
+                            continue;
+                        }
                         if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
                             best[axis] = Some((c, (container, Some(index))));
                         }
                     }
+                }
+            }
+        }
+        if dir.is_some() {
+            for axis in 0..2 {
+                // (Only `mandatory` must rest on a snap position: `proximity` with nothing ahead
+                // lands where it was sent, not back where it was.)
+                if best[axis].is_none() && mandatory {
+                    best[axis] = fallback[axis];
+                }
+                // A `scroll-snap-stop: always` position strictly between the scroll offset now
+                // and the chosen one stops the scroll: the nearest such (CSS Scroll Snap 1 § 5.2).
+                let Some((b, _)) = best[axis] else { continue };
+                let (lo, hi) = if b.round() > from[axis] { (from[axis], b.round()) } else { (b.round(), from[axis]) };
+                let passed = stops[axis].iter().filter(|(p, _)| p.round() > lo && p.round() < hi);
+                if let Some(&stop) = passed.min_by(|first, second| (first.0 - from[axis]).abs().total_cmp(&(second.0 - from[axis]).abs())) {
+                    best[axis] = Some(stop);
                 }
             }
         }
@@ -3292,10 +3377,10 @@ impl Layout {
             };
             let (tx, ty) = (Some(current.0 as i64), Some(current.1 as i64));
             let alive = targets.map(|t| t.filter(|(el, _)| dom.is_connected(*el).unwrap_or(false)));
-            let (mut x, mut y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, Some(alive));
+            let (mut x, mut y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, Some(alive), None);
             // The box it snapped to has no snap position any more: the nearest one.
             if chosen[0].is_none() && chosen[1].is_none() {
-                (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None);
+                (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None, None);
             }
             if chosen.iter().all(Option::is_none) {
                 self.snapped.remove(&scroller);
@@ -3548,7 +3633,7 @@ impl Layout {
             if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0)) || !self.initially_snapped.insert(el) {
                 continue;
             }
-            let (tx, ty) = self.snap_scroll(dom, Some(el), (0, 0), Some(0), Some(0));
+            let (tx, ty) = self.snap_scroll(dom, Some(el), (0, 0), Some(0), Some(0), None);
             let x = tx.map_or(0, |t| self.clamp_scroll(dom, el, Axis::Width, t));
             let y = ty.map_or(0, |t| self.clamp_scroll(dom, el, Axis::Height, t));
             if (x, y) != (0, 0) {
