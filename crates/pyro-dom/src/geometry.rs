@@ -849,6 +849,8 @@ pub trait GeometrySource {
     }
     fn generated_hit(&self, _owner: u64, _x: f64, _y: f64) -> Option<GeneratedHit> { None }
 
+    fn grid_item_starts(&self, _owner: u64) -> Vec<(u64, u16, u16)> { Vec::new() }
+
     fn css_animation_frames(&self, _key: u64, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
 
     /// Authored timing values whose computation needs the element or its pseudo-element.

@@ -1,0 +1,143 @@
+{
+  "version": "124.0.6367.29",
+  "results": {
+    "ordinary": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ]
+    },
+    "positive": {
+      "forward": [
+        "b",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "b",
+        "start"
+      ]
+    },
+    "nested": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ]
+    },
+    "slot": {
+      "forward": [
+        "a",
+        "c",
+        "b",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "b",
+        "c",
+        "a",
+        "start"
+      ]
+    },
+    "explicitGrid": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ]
+    },
+    "autoGrid": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ]
+    },
+    "reorderedGrid": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ]
+    },
+    "dynamic": {
+      "forward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "reverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ],
+      "changedForward": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "end"
+      ],
+      "changedReverse": [
+        "d",
+        "c",
+        "b",
+        "a",
+        "start"
+      ]
+    }
+  }
+}

@@ -82,16 +82,93 @@ impl Dom {
         }
     }
 
+    /// Tab traversal without an external style engine (DOM-only callers).
+    pub fn sequential_focus_target(
+        &self, doc: NodeId, current: Option<NodeId>, backward: bool, area: &dyn Fn(NodeId) -> bool,
+    ) -> Option<NodeId> {
+        FocusNavigation::new(self, None).next(doc, current, backward, area)
+    }
+
+    pub fn sequential_focus_target_with_layout(
+        &self, doc: NodeId, current: Option<NodeId>, backward: bool,
+        area: &dyn Fn(NodeId) -> bool, layout: &crate::layout::Layout,
+    ) -> Option<NodeId> {
+        FocusNavigation::new(self, Some(layout)).next(doc, current, backward, area)
+    }
+}
+
+use style::values::computed::ReadingFlow;
+use style::values::specified::box_::{DisplayInside, DisplayOutside};
+use rustc_hash::FxHashMap;
+
+/// Per-navigation readback. It expires before listeners can mutate the DOM or styles.
+struct FocusNavigation<'a> {
+    dom: &'a Dom,
+    layout: Option<&'a crate::layout::Layout>,
+    flows: std::cell::RefCell<FxHashMap<u32, ReadingFlow>>,
+}
+
+impl std::ops::Deref for FocusNavigation<'_> {
+    type Target = Dom;
+    fn deref(&self) -> &Dom { self.dom }
+}
+
+impl<'a> FocusNavigation<'a> {
+    fn new(dom: &'a Dom, layout: Option<&'a crate::layout::Layout>) -> Self {
+        Self { dom, layout, flows: Default::default() }
+    }
+
+    fn flow(&self, i: u32) -> ReadingFlow {
+        let Some(layout) = self.layout else { return ReadingFlow::Normal };
+        if i == NIL || !self.n(i).is_element() { return ReadingFlow::Normal; }
+        if let Some(flow) = self.flows.borrow().get(&i) { return *flow; }
+        let style = layout.style().stylo_style(self.dom, self.id_of(i));
+        let flow = style.as_ref().map_or(ReadingFlow::Normal, |s| {
+            let display = s.get_box().display;
+            match (s.get_position().reading_flow, display.inside()) {
+                (ReadingFlow::SourceOrder, DisplayInside::Flow) if display.outside() == DisplayOutside::Block => ReadingFlow::SourceOrder,
+                (ReadingFlow::SourceOrder, DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid) => ReadingFlow::SourceOrder,
+                (ReadingFlow::FlexFlow, DisplayInside::Flex) => ReadingFlow::FlexFlow,
+                (f @ (ReadingFlow::GridOrder | ReadingFlow::GridRows | ReadingFlow::GridColumns), DisplayInside::Grid) => f,
+                _ => ReadingFlow::Normal,
+            }
+        });
+        self.flows.borrow_mut().insert(i, flow);
+        flow
+    }
+
+    fn order_roots(&self, owner: u32, roots: &mut [u32], flow: ReadingFlow) {
+        let Some(layout) = self.layout else { return };
+        let mut placements = FxHashMap::default();
+        if matches!(flow, ReadingFlow::GridRows | ReadingFlow::GridColumns) {
+            if let Some(source) = layout.synced_geometry_source(self.dom) {
+                for (key, row, column) in source.grid_item_starts(crate::snapshot::render_key(self.id_of(owner))) {
+                    placements.insert(key, if flow == ReadingFlow::GridColumns { (column, row) } else { (row, column) });
+                }
+            }
+        }
+        roots.sort_by_cached_key(|&i| {
+            let id = self.id_of(i);
+            let style = layout.style().stylo_style(self.dom, id);
+            let reading = style.as_ref().map_or(0, |s| s.get_position().reading_order);
+            let order = if flow == ReadingFlow::SourceOrder { 0 } else { style.as_ref().map_or(0, |s| s.get_position().order) };
+            let position = placements.get(&crate::snapshot::render_key(id)).copied().unwrap_or_default();
+            (reading, position, order)
+        });
+    }
+
     fn is_scope_owner(&self, i: u32) -> bool {
         self.n(i).element().is_some_and(|e| e.shadow_root != NIL) || self.is_slot(i)
+            || self.flow(i) != ReadingFlow::Normal || self.flow(self.n(i).parent) != ReadingFlow::Normal
     }
 
     /// The elements of `owner`'s scope, tabindex-ordered.
     fn scope_items(&self, owner: u32) -> Vec<u32> {
-        let roots: Vec<u32> = match &self.n(owner).kind {
+        let flow = self.flow(owner);
+        let mut roots: Vec<u32> = match &self.n(owner).kind {
             NodeKind::Document(_) => self.child_idx_iter(owner).collect(),
             NodeKind::Element(e) if e.shadow_root != NIL => self.child_idx_iter(e.shadow_root).collect(),
-            _ => {
+            _ if self.is_slot(owner) => {
                 let assigned = self.slot_assigned(owner);
                 if assigned.is_empty() {
                     self.child_idx_iter(owner).collect()
@@ -99,7 +176,9 @@ impl Dom {
                     assigned
                 }
             }
+            _ => self.child_idx_iter(owner).collect(),
         };
+        if flow != ReadingFlow::Normal { self.order_roots(owner, &mut roots, flow); }
         let mut out = Vec::new();
         let mut stack: Vec<u32> = roots.into_iter().rev().collect();
         while let Some(i) = stack.pop() {
@@ -114,6 +193,7 @@ impl Dom {
             }
         }
         // Stable: equal keys keep tree order.
+        if flow != ReadingFlow::Normal { return out; }
         out.sort_by_key(|&i| match self.tabindex_attr(i) {
             Some(t) if t > 0 => (0, t),
             _ => (1, 0),
@@ -137,7 +217,7 @@ impl Dom {
                 NodeKind::Document(_) => return Some(p),
                 NodeKind::Fragment(f) if f.shadow.is_some() => return Some(f.host),
                 NodeKind::Element(e) if e.shadow_root != NIL => return None,
-                NodeKind::Element(_) if self.is_slot(p) => return Some(p),
+                NodeKind::Element(_) if self.is_scope_owner(p) => return Some(p),
                 NodeKind::Element(_) => x = p,
                 _ => return None,
             }
@@ -188,7 +268,7 @@ impl Dom {
     /// The element Tab (`backward`: Shift+Tab) moves focus to from
     /// `current` (the start or end of the document without one); `None`
     /// at either end of the document.
-    pub fn sequential_focus_target(
+    fn next(
         &self,
         doc: NodeId,
         current: Option<NodeId>,
@@ -229,6 +309,9 @@ impl Dom {
         }
     }
 
+}
+
+impl Dom {
     /// HTML "focus delegate" of a `delegatesFocus` shadow host (null for
     /// any other host): its shadow tree's first autofocus element that is a
     /// focusable area, else its first focusable area in tree order, looking

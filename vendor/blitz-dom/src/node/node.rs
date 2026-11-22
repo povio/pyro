@@ -1376,6 +1376,14 @@ impl Node {
         (transform, context)
     }
 
+    /// Placed in-flow items of this grid, as recorded by Taffy.
+    pub fn placed_grid_items(&self) -> Option<&[taffy::DetailedGridItemsInfo]> {
+        match &self.element_data()?.detailed_layout_info {
+            taffy::DetailedLayoutInfo::Grid(info) => Some(&info.items),
+            _ => None,
+        }
+    }
+
     pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
         match index {
             0 => self.after(),
