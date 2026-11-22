@@ -12,12 +12,13 @@ const retro = batch === 'retrospective';
 const directory = '/webaudio/the-audio-api/' + (realtime ? 'the-audiocontext-interface/' : hold || retro ? 'the-audioparam-interface/' : periodic ? '' : 'the-audiobuffersourcenode-interface/');
 const pages = retro ? ['setValueAtTime', 'setTargetAtTime', 'linearRampToValueAtTime', 'exponentialRampToValueAtTime', 'setValueCurveAtTime'].map(method => `retrospective-${method}.html`) : realtime ? ['audiocontext-rendersizehint.html'] : hold ? ['audioparam-cancel-and-hold.html', 'cancel-scheduled-values.html'] : periodic ? ['the-periodicwave-interface/periodicWave.html', 'the-oscillatornode-interface/ctor-oscillator.html'] : ['sub-sample-scheduling.html', 'audiobuffersource-duration-loop.html', 'audiobuffersource-duration-loop-playbackrate.html'];
 const offlineClose = batch === 'offline-close';
-const batchDirectory = offlineClose ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
-const batchPages = offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
+const offlineQuantum = batch === 'offline-quantum';
+const batchDirectory = offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
+const batchPages = offlineQuantum ? ['offlineaudiocontext-rendersizehint.html', 'offlineaudiocontext-suspend-rendersizehint.https.html', 'offlineaudiocontext-close.html'] : offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
 const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
 if (hold) allowed.add('/webaudio/resources/audio-param.js');
-if (realtime) allowed.add('/webaudio/resources/rendersizehint-testing.js');
+if (realtime || offlineQuantum) allowed.add('/webaudio/resources/rendersizehint-testing.js');
 if (retro) allowed.add(directory + 'retrospective-test.js');
 try {
   const page = await browser.newPage();
@@ -42,6 +43,32 @@ try {
     await page.waitForFunction(() => globalThis.results);
     outcomes[name] = await page.evaluate(() => globalThis.results);
   }
+  if (offlineQuantum) outcomes['stereo-analyser-pcm'] = await page.evaluate(async () => {
+    const tests = [];
+    for (const size of [441, 33001]) {
+      const rate = 48000, pause = Math.ceil(32769 / size) * size, length = pause + 147;
+      const context = new OfflineAudioContext({numberOfChannels: 2, length, sampleRate: rate, renderSizeHint: size});
+      const source = context.createBufferSource(), analyser = context.createAnalyser();
+      analyser.fftSize = 32;
+      const sample = (frame, channel) => ((frame % 17) - 8) * (channel + 1) / 32;
+      source.buffer = context.createBuffer(2, length, rate);
+      for (let channel = 0; channel < 2; channel++) {
+        const data = source.buffer.getChannelData(channel);
+        for (let frame = 0; frame < length; frame++) data[frame] = sample(frame, channel);
+      }
+      source.connect(analyser).connect(context.destination);
+      source.start();
+      const suspended = context.suspend((pause - 0.5) / rate), rendered = context.startRendering();
+      await suspended;
+      const history = new Float32Array(32);
+      analyser.getFloatTimeDomainData(history);
+      tests.push([`mono history at frame ${pause}, quantum ${size}`, history.every((value, index) => value === (sample(pause - 32 + index, 0) + sample(pause - 32 + index, 1)) / 2) ? 0 : 1]);
+      await context.resume();
+      const buffer = await rendered;
+      tests.push([`stereo PCM through final frame, quantum ${size}`, buffer.length === length && [0, 1].every(channel => buffer.getChannelData(channel).every((value, frame) => value === sample(frame, channel))) ? 0 : 1]);
+    }
+    return {status: 0, tests};
+  });
   if (realtime) outcomes['source-clock'] = await page.evaluate(async () => {
     const tests = [];
     for (const quantum of [13, 500, 4096]) {

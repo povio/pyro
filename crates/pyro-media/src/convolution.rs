@@ -1,4 +1,4 @@
-//! Zero-latency convolution in Web Audio's 128-frame render quanta.
+//! Zero-latency convolution with a fixed 128-frame head and variable render blocks.
 //! The first quantum of the impulse is a direct FIR. Later partitions use
 //! overlap-add: a partition of size N starts N samples into the impulse, so
 //! its input block is complete before its first output is due.
@@ -76,16 +76,23 @@ impl PartitionState {
         }
     }
 
-    fn add(&mut self, p: &Partition, src: &Block, dst: &mut Block) {
-        let start = self.filled;
-        for i in 0..QUANTUM {
-            dst[i] += self.pending[start + i];
-            self.input[self.index][start + i] = Complex32::new(src[i], 0.);
+    fn add(&mut self, p: &Partition, src: &[f32], dst: &mut [f32]) {
+        let mut offset = 0;
+        while offset < src.len() {
+            let count = (p.size - self.filled).min(src.len() - offset);
+            for index in 0..count {
+                dst[offset + index] += self.pending[self.filled + index];
+                self.input[self.index][self.filled + index] = Complex32::new(src[offset + index], 0.);
+            }
+            offset += count;
+            self.filled += count;
+            if self.filled == p.size {
+                self.finish_partition(p);
+            }
         }
-        self.filled += QUANTUM;
-        if self.filled != p.size {
-            return;
-        }
+    }
+
+    fn finish_partition(&mut self, p: &Partition) {
         self.filled = 0;
         let newest = &mut self.input[self.index];
         newest[p.size..].fill(Complex32::default());
@@ -118,11 +125,11 @@ impl Path {
         Self { kernel, previous: [0.; QUANTUM], partitions }
     }
 
-    fn add(&mut self, src: &Block, dst: &mut Block) {
+    fn add(&mut self, src: &[f32], dst: &mut [f32]) {
         let mut samples = [0.; QUANTUM * 2];
         samples[..QUANTUM].copy_from_slice(&self.previous);
-        samples[QUANTUM..].copy_from_slice(src);
-        self.previous.copy_from_slice(src);
+        samples[QUANTUM..QUANTUM + src.len()].copy_from_slice(src);
+        self.previous.copy_from_slice(&samples[src.len()..src.len() + QUANTUM]);
         for &(k, value) in &self.kernel.head {
             for (output, input) in dst.iter_mut().zip(&samples[QUANTUM - k..]) {
                 *output += input * value;
@@ -180,26 +187,72 @@ impl Convolver {
     /// when its mono response contributes to a later stereo quantum. Stereo
     /// impulses route input channels independently; four channels form a matrix.
     pub fn render(&mut self, left: &Block, right: Option<&Block>, speakers: bool, out: &mut [Block; 2]) -> usize {
-        const SILENCE: Block = [0.; QUANTUM];
-        let stereo = right.is_some();
         let [l, r] = out;
+        self.render_block(left, right.map(|channel| channel.as_slice()), speakers, l, r)
+    }
+
+    /// Render equally sized channel slices without padding or delaying the output.
+    pub fn render_block(
+        &mut self,
+        left: &[f32],
+        right: Option<&[f32]>,
+        speakers: bool,
+        l: &mut [f32],
+        r: &mut [f32],
+    ) -> usize {
+        assert_eq!(left.len(), l.len());
+        assert_eq!(left.len(), r.len());
+        assert!(right.is_none_or(|channel| channel.len() == left.len()));
+        let stereo_output = self.impulse_channels != 1 || right.is_some() || self.stereo_tail > 0;
+        for (index, ((input, l), r)) in
+            left.chunks(QUANTUM).zip(l.chunks_mut(QUANTUM)).zip(r.chunks_mut(QUANTUM)).enumerate()
+        {
+            let start = index * QUANTUM;
+            self.render_chunk(
+                input,
+                right.map(|channel| &channel[start..start + input.len()]),
+                speakers,
+                stereo_output,
+                l,
+                r,
+            );
+        }
+        if stereo_output {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn render_chunk(
+        &mut self,
+        left: &[f32],
+        right: Option<&[f32]>,
+        speakers: bool,
+        stereo_output: bool,
+        l: &mut [f32],
+        r: &mut [f32],
+    ) {
+        const SILENCE: Block = [0.; QUANTUM];
+        let silence = &SILENCE[..left.len()];
+        let stereo = right.is_some();
         l.fill(0.);
         r.fill(0.);
         if self.impulse_channels == 1 {
-            let stereo_output = stereo || self.stereo_tail > 0;
             if !stereo || self.mono_tail > 0 {
-                self.paths[0].add(if stereo { &SILENCE } else { left }, l);
+                self.paths[0].add(if stereo { silence } else { left }, l);
                 if stereo_output && speakers {
                     r.copy_from_slice(l);
                 }
             }
             if stereo_output {
-                self.paths[1].add(if stereo { left } else { &SILENCE }, l);
-                self.paths[2].add(right.unwrap_or(&SILENCE), r);
+                self.paths[1].add(if stereo { left } else { silence }, l);
+                self.paths[2].add(right.unwrap_or(silence), r);
             }
-            self.mono_tail = if stereo { self.mono_tail.saturating_sub(QUANTUM) } else { self.impulse_length - 1 };
-            self.stereo_tail = if stereo { self.impulse_length - 1 } else { self.stereo_tail.saturating_sub(QUANTUM) };
-            return if stereo_output { 2 } else { 1 };
+            self.mono_tail = if stereo { self.mono_tail.saturating_sub(left.len()) } else { self.impulse_length - 1 };
+            self.stereo_tail =
+                if stereo { self.impulse_length - 1 } else { self.stereo_tail.saturating_sub(left.len()) };
+            return;
         }
 
         let right = right.unwrap_or(left);
@@ -212,7 +265,6 @@ impl Convolver {
         } else {
             self.paths[1].add(right, r);
         }
-        2
     }
 }
 
@@ -243,5 +295,51 @@ impl Convolver {
                         + (s.pending.capacity() + s.overlap.capacity()) * size_of::<f32>()
                 })
                 .sum::<usize>()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn irregular_blocks_match_direct_convolution() {
+        let mut impulse = vec![0.; 8301];
+        let taps = [(0, 1.), (73, -0.5), (127, 0.25), (128, 0.5), (511, -0.25), (4096, 0.25), (8300, 0.5)];
+        for (delay, gain) in taps {
+            impulse[delay] = gain;
+        }
+        let mut signal: Vec<_> = (0..789).map(|index| (index % 23) as f32 / 23.).collect();
+        signal.resize(signal.len() + impulse.len() - 1, 0.);
+        let mut engine = Convolver::new(&[impulse], 48000., false).unwrap();
+        let mut start = 0;
+        for size in [1, 63, 129, 511, 128, 37].into_iter().cycle() {
+            let end = (start + size).min(signal.len());
+            let mut left = vec![0.; end - start];
+            let mut right = left.clone();
+            assert_eq!(engine.render_block(&signal[start..end], None, true, &mut left, &mut right), 1);
+            for (frame, sample) in (start..end).zip(left) {
+                let expected: f32 =
+                    taps.iter().filter_map(|&(delay, gain)| frame.checked_sub(delay).map(|i| signal[i] * gain)).sum();
+                assert!((sample - expected).abs() < 2e-5, "frame {frame}: {sample} != {expected}");
+            }
+            start = end;
+            if start == signal.len() {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn stereo_tail_counts_frames_not_quanta() {
+        let mut impulse = vec![0.; 131];
+        impulse[130] = 1.;
+        let mut engine = Convolver::new(&[impulse], 48000., false).unwrap();
+        assert_eq!(engine.render_block(&[0.], Some(&[1.]), true, &mut [0.], &mut [0.]), 2);
+        assert_eq!(engine.render_block(&[0.; 129], None, true, &mut [0.; 129], &mut [0.; 129]), 2);
+        let mut right = [0.];
+        assert_eq!(engine.render_block(&[0.], None, true, &mut [0.], &mut right), 2);
+        assert!((right[0] - 1.).abs() < 1e-6);
+        assert_eq!(engine.render_block(&[0.], None, true, &mut [0.], &mut right), 1);
     }
 }

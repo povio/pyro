@@ -3,7 +3,7 @@
 //! `ConstantSourceNode`), `GainNode` and `AudioParam` automation, made in JS
 //! (webaudio.js) on a realm's first use of any of them.
 //!
-//! An `OfflineAudioContext` renders its graph in 128-frame quanta when
+//! An `OfflineAudioContext` renders its graph in blocks (128 frames by default) when
 //! `startRendering()` runs. A real-time `AudioContext` has no output device:
 //! its `currentTime` advances on the document clock while it runs and its
 //! sources end on time, but no sample is computed.
@@ -174,7 +174,7 @@ fn samples(s: &Scope<'_>, value: Value<'_>) -> JsResult<Vec<f32>> {
 }
 
 fn make_convolver<'s>(s: &Scope<'s>, _this: Value<'s>, args: pyro_js::Args<'s>) -> JsResult<Value<'s>> {
-    use pyro_media::convolution::{Convolver, QUANTUM};
+    use pyro_media::convolution::Convolver;
     let channels = args.get(0).as_object().ok_or_else(|| JsError::Type("Expected impulse channels".into()))?;
     let count = channels.get_atom("length")?.to_number()? as u32;
     if !matches!(count, 1 | 2 | 4) {
@@ -195,13 +195,15 @@ fn make_convolver<'s>(s: &Scope<'s>, _this: Value<'s>, args: pyro_js::Args<'s>) 
     }
     let engine = RefCell::new(engine);
     Ok(s.function("renderConvolution", move |s, _, args| {
-        let read = |v| -> JsResult<[f32; QUANTUM]> {
-            samples(s, v)?.try_into().map_err(|_| JsError::Type("Invalid render quantum".into()))
-        };
-        let left = read(args.get(0))?;
-        let right = if args.get(1).is_undefined() { None } else { Some(read(args.get(1))?) };
-        let mut out = [[0.0; QUANTUM]; 2];
-        let count = engine.borrow_mut().render(&left, right.as_ref(), args.get(2).to_bool(), &mut out);
+        let left = samples(s, args.get(0))?;
+        let right = if args.get(1).is_undefined() { None } else { Some(samples(s, args.get(1))?) };
+        if right.as_ref().is_some_and(|channel| channel.len() != left.len()) {
+            return Err(JsError::Type("Mismatched convolution channel lengths".into()));
+        }
+        let mut out = [vec![0.; left.len()], vec![0.; left.len()]];
+        let [out_left, out_right] = &mut out;
+        let count =
+            engine.borrow_mut().render_block(&left, right.as_deref(), args.get(2).to_bool(), out_left, out_right);
         let values = out[..count].iter().map(|ch| float32_array(s, ch)).collect::<JsResult<Vec<_>>>()?;
         Ok(s.array(&values)?.value())
     })?

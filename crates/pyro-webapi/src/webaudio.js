@@ -3,7 +3,7 @@
 // timer that does not keep the page busy)
 // returning the module object.
 //
-// The graph renders in 128-frame quanta, pulled from the destination: each
+// The graph renders in context-sized quanta, pulled from the destination: each
 // node's output for a quantum is computed once (fan-out shares it), inputs
 // are summed after up/down-mixing to the input's computed channel count, and
 // AudioParams compute their automation (and connected inputs) per sample
@@ -41,7 +41,7 @@
   const perfNow = perf.now;
   const now = () => apply(perfNow, perf, []);
   const secret = Symbol('pyro');
-  const QUANTUM = 128;
+  const DEFAULT_QUANTUM = 128;
   const MAX_CHANNELS = 32;
   const MIN_RATE = 3000, MAX_RATE = 768000;
 
@@ -198,7 +198,7 @@
       if (token !== secret) throw illegal();
       params.set(this, {
         ctx, value: Math.fround(value), defaultValue: Math.fround(value), minValue, maxValue, rate, fixedRate,
-        events: [], inputs: [], values: new F32(QUANTUM), q: -1,
+        events: [], inputs: [], values: null, q: -1,
       });
     }
     get value() {
@@ -404,18 +404,18 @@
   function paramValues(p, f0, rate, q) {
     if (p.q === q) return p.values;
     p.q = q;
-    const out = p.values;
+    const out = (p.values ??= new F32(ctxOf(p.ctx).quantum));
     if (!p.events.length) out.fill(p.value);
     else if (p.rate === 'k-rate') out.fill(clampParam(p, valueAt(p, f0 / rate)));
-    else for (let i = 0; i < QUANTUM; i++) out[i] = clampParam(p, valueAt(p, (f0 + i) / rate));
-    p.renderedValue = out[QUANTUM - 1];
+    else for (let i = 0; i < out.length; i++) out[i] = clampParam(p, valueAt(p, (f0 + i) / rate));
+    p.renderedValue = out[out.length - 1];
     if (p.inputs.length) {
-      const mono = new F32(QUANTUM);
+      const mono = new F32(out.length);
       for (const { node, output } of p.inputs) mix(pull(node, q, f0, output), [mono], 'speakers', 1);
-      if (p.rate === 'k-rate') { const v = mono[0]; for (let i = 0; i < QUANTUM; i++) out[i] += v; }
-      else for (let i = 0; i < QUANTUM; i++) out[i] += mono[i];
+      if (p.rate === 'k-rate') { const v = mono[0]; for (let i = 0; i < out.length; i++) out[i] += v; }
+      else for (let i = 0; i < out.length; i++) out[i] += mono[i];
     }
-    for (let i = 0; i < QUANTUM; i++) {
+    for (let i = 0; i < out.length; i++) {
       const v = out[i];
       if (v !== v) out[i] = p.defaultValue;
       else if (v < p.minValue) out[i] = p.minValue;
@@ -430,7 +430,7 @@
   // and 6 channels; otherwise channels map by index).
   function mix(src, dst, interp) {
     const si = src.length, di = dst.length;
-    const add = (d, s, g = 1) => { for (let i = 0; i < QUANTUM; i++) d[i] += s[i] * g; };
+    const add = (d, s, g = 1) => { for (let i = 0; i < d.length; i++) d[i] += s[i] * g; };
     if (si === di || interp === 'discrete' || !speakerMix(src, dst, add)) {
       for (let c = 0; c < min(si, di); c++) add(dst[c], src[c]);
     }
@@ -461,7 +461,7 @@
     }
     return false;
   }
-  const silentBus = () => [new F32(QUANTUM)];
+  const silentBus = size => [new F32(size)];
 
   // ---- AudioNode ------------------------------------------------------------
   const nodes = new WeakMap();
@@ -480,11 +480,11 @@
   function pull(n, q, f0, output = 0) {
     const bus = renderNode(n, q, f0);
     // A splitter exposes each discrete input channel as its own mono output port.
-    return n.splitChannels ? (bus[output] ? [bus[output]] : silentBus()) : bus;
+    return n.splitChannels ? (bus[output] ? [bus[output]] : silentBus(n.blockSize)) : bus;
   }
   function renderNode(n, q, f0) {
     if (n.q === q) return n.out;
-    if (n.busy) return silentBus();
+    if (n.busy) return silentBus(n.blockSize);
     n.busy = true;
     try {
       const track = ctxOf(n.ctx).trackConvolverActivity;
@@ -513,7 +513,7 @@
     if (n.mode === 'clamped-max') channels = min(channels, n.channelCount);
     else if (n.mode === 'explicit') channels = n.channelCount;
     const out = [];
-    for (let c = 0; c < channels; c++) out.push(new F32(QUANTUM));
+    for (let c = 0; c < channels; c++) out.push(new F32(n.blockSize));
     for (const b of buses) mix(b, out, n.interp);
     return out;
   }
@@ -522,9 +522,9 @@
       if (token !== secret) throw illegal();
       super();
       nodes.set(this, {
-        self: this, ctx, inputs: [], outs: [], q: -1, out: null, busy: false,
+        self: this, ctx, blockSize: ctxOf(ctx).quantum, inputs: [], outs: [], q: -1, out: null, busy: false,
         numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, mode: 'max', interp: 'speakers',
-        process: () => silentBus(),
+        process: () => silentBus(ctxOf(ctx).quantum),
         ...init,
       });
     }
@@ -690,7 +690,7 @@
       n.process = (f0, q) => {
         const bus = input(n, q, f0);
         const out = [];
-        for (let c = 0; c < n.channelCount; c++) out.push(new F32(QUANTUM));
+        for (let c = 0; c < n.channelCount; c++) out.push(new F32(n.blockSize));
         if (bus) mix(bus, out, n.interp);
         return out;
       };
@@ -711,9 +711,9 @@
       if (o.gain !== undefined) params.get(gain).value = Math.fround(finite(o.gain, 'construct', 'GainNode'));
       n.process = (f0, q) => {
         const bus = input(n, q, f0);
-        if (!bus) return silentBus();
+        if (!bus) return silentBus(n.blockSize);
         const g = paramValues(params.get(gain), f0, ctxOf(context).rate, q);
-        for (const ch of bus) for (let i = 0; i < QUANTUM; i++) ch[i] *= g[i];
+        for (const ch of bus) for (let i = 0; i < n.blockSize; i++) ch[i] *= g[i];
         return bus;
       };
     }
@@ -808,7 +808,7 @@
       if (curve !== null) assignShaperCurve(state, curve);
       const node = nodeOf(this);
       node.process = (frame, quantum) => {
-        const bus = input(node, quantum, frame) ?? Array.from({length: node.mode === 'explicit' ? node.channelCount : 1}, () => new F32(QUANTUM));
+        const bus = input(node, quantum, frame) ?? Array.from({length: node.mode === 'explicit' ? node.channelCount : 1}, () => new F32(node.blockSize));
         if (!state.curve) return bus;
         state.history.length = bus.length;
         for (let channel = 0; channel < bus.length; channel++) {
@@ -905,11 +905,11 @@
       this.smoothingTimeConstant = smoothingTimeConstant;
       (ctxOf(context).analyserNodes ??= new Set()).add(new WeakRefC(node));
       node.process = (frame, quantum) => {
-        const bus = input(node, quantum, frame) ?? silentBus();
-        const mono = new F32(QUANTUM);
+        const bus = input(node, quantum, frame) ?? silentBus(node.blockSize);
+        const mono = new F32(node.blockSize);
         mix(bus, [mono], 'speakers');
-        state.history.set(mono, state.cursor);
-        state.cursor = (state.cursor + QUANTUM) & 32767;
+        for (let index = max(0, mono.length - state.history.length); index < mono.length; index++) state.history[(state.cursor + index) & 32767] = mono[index];
+        state.cursor = (state.cursor + node.blockSize) & 32767;
         state.dirty = true;
         return bus;
       };
@@ -993,10 +993,10 @@
       n.pan = pan;
       n.process = (f0, q) => {
         const bus = input(n, q, f0);
-        const left = new F32(QUANTUM), right = new F32(QUANTUM);
+        const left = new F32(n.blockSize), right = new F32(n.blockSize);
         if (bus) {
           const values = paramValues(params.get(pan), f0, ctxOf(context).rate, q);
-          for (let i = 0; i < QUANTUM; i++) writeEqualPower(bus, left, right, i, values[i], 1);
+          for (let i = 0; i < n.blockSize; i++) writeEqualPower(bus, left, right, i, values[i], 1);
         }
         return [left, right];
       };
@@ -1084,12 +1084,12 @@
     return 1 + (n.coneOuterGain - 1) * (angle - inner) / (outer - inner);
   }
   function renderSpatial(n, f0, q) {
-    const left = new F32(QUANTUM), right = new F32(QUANTUM);
+    const left = new F32(n.blockSize), right = new F32(n.blockSize);
     const bus = input(n, q, f0);
     if (!bus) return [left, right];
     const rate = ctxOf(n.ctx).rate;
     const source = n.spatial, listener = listenerOf(contextListener(n.ctx)).spatial;
-    let stride = QUANTUM;
+    let stride = n.blockSize;
     function values(param) {
       const state = params.get(param);
       if (state.rate === 'a-rate' && (state.events.length || state.inputs.length)) stride = 1;
@@ -1098,7 +1098,7 @@
     const [sx, sy, sz, ox, oy, oz] = pannerNames.map(k => values(source[k]));
     const [lx, ly, lz, fx, fy, fz, ux, uy, uz] = listenerNames.map(k => values(listener[k]));
     // Static and k-rate coordinates have one listener-relative position per quantum.
-    for (let i = 0; i < QUANTUM; i += stride) {
+    for (let i = 0; i < n.blockSize; i += stride) {
       const dx = sx[i] - lx[i], dy = sy[i] - ly[i], dz = sz[i] - lz[i];
       const d = hypot(dx, dy, dz);
       // Project the source onto the listener's orthonormal right/forward axes.
@@ -1210,7 +1210,7 @@
   }
   function delayBlock(n, frame) {
     if (frame < 0) return null;
-    const q = floor(frame / QUANTUM), block = n.blocks.get(q % n.slots);
+    const q = floor(frame / n.blockSize), block = n.blocks.get(q % n.slots);
     return block?.q === q ? block.bus : null;
   }
   function readDelay(n, q, f0) {
@@ -1222,31 +1222,31 @@
     let channels = 1;
     // Delay the channel layout with the samples. Where interpolation or
     // automation touches two layouts, mix them to this quantum's output width.
-    for (let i = 0; i < QUANTUM; i++) {
-      const duration = max(cyclic ? QUANTUM : 0, fround(times[i] * ctx.rate));
+    for (let i = 0; i < n.blockSize; i++) {
+      const duration = max(cyclic ? n.blockSize : 0, fround(times[i] * ctx.rate));
       const pos = f0 + i - duration, prev = floor(pos);
       positions[i] = pos;
       channels = max(channels, delayBlock(n, prev)?.length ?? 1);
       if (prev !== pos) channels = max(channels, delayBlock(n, prev + 1)?.length ?? 1);
     }
-    const out = Array.from({length: channels}, () => new F32(QUANTUM));
+    const out = Array.from({length: channels}, () => new F32(n.blockSize));
     const converted = new Map();
     function source(frame) {
       const bus = delayBlock(n, frame);
       if (!bus || bus.length === channels) return bus;
       if (!converted.has(bus)) {
-        const normalized = Array.from({length: channels}, () => new F32(QUANTUM));
+        const normalized = Array.from({length: channels}, () => new F32(n.blockSize));
         mix(bus, normalized, n.interp);
         converted.set(bus, normalized);
       }
       return converted.get(bus);
     }
-    for (let i = 0; i < QUANTUM; i++) {
+    for (let i = 0; i < n.blockSize; i++) {
       const pos = positions[i], a = floor(pos), frac = pos - a;
       const first = source(a), second = frac ? source(a + 1) : null;
       for (let ch = 0; ch < channels; ch++) {
-        const v = first ? first[ch][a % QUANTUM] : 0;
-        out[ch][i] = frac ? v + frac * ((second ? second[ch][(a + 1) % QUANTUM] : 0) - v) : v;
+        const v = first ? first[ch][a % n.blockSize] : 0;
+        out[ch][i] = frac ? v + frac * ((second ? second[ch][(a + 1) % n.blockSize] : 0) - v) : v;
       }
     }
     return out;
@@ -1265,9 +1265,9 @@
       setParamValue(params.get(n.delayTime), delay, 0);
       // Store only the rendered part of the delay line, bounded by its maximum
       // age. Two extra quanta cover the neighboring sample and the current write.
-      n.slots = max(1, ceil(limit * ctxOf(context).rate / QUANTUM)) + 2;
+      n.slots = max(1, ceil(limit * ctxOf(context).rate / n.blockSize)) + 2;
       n.blocks = new Map();
-      n.positions = new Float64Array(QUANTUM);
+      n.positions = new Float64Array(n.blockSize);
       n.process = (f0, q) => readDelay(n, q, f0);
       (ctxOf(context).delayNodes ??= new Set()).add(new WeakRefC(n));
     }
@@ -1344,12 +1344,12 @@
       (c.convolverNodes ??= new Set()).add(new WeakConvolver(n));
       if (source != null) setImpulse(n, source, info);
       n.process = (f0, q) => {
-        if (!n.convolve) return silentBus();
+        if (!n.convolve) return silentBus(n.blockSize);
         const bus = input(n, q, f0);
-        if (!n.activeInput && n.tail === 0) return silentBus();
+        if (!n.activeInput && n.tail === 0) return silentBus(n.blockSize);
         n.processingFrame = f0;
-        n.tail = n.activeInput ? n.impulseLength - 1 : max(0, n.tail - QUANTUM);
-        return n.convolve(bus ? bus[0] : new F32(QUANTUM), bus?.[1], n.interp === 'speakers');
+        n.tail = n.activeInput ? n.impulseLength - 1 : max(0, n.tail - n.blockSize);
+        return n.convolve(bus ? bus[0] : new F32(n.blockSize), bus?.[1], n.interp === 'speakers');
       };
     }
     get normalize() { return convolverOf(this).normalize; }
@@ -1376,7 +1376,7 @@
   // sample, while its previous samples still belong to the same channel.
   function filterProcess(n, f0, q, update) {
     const bus = input(n, q, f0);
-    const channels = bus || silentBus();
+    const channels = bus || silentBus(n.blockSize);
     // A channel disappearing from the input remains audible for its tail.
     // Retire it once its delay line no longer contributes to any output.
     while (n.history.length > channels.length) {
@@ -1385,10 +1385,10 @@
       n.history.pop();
     }
     const count = max(channels.length, n.history.length);
-    while (channels.length < count) channels.push(new F32(QUANTUM));
+    while (channels.length < count) channels.push(new F32(n.blockSize));
     const size = max(n.a.length, n.b.length);
     while (n.history.length < count) n.history.push({x: new F64(size), y: new F64(size)});
-    for (let i = 0; i < QUANTUM; i++) {
+    for (let i = 0; i < n.blockSize; i++) {
       if (update) update(i);
       const position = n.position;
       for (let c = 0; c < count; c++) {
@@ -1632,7 +1632,7 @@
       });
       const n = nodeOf(this);
       applyNodeOptions(this, inherited);
-      n.process = (f0, q) => Array.from({length: count}, (_, port) => input(n, q, f0, port)?.[0] || new F32(QUANTUM));
+      n.process = (f0, q) => Array.from({length: count}, (_, port) => input(n, q, f0, port)?.[0] || new F32(n.blockSize));
     }
   }
   webidl(ChannelMergerNode, 'ChannelMergerNode');
@@ -1682,11 +1682,11 @@
     if (n.start < 0 || n.ended) return null;
     const first = max(f0, ceil(n.start * rate - 1e-9));
     const stopAt = n.stop === Infinity ? Infinity : max(ceil(n.stop * rate - 1e-9), ceil(n.start * rate - 1e-9));
-    const last = min(f0 + QUANTUM, stopAt);
+    const last = min(f0 + n.blockSize, stopAt);
     if (stopAt <= f0) { end(n); return null; }
-    if (first >= f0 + QUANTUM || first >= last) return null;
+    if (first >= f0 + n.blockSize || first >= last) return null;
     n.processingFrame = f0;
-    return [first - f0, last - f0, stopAt <= f0 + QUANTUM];
+    return [first - f0, last - f0, stopAt <= f0 + n.blockSize];
   }
 
   class AudioBufferSourceNode extends AudioScheduledSourceNode {
@@ -1752,11 +1752,11 @@
     const range = activeRange(n, rate, f0);
     if (!range || !data) {
       if (range && range[2]) end(n);
-      return silentBus();
+      return silentBus(n.blockSize);
     }
     const [from, to, stopping] = range;
     const out = [];
-    for (let ch = 0; ch < data.channels.length; ch++) out.push(new F32(QUANTUM));
+    for (let ch = 0; ch < data.channels.length; ch++) out.push(new F32(n.blockSize));
     const pr = paramValues(params.get(n.playbackRate), f0, rate, q)[0];
     const dt = paramValues(params.get(n.detune), f0, rate, q)[0];
     const step = pr * pow(2, dt / 1200) * data.rate / rate;
@@ -1880,9 +1880,9 @@
       n.process = (f0, q) => {
         const rate = ctxOf(context).rate;
         const range = activeRange(n, rate, f0);
-        if (!range) return silentBus();
+        if (!range) return silentBus(n.blockSize);
         const [from, to, stopping] = range;
-        const out = new F32(QUANTUM);
+        const out = new F32(n.blockSize);
         const fr = paramValues(params.get(n.frequency), f0, rate, q);
         const dt = paramValues(params.get(n.detune), f0, rate, q);
         let phase = n.phase;
@@ -1935,10 +1935,10 @@
       n.process = (f0, q) => {
         const rate = ctxOf(context).rate;
         const range = activeRange(n, rate, f0);
-        if (!range) return silentBus();
+        if (!range) return silentBus(n.blockSize);
         const [from, to, stopping] = range;
         const v = paramValues(params.get(n.offset), f0, rate, q);
-        const out = new F32(QUANTUM);
+        const out = new F32(n.blockSize);
         for (let i = from; i < to; i++) out[i] = v[i];
         if (stopping) end(n);
         return [out];
@@ -1955,8 +1955,16 @@
     if (!c) throw invocation();
     return c;
   }
+  function renderQuantum(hint) {
+    if (typeof hint === 'number') return ulong(hint);
+    if (hint !== undefined && !['default', 'hardware'].includes(`${hint}`)) throw new TypeErrorC('Invalid AudioContextRenderSizeCategory.');
+    return DEFAULT_QUANTUM;
+  }
+  function checkQuantum(quantum, rate) {
+    if (!quantum || quantum > 6 * rate) throw new DE('Render quantum size outside supported range.', 'NotSupportedError');
+  }
   class BaseAudioContext extends ET {
-    constructor(token, rate, channels, offline, quantum = QUANTUM) {
+    constructor(token, rate, channels, offline, quantum = DEFAULT_QUANTUM) {
       if (token !== secret) throw illegal();
       super();
       const self = this;
@@ -2079,16 +2087,13 @@
       if (typeof latency === 'string' && !['interactive', 'balanced', 'playback'].includes(latency)) {
         throw new TypeErrorC(`Failed to construct 'AudioContext': Failed to read the 'latencyHint' property from 'AudioContextOptions': The provided value '${latency}' is not a valid enum value of type AudioContextLatencyCategory.`);
       }
-      const hint = o.renderSizeHint;
-      let quantum = QUANTUM;
-      if (typeof hint === 'number') quantum = ulong(hint);
-      else if (hint !== undefined && !['default', 'hardware'].includes(`${hint}`)) throw new TypeErrorC('Invalid AudioContextRenderSizeCategory.');
+      const quantum = renderQuantum(o.renderSizeHint);
       const sampleRate = o.sampleRate;
       const rate = sampleRate === undefined ? 48000 : fround(finite(sampleRate, 'construct', 'AudioContext'));
       if (!(rate >= MIN_RATE && rate <= MAX_RATE)) {
         throw new DE(`Failed to construct 'AudioContext': The hardware sample rate provided (${rate}) is outside the range [${MIN_RATE}, ${MAX_RATE}].`, 'NotSupportedError');
       }
-      if (!quantum || quantum > 6 * rate) throw new DE('Render quantum size outside supported range.', 'NotSupportedError');
+      checkQuantum(quantum, rate);
       super(secret, rate, 2, false, quantum);
       const c = ctxOf(this);
       c.started = 0; // document time the clock (re)started at
@@ -2134,7 +2139,7 @@
     }
     get baseLatency() {
       const c = ctxOf(this);
-      return max(QUANTUM, ceil(256 * c.rate / 48000), c.quantum) / c.rate;
+      return max(DEFAULT_QUANTUM, ceil(256 * c.rate / 48000), c.quantum) / c.rate;
     }
     get outputLatency() { ctxOf(this); return 0; }
     getOutputTimestamp() {
@@ -2186,14 +2191,16 @@
   // An offline context renders its graph into a buffer.
   class OfflineAudioContext extends BaseAudioContext {
     constructor(numberOfChannels, length, sampleRate) {
-      let channels, frames, rate;
+      let channels, frames, rate, quantum = DEFAULT_QUANTUM;
       if (arguments.length === 1 && numberOfChannels !== null && typeof numberOfChannels === 'object') {
         const o = numberOfChannels;
         const lengthOption = o.length;
-        if (o.sampleRate === undefined) throw new TypeErrorC("Failed to construct 'OfflineAudioContext': Failed to read the 'sampleRate' property from 'OfflineAudioContextOptions': Required member is undefined.");
         channels = o.numberOfChannels === undefined ? 1 : ulong(o.numberOfChannels);
         frames = lengthOption == null ? null : ulong(lengthOption);
-        rate = finite(o.sampleRate, 'construct', 'OfflineAudioContext');
+        quantum = renderQuantum(o.renderSizeHint);
+        const rateOption = o.sampleRate;
+        if (rateOption === undefined) throw new TypeErrorC("Failed to construct 'OfflineAudioContext': Failed to read the 'sampleRate' property from 'OfflineAudioContextOptions': Required member is undefined.");
+        rate = fround(finite(rateOption, 'construct', 'OfflineAudioContext'));
       } else {
         if (arguments.length < 3) throw new TypeErrorC(`Failed to construct 'OfflineAudioContext': 3 arguments required, but only ${arguments.length} present.`);
         channels = ulong(numberOfChannels);
@@ -2201,7 +2208,8 @@
         rate = finite(sampleRate, 'construct', 'OfflineAudioContext');
       }
       checkBuffer('construct', 'OfflineAudioContext', channels, frames ?? 1, rate);
-      super(secret, rate, channels, true);
+      checkQuantum(quantum, rate);
+      super(secret, rate, channels, true, quantum);
       const c = ctxOf(this);
       c.length = frames;
       c.channels = channels;
@@ -2218,7 +2226,7 @@
         if (c.closing || c.state === 'closed' || c.committed === c.length) throw new DE('No further frames can be rendered.', 'InvalidStateError');
         if (size === 0) throw new DE('The requested chunk size cannot be zero.', 'NotSupportedError');
         const start = c.committed;
-        const end = size === null ? (c.length ?? start + QUANTUM) : min(c.length ?? Infinity, start + ceil(size / QUANTUM) * QUANTUM);
+        const end = size === null ? (c.length ?? start + c.quantum) : min(c.length ?? Infinity, start + ceil(size / c.quantum) * c.quantum);
         const output = Array.from({length: c.channels}, () => new F32(end - start));
         c.committed = end;
         c.chunks.push({start, end, output, resolve, reject});
@@ -2264,8 +2272,8 @@
       if (arguments.length < 1) return PromiseC.reject(new TypeErrorC("Failed to execute 'suspend' on 'OfflineAudioContext': 1 argument required, but only 0 present."));
       const t = +suspendTime;
       if (!(t >= 0)) return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': negative suspend time (${t}) is not allowed`, 'InvalidStateError'));
-      const lower = floor(t * c.rate / QUANTUM) * QUANTUM;
-      const frame = t > lower / c.rate ? lower + QUANTUM : lower;
+      const lower = floor(t * c.rate / c.quantum) * c.quantum;
+      const frame = t > lower / c.rate ? lower + c.quantum : lower;
       if (c.closing || c.state === 'closed') return PromiseC.reject(new DE('Context is closed.', 'InvalidStateError'));
       if (c.length !== null && frame >= c.length) {
         return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': cannot schedule a suspend at frame ${frame} (${t} seconds) because it is greater than or equal to the total render duration of ${c.length} frames`, 'InvalidStateError'));
@@ -2289,7 +2297,7 @@
     setState(c, 'running');
     c.graphEpoch = (c.graphEpoch ?? 0) + 1;
     const dest = nodes.get(c.destination);
-    const sliceEnd = min(chunk.end, c.frames + 128 * QUANTUM);
+    const sliceEnd = min(chunk.end, c.frames + min(128 * c.quantum, 16384));
     while (c.frames < sliceEnd) {
       const pause = c.suspends.get(c.frames);
       if (pause) {
@@ -2300,10 +2308,10 @@
         return;
       }
       const f0 = c.frames;
-      const q = f0 / QUANTUM;
+      const q = f0 / c.quantum;
       const bus = pull(dest, q, f0);
-      const count = min(QUANTUM, chunk.end - f0);
-      for (let ch = 0; ch < c.channels; ch++) chunk.output[ch].set(count === QUANTUM ? bus[ch] : bus[ch].subarray(0, count), f0 - chunk.start);
+      const count = min(c.quantum, chunk.end - f0);
+      for (let ch = 0; ch < c.channels; ch++) chunk.output[ch].set(count === c.quantum ? bus[ch] : bus[ch].subarray(0, count), f0 - chunk.start);
       // Started sources nothing pulled still play (and end) on time.
       for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
       if (c.analyserNodes) for (const ref of c.analyserNodes) {
@@ -2328,7 +2336,7 @@
         for (const n of c.delayWriters) writeDelay(n, q, f0);
         c.delayWriters.clear();
       }
-      c.frames += QUANTUM;
+      c.frames += c.quantum;
     }
     if (c.frames < chunk.end) {
       setTimer(() => render(c), 0);
