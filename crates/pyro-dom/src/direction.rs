@@ -284,6 +284,11 @@ pub fn lang_range_matches(tag: &str, range: &str) -> bool {
     if range.is_empty() || tag.is_empty() {
         return false;
     }
+    // A subtag longer than 8 characters makes the tag ill-formed (BCP 47): Chrome matches no
+    // range against it (WPT css/selectors/selectors-4 `lang-singleton-subtag-matching`).
+    if tag.split('-').any(|t| t.len() > 8) {
+        return false;
+    }
     let mut tags = tag.split('-');
     let mut ranges = range.split('-');
     let (Some(t0), Some(r0)) = (tags.next(), ranges.next()) else { return false };
@@ -323,6 +328,8 @@ mod tests {
         assert!(!lang_range_matches("fr-x-standard", "fr-standard"));
         assert!(lang_range_matches("de-CH-1996", "de-*-1996"));
         assert!(lang_range_matches("zh-Hant-TW", "*-Hant"));
+        assert!(!lang_range_matches("fr-ninechars", "fr"), "a subtag over 8 characters");
+        assert!(lang_range_matches("fr-eightchr", "fr"), "8 characters are allowed");
     }
 
     #[test]
