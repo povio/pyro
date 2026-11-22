@@ -1,0 +1,56 @@
+{
+  "scores": {
+    "baseFull": 16,
+    "candidateFull": 20,
+    "chrome158Full": 45,
+    "baseNamed": 1440,
+    "candidateNamed": 1520,
+    "chrome158Named": 2058,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 573,
+    "lpOnly": 35,
+    "gained": 80
+  },
+  "gainsByPage": {
+    "svg/animations/svgnumberlist-animation-invalid-value-1.html": 1,
+    "svg/animations/svgnumberlist-animation-invalid-value-2.html": 1,
+    "svg/animations/svgnumberlist-animation-invalid-value-3.html": 1,
+    "svg/idlharness.window.html": 47,
+    "svg/types/SameObject-identity.html": 1,
+    "svg/types/scripted/SVGAnimatedNumberList.html": 1,
+    "svg/types/scripted/SVGList-animVal-reflects-base-value.html": 5,
+    "svg/types/scripted/SVGList-getItem-identity.html": 4,
+    "svg/types/scripted/SVGList-identity-across-attribute-change.html": 4,
+    "svg/types/scripted/SVGList-mutator-return-identity.html": 4,
+    "svg/types/scripted/SVGList-parse-invalid-clears-items.html": 1,
+    "svg/types/scripted/SVGList-reflected-attribute-synchronize.html": 10
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 51
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "b3f2b303ad203999fd733d82d6a93176db24b668173292db01c33f14bf4befea"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 51
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "033b9c3d7a210a93952ced66113fc924f8f864385436564132f5029dd9bdeb8a"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 51
+      },
+      "restarts": null,
+      "watchdogKills": null,
+      "receiptSHA256": "83129d10a32921206a664e9d10ce126fe5fd8228a61c7173a3cb07cc636929cc"
+    }
+  }
+}
