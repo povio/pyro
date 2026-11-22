@@ -182,20 +182,21 @@ fn await_graph<'s>(s: &Scope<'s>, page: &Rc<PageDom>, url: &str) -> JsResult<Val
     Ok(promise)
 }
 
-/// The calling realm's promise for a worklet operation, settled from the worklet realm's promises.
+/// The calling realm's promise for a worklet operation, settled from the worklet realm's promises
+/// (shared with `crate::audio_worklet`).
 #[derive(Clone)]
-struct Settle {
+pub(crate) struct Settle {
     deferred: Rc<RefCell<Option<pyro_js::Deferred>>>,
     caller: pyro_js::WeakRealm,
 }
 
 impl Settle {
-    fn new(s: &Scope<'_>, deferred: pyro_js::Deferred) -> Settle {
+    pub(crate) fn new(s: &Scope<'_>, deferred: pyro_js::Deferred) -> Settle {
         Settle { deferred: Rc::new(RefCell::new(Some(deferred))), caller: s.realm().downgrade() }
     }
 
     /// Settles it now, in `s` (the caller's realm): fulfilled with undefined, or rejected with the error.
-    fn now(&self, s: &Scope<'_>, result: Result<(), Value<'_>>) -> JsResult<()> {
+    pub(crate) fn now(&self, s: &Scope<'_>, result: Result<(), Value<'_>>) -> JsResult<()> {
         let Some(d) = self.deferred.borrow_mut().take() else { return Ok(()) };
         match result {
             Ok(()) => d.resolve(s, s.undefined()),
@@ -214,7 +215,7 @@ impl Settle {
 
     /// Settles it as `promise` (of the worklet realm `ws`) settles; when it fulfills, `next` may give
     /// the step after it (a value or promise it then settles as, or the error that rejects it).
-    fn when<'s>(
+    pub(crate) fn when<'s>(
         &self,
         s: &Scope<'s>,
         ws: &Scope<'_>,
