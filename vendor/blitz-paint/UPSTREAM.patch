@@ -5081,7 +5081,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  /// The default color for text selection highlights
  const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
  
-@@ -42,6 +55,184 @@
+@@ -42,6 +55,194 @@
  /// Generally this will involve executing them to draw a rasterized image/texture. But in some cases it may choose to
  /// transform them to a vector format (e.g. SVG/PDF) or serialize them in raw form for later use.
  pub fn paint_scene(
@@ -5213,6 +5213,16 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +    if in_scene {
 +        return true;
 +    }
++    // A visited link around the element (the drawable canvas inside one, or the element inside
++    // one in the canvas) gives it visited-dependent colours, which reveal history. (The render
++    // tree has no shadow root nodes: a shadow tree's parent is its host.)
++    let mut ancestor = doc.get_node(id).and_then(|node| node.parent);
++    while let Some(a) = ancestor {
++        if doc.is_visited_link(a) {
++            return true;
++        }
++        ancestor = doc.get_node(a).and_then(|node| node.parent);
++    }
 +    let mut stack = vec![id];
 +    while let Some(n) = stack.pop() {
 +        let Some(node) = doc.get_node(n) else { continue };
@@ -5266,7 +5276,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      scene: &mut impl PaintScene,
      doc: &mut BaseDocument,
      scale: f64,
-@@ -49,7 +240,44 @@
+@@ -49,7 +250,44 @@
      height: u32,
      x_offset: u32,
      y_offset: u32,
@@ -5311,7 +5321,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
      // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
      //
-@@ -59,7 +287,7 @@
+@@ -59,7 +297,7 @@
      #[cfg(feature = "custom-widget")]
      build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
  
@@ -5320,7 +5330,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
          doc,
          scale,
          width,
-@@ -68,6 +296,10 @@
+@@ -68,6 +306,10 @@
          y_offset as f64,
          &custom_widget_scenes,
      );
@@ -5331,7 +5341,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      generator.paint_scene(scene);
  
      // println!(
-@@ -78,6 +310,134 @@
+@@ -78,6 +320,134 @@
      // );
  }
  
@@ -5466,7 +5476,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  #[cfg(feature = "custom-widget")]
  fn build_custom_widget_scenes(
      custom_widget_scenes: &mut CustomWidgetSceneMap,
-@@ -142,3 +502,9 @@
+@@ -142,3 +512,9 @@
  
      Some(widget_scene)
  }

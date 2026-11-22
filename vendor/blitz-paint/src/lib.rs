@@ -183,6 +183,16 @@ fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u
     if in_scene {
         return true;
     }
+    // A visited link around the element (the drawable canvas inside one, or the element inside
+    // one in the canvas) gives it visited-dependent colours, which reveal history. (The render
+    // tree has no shadow root nodes: a shadow tree's parent is its host.)
+    let mut ancestor = doc.get_node(id).and_then(|node| node.parent);
+    while let Some(a) = ancestor {
+        if doc.is_visited_link(a) {
+            return true;
+        }
+        ancestor = doc.get_node(a).and_then(|node| node.parent);
+    }
     let mut stack = vec![id];
     while let Some(n) = stack.pop() {
         let Some(node) = doc.get_node(n) else { continue };
