@@ -450,7 +450,17 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
     let nested = !page.popover.busy.borrow_mut().insert(el);
     let _busy = Busy(page, el, !nested);
     let fire_events = !nested;
+    // HTML "show popover": the document the popover was in before `beforetoggle` (its
+    // "expected document").
+    let original_document = page.dom.borrow().node_document(el).ok();
     if fire_events && !fire_toggle(page, el, "beforetoggle", false, true, true, invoker) {
+        return Ok(());
+    }
+    // A `beforetoggle` handler that moved the popover to another document makes it invalid.
+    if page.dom.borrow().node_document(el).ok() != original_document {
+        if throw {
+            return Err(JsError::dom("InvalidStateError", "The popover was moved to another document."));
+        }
         return Ok(());
     }
     if !check_popover_validity(page, el, false, false)? {
