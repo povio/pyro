@@ -236,8 +236,9 @@ fn form_entries_with_charset(
     out
 }
 
-/// Inserts CRLF pairs so that no line of `value` is longer than `cols` characters: after
-/// the last space that fits (as Chrome), else at `cols`.
+/// Inserts line feeds so that no line of `value` is longer than `cols` characters: after
+/// the last space that fits (as Chrome), else at `cols`. The entry keeps LF; the
+/// serializers turn every newline into CRLF.
 fn hard_wrap(value: &str, cols: usize) -> String {
     let mut out = String::with_capacity(value.len() + value.len() / cols.max(1) * 2);
     for (i, line) in value.split('\n').enumerate() {
@@ -251,7 +252,7 @@ fn hard_wrap(value: &str, cols: usize) -> String {
             let cut = chars[start..=start + cols].iter().rposition(|&c| c == ' ').map_or(cols, |p| p + 1);
             let cut = if cut == 0 { cols } else { cut };
             out.extend(&chars[start..start + cut]);
-            out.push_str("\r\n");
+            out.push('\n');
             start += cut;
         }
         out.extend(&chars[start..]);
