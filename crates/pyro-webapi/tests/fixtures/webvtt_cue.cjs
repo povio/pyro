@@ -16,7 +16,7 @@ const document = {
 };
 const realm = vm.createContext({document, EventTarget, DOMException});
 const factory = vm.runInContext(readFileSync(resolve(__dirname, '../../src/webvtt_cue.js'), 'utf8'), realm);
-const api = factory(s => s.replaceAll('&amp;', '&'));
+const api = factory(s => s.replaceAll('&amp;', '&'), () => false);
 
 test('cue text tokens construct fresh nested fragments and normalized timestamps', () => {
   const cue = new api.VTTCue(2, Infinity,
@@ -49,4 +49,21 @@ test('parsed cues retain region and track identity while script changes timing',
   cue.line = -20;
   assert.equal(cue.line, -20);
   assert.throws(() => { cue.endTime = NaN; }, {name: 'TypeError'});
+});
+
+test('cross-realm region assignment accepts a genuine foreign region and rejects forged instances', () => {
+  const otherRealm = vm.createContext({document, EventTarget, DOMException});
+  const otherFactory = vm.runInContext(readFileSync(resolve(__dirname, '../../src/webvtt_cue.js'), 'utf8'), otherRealm);
+  const other = otherFactory(s => s, api.hasRegion);
+  const childCue = new other.VTTCue(0, 2, 'foreign');
+  const parentRegion = new api.VTTRegion();
+  childCue.region = parentRegion;
+  assert.equal(childCue.region, parentRegion);
+  assert.equal(other.hasCue(childCue), true);
+  assert.equal(api.hasCue(childCue), false);
+  const forged = Object.create(api.VTTRegion.prototype);
+  assert.throws(() => { childCue.region = forged; }, {name: 'TypeError'});
+  assert.equal(childCue.region, parentRegion);
+  childCue.pauseOnExit = true;
+  assert.equal(other.cueTiming(childCue)[3], true);
 });

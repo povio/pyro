@@ -1,5 +1,5 @@
 // WebVTT cue text has its own tokenizer, restricted element vocabulary and tree rules.
-(function (decodeReferences) {
+(function (decodeReferences, isForeignRegion) {
   'use strict';
   const cues = new WeakMap(), regions = new WeakMap(), construct = Symbol();
   const define = Object.defineProperty;
@@ -156,7 +156,7 @@
   attribute(cue, cues, 'snapToLines', Boolean);
   attribute(cue, cues, 'region', value => {
     if (value == null) return null;
-    state(regions, value);
+    if (!regions.has(value) && !isForeignRegion(value)) throw new TypeError('Expected a VTTRegion.');
     return value;
   });
   enumAttribute(cue, cues, 'vertical', ['', 'rl', 'lr']);
@@ -184,8 +184,9 @@
   }
   function cueTiming(cue) {
     const s = state(cues, cue);
-    return [s.startTime, s.endTime, s.id];
+    return [s.startTime, s.endTime, s.id, s.pauseOnExit];
   }
   return {TextTrackCue, VTTCue, VTTRegion, parsedRegion, parsedCue, cueTiming,
+    hasCue: cue => cues.has(cue), hasRegion: region => regions.has(region),
     cueOwner: cue => state(cues, cue).track, setCueOwner(cue, track) { state(cues, cue).track = track; }};
 })
