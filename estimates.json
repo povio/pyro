@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 1060,
-    "studio_in_scope": 429,
+    "studio_in_scope": 433,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -14,7 +14,7 @@
    "selector_union": 1647,
    "owner_estimate_reduction": 239,
    "of_which_tentative": 208,
-   "studio_css_reported_pages_not_deduped": 280,
+   "studio_css_reported_pages_not_deduped": 284,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 460,
@@ -44,15 +44,15 @@
     "FileAPI": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "fetch/orb": 2,
     "xhr": 2,
-    "fetch/redirect-navigate": 1,
-    "fetch/security": 1,
-    "svg/styling": 1,
+    "fetch/orb": 2,
     "fetch/redirects": 1,
+    "fetch/security": 1,
+    "fetch/redirect-navigate": 1,
     "IndexedDB": 1,
+    "quirks": 1,
     "fetch/images": 1,
-    "quirks": 1
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -82,15 +82,15 @@
     "html/interaction": 10,
     "fetch/compression-dictionary": 8,
     "fetch/api": 5,
-    "html/editing": 5,
     "html/obsolete": 5,
+    "html/editing": 5,
     "fetch/security": 4,
-    "fetch/fetch-later": 3,
     "html/user-activation": 3,
+    "fetch/fetch-later": 3,
     "html/select": 1,
+    "fetch/content-type": 1,
     "html/scripting": 1,
-    "fetch/http-cache": 1,
-    "fetch/content-type": 1
+    "fetch/http-cache": 1
    }
   },
   "queued": {
@@ -2462,6 +2462,13 @@
    "pages": null,
    "tentative": null
   },
+  "SC-CSP-wasm-gate": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
   "SC-CSP-paintworklet-eval": {
    "state": "implemented-unbuilt",
    "in_scope_pages": null,
@@ -2806,7 +2813,7 @@
    "tentative": null
   }
  },
- "implemented_total_estimate": 1742,
+ "implemented_total_estimate": 1746,
  "milestones_reached": [
   250,
   500,
