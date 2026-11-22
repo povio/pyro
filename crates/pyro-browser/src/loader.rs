@@ -1564,6 +1564,9 @@ pub(crate) fn integrity_error(
     })
 }
 
+/// Chrome's error for a response that refuses to be framed (CSP `frame-ancestors`).
+const BLOCKED_BY_RESPONSE: &str = "net::ERR_BLOCKED_BY_RESPONSE";
+
 /// Whether a document request that failed with `error` (a loader error)
 /// shows Chrome's error document: any network error (`net::ERR_...`) but an
 /// aborted navigation (a download, a cancel) and the URLs Chrome hands
@@ -1725,6 +1728,11 @@ impl Browser {
                             );
                         }
                     }
+                    Ok(resource) if b.frame_ancestors_block(page, &resource) => {
+                        // CSP `frame-ancestors` refuses this frame's ancestors: Chrome commits
+                        // its (opaque-origin) error document instead, and the frame loads.
+                        b.commit_error_document(page, opts, loader_id, BLOCKED_BY_RESPONSE.into(), history);
+                    }
                     Ok(resource) if (200..300).contains(&resource.status) || resource.status == 0 => {
                         let mut opts = opts;
                         opts.url = resource.url.clone();
@@ -1755,12 +1763,45 @@ impl Browser {
         Ok(())
     }
 
+    /// Whether CSP `frame-ancestors` blocks `resource`, the response of child frame `page`'s
+    /// navigation (CSP3 §6.4.2.1 "navigation response check"): its header policies (a page
+    /// that bypasses CSP has none) against the origins of every frame above it. The
+    /// violations are not fired at any document: the response never becomes one, and Chrome
+    /// fires no `securitypolicyviolation` at the embedder (they only go to the response
+    /// policy's `report-uri`, which is not delivered yet). `X-Frame-Options` is not checked.
+    fn frame_ancestors_block(&self, page: FrameKey, resource: &Resource) -> bool {
+        if page.child.is_none() || self.page(page.page).is_some_and(|p| p.bypass_csp) {
+            return false;
+        }
+        let Some(csp) = resource.header_csp.as_deref() else { return false };
+        if !csp.to_ascii_lowercase().contains("frame-ancestors") {
+            return false;
+        }
+        let Ok(url) = url::Url::parse(&resource.url) else { return false };
+        let mut list = pyro_net::csp::PolicyList::new(Some(&url));
+        let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
+        list.add_header(enforce, pyro_net::csp::Disposition::Enforce);
+        list.add_header(report_only, pyro_net::csp::Disposition::Report);
+        // The ancestors' origins, parent first (an opaque one, a sandboxed frame's, as `None`).
+        let mut ancestors = Vec::new();
+        let mut next = self.doc(page).and_then(|p| p.main_frame.parent.clone());
+        while let Some(id) = next.take() {
+            let Some(frame) = self.frame(page.page, &id) else { break };
+            ancestors.push(if frame.origin == "null" { None } else { url::Url::parse(&frame.origin).ok() });
+            next = frame.parent;
+        }
+        list.frame_ancestors_check(&ancestors).blocked
+    }
+
     /// The document request of a navigation failed on the network. A new
     /// window's navigation (its top-level frame still shows its first
     /// about:blank document: a popup, a new target) then commits an error
     /// document ([`Browser::commit_error_document`]), as Chrome commits
     /// one, so the window has a document and clients waiting for its first
-    /// commit (Playwright's `popup` event) go on. Any other navigation fails
+    /// commit (Playwright's `popup` event) go on. So does a child frame whose
+    /// navigation CSP blocked (the parent's `frame-src`): Chrome's error
+    /// document is opaque, so the frame reads as blocked (cross-origin), not
+    /// as its parent's same-origin about:blank. Any other navigation fails
     /// and leaves the document as it was (Chrome would show its error page
     /// there too).
     fn document_fetch_failed(
@@ -1772,7 +1813,8 @@ impl Browser {
         history: HistoryHandling,
     ) {
         let new_window = page.child.is_none() && self.doc(page).is_some_and(|d| d.nav.is_first_blank());
-        if new_window && shows_error_document(&error) {
+        let blocked_frame = page.child.is_some() && error.starts_with(pyro_net::csp::BLOCKED_BY_CSP);
+        if (new_window && shows_error_document(&error)) || blocked_frame {
             self.commit_error_document(page, opts, loader_id, error, history);
         } else {
             self.navigation_failed(page, &opts, loader_id, error);
@@ -1787,7 +1829,8 @@ impl Browser {
     /// its frame's `unreachable` and its session history entry's URL (a
     /// reload fetches that URL again). As in Chrome, `Page.navigate` first
     /// gets the error (`FrameNavigateFailed` with `error_page`), then the
-    /// document commits and loads.
+    /// document commits and loads. In a child frame (a CSP block) the frame
+    /// then loads like any other, firing its container's `load`.
     fn commit_error_document(
         &mut self,
         page: FrameKey,
@@ -1847,6 +1890,11 @@ impl Browser {
                     error_page: false,
                 },
             );
+            // As `navigation_failed`: a child frame still releases its parent's load-event
+            // blocker.
+            if page.child.is_some() {
+                self.finish_blank_document(page);
+            }
         }
     }
 

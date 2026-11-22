@@ -563,6 +563,30 @@ impl PolicyList {
         self.navigation_directive_check("base-uri", url, false)
     }
 
+    /// `frame-ancestors` (CSP3 §6.4.2.1, no fallback): this list is a navigation response's
+    /// (header policies only; `<meta>` drops the directive), and `ancestors` the origins of
+    /// the frames above the one it would commit in, parent first, up to the top-level one
+    /// (`None`: an opaque origin, which nothing matches). Each policy reports the first
+    /// ancestor its directive does not match (blocked URI: that ancestor's origin). An origin
+    /// has no path, so a source with a path never matches one (Chrome, and §6.4.2.1 6.2-6.3).
+    pub fn frame_ancestors_check(&self, ancestors: &[Option<Url>]) -> CheckOutcome {
+        let mut outcome = CheckOutcome::default();
+        for policy in &self.policies {
+            let Some(directive) = policy.directive("frame-ancestors") else { continue };
+            let refused = ancestors.iter().find(|ancestor| match ancestor {
+                Some(url) => !url_matches_source_list(&directive.value, url, self.self_origin.as_ref(), false),
+                None => true,
+            });
+            let Some(ancestor) = refused else { continue };
+            let blocked = ancestor.as_ref().map_or_else(|| "null".to_owned(), |url| url.origin().ascii_serialization());
+            outcome.violations.push(self.violation(policy, directive, "frame-ancestors", &blocked, &blocked, ""));
+            if policy.disposition == Disposition::Enforce {
+                outcome.blocked = true;
+            }
+        }
+        outcome
+    }
+
     fn navigation_directive_check(&self, name: &str, url: &Url, redirected: bool) -> CheckOutcome {
         let mut outcome = CheckOutcome::default();
         for policy in &self.policies {
@@ -1196,6 +1220,37 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].blocked_url, "https://a.test/m.js");
         assert_eq!(violations[0].checked_url, "https://evil.test/m.js");
+    }
+
+    #[test]
+    fn frame_ancestors_checks_every_ancestor_origin() {
+        let child = Url::parse("http://a.test:8000/frame.html").unwrap();
+        let same = Some(Url::parse("http://a.test:8000").unwrap());
+        let cross = Some(Url::parse("http://b.test:8001").unwrap());
+        let check = |policy: &str, disposition, ancestors: &[Option<Url>]| {
+            let mut list = PolicyList::new(Some(&child));
+            list.add_header(policy, disposition);
+            list.frame_ancestors_check(ancestors)
+        };
+        assert!(check("frame-ancestors 'none'", Disposition::Enforce, &[same.clone()]).blocked);
+        assert!(check("frame-ancestors 'self'", Disposition::Enforce, &[same.clone()]).allowed());
+        // Every ancestor, not only the parent.
+        let outcome = check("frame-ancestors 'self'", Disposition::Enforce, &[same.clone(), cross.clone()]);
+        assert!(outcome.blocked);
+        assert_eq!(outcome.violations[0].blocked_url, "http://b.test:8001");
+        assert_eq!(outcome.violations[0].effective_directive, "frame-ancestors");
+        assert!(check("frame-ancestors http://b.test:8001 'self'", Disposition::Enforce, &[same.clone(), cross.clone()]).allowed());
+        assert!(check("frame-ancestors *", Disposition::Enforce, &[cross.clone()]).allowed());
+        // A source with a path matches no origin.
+        assert!(check("frame-ancestors http://a.test:8000/test", Disposition::Enforce, &[same.clone()]).blocked);
+        assert!(check("frame-ancestors http://a.test:8000", Disposition::Enforce, &[same.clone()]).allowed());
+        // An opaque ancestor matches nothing, `*` included.
+        assert!(check("frame-ancestors *", Disposition::Enforce, &[None]).blocked);
+        // No fallback to default-src; report-only reports without blocking.
+        assert!(check("default-src 'none'", Disposition::Enforce, &[cross.clone()]).violations.is_empty());
+        let outcome = check("frame-ancestors 'none'", Disposition::Report, &[same]);
+        assert!(!outcome.blocked);
+        assert_eq!(outcome.violations.len(), 1);
     }
 
     #[test]
