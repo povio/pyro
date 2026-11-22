@@ -7107,11 +7107,22 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -697,6 +1107,27 @@
+@@ -690,13 +1100,36 @@
+-        after_part: bool,
++        _after_part: bool,
+     ) -> Result<NonTSPseudoClass, ParseError> {
+         let pseudo_class = match_ignore_ascii_case! { &name,
+-            "lang" if !after_part => {
++            // pyro: `:lang()` and `:dir()` are not tree-structural, so they may follow `::part()`
++            // as Chrome allows (WPT css/selectors/parsing `parse-part`, invalidation `part-lang`).
++            "lang" => {
+                 NonTSPseudoClass::Lang(parser.expect_ident_or_string()?.as_ref().into())
+             },
+             "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
              },
-+            "dir" if !after_part => {
++            "dir" => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
 +            },
 +            "has-slotted" => {
@@ -7135,7 +7146,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
  
-@@ -714,8 +1145,26 @@
+@@ -714,8 +1147,26 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -7162,7 +7173,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "placeholder" => Placeholder,
              "-servo-text-control-inner-container" => {
                  if !self.in_user_agent_stylesheet() {
-@@ -774,6 +1223,43 @@
+@@ -774,6 +1225,43 @@
          };
  
          Ok(pseudo_element)
