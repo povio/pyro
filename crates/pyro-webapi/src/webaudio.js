@@ -1762,7 +1762,7 @@
       const startAt = n.start * rate;
       n.pos = n.offset * data.rate + (f0 + from - startAt) * step;
       if (n.loop && n.offset * data.rate >= loopEnd) n.pos = loopStart;
-      n.played = 0;
+      n.played = max(0, ceil(startAt - 1e-9) - startAt) * abs(step);
     }
     const maxPlayed = n.duration * data.rate;
     let pos = n.pos;
