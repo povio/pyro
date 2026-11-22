@@ -839,10 +839,16 @@ fn complete_seek(page: &Rc<PageDom>, node: NodeId, generation: u32, serial: u32)
 fn notify_playing(page: &Rc<PageDom>, node: NodeId, generation: u32) {
     // The cues current at the playback position are active by `playing`.
     crate::text_tracks::playback(page, node, false);
+    // HTML takes the pending play promises before `playing` fires: a `pause()` in its
+    // listener rejects none of them, and they resolve after it.
+    let pending = with(page, node, |st| std::mem::take(&mut st.pending_play));
     if !fire(page, node, generation, "playing") {
+        with(page, node, |st| {
+            let later = std::mem::replace(&mut st.pending_play, pending);
+            st.pending_play.extend(later);
+        });
         return;
     }
-    let pending = with(page, node, |st| std::mem::take(&mut st.pending_play));
     resolve_all(pending);
 }
 
