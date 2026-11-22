@@ -487,6 +487,15 @@ fn is_base_appearance(context: &computed::Context) -> bool {
     }
 }
 
+/// pyro: whether the element is a select (a widget `appearance: base-select` applies to).
+fn is_select_widget(context: &computed::Context) -> bool {
+    use computed::Appearance;
+    matches!(
+        context.builder.get_box().get__moz_default_appearance(),
+        Appearance::Listbox | Appearance::Menulist
+    )
+}
+
 fn tweak_when_ignoring_colors(
     context: &computed::Context,
     longhand_id: LonghandId,
@@ -962,6 +971,16 @@ impl<'a> Cascade<'a> {
                     context
                         .included_cascade_flags
                         .insert(RuleCascadeFlags::APPEARANCE_BASE);
+                } else if is_select_widget(context) {
+                    // pyro: a select of auto appearance inside a base-appearance select is not
+                    // in its base subtree (it and its options keep their auto look), as in
+                    // Chromium (WPT customizable-select/base-appearance-inheritance).
+                    context
+                        .style()
+                        .remove_flags(ComputedValueFlags::IS_IN_APPEARANCE_BASE_SUBTREE);
+                    context
+                        .included_cascade_flags
+                        .remove(RuleCascadeFlags::APPEARANCE_BASE);
                 }
             },
             WritingMode | Direction | TextOrientation => {

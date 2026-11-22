@@ -2650,6 +2650,10 @@ fn dispatch_mouse_inner(
                     }
                 }
             }
+            // A press on a customizable select's button opens or closes its picker.
+            if pd && md && m.button == MouseButton::Left && !page.is_disposed() {
+                crate::popover::select_picker_mousedown(page, target);
+            }
             // Chromium on Linux and macOS opens the context menu on the
             // press, whether or not the page canceled it (Windows waits for
             // the release); the release still fires `mouseup` and `auxclick`.

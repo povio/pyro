@@ -2918,3 +2918,8 @@ parent's `margin-trim: block-end` reaching the margins that collapse through its
 README.pyro.md) is laid out afresh and its layout cache cleared after it, as for a block among floats: the cache
 does not key on the flag. WPT css-box `margin-trim/block-container-block-end-self-collapsing-children-nested-*`.
 Test `block_end_trims_self_collapsing_boxes_nested_at_the_bottom` (pyro-render).
+
+- `assets/default.css`: an `@appearance-base` block with Chromium's base appearance of a customizable select
+  (`appearance: base-select`): the select an `inline-flex` box with a 1px `currentColor` border and 24px minimum
+  sizes, its first child button `display: contents`, options `flex`. Stylo applies the block to a select of base
+  appearance and its subtree (vendor/stylo README.pyro.md). WPT html `customizable-select/base-appearance-inheritance`.

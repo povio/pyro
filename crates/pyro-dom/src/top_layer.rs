@@ -67,8 +67,12 @@ pub(crate) struct TopLayer {
     /// marks it stale (`None`), and the next read rebuilds it once, so
     /// hiding many popovers in a row costs no renumbering each.
     rank: std::cell::RefCell<Option<FxHashMap<NodeId, usize>>>,
-    /// Showing `popover=auto` popovers, bottom first.
+    /// Showing `popover=auto` popovers, bottom first, and the selects whose
+    /// picker is open (it is an auto popover).
     auto_stack: Vec<NodeId>,
+    /// Selects (customizable, `appearance: base-select`) whose picker is
+    /// open: they match `:open` ([`Dom::set_select_picker_open`]).
+    pickers: FxHashSet<NodeId>,
     /// Showing `popover=hint` popovers, bottom first.
     hint_stack: Vec<NodeId>,
     /// The element that showed each showing popover (`popovertarget`,
@@ -207,7 +211,36 @@ impl Dom {
         if self.top_layer.popovers.remove(&el) {
             self.bump();
         }
+        if self.top_layer.pickers.contains(&el) {
+            let _ = self.set_select_picker_open(el, false);
+        }
         self.top_layer.leave(el);
+    }
+
+    /// Opens or closes a select's picker. An open picker is an auto popover: it is on top of
+    /// the auto popover stack (other auto popovers, dialogs and light dismiss close it) and the
+    /// select matches `:open`. The bindings run the steps around it (`popover.rs`).
+    pub fn set_select_picker_open(&mut self, el: NodeId, open: bool) -> DomResult<()> {
+        let i = self.check(el)?;
+        let changed = if open { self.top_layer.pickers.insert(el) } else { self.top_layer.pickers.remove(&el) };
+        self.top_layer.auto_stack.retain(|&e| e != el);
+        if open {
+            self.top_layer.auto_stack.push(el);
+        }
+        if changed {
+            self.bump();
+            self.note(crate::dom::Change::State(i));
+        }
+        Ok(())
+    }
+
+    /// Whether a select's picker is open.
+    pub fn is_select_picker_open(&self, el: NodeId) -> bool {
+        !self.top_layer.pickers.is_empty() && self.top_layer.pickers.contains(&el)
+    }
+
+    pub(crate) fn is_select_picker_open_idx(&self, idx: u32) -> bool {
+        !self.top_layer.pickers.is_empty() && self.top_layer.pickers.contains(&self.id_of(idx))
     }
 
         /// Whether the popover's visibility state is "showing".
@@ -399,11 +432,19 @@ impl Dom {
     /// HTML removing steps: a removed dialog is no longer modal and a removed
     /// popover is hidden (no events), as are those inside the removed subtree.
     pub(crate) fn top_layer_before_remove(&mut self, node: u32) {
-        if self.top_layer.modal.is_empty() && self.top_layer.popovers.is_empty() && self.top_layer.pending.is_empty() {
+        if self.top_layer.modal.is_empty()
+            && self.top_layer.popovers.is_empty()
+            && self.top_layer.pending.is_empty()
+            && self.top_layer.pickers.is_empty()
+        {
             return;
         }
         for i in self.shadow_including_subtree(node) {
             let id = self.id_of(i);
+            // A removed select's picker closes.
+            if self.top_layer.pickers.contains(&id) {
+                let _ = self.set_select_picker_open(id, false);
+            }
             if self.top_layer.pending.remove(&id) {
                 self.top_layer.exit(id);
                 self.bump();

@@ -470,3 +470,8 @@ without a style context (custom properties left as they are): pyro serializes a 
   that resolves at computed-value time gets the NaN adjustment absolute colors get (it was only done for colors the
   parser had resolved), and a NaN hue of `lch()`/`oklch()` computes to 0. WPT css-color `parsing/color-valid-*`,
   `color-computed-lab`; test `color_functions_keep_calc_in_their_specified_value` (pyro-webapi).
+
+- `properties/cascade.rs` `did_apply_prioritary_property`: a select (`-moz-default-appearance` `menulist` or
+  `listbox`) whose appearance is not base leaves the `@appearance-base` subtree it inherited: a select of auto
+  appearance nested in one of `appearance: base-select` keeps its auto look, as do its options (Chromium). WPT html
+  `customizable-select/base-appearance-inheritance`.

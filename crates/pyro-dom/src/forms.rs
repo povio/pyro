@@ -1918,9 +1918,30 @@ impl Dom {
                 "a" | "area" => e.attr_local(&local_name!("href")).is_some(),
                 "input" => self.input_type_idx(i) != InputType::Hidden,
                 "summary" => self.is_details_summary(id),
-                "button" | "select" | "textarea" | "iframe" => true,
+                // A select's button (its first child button) is part of the select, which takes
+                // the focus (customizable select).
+                "button" => !self.is_select_button_idx(i),
+                "select" | "textarea" | "iframe" => true,
+                // An option is focusable while its select's picker is open.
+                "option" => {
+                    let select = self.option_nearest_ancestor_select(i);
+                    select != NIL && self.is_select_picker_open_idx(select)
+                }
                 _ => false,
             })
+    }
+    /// Whether `i` is a select's button: a button that is the select's first
+    /// element child (HTML customizable select).
+    pub(crate) fn is_select_button_idx(&self, i: u32) -> bool {
+        let parent = self.n(i).parent;
+        if parent == NIL || self.html_local(parent) != Some(&local_name!("select")) {
+            return false;
+        }
+        let mut c = self.n(parent).first_child;
+        while c != NIL && self.n(c).element().is_none() {
+            c = self.n(c).next;
+        }
+        c == i
     }
 
     /// Document's focused element (`activeElement` is body when None).

@@ -59,6 +59,10 @@ pub(crate) fn select<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
         ));
     }
     page.consume_transient_activation();
+    // A customizable select shows its own picker (a native one has none here).
+    if crate::popover::has_select_picker(page, n.id) {
+        crate::popover::show_select_picker(page, n.id);
+    }
     Ok(s.undefined())
 }
 

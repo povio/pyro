@@ -247,6 +247,10 @@ fn nearest_open_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
         if dom.is_popover_showing(n) && matches!(popover_type(dom, n), Some(PopoverType::Auto | PopoverType::Hint)) {
             return Some(n);
         }
+        // A select's open picker is an auto popover holding the select's contents.
+        if dom.is_select_picker_open(n) {
+            return Some(n);
+        }
         cur = parent_or_host(dom, n);
     }
     None
@@ -335,6 +339,11 @@ fn close_stack_until(
             break;
         }
         budget -= 1;
+        if page.dom.borrow().is_select_picker_open(top) {
+            hide_select_picker(page, top, false);
+            hidden.push(top);
+            continue;
+        }
         let fire = fire_events && initial.contains(&top);
         let previous = page.popover.previously_focused.borrow().get(&top).copied();
         let _ = hide_popover(page, top, false, fire, false, None);
@@ -543,6 +552,105 @@ pub(crate) fn source_option<'s>(s: &pyro_js::Scope<'s>, v: pyro_js::Value<'s>) -
 
 // ----- light dismiss and close requests --------------------------------------------
 
+// ----- select pickers ------------------------------------------------------------------
+
+/// Whether `select` shows a picker of its own: a customizable select (computed `appearance:
+/// base-select`) rendering as a drop-down box (not `multiple`, display size 1), enabled and
+/// connected.
+pub(crate) fn has_select_picker(page: &PageDom, select: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    if !is_html(&dom, select, "select")
+        || !dom.is_connected(select).unwrap_or(false)
+        || dom.is_disabled(select).unwrap_or(true)
+    {
+        return false;
+    }
+    if dom.has_attribute(select, "multiple").unwrap_or(false) {
+        return false;
+    }
+    let size = dom.get_attribute(select, "size").ok().flatten().and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(1);
+    size <= 1 && page.layout().computed_style_value(&dom, select, "appearance") == "base-select"
+}
+
+/// Opens a customizable select's picker. The picker is an auto popover: auto popovers that do
+/// not hold the select close first, light dismiss, a close request, an auto popover or a dialog
+/// shown later close it. The selected option takes the focus, as in Chromium.
+pub(crate) fn show_select_picker(page: &Rc<PageDom>, select: NodeId) {
+    if page.dom.borrow().is_select_picker_open(select) {
+        return;
+    }
+    let ancestor = topmost_popover_ancestor(&page.dom.borrow(), select, PopoverStack::Auto, None);
+    hide_all_popovers_until(page, ancestor, false, true);
+    let previous = focused(page);
+    if page.dom.borrow_mut().set_select_picker_open(select, true).is_err() {
+        return;
+    }
+    page.popover.watchers.borrow_mut().retain(|&w| w != select);
+    page.popover.watchers.borrow_mut().push(select);
+    if let Some(prev) = previous {
+        page.popover.previously_focused.borrow_mut().insert(select, prev);
+    }
+    let option = page.dom.borrow().selected_options(select).ok().and_then(|o| o.first().copied());
+    if let Some(option) = option {
+        focus_forced(page, option);
+    }
+}
+
+/// Closes a select's picker. With `focus_select`, focus inside the select goes back to it.
+pub(crate) fn hide_select_picker(page: &Rc<PageDom>, select: NodeId, focus_select: bool) {
+    if !page.dom.borrow().is_select_picker_open(select) {
+        return;
+    }
+    let _ = page.dom.borrow_mut().set_select_picker_open(select, false);
+    remove_watcher(page, select);
+    page.popover.previously_focused.borrow_mut().remove(&select);
+    let inside = focused(page).is_some_and(|f| f != select && page.dom.borrow().contains(select, f).unwrap_or(false));
+    if focus_select || inside {
+        crate::input::focus_element_with_options(page, select, true);
+    }
+}
+
+/// A trusted left-button `mousedown` on `target` (not canceled): a press on a customizable
+/// select's button (the select itself, or its first child button) opens its picker, or
+/// closes it when open. A press inside the open picker does not.
+pub(crate) fn select_picker_mousedown(page: &Rc<PageDom>, target: NodeId) {
+    let select = {
+        let dom = page.dom.borrow();
+        let mut cur = Some(target);
+        let mut found = None;
+        while let Some(n) = cur {
+            if is_html(&dom, n, "select") {
+                found = Some(n);
+                break;
+            }
+            cur = parent_or_host(&dom, n);
+        }
+        let Some(select) = found else { return };
+        // The press is on the select's button: the select, or inside its first child button.
+        let on_button = target == select || {
+            let mut cur = Some(target);
+            let mut button = false;
+            while let Some(n) = cur.filter(|&n| n != select) {
+                if is_html(&dom, n, "button") && dom.parent(n).ok().flatten() == Some(select) {
+                    button = dom.element_children(select).ok().and_then(|mut c| c.next()) == Some(n);
+                    break;
+                }
+                cur = parent_or_host(&dom, n);
+            }
+            button
+        };
+        if !on_button {
+            return;
+        }
+        select
+    };
+    if page.dom.borrow().is_select_picker_open(select) {
+        hide_select_picker(page, select, true);
+    } else if has_select_picker(page, select) {
+        show_select_picker(page, select);
+    }
+}
+
 /// The auto/hint popover `node` is in or invokes that is highest in the
 /// popover stacks ("topmost clicked popover").
 fn topmost_clicked_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
@@ -626,7 +734,7 @@ fn forget_closed_watchers(page: &PageDom) {
             && if is_html(&dom, w, "dialog") && !dom.is_popover_showing(w) {
                 is_open(&dom, w)
             } else {
-                dom.is_popover_showing(w)
+                dom.is_popover_showing(w) || dom.is_select_picker_open(w)
             }
     });
 }
@@ -642,10 +750,14 @@ pub(crate) fn close_request(page: &Rc<PageDom>) -> bool {
     let candidate = {
         let dom = page.dom.borrow();
         let watchers = page.popover.watchers.borrow();
-        watchers.iter().rev().copied().find(|&w| dom.is_popover_showing(w) || closed_by(&dom, w) != ClosedBy::None)
+        watchers.iter().rev().copied().find(|&w| {
+            dom.is_popover_showing(w) || dom.is_select_picker_open(w) || closed_by(&dom, w) != ClosedBy::None
+        })
     };
     let Some(w) = candidate else { return false };
-    if page.dom.borrow().is_popover_showing(w) {
+    if page.dom.borrow().is_select_picker_open(w) {
+        hide_select_picker(page, w, true);
+    } else if page.dom.borrow().is_popover_showing(w) {
         let _ = hide_popover(page, w, true, true, false, None);
         if page.dom.borrow().is_popover_showing(w) {
             remove_watcher(page, w);

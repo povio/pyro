@@ -53,6 +53,8 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.writing-mode.sideways.enabled", true);
         // Properties Stylo 0.22 enabled with `layout.unimplemented`.
         style_config::set_pref!("layout.css.appearance.enabled", true);
+        // pyro: `appearance: base-select` (customizable select), as Chromium ships it.
+        style_config::set_pref!("dom.select.customizable_select.enabled", true);
         style_config::set_pref!("layout.css.backdrop-filter.enabled", true);
         style_config::set_pref!("layout.css.contain.enabled", true);
         style_config::set_pref!("layout.css.content.alt-text.enabled", true);

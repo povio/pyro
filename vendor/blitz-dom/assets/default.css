@@ -234,6 +234,42 @@ select[size]:not([size="0"], [size="1"], [size=""]) {
     vertical-align: text-bottom;
 }
 
+/* pyro: Chromium's base appearance of a customizable select (html.css, `appearance:
+   base-select`). Stylo applies an `@appearance-base` block to a select whose computed appearance
+   is base-select and to its subtree (not to a nested select of auto appearance). */
+@appearance-base {
+    select {
+        display: inline-flex;
+        align-items: center;
+        box-sizing: border-box;
+        border: 1px solid currentColor;
+        border-radius: 0.5em;
+        background-color: transparent;
+        color: inherit;
+        font: inherit;
+        padding-block: 0.25em;
+        padding-inline: 0.5em;
+        min-inline-size: 24px;
+        min-block-size: max(24px, calc(1lh + 0.5em));
+    }
+
+    /* A select's first child button is its button: it takes no box of its own. */
+    select > button:first-child {
+        all: unset;
+        display: contents;
+    }
+
+    option {
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+        padding-block: 0;
+        padding-inline: 0.5em;
+        min-inline-size: 24px;
+        min-block-size: max(24px, 1lh);
+    }
+}
+
 textarea {
     font-family: monospace;
 }

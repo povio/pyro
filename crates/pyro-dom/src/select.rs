@@ -937,8 +937,12 @@ impl Dom {
             }
             Open => {
                 e.is_html()
-                    && matches!(&*e.name.local, "details" | "dialog")
-                    && e.attr_local(&local_name!("open")).is_some()
+                    && match &*e.name.local {
+                        "details" | "dialog" => e.attr_local(&local_name!("open")).is_some(),
+                        // A customizable select whose picker is open.
+                        "select" => self.is_select_picker_open_idx(idx),
+                        _ => false,
+                    }
             }
             // A dialog shown with `showModal()` that is still open.
             Modal => {
