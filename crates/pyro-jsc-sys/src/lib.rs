@@ -1325,6 +1325,16 @@ pub mod modules {
         /// 1 when fetch callbacks see the `type` import attribute and JSON
         /// and CSS module scripts can load (source-built JavaScriptCore).
         pub fn pyro_jsc_typed_modules_available() -> c_int;
+        /// Registers `id` as an inline module script's registry identity
+        /// whose specifiers resolve against `base` (patch 0038); loading `id`
+        /// keeps it as it is. 1 when registered, 0 without the patch.
+        pub fn pyro_jsc_inline_module_base_set(
+            ctx: JSGlobalContextRef,
+            id: *const c_char,
+            id_len: usize,
+            base: *const c_char,
+            base_len: usize,
+        ) -> c_int;
         pub fn pyro_jsc_import_map_add(
             ctx: JSGlobalContextRef,
             src: *const c_char,

@@ -1909,12 +1909,15 @@ impl Browser {
             }
             (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url, element, ScriptFetch::of(&info)),
             (ScriptType::Module, None) => {
-                let url = {
+                // The script's base URL is the document base URL when it is
+                // prepared (a `<base>` before it counts).
+                let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
+                let seq = {
                     let mut l = self.load_mut(page).expect("load");
                     l.inline_module_seq += 1;
-                    // Distinct registry key per inline module (see pyro_js::Scope::eval_module).
-                    format!("{}#inline-module-{}", base.split('#').next().unwrap_or(&base), l.inline_module_seq)
+                    l.inline_module_seq
                 };
+                let url = self.inline_module_identity(page, &script_base, &seq.to_string());
                 if info.async_ {
                     self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
                 } else {
@@ -2214,7 +2217,8 @@ impl Browser {
                 self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
             }
             (ScriptType::Module, None) => {
-                let url = dynamic_inline_module_url(&base);
+                let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or(base);
+                let url = self.dynamic_inline_module_identity(page, &script_base);
                 self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
                 self.drain_dom_resources(page);
             }
@@ -2607,7 +2611,10 @@ impl Browser {
         let external = info.src.is_some();
         let url = match info.src.as_deref() {
             Some(src) => (!src.is_empty()).then(|| resolve_url(node_base_str(&element.dom.borrow(), node).unwrap_or(&base), src)).flatten(),
-            None if module => Some(dynamic_inline_module_url(&base)),
+            None if module => {
+                let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or_else(|| base.clone());
+                Some(self.dynamic_inline_module_identity(page, &script_base))
+            }
             None => None,
         };
         let Some(url) = url else { self.script_loaded(page, &element, false); ready(empty()); return };
@@ -2666,7 +2673,8 @@ impl Browser {
             if blocking {
                 pyro_webapi::lifecycle::written_script_fetched(bindings, node, "", Err("invalid URL".into()));
             } else if info.src.is_none() && info.kind == ScriptKind::Module {
-                let url = dynamic_inline_module_url(&base);
+                let script_base = node_base_url(&dom.borrow(), node).unwrap_or_else(|| base.clone());
+                let url = self.dynamic_inline_module_identity(page, &script_base);
                 let element =
                     dom.borrow_mut().add_ref(node).ok().map(|_| Rc::new(ResourceNode { dom: dom.clone(), node }));
                 self.execute_module(page, &info.inline_text, &url, false, element, false);
@@ -3024,15 +3032,29 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
     bindings.set_current_script(outer);
 }
 
-/// Registry key of an inline module the parser did not reach (script-inserted
-/// or written). JSC never evaluates a URL twice and node indices are reused
-/// after DOM garbage collection, so the key is a process-wide sequence under a
-/// prefix the parser's `#inline-module-N` keys never use.
-fn dynamic_inline_module_url(base: &str) -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let n = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-    format!("{}#inline-module-dyn-{n}", base.split('#').next().unwrap_or(base))
+impl Browser {
+    /// Registry identity of an inline module script whose base URL is `base`,
+    /// the document base URL when it was prepared (`pyro_js`
+    /// `Scope::inline_module_identity`): its `import.meta.url` and the
+    /// referrer of its imports are `base`, fragment and all.
+    fn inline_module_identity(&self, page: FrameKey, base: &str, tag: &str) -> String {
+        let realm = self.main_realm(page);
+        match realm.as_ref().and_then(|r| r.scope().ok()) {
+            Some(scope) => scope.inline_module_identity(base, tag),
+            None => format!("{}#inline-module-{tag}", base.split('#').next().unwrap_or(base)),
+        }
+    }
+
+    /// [`Browser::inline_module_identity`] for an inline module the parser
+    /// did not reach (script-inserted or written). Node indices are reused
+    /// after DOM garbage collection, so the tag is a process-wide sequence
+    /// under a prefix the parser's tags (`N`) never use.
+    fn dynamic_inline_module_identity(&self, page: FrameKey, base: &str) -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+        self.inline_module_identity(page, base, &format!("dyn-{n}"))
+    }
 }
 
 pub(crate) fn install_module_fetcher(sched: pyro_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
