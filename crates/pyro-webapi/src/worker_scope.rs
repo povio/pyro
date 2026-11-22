@@ -746,6 +746,11 @@ fn script_text(bytes: &[u8]) -> String {
 /// asynchronous: its failure is reported, and this says true).
 fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bool {
     let Ok(s) = state.realm.scope() else { return false };
+    // eval and Function follow the worker's own CSP list (its script's response's, or its
+    // owner's for a `data:` or `blob:` script) and Trusted Types, as a window's classic scripts
+    // do (`trusted_types::sync_compile_strings`, which installs the compile hooks when a policy
+    // asks). Without this a worker's realm got the hooks only once it used `trustedTypes`.
+    crate::trusted_types::sync_compile_strings(&s, &state.page);
     if !module {
         if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
             s.report_exception(&e);
