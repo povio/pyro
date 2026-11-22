@@ -500,6 +500,15 @@ fn parsed_attr<T>(n: &NodeData, attr: &str, parse: fn(&str) -> Option<T>) -> JsR
     Ok(n.page().dom.borrow().get_attribute(n.id, attr).js()?.and_then(parse))
 }
 
+fn img_position(n: &NodeData) -> (i32, i32) {
+    let page = n.page();
+    if !page.dom.borrow().is_connected(n.id).unwrap_or(false) {
+        return (0, 0);
+    }
+    crate::animation_events::layout_flush(page, n.id);
+    page.layout().image_position(&page.dom.borrow(), n.id)
+}
+
 /// An integer attribute in `min..=2147483647`, else `default`.
 /// `img.width` (`width`) or `img.height`: see the accessors.
 fn img_dimension(n: &NodeData, width: bool) -> JsResult<f64> {
@@ -2101,6 +2110,8 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_enum!(def, "fetchPriority", "fetchpriority", FETCH_PRIORITY);
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_bool!(def, "isMap", "ismap");
+    def.getter("x", |s, n| Ok(s.number(f64::from(img_position(n).0))));
+    def.getter("y", |s, n| Ok(s.number(f64::from(img_position(n).1))));
     // HTML: the rendered width and height when the image is being rendered, else (as browsers
     // do) the content attribute when it parses, else the density-corrected natural size, else 0.
     def.accessor("width", |s, n| Ok(s.number(img_dimension(n, true)?)), |_s, n, v| set_ulong(n, "width", to_u32(v)?, 0));

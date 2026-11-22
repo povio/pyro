@@ -1,0 +1,41 @@
+{
+  "version": "158.0.8127.37",
+  "results": [
+    {
+      "url": "css/cssom-view/cssom-view-img-attributes-001.html",
+      "harnessStatus": 0,
+      "subtests": [
+        {
+          "name": "test x with display false",
+          "status": 0
+        },
+        {
+          "name": "test y with display false",
+          "status": 0
+        },
+        {
+          "name": "test x with display true",
+          "status": 0
+        },
+        {
+          "name": "test y with display true",
+          "status": 0
+        }
+      ]
+    },
+    {
+      "url": "css/cssom-view/image-x-y-zoom.html",
+      "harnessStatus": 0,
+      "subtests": [
+        {
+          "name": "x and y properties for image elements with css zoom",
+          "status": 0
+        },
+        {
+          "name": "x and y properties for image elements with css zoom 1",
+          "status": 0
+        }
+      ]
+    }
+  ]
+}
