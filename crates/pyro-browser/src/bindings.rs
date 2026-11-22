@@ -403,14 +403,16 @@ impl PageHooks for Hooks {
             let named = request.target.as_deref().filter(|_| !request.window_features.noopener)
                 .and_then(|t| b.page(page.page)?.frames.named_frame(page, t));
             // HTML "navigate to a javascript: URL": the script runs in the
-            // target document, which stays (replacing it with a string result
-            // is not supported).
+            // target document; a string result replaces that document.
             if let Some(source) = javascript_url_source(&request.url) {
-                let realm = b.doc(named.unwrap_or(page)).and_then(|p| p.main_frame.main_realm().cloned());
-                if let Some(scope) = realm.as_ref().and_then(|realm| realm.scope().ok()) {
-                    if let Err(e) = scope.eval(&source, None, 1) {
-                        scope.report_exception(&e);
-                    }
+                let target = named.unwrap_or(page);
+                let realm = b.doc(target).and_then(|p| p.main_frame.main_realm().cloned());
+                let result = realm
+                    .as_ref()
+                    .and_then(|realm| realm.scope().ok())
+                    .and_then(|scope| crate::frames::javascript_url_result(&scope, &source));
+                if let Some(html) = result {
+                    let _ = b.begin_javascript_result(target, html);
                 }
                 return;
             }

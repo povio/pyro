@@ -1949,6 +1949,8 @@ impl Browser {
                     let checker = parent_key.and_then(|k| b.doc(k)).and_then(|d| {
                         Some((d.main_frame.main_realm().cloned()?, d.main_frame.page_dom.clone()?))
                     });
+                    // A string result replaces the initial document (HTML "evaluate a javascript: URL").
+                    let mut result = None;
                     if let (Some(realm), Some((parent_realm, parent_dom))) = (realm, checker) {
                         if let (Ok(scope), Ok(parent_scope)) = (realm.scope(), parent_realm.scope()) {
                             let script = pyro_webapi::trusted_types::javascript_url_script(&parent_scope, &parent_dom, &source);
@@ -1956,14 +1958,19 @@ impl Browser {
                                 return;
                             }
                             if let Some(script) = script {
-                                if let Err(e) = scope.eval(&script, None, 1) {
-                                    scope.report_exception(&e);
-                                }
+                                result = javascript_url_result(&scope, &script);
                             }
                         }
                     }
                     if connected(b) {
-                        b.finish_blank_document(key);
+                        match result {
+                            Some(html) => {
+                                if b.begin_javascript_result(key, html).is_err() {
+                                    b.finish_blank_document(key);
+                                }
+                            }
+                            None => b.finish_blank_document(key),
+                        }
                     }
                 });
                 Ok(())
@@ -2064,6 +2071,59 @@ impl Browser {
         Ok(loader)
     }
 
+    /// HTML "evaluate a javascript: URL" whose result is a string: the string is the frame's
+    /// new document, HTML in UTF-8 at the URL of the document it replaces, which it replaces in
+    /// session history.
+    pub(crate) fn begin_javascript_result(&mut self, key: FrameKey, html: String) -> Result<LoaderId, JsError> {
+        let host = self.page(key.page).map(|p| p.frames.clone()).ok_or(JsError::ContextDestroyed)?;
+        let frame = host.frame(key).ok_or(JsError::ContextDestroyed)?;
+        let loader = LoaderId(format!("{:032X}", self.next()));
+        let opts = NavigateOpts {
+            post: None,
+            url: frame.url.clone(),
+            reason: NavigationReason::Script,
+            cdp_request_id: None,
+            referrer: None,
+            referrer_policy: None,
+        };
+        self.emit(
+            key.page,
+            PageEvent::FrameNavigate {
+                frame_id: frame.id.clone(),
+                loader_id: loader.clone(),
+                url: opts.url.clone(),
+                reason: opts.reason,
+                cdp_request_id: None,
+            },
+        );
+        self.begin_document(
+            key,
+            &opts,
+            loader.clone(),
+            Resource {
+                url: opts.url.clone(),
+                status: 200,
+                mime: "text/html".into(),
+                charset: Some("utf-8".into()),
+                body: html.into_bytes().into(),
+                immutable_local: false,
+                content_disposition: None,
+                header_csp: None,
+                refresh: None,
+                content_language: None,
+                referrer_policy: crate::loader::parent_referrer_policy(self, key),
+                origin_agent_cluster: false,
+                sent_referrer: None,
+                timing: None,
+                partial: None,
+                nosniff: false,
+                opaque: false,
+            },
+            HistoryHandling::Replace,
+        )?;
+        Ok(loader)
+    }
+
     /// The `srcdoc` of the connected iframe that holds the frame of `key`, if it has one.
     pub(crate) fn srcdoc_of(&self, key: FrameKey) -> Option<(FrameId, String)> {
         let host = self.page(key.page).map(|p| p.frames.clone())?;
@@ -2099,6 +2159,19 @@ impl Browser {
             dom.set_cache_disabled(settings.cache_disabled);
             dom.set_bypass_service_worker(settings.bypass_service_worker);
             dom.set_max_touch_points(settings.max_touch_points);
+        }
+    }
+}
+
+/// Runs the script of a `javascript:` URL in `scope`: its result when that is a string (which
+/// becomes the navigated frame's document), else None. An exception is reported.
+pub(crate) fn javascript_url_result(scope: &pyro_js::Scope<'_>, script: &str) -> Option<String> {
+    match scope.eval(script, None, 1) {
+        Ok(value) if value.is_string() => value.to_string().ok(),
+        Ok(_) => None,
+        Err(e) => {
+            scope.report_exception(&e);
+            None
         }
     }
 }
