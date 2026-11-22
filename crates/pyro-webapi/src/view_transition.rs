@@ -148,6 +148,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             captures.get_or_insert_with(Default::default).insert(scope_key, record);
             return Ok(s.boolean(true));
         }
+        // The elements the other transitions captured: an element takes part in one transition at a
+        // time, so a scope's transition whose old state would capture one of them is skipped, with
+        // InvalidStateError (Chrome; WPT css-view-transitions `scoped/collision`).
+        let others: rustc_hash::FxHashSet<u64> = if old {
+            captures.as_ref().map(|map| map.iter().filter(|(k, _)| **k != scope_key).flat_map(|(_, r)| r.old.iter().chain(r.new.iter()).map(|b| b.key)).collect()).unwrap_or_default()
+        } else {
+            Default::default()
+        };
         let Some(record) = captures.as_mut().and_then(|map| map.get_mut(&scope_key)) else { return Ok(s.boolean(false)); };
         let Some(reservation) = Arc::get_mut(&mut record.reservation) else { return Ok(s.boolean(false)); };
         let prep = u64::from(page.dom.borrow().slot_count()) + 1;
@@ -161,8 +169,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             layout.synced_geometry_source(&page.dom.borrow()).cloned()
         }) else { attempt.failed(work); return Ok(s.boolean(false)); };
         let Some(source) = source else { return Ok(s.boolean(true)); };
+        // An element scope (its own transition root) that cannot take layout containment (a
+        // non-atomic inline, `display: contents`, an internal table box but a cell) fails both of
+        // its captures (Chrome; WPT `scoped/element-scoped-containment-invalid-state`).
+        if scope.id == root.id && !source.layout_containment_eligible(key) { attempt.failed(work); return Ok(s.boolean(false)); }
         let result = source.capture_transition(key, old, attempt.pixels, &mut work);
         let Some(boxes) = result else { attempt.failed(work); return Ok(s.boolean(false)); };
+        if boxes.iter().any(|item| others.contains(&item.key)) { attempt.failed(work); return Ok(s.boolean(false)); }
         if old {
             reservation.pixels = boxes.iter().filter_map(|item| item.rgba.as_ref()).map(|img| img.len() as u64 / 4).sum();
             attempt.pixels -= reservation.pixels;
@@ -227,6 +240,20 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         Ok(s.boolean(args.get(0).as_object().is_some_and(|callback| s.object_realm_gone(callback))))
     })?;
     out.set_atom("callbackGone", gone.value())?;
+    // The state of the scope of an element-scoped view transition (`Dom::set_view_transition_scope`):
+    // 0 none, 1 active, 2 active and keeping its size (until its update callback is done). A
+    // document scope has none.
+    let scope_state = s.function("scopeState", |s, _, args| {
+        let Some(scope) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.undefined()) };
+        let state = match args.get(1).to_number()? as u8 { 1 => Some(false), 2 => Some(true), _ => None };
+        let page = scope.page();
+        let mut dom = page.dom.borrow_mut();
+        if dom.node(scope.id).ok().is_some_and(|node| node.element().is_some()) {
+            dom.set_view_transition_scope(scope.id, state);
+        }
+        Ok(s.undefined())
+    })?;
+    out.set_atom("scopeState", scope_state.value())?;
     Ok(out)
 }
 

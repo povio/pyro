@@ -1917,6 +1917,14 @@ impl Renderer {
         mirror.doc.create_transition_tree(origin, &groups)
     }
 
+    /// pyro: whether element `key` of `page` can take layout containment, as the scope of an
+    /// element-scoped view transition must (`BaseDocument::layout_containment_eligible`; `None`:
+    /// no such element).
+    pub fn layout_containment_eligible(&self, page: u64, key: u64) -> Option<bool> {
+        let mirror = self.mirrors.get(&page)?;
+        Some(mirror.doc.layout_containment_eligible(mirror.node(key)?))
+    }
+
     pub fn set_transition_samples(&mut self, page: u64, root: u64, values: &[(usize,usize,f64)]) -> bool {
         self.mirrors.get_mut(&page).and_then(|mirror| Some(mirror.doc.set_transition_samples(mirror.node(root)?,values))).unwrap_or(false)
     }

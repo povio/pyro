@@ -344,6 +344,9 @@ pub struct Dom {
     invoker_targets: rustc_hash::FxHashMap<(u32, InvokerTarget), NodeId>,
     /// Modal dialogs and showing popovers (`top_layer`).
     pub(crate) top_layer: crate::top_layer::TopLayer,
+    /// pyro: the scopes of active element-scoped view transitions, and whether each keeps its
+    /// size (`Dom::set_view_transition_scope`).
+    pub(crate) view_transition_scopes: rustc_hash::FxHashMap<NodeId, bool>,
     /// Queued `<details>` toggles and whether accordions are in use.
     pub(crate) details: crate::details::DetailsState,
     /// Nonces hidden from content attributes (`nonce`).
@@ -447,6 +450,7 @@ impl Dom {
             internals: Default::default(),
             invoker_targets: Default::default(),
             top_layer: Default::default(),
+            view_transition_scopes: Default::default(),
             details: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),

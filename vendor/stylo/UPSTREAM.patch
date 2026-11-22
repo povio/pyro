@@ -2688,7 +2688,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-22 21:21:35
++++ b/properties/longhands.toml	2026-11-22 21:24:33
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -3485,7 +3485,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +
 +[view-transition-scope]
 +type = "ViewTransitionScope"
-+initial = "computed::ViewTransitionScope::Auto"
++initial = "computed::ViewTransitionScope::None"
 +struct = "ui"
 +engine = "servo"
 +servo_pref = "layout.css.view-transitions.enabled"
@@ -6758,7 +6758,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
          !self.transform.0.is_empty()
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-21 01:58:20
++++ b/servo/selector_parser.rs	2026-11-22 21:24:33
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -7086,12 +7086,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          result
      }
  
-@@ -166,8 +400,58 @@
-     #[inline]
-     pub fn is_marker(&self) -> bool {
+@@ -168,6 +402,56 @@
          *self == PseudoElement::Marker
-+    }
-+
+     }
+ 
 +    /// pyro: whether this pseudo-element is `::scroll-marker`.
 +    #[inline]
 +    pub fn is_scroll_marker(&self) -> bool {
@@ -7113,8 +7111,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | PseudoElement::ScrollButtonLeft
 +                | PseudoElement::ScrollButtonRight
 +        )
-     }
- 
++    }
++
 +    /// pyro: the key a rule for this pseudo-element is filed under in the stylist's maps: every
 +    /// `::scroll-button()` rule under `::scroll-button(*)`, as which a button's box is styled (its
 +    /// node then matches each rule's argument against its direction).
@@ -7290,7 +7288,17 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +757,17 @@
+@@ -395,6 +747,9 @@
+     MozMeterSubOptimum,
+     MozMeterSubSubOptimum,
+     MozTopmostModal,
++    /// pyro: `:-pyro-active-view-transition-scope` (UA sheets only): an element whose
++    /// element-scoped view transition is active (css-view-transitions-2).
++    PyroActiveViewTransitionScope,
+     Open,
+     Optional,
+     OutOfRange,
+@@ -405,6 +760,17 @@
      Required,
      ServoNonZeroBorder,
      Target,
@@ -7308,7 +7316,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +780,24 @@
+@@ -417,11 +783,24 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -7334,7 +7342,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -441,6 +817,20 @@
+@@ -441,6 +820,20 @@
              serialize_identifier(lang, dest)?;
              return dest.write_char(')');
          }
@@ -7355,7 +7363,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  
          dest.write_str(match *self {
              Self::Active => ":active",
-@@ -481,11 +871,16 @@
+@@ -471,6 +864,7 @@
+             Self::MozMeterSubOptimum => ":-moz-meter-sub-optimum",
+             Self::MozMeterSubSubOptimum => ":-moz-meter-sub-sub-optimum",
+             Self::MozTopmostModal => ":-moz-topmost-modal",
++            Self::PyroActiveViewTransitionScope => ":-pyro-active-view-transition-scope",
+             Self::Open => ":open",
+             Self::Optional => ":optional",
+             Self::OutOfRange => ":out-of-range",
+@@ -481,11 +875,16 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
@@ -7373,7 +7389,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -527,11 +922,20 @@
+@@ -518,6 +917,7 @@
+             Self::MozMeterSubOptimum => ElementState::SUB_OPTIMUM,
+             Self::MozMeterSubSubOptimum => ElementState::SUB_SUB_OPTIMUM,
+             Self::MozTopmostModal => ElementState::TOPMOST_MODAL,
++            Self::PyroActiveViewTransitionScope => ElementState::ACTIVE_VIEW_TRANSITION,
+             Self::Open => ElementState::OPEN,
+             Self::Optional => ElementState::OPTIONAL_,
+             Self::OutOfRange => ElementState::OUTOFRANGE,
+@@ -527,11 +927,20 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
@@ -7395,7 +7419,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +1050,12 @@
+@@ -646,6 +1055,12 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
@@ -7408,7 +7432,25 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -690,13 +1100,36 @@
+@@ -669,6 +1084,14 @@
+                 }
+                 NonTSPseudoClass::MozTopmostModal
+             },
++            "-pyro-active-view-transition-scope" => {
++                if !self.in_user_agent_stylesheet() {
++                    return Err(ParseError::custom(
++                        SelectorParseErrorKind::UnexpectedIdent
++                    ))
++                }
++                NonTSPseudoClass::PyroActiveViewTransitionScope
++            },
+             "-servo-nonzero-border" => {
+                 if !self.in_user_agent_stylesheet() {
+                     return Err(ParseError::custom(
+@@ -687,16 +1110,39 @@
+         &self,
+         name: &str,
+         parser: &mut CssParser<'i>,
 -        after_part: bool,
 +        _after_part: bool,
      ) -> Result<NonTSPseudoClass, ParseError> {
@@ -7447,7 +7489,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
  
-@@ -714,8 +1147,26 @@
+@@ -714,8 +1160,26 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -7474,7 +7516,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "placeholder" => Placeholder,
              "-servo-text-control-inner-container" => {
                  if !self.in_user_agent_stylesheet() {
-@@ -774,6 +1225,43 @@
+@@ -774,6 +1238,43 @@
          };
  
          Ok(pseudo_element)
@@ -13970,7 +14012,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-22 21:15:04
++++ b/values/specified/box.rs	2026-11-22 21:24:33
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -14488,12 +14530,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2291,6 +2467,15 @@
- pub enum ScrollBehavior {
-     Auto,
+@@ -2293,6 +2469,15 @@
      Smooth,
-+}
-+
+ }
+ 
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq,
 +         Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -14501,26 +14541,29 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ScrollAxisLock {
 +    Auto,
 +    None,
- }
- 
++}
++
  /// https://drafts.fxtf.org/compositing/#isolation
-@@ -2320,6 +2505,15 @@
+ #[allow(missing_docs)]
+ #[derive(
+@@ -2320,6 +2505,16 @@
      Isolate,
  }
  
-+/// Which view transition names are scoped to this element.
++/// Which view transition names are scoped to this element (`none | all`, initially `none`,
++/// as in Chrome).
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
 +#[repr(u8)]
 +pub enum ViewTransitionScope {
-+    Auto,
++    None,
 +    All,
 +}
 +
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
  #[allow(missing_docs)]
  #[derive(
-@@ -2486,8 +2680,41 @@
+@@ -2486,8 +2681,41 @@
  pub enum ImageOrientation {
      FromImage,
      None,
@@ -14562,7 +14605,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
  #[allow(missing_docs)]
  #[derive(
-@@ -2629,3 +2856,90 @@
+@@ -2629,3 +2857,90 @@
      Ltr,
      Rtl,
  }

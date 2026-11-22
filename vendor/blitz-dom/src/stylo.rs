@@ -1031,6 +1031,11 @@ impl selectors::Element for BlitzNode<'_> {
             // pyro: a dialog in the top layer (modal, or kept there for its `overlay` transition):
             // the state pyro-dom gives it (Chromium's `:-internal-dialog-in-top-layer`).
             NonTSPseudoClass::MozTopmostModal => self.element_state().contains(ElementState::TOPMOST_MODAL),
+            // pyro: an element whose element-scoped view transition is active (the state pyro-dom
+            // gives it).
+            NonTSPseudoClass::PyroActiveViewTransitionScope => {
+                self.element_state().contains(ElementState::ACTIVE_VIEW_TRANSITION)
+            }
         }
     }
 

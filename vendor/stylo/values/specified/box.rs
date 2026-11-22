@@ -2505,12 +2505,13 @@ pub enum Isolation {
     Isolate,
 }
 
-/// Which view transition names are scoped to this element.
+/// Which view transition names are scoped to this element (`none | all`, initially `none`,
+/// as in Chrome).
 #[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
 #[repr(u8)]
 pub enum ViewTransitionScope {
-    Auto,
+    None,
     All,
 }
 

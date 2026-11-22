@@ -62,6 +62,31 @@ pub(crate) struct Tree {
 }
 
 impl BaseDocument {
+    /// pyro: whether element `id` can take layout containment (css-contain-2 § 3.2), as the scope
+    /// of an element-scoped view transition must (css-view-transitions-2; else its transition is
+    /// skipped with an InvalidStateError, as in Chrome): it has a box (not `display: none` or
+    /// `contents`) that is no non-atomic inline box and no internal table box but a cell.
+    pub fn layout_containment_eligible(&self, id: NodeId) -> bool {
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        let Some(node) = self.get_node(id) else { return false };
+        let Some(styles) = node.primary_styles() else { return false };
+        let display = styles.clone_display();
+        if display.is_none() || display.is_contents() {
+            return false;
+        }
+        match display.outside() {
+            DisplayOutside::Inline => {
+                display.inside() != DisplayInside::Flow
+                    || node.data.downcast_element().is_some_and(|el| {
+                        crate::layout::replaced::is_replaced(el) || crate::layout::replaced::is_inline_box(el)
+                    })
+            }
+            DisplayOutside::InternalTable => display.inside() == DisplayInside::TableCell,
+            DisplayOutside::None => false,
+            _ => true,
+        }
+    }
+
     pub fn activate_transition_paint(&mut self, origin: NodeId, images: Vec<Option<Raster>>) -> bool {
         use PseudoElement::*;
         let Some(tree) = self.transition_trees.as_ref().and_then(|trees| trees.get(&origin)) else { return false };

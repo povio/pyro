@@ -255,6 +255,12 @@ pub struct LayoutData {
     /// did not skip its contents. What that `auto` sizes it as while its contents are skipped
     /// (CSS Sizing 4 § 5.1, `BaseDocument::record_remembered_sizes`).
     pub remembered_size: [Option<f32>; 2],
+    /// pyro: the border-box size the scope of an element-scoped view transition keeps until its
+    /// update callback is done (physical and unrounded, CSS px):
+    /// its size from before the transition (pyro-dom's
+    /// `view-transition-contain` state token; css-view-transitions-2 size containment with the
+    /// last remembered size, which its computed style does not show).
+    pub view_transition_size: Option<taffy::Size<f32>>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -281,6 +287,7 @@ impl LayoutData {
             columns: None,
             subgrid: None,
             remembered_size: [None; 2],
+            view_transition_size: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }

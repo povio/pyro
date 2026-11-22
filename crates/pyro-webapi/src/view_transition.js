@@ -2,7 +2,7 @@
 // `Element.startViewTransition`): per-scope lifecycle and native capture.
 (function (native) {
   'use strict';
-  const {captureValid, transitionAnimations, callbackGone} = native;
+  const {captureValid, transitionAnimations, callbackGone, scopeState} = native;
   const global = globalThis;
   const rafFn = global.requestAnimationFrame, setTimeoutFn = global.setTimeout;
   const clearTimeoutFn = global.clearTimeout;
@@ -29,11 +29,20 @@
     try { raf(fn); } catch (_) { setTimeout_(fn, 0); }
   };
   const abortError = (message) => new DOMException(message, 'AbortError');
+  // The scope of an element-scoped transition is marked from its start until the transition is
+  // done (`scopeState`: the UA sheet names it `root` and scopes its names), and keeps its size
+  // until its update callback is done (css-view-transitions-2, as in Chrome).
+  function unmark(st) {
+    if (!st.marked) return;
+    st.marked = false;
+    scopeState(st.scope, 0);
+  }
   function finish(st) {
     if (st.phase !== 'animating' || !st.animationDone) return;
     if (st.runs) { st.runs.release(); st.runs = null; }
     if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
     if (st.waiting) return;
+    unmark(st);
     st.phase = 'done';
     if (active.get(st.scope) === st.self) active.delete(st.scope);
     st.finished.resolve();
@@ -168,6 +177,7 @@
     if (st.runs) { st.runs.release(); st.runs = null; }
     if (before) pending.delete(st.scope);
     if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
+    unmark(st);
     st.phase = 'done';
     if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
     if (active.get(st.scope) === st.self) active.delete(st.scope);
@@ -198,7 +208,10 @@
       if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
       st.updateCallbackDone.resolve();
       st.updateDone.resolve();
-      if (st.phase === 'done' || !capture(st)) return;
+      if (st.phase === 'done') return;
+      // The new state is captured at the scope's own size.
+      if (st.marked) scopeState(st.scope, 1);
+      if (!capture(st)) return;
       try { st.runs = transitionAnimations(st.root); } catch (_) { st.runs = null; }
       if (!st.runs) { skip(st, new DOMException('Cannot animate transition boxes', 'InvalidStateError')); return; }
       if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes')); return; }
@@ -240,7 +253,7 @@
     }
     const self = Object.create(ViewTransition.prototype);
     const st = {
-      self, scope, root, update, phase: 'pending-capture', called: false, readySettled: false, inactive,
+      self, scope, root, update, phase: 'pending-capture', called: false, readySettled: false, inactive, marked: false,
       types: typeSet(types), timer: null, waiting: 0, animationDone: false,
       updateCallbackDone: deferred(), ready: deferred(), finished: deferred(), updateDone: deferred(),
     };
@@ -264,6 +277,8 @@
       skip(st, new DOMException('View transition capture limit reached', 'InvalidStateError'));
       return self;
     }
+    st.marked = true;
+    scopeState(scope, 2);
     pending.set(scope, st);
     if (!pumpQueued) {
       pumpQueued = true;

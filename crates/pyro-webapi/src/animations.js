@@ -2179,6 +2179,15 @@
       }
       return;
     }
+    // pyro: a view transition's run follows `animation-play-state` once script controls it only
+    // when the property changes (CSS Animations 1 § 3): one script finished while paused stays
+    // finished, and its transition ends (Chrome; WPT css-view-transitions `scoped/run_in_parallel`).
+    if (a.viewRun) {
+      const paused = held !== null;
+      const changed = a.cssPaused !== paused;
+      a.cssPaused = paused;
+      if (a.scripted && !a.scrollDriven && !changed) return;
+    }
     if (!a.scripted && !a.scrollDriven) return cssFollowPlayState(a, run);
     const state = playStateOf(a);
     if (held !== null) {
