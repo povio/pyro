@@ -2064,7 +2064,15 @@ impl Browser {
                         referrer: parent.navigation_referrer(),
                         referrer_policy,
                     },
-                    HistoryHandling::Replace,
+                    // HTML "navigate an iframe or frame": "replace" while the frame's document is
+                    // not completely loaded, else "auto", a push (which leaving the initial
+                    // about:blank document still makes a replace). An `<object>` or `<embed>`
+                    // always replaces.
+                    if frame.loaded && !host.dom.borrow().is_document_object(owner) {
+                        HistoryHandling::Push
+                    } else {
+                        HistoryHandling::Replace
+                    },
                 )
                 .map(|_| ())
             }
