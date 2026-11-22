@@ -1,0 +1,8 @@
+[
+ "html/browsers/the-window-object/open-close/creating_browsing_context_test_01.html",
+ "html/browsers/the-window-object/window-open-defaults.window.html",
+ "webnn/conformance_tests/abs.https.any.html?cpu",
+ "webnn/conformance_tests/abs.https.any.html?gpu",
+ "webnn/conformance_tests/abs.https.any.html?npu",
+ "webnn/helper-validation.window.html"
+]

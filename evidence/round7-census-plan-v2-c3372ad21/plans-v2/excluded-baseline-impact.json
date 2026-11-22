@@ -1,0 +1,4394 @@
+{
+ "priorPublication": "01f49f43da24a20ecb20d99c967fc5de54272120",
+ "finalHeadObserved": false,
+ "counts": {
+  "all": {
+   "urls": 179,
+   "priorLPStrict": 89,
+   "priorLPPass": 320,
+   "priorLPObserved": 641,
+   "signedChrome158Strict": 148,
+   "signedChrome158Pass": 528,
+   "signedChrome158Observed": 645,
+   "priorLPOnly": 20,
+   "signedChromeOnly": 228,
+   "commonPass": 300
+  },
+  "local": {
+   "urls": 80,
+   "priorLPStrict": 36,
+   "priorLPPass": 130,
+   "priorLPObserved": 256,
+   "signedChrome158Strict": 63,
+   "signedChrome158Pass": 228,
+   "signedChrome158Observed": 260,
+   "priorLPOnly": 20,
+   "signedChromeOnly": 118,
+   "commonPass": 110
+  },
+  "v2additional": {
+   "urls": 174,
+   "priorLPStrict": 85,
+   "priorLPPass": 316,
+   "priorLPObserved": 627,
+   "signedChrome158Strict": 143,
+   "signedChrome158Pass": 514,
+   "signedChrome158Observed": 631,
+   "priorLPOnly": 20,
+   "signedChromeOnly": 218,
+   "commonPass": 296
+  },
+  "studio": {
+   "urls": 99,
+   "priorLPStrict": 53,
+   "priorLPPass": 190,
+   "priorLPObserved": 385,
+   "signedChrome158Strict": 85,
+   "signedChrome158Pass": 300,
+   "signedChrome158Observed": 385,
+   "priorLPOnly": 0,
+   "signedChromeOnly": 110,
+   "commonPass": 190
+  },
+  "v1": {
+   "urls": 5,
+   "priorLPStrict": 4,
+   "priorLPPass": 4,
+   "priorLPObserved": 14,
+   "signedChrome158Strict": 5,
+   "signedChrome158Pass": 14,
+   "signedChrome158Observed": 14,
+   "priorLPOnly": 0,
+   "signedChromeOnly": 10,
+   "commonPass": 4
+  }
+ },
+ "records": [
+  {
+   "url": "IndexedDB/blob-delete-objectstore-db.any.html",
+   "source": "IndexedDB/blob-delete-objectstore-db.any.js",
+   "blob": "f25d388a2143f0b889563af7705e017416b8dc11",
+   "shard": "ordinary-182",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "IndexedDB/blob-delete-objectstore-db.any.worker.html",
+   "source": "IndexedDB/blob-delete-objectstore-db.any.js",
+   "blob": "f25d388a2143f0b889563af7705e017416b8dc11",
+   "shard": "ordinary-249",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "accessibility/svg-mouse-listener.html",
+   "source": "accessibility/svg-mouse-listener.html",
+   "blob": "85a218f8635917f5fe1496d8b0f6693ba8819f12",
+   "shard": "ordinary-004",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "ai/semantic_embedder/semantic-embedder-create.tentative.https.window.html",
+   "source": "ai/semantic_embedder/semantic-embedder-create.tentative.https.window.js",
+   "blob": "ee7625f0ca19f11d624231358ffa7cd94097e48a",
+   "shard": "ordinary-075",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    7
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    7
+   ]
+  },
+  {
+   "url": "ai/translator/translator-bad-input.https.window.html",
+   "source": "ai/translator/translator-bad-input.https.window.js",
+   "blob": "db8905a61f660f8dc0aa7666c044794d22683799",
+   "shard": "ordinary-192",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    3
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ]
+  },
+  {
+   "url": "audio-output/removeTrack-after-setSinkId.https.html",
+   "source": "audio-output/removeTrack-after-setSinkId.https.html",
+   "blob": "97db5f81e29ade84871f816a982724359da5e105",
+   "shard": "ordinary-056",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "battery-status/no-leak-on-detached-use.https.html",
+   "source": "battery-status/no-leak-on-detached-use.https.html",
+   "blob": "8ea7ea303c262206b20e9f488e138f14aa6f7838",
+   "shard": "ordinary-051",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "clipboard-apis/async-clipboard-read-unsanitized-null.https.html",
+   "source": "clipboard-apis/async-clipboard-read-unsanitized-null.https.html",
+   "blob": "f74eee56677c1c826908f8fde9607905fcf30358",
+   "shard": "ordinary-202",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "clipboard-apis/async-write-blobs-read-blobs.https.html",
+   "source": "clipboard-apis/async-write-blobs-read-blobs.https.html",
+   "blob": "dd390e2d8e60beaba92b77e2fb28b7b403002524",
+   "shard": "ordinary-116",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    2
+   ]
+  },
+  {
+   "url": "clipboard-apis/detached-iframe/paste-on-detaching-iframe.https.html",
+   "source": "clipboard-apis/detached-iframe/paste-on-detaching-iframe.https.html",
+   "blob": "34e456e4debf2eecfb6b2f0d434a0e52aea84290",
+   "shard": "ordinary-284",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "clipboard-apis/detached-iframe/read-on-detaching-iframe.https.html",
+   "source": "clipboard-apis/detached-iframe/read-on-detaching-iframe.https.html",
+   "blob": "827c17a9e32f62b98ccb278b8a79f124cb6e5cb4",
+   "shard": "ordinary-219",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "clipboard-apis/detached-iframe/write-on-detaching-iframe.https.html",
+   "source": "clipboard-apis/detached-iframe/write-on-detaching-iframe.https.html",
+   "blob": "b3836799df822d703c151f57d87663a733c85a81",
+   "shard": "ordinary-009",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "clipboard-apis/detached-iframe/write-read-on-detached-iframe.https.html",
+   "source": "clipboard-apis/detached-iframe/write-read-on-detached-iframe.https.html",
+   "blob": "155f9d004aee2a9540a0acab819d6c7964f776df",
+   "shard": "ordinary-008",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "clipboard-apis/detached-iframe/writeText-readText-on-detached-iframe.https.html",
+   "source": "clipboard-apis/detached-iframe/writeText-readText-on-detached-iframe.https.html",
+   "blob": "8c6448d5cc9e4c49cd87b897c74d1340149237b3",
+   "shard": "ordinary-208",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "compat/webkit-gradient-sign.html",
+   "source": "compat/webkit-gradient-sign.html",
+   "blob": "68e1e32b1f336e99e99f54b4a32588648035b4d1",
+   "shard": "ordinary-074",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    1,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "compute-pressure/compute_pressure_disconnect.https.window.html?globalScope=dedicated_worker",
+   "source": "compute-pressure/compute_pressure_disconnect.https.window.js",
+   "blob": "0a27b16a926b35b3d9d7f1878542f379bb7cb7f3",
+   "shard": "ordinary-245",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "error",
+    "Error",
+    false,
+    0,
+    0
+   ],
+   "signed": [
+    "error",
+    "Error",
+    false,
+    1,
+    2
+   ]
+  },
+  {
+   "url": "compute-pressure/compute_pressure_disconnect.https.window.html?globalScope=window",
+   "source": "compute-pressure/compute_pressure_disconnect.https.window.js",
+   "blob": "0a27b16a926b35b3d9d7f1878542f379bb7cb7f3",
+   "shard": "ordinary-130",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "error",
+    "Error",
+    false,
+    0,
+    0
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    1,
+    2
+   ]
+  },
+  {
+   "url": "content-security-policy/frame-src/frame-src-cross-origin-same-document-navigation.window.html",
+   "source": "content-security-policy/frame-src/frame-src-cross-origin-same-document-navigation.window.js",
+   "blob": "4c771935415c362bf736c1ceb43e46d9c987b882",
+   "shard": "ordinary-214",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "content-security-policy/frame-src/frame-src-same-document-meta.sub.html",
+   "source": "content-security-policy/frame-src/frame-src-same-document-meta.sub.html",
+   "blob": "f4122f3d356b37860a29634e47bde9147432ba09",
+   "shard": "ordinary-073",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "custom-elements/customized-built-in-constructor-exceptions.html",
+   "source": "custom-elements/customized-built-in-constructor-exceptions.html",
+   "blob": "bdfade9e4cda0e88107203f5829aa7e80b41fab0",
+   "shard": "ordinary-261",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    5,
+    5
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    5,
+    5
+   ]
+  },
+  {
+   "url": "custom-elements/element-internals-aria-element-reflection.html",
+   "source": "custom-elements/element-internals-aria-element-reflection.html",
+   "blob": "5149494c353cb5ea138d5265449b91e4eae60c39",
+   "shard": "ordinary-084",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    6,
+    9
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    6,
+    9
+   ]
+  },
+  {
+   "url": "custom-elements/state/custom-state-set-strong-ref.html",
+   "source": "custom-elements/state/custom-state-set-strong-ref.html",
+   "blob": "da25943ffa233f313f6a65a6b3755cac6bbbcafb",
+   "shard": "ordinary-186",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "delegated-ink/delete-presentation-area.html",
+   "source": "delegated-ink/delete-presentation-area.html",
+   "blob": "2408c7eeaf568858a0f6ead7094ec6f05ebd76f3",
+   "shard": "ordinary-112",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "dom/events/focus-event-document-move.html",
+   "source": "dom/events/focus-event-document-move.html",
+   "blob": "2943761ce132e3503b424134237f6a98b046c7ce",
+   "shard": "ordinary-051",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "dom/nodes/Node-cloneNode-external-stylesheet-no-bc.sub.html",
+   "source": "dom/nodes/Node-cloneNode-external-stylesheet-no-bc.sub.html",
+   "blob": "bce6074aad3d446234c6dd79e2b1bc4b5104740c",
+   "shard": "ordinary-052",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "dom/nodes/moveBefore/Node-moveBefore.html",
+   "source": "dom/nodes/moveBefore/Node-moveBefore.html",
+   "blob": "845c5986eaf3380278e6a2f82176327ccfd0bf08",
+   "shard": "ordinary-221",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    32,
+    32
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    32,
+    32
+   ]
+  },
+  {
+   "url": "dom/nodes/moveBefore/custom-element-move-reactions.html",
+   "source": "dom/nodes/moveBefore/custom-element-move-reactions.html",
+   "blob": "68f28deb8ccd51a48e28d3d353c4a2efa0b053bf",
+   "shard": "ordinary-021",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    7,
+    7
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    7,
+    7
+   ]
+  },
+  {
+   "url": "dom/nodes/remove-and-adopt-thcrash.html",
+   "source": "dom/nodes/remove-and-adopt-thcrash.html",
+   "blob": "d37015ec9f923bfc74319631723defa0b222654d",
+   "shard": "ordinary-228",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-title-or-metadata",
+    "prior-explicit-fault-fixture"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "dom/observable/tentative/observable-forEach.window.html",
+   "source": "dom/observable/tentative/observable-forEach.window.js",
+   "blob": "71c2e1730393807c7cb4ca2e55ef7099d9afa837",
+   "shard": "guard-main-006",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "dom/observable/tentative/observable-map.window.html",
+   "source": "dom/observable/tentative/observable-map.window.js",
+   "blob": "06bf2e26b544184ba0df858fbfb0ff3adf9daa85",
+   "shard": "guard-main-024",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "dom/observable/tentative/observable-take.any.html",
+   "source": "dom/observable/tentative/observable-take.any.js",
+   "blob": "736a08abe31ae6eaf0780e745d1dbedeb5e4d834",
+   "shard": "guard-main-000",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "dom/observable/tentative/observable-take.any.worker.html",
+   "source": "dom/observable/tentative/observable-take.any.js",
+   "blob": "736a08abe31ae6eaf0780e745d1dbedeb5e4d834",
+   "shard": "guard-main-005",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "dom/observable/tentative/observable-takeUntil.window.html",
+   "source": "dom/observable/tentative/observable-takeUntil.window.js",
+   "blob": "e4906d5f165c103c564a1b4900ddeb338faea95e",
+   "shard": "guard-main-027",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "dom/ranges/Range-expand-shadow.tentative.html",
+   "source": "dom/ranges/Range-expand-shadow.tentative.html",
+   "blob": "a1b553314ef3b5562cf44f3ed5b2affe6596f962",
+   "shard": "ordinary-100",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    13
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    13,
+    13
+   ]
+  },
+  {
+   "url": "domparsing/tentative/stream-html-parser-blocking-script.html",
+   "source": "domparsing/tentative/stream-html-parser-blocking-script.html",
+   "blob": "a058497b4b0037e0d2307d5c8c94d0087eba7de3",
+   "shard": "guard-main-025",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    26,
+    26
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    26,
+    26
+   ]
+  },
+  {
+   "url": "editing/other/delete-at-end-boundary-of-div-followed-by-inline-element-containing-hidden-select-element-with-non-editable-node.html",
+   "source": "editing/other/delete-at-end-boundary-of-div-followed-by-inline-element-containing-hidden-select-element-with-non-editable-node.html",
+   "blob": "5c362d4963f6c2ccc955a38775ff4a054ff65b53",
+   "shard": "guard-main-010",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "editing/other/delete-at-start-boundary-of-div-containing-hidden-select-element-with-non-editable-node.html",
+   "source": "editing/other/delete-at-start-boundary-of-div-containing-hidden-select-element-with-non-editable-node.html",
+   "blob": "0ed42e5729235f8baca7519e781bbf74871dfc0a",
+   "shard": "guard-main-012",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "editing/other/editing-style-of-range-around-void-element-child.tentative.html",
+   "source": "editing/other/editing-style-of-range-around-void-element-child.tentative.html",
+   "blob": "864074c1a64800aca19b186d84659ba18e2551ed",
+   "shard": "guard-main-027",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    6,
+    8
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    8,
+    8
+   ]
+  },
+  {
+   "url": "editing/other/password-bidi-dblclick.html",
+   "source": "editing/other/password-bidi-dblclick.html",
+   "blob": "bad73019f28ec4cebc3e612985a0d88afdcbe15d",
+   "shard": "guard-main-024",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "fenced-frame/parse-from-string-sandboxed-iframe.https.html",
+   "source": "fenced-frame/parse-from-string-sandboxed-iframe.https.html",
+   "blob": "01eae33ab02c88e0cb9d31561a9c1279a7b2a1b2",
+   "shard": "ordinary-248",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "fetch/api/abort/destroyed-context.html",
+   "source": "fetch/api/abort/destroyed-context.html",
+   "blob": "161d39bd9ce3db0e979aeb1087e7c38899669c0d",
+   "shard": "ordinary-140",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "fetch/api/response/response-clone-iframe.window.html",
+   "source": "fetch/api/response/response-clone-iframe.window.js",
+   "blob": "da54616c376d9105b024d668846ea5dc1c1cb143",
+   "shard": "ordinary-279",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "fetch/content-type/multipart-malformed.any.html",
+   "source": "fetch/content-type/multipart-malformed.any.js",
+   "blob": "9de0edc24ac25c0b0a8e97ff0b69789eaa5430aa",
+   "shard": "ordinary-125",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "fetch/content-type/multipart-malformed.any.worker.html",
+   "source": "fetch/content-type/multipart-malformed.any.js",
+   "blob": "9de0edc24ac25c0b0a8e97ff0b69789eaa5430aa",
+   "shard": "ordinary-080",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "font-access/font_access_detached_iframe.tentative.https.window.html",
+   "source": "font-access/font_access_detached_iframe.tentative.https.window.js",
+   "blob": "ca8171aec037ed0dd317ce49045612b3e5cee11d",
+   "shard": "ordinary-085",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    3
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    2,
+    3
+   ]
+  },
+  {
+   "url": "fs/FileSystemDirectoryHandle-iteration.https.any.html",
+   "source": "fs/FileSystemDirectoryHandle-iteration.https.any.js",
+   "blob": "495560f2557c1ad2caae0071b9e3822d010239fc",
+   "shard": "ordinary-155",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "fs/FileSystemDirectoryHandle-iteration.https.any.serviceworker.html",
+   "source": "fs/FileSystemDirectoryHandle-iteration.https.any.js",
+   "blob": "495560f2557c1ad2caae0071b9e3822d010239fc",
+   "shard": "ordinary-180",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "fs/FileSystemDirectoryHandle-iteration.https.any.sharedworker.html",
+   "source": "fs/FileSystemDirectoryHandle-iteration.https.any.js",
+   "blob": "495560f2557c1ad2caae0071b9e3822d010239fc",
+   "shard": "ordinary-157",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "fs/FileSystemDirectoryHandle-iteration.https.any.worker.html",
+   "source": "fs/FileSystemDirectoryHandle-iteration.https.any.js",
+   "blob": "495560f2557c1ad2caae0071b9e3822d010239fc",
+   "shard": "ordinary-127",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "gamepad/gamepad-permissions-policy-event-listener.html",
+   "source": "gamepad/gamepad-permissions-policy-event-listener.html",
+   "blob": "8472616864df2a746c3fd521b57f653476c7559c",
+   "shard": "ordinary-172",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/browsers/browsing-the-web/navigating-across-documents/abort-document-window-stop.sub.window.html",
+   "source": "html/browsers/browsing-the-web/navigating-across-documents/abort-document-window-stop.sub.window.js",
+   "blob": "e2dafe4a22a74d821d6f82f9f5eacc86227f4a22",
+   "shard": "ordinary-168",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "html/browsers/sandboxing/sandbox-window-open-srcdoc.html",
+   "source": "html/browsers/sandboxing/sandbox-window-open-srcdoc.html",
+   "blob": "e882b890efec3814888c5aea37f00787b2a9de1d",
+   "shard": "ordinary-144",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "html/canvas/element/manual/context-attributes/canvas-with-padding.html",
+   "source": "html/canvas/element/manual/context-attributes/canvas-with-padding.html",
+   "blob": "5a93ef680a6cdd287fb0082a82f4146207abc7be",
+   "shard": "ordinary-086",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/element/manual/imagebitmap/createImageBitmap-sizeOverflow.html",
+   "source": "html/canvas/element/manual/imagebitmap/createImageBitmap-sizeOverflow.html",
+   "blob": "25c1fb688525693bc503cc4e2095e25da261bb72",
+   "shard": "ordinary-195",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    2,
+    7
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    7,
+    7
+   ]
+  },
+  {
+   "url": "html/canvas/element/manual/the-canvas-state/2d.zero.size.canvas.html",
+   "source": "html/canvas/element/manual/the-canvas-state/2d.zero.size.canvas.html",
+   "blob": "273e5c7484583c800646eb714af711f84e8c944a",
+   "shard": "ordinary-040",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/element/pixel-manipulation/2d.imageData.create.and.resize.html",
+   "source": "html/canvas/element/pixel-manipulation/2d.imageData.create.and.resize.html",
+   "blob": "4fbad85d8fc8aa507af7fbcfcfacba06560cb1b1",
+   "shard": "ordinary-044",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/element/text/2d.text.draw.fontface.repeat.html",
+   "source": "html/canvas/element/text/2d.text.draw.fontface.repeat.html",
+   "blob": "a621017ff113a6398ed9c078d9e181ca5f81dd2b",
+   "shard": "ordinary-202",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/element/text/2d.text.setFont.mathFont.html",
+   "source": "html/canvas/element/text/2d.text.setFont.mathFont.html",
+   "blob": "feaa38593e0eca3e750cc4574067678daddb0de3",
+   "shard": "ordinary-031",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/element/video/2d.video.invalid.html",
+   "source": "html/canvas/element/video/2d.video.invalid.html",
+   "blob": "f85b51db08498c55acd238aa44c4557f6767a020",
+   "shard": "ordinary-103",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.lowlatency.nocrash.html",
+   "source": "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.lowlatency.nocrash.html",
+   "blob": "1960841564773faeaf6a21d56ca4f46e3547172b",
+   "shard": "ordinary-240",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description",
+    "prior-explicit-fault-fixture"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.to.imagebitmap.nocrash.html",
+   "source": "html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.to.imagebitmap.nocrash.html",
+   "blob": "09a388ed35729b2741c66d9b8f3f13b8d68ea668",
+   "shard": "ordinary-101",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description",
+    "prior-explicit-fault-fixture"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/offscreen/text/2d.text.draw.fontface.repeat.html",
+   "source": "html/canvas/offscreen/text/2d.text.draw.fontface.repeat.html",
+   "blob": "ac6becd195279dd9137e4740389a9d644b3f5703",
+   "shard": "ordinary-080",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/offscreen/text/2d.text.draw.fontface.repeat.worker.html",
+   "source": "html/canvas/offscreen/text/2d.text.draw.fontface.repeat.worker.js",
+   "blob": "fb1f7980a6cca6de73830ad1c814f2b505e53319",
+   "shard": "ordinary-124",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/offscreen/text/2d.text.setFont.mathFont.html",
+   "source": "html/canvas/offscreen/text/2d.text.setFont.mathFont.html",
+   "blob": "4ed1786048832c08bccd5979d3703f0fa25e048c",
+   "shard": "ordinary-130",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/canvas/offscreen/text/2d.text.setFont.mathFont.worker.html",
+   "source": "html/canvas/offscreen/text/2d.text.setFont.mathFont.worker.js",
+   "blob": "b756b45dc51b975829f2caada9053795db16a58f",
+   "shard": "ordinary-267",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/dom/documents/dom-tree-accessors/nameditem-insertion-attr-mutation.html",
+   "source": "html/dom/documents/dom-tree-accessors/nameditem-insertion-attr-mutation.html",
+   "blob": "92badc9f4e8dd38ca9eb31d79377389762d38ec4",
+   "shard": "ordinary-125",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/interaction/focus/focusgroup/tentative/top-layer-popover-invoker.html",
+   "source": "html/interaction/focus/focusgroup/tentative/top-layer-popover-invoker.html",
+   "blob": "fa9d9ae6be712f9207d713b2b89c429dab1f43aa",
+   "shard": "ordinary-244",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    1,
+    7
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    7,
+    7
+   ]
+  },
+  {
+   "url": "html/rendering/non-replaced-elements/the-fieldset-and-legend-elements/fieldset-content-before-legend.html",
+   "source": "html/rendering/non-replaced-elements/the-fieldset-and-legend-elements/fieldset-content-before-legend.html",
+   "blob": "5bd1fbc161a2ff0c749b593ee081a5906987e22f",
+   "shard": "ordinary-093",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    1,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "html/rendering/non-replaced-elements/the-frameset-and-frame-elements/exceed-then-not-exceed.html",
+   "source": "html/rendering/non-replaced-elements/the-frameset-and-frame-elements/exceed-then-not-exceed.html",
+   "blob": "85a5b98ae5543c50c63bd8c515b53960dbeef44b",
+   "shard": "ordinary-090",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/embedded-content/media-elements/loading-the-media-resource/resource-selection-candidate-remove-no-listener.html",
+   "source": "html/semantics/embedded-content/media-elements/loading-the-media-resource/resource-selection-candidate-remove-no-listener.html",
+   "blob": "f384eb31215dc27a26a81539055739ed77584d37",
+   "shard": "ordinary-099",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/embedded-content/media-elements/track/track-element/track-remove-active-cue.html",
+   "source": "html/semantics/embedded-content/media-elements/track/track-element/track-remove-active-cue.html",
+   "blob": "176e0065c590f14541e515f5f10a550fbb0b088c",
+   "shard": "ordinary-257",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/embedded-content/media-elements/track/track-element/track-remove-by-setting-innerHTML.html",
+   "source": "html/semantics/embedded-content/media-elements/track/track-element/track-remove-by-setting-innerHTML.html",
+   "blob": "95929bc83fbac802c4ce9887d71065b1b28bdc2a",
+   "shard": "ordinary-279",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/embedded-content/media-elements/track/track-element/track-remove-quickly.html",
+   "source": "html/semantics/embedded-content/media-elements/track/track-element/track-remove-quickly.html",
+   "blob": "4be040c5f872527dfd8fe0981c3d94de3096fd24",
+   "shard": "ordinary-207",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/embedded-content/the-iframe-element/iframe-loading-lazy-multiple-queued-navigations.html",
+   "source": "html/semantics/embedded-content/the-iframe-element/iframe-loading-lazy-multiple-queued-navigations.html",
+   "blob": "0569881ea5e0a566b7e7b4627d0778e3361991f4",
+   "shard": "ordinary-141",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/embedded-content/the-iframe-element/move-node-local-root.html",
+   "source": "html/semantics/embedded-content/the-iframe-element/move-node-local-root.html",
+   "blob": "33a247ff1f17fcca4b382f65b03777ea361feb4d",
+   "shard": "ordinary-073",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/forms/the-progress-element/serialization-regression-test.html",
+   "source": "html/semantics/forms/the-progress-element/serialization-regression-test.html",
+   "blob": "f94813f9a405e0c81c8a2bdd492538ae692cc08f",
+   "shard": "ordinary-129",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/forms/the-select-element/customizable-select/nested-options.html",
+   "source": "html/semantics/forms/the-select-element/customizable-select/nested-options.html",
+   "blob": "e80b09f77788617c86cf6e923b670e2be2f65b0e",
+   "shard": "ordinary-259",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ]
+  },
+  {
+   "url": "html/semantics/forms/the-select-element/customizable-select/select-anchor-regression.html",
+   "source": "html/semantics/forms/the-select-element/customizable-select/select-anchor-regression.html",
+   "blob": "373e8e394f098bc2dd8f728630e33e453cb5322e",
+   "shard": "ordinary-241",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/forms/the-select-element/customizable-select/select-iterate-before-beginning.optional.html",
+   "source": "html/semantics/forms/the-select-element/customizable-select/select-iterate-before-beginning.optional.html",
+   "blob": "8006bea9bd76144fb53d16f456615ea3644b9fe0",
+   "shard": "ordinary-022",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "html/semantics/forms/the-select-element/customizable-select/select-multiple-removed.html",
+   "source": "html/semantics/forms/the-select-element/customizable-select/select-multiple-removed.html",
+   "blob": "87949e534c0e367a209bf3d42d4fbdff66e5c448",
+   "shard": "ordinary-127",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/forms/the-select-element/customizable-select/select-size-change.html",
+   "source": "html/semantics/forms/the-select-element/customizable-select/select-size-change.html",
+   "blob": "579c35be038e2f5a7a0471f3838814d8937a30de",
+   "shard": "ordinary-267",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/forms/the-select-element/customizable-select/selectedcontent-restore.optional.html",
+   "source": "html/semantics/forms/the-select-element/customizable-select/selectedcontent-restore.optional.html",
+   "blob": "eb0a7ceb8eee2eb7a2205ca49c537807ab9669bd",
+   "shard": "ordinary-173",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "html/semantics/interactive-elements/the-dialog-element/dialog-closedby-start-open.html",
+   "source": "html/semantics/interactive-elements/the-dialog-element/dialog-closedby-start-open.html",
+   "blob": "d9acc279b6bb47cb05bcd838a4ee023d87b0fc13",
+   "shard": "ordinary-148",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    1,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "html/semantics/menu/tentative/menu-content-model-violation.html",
+   "source": "html/semantics/menu/tentative/menu-content-model-violation.html",
+   "blob": "e21c03847e11f3d48b64d267dbe4750115d4b549",
+   "shard": "ordinary-285",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    36
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    36
+   ]
+  },
+  {
+   "url": "html/semantics/permission-element/camera/camera-set-constraints.https.html",
+   "source": "html/semantics/permission-element/camera/camera-set-constraints.https.html",
+   "blob": "11b7a23026208c0a09a42d59104283c3b2c0a496",
+   "shard": "ordinary-283",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    2
+   ],
+   "signed": [
+    "timeout",
+    null,
+    false,
+    0,
+    0
+   ]
+  },
+  {
+   "url": "html/semantics/permission-element/microphone/microphone-set-constraints.https.html",
+   "source": "html/semantics/permission-element/microphone/microphone-set-constraints.https.html",
+   "blob": "d1651696c14362ad89c906d6647469924daed76f",
+   "shard": "ordinary-198",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    3
+   ],
+   "signed": [
+    "timeout",
+    null,
+    false,
+    0,
+    0
+   ]
+  },
+  {
+   "url": "html/semantics/scripting-1/the-script-element/module/error-and-slow-dependency.html",
+   "source": "html/semantics/scripting-1/the-script-element/module/error-and-slow-dependency.html",
+   "blob": "f336276f3fcdbe1777b0c3bcf3140999655011b4",
+   "shard": "ordinary-083",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/scripting-1/the-script-element/module/import-subgraph-404.html",
+   "source": "html/semantics/scripting-1/the-script-element/module/import-subgraph-404.html",
+   "blob": "4911a071a0fb68a4f58a14cc1120bada153d2258",
+   "shard": "ordinary-073",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/scripting-1/the-script-element/module/inactive-context-import.html",
+   "source": "html/semantics/scripting-1/the-script-element/module/inactive-context-import.html",
+   "blob": "ce88c0a1528613e6586f2188e583d44d5c89fe67",
+   "shard": "ordinary-268",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/scripting-1/the-script-element/module/instantiation-error-8.html",
+   "source": "html/semantics/scripting-1/the-script-element/module/instantiation-error-8.html",
+   "blob": "080b17023375aa08d1c4f3901b4f476321b18301",
+   "shard": "ordinary-028",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/semantics/scripting-1/the-script-element/promise-reject-and-remove.html",
+   "source": "html/semantics/scripting-1/the-script-element/promise-reject-and-remove.html",
+   "blob": "a3b2730e5699c928f1ffcaf03f6a4ac2dcd7aca9",
+   "shard": "ordinary-077",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/syntax/parsing/adoption-agency-reparenting-document-target.html",
+   "source": "html/syntax/parsing/adoption-agency-reparenting-document-target.html",
+   "blob": "b237e3f05089839d3681689980f609ef304194a3",
+   "shard": "ordinary-139",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/webappapis/dynamic-markup-insertion/opening-the-input-stream/crbug-583445-regression.window.html",
+   "source": "html/webappapis/dynamic-markup-insertion/opening-the-input-stream/crbug-583445-regression.window.js",
+   "blob": "3809c2e081a543da4d79423122e4ae765d28dda8",
+   "shard": "ordinary-283",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-security-vulnerability-regression"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "html/webappapis/dynamic-markup-insertion/opening-the-input-stream/open-with-defer-script-during-initial-about-blank-load.html",
+   "source": "html/webappapis/dynamic-markup-insertion/opening-the-input-stream/open-with-defer-script-during-initial-about-blank-load.html",
+   "blob": "0554b44ccd0b0f5d2695776b97d65e434f9daafa",
+   "shard": "ordinary-121",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "input-events/input-events-arrow-key-on-number-input-delete-document.html",
+   "source": "input-events/input-events-arrow-key-on-number-input-delete-document.html",
+   "blob": "a8ad3faf4f4f07bcd47840b7411391c94b665892",
+   "shard": "ordinary-139",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "input-events/input-events-spin-button-click-on-number-input-delete-document.html",
+   "source": "input-events/input-events-spin-button-click-on-number-input-delete-document.html",
+   "blob": "24a53df9cc3fd47842c0b052f069f7be296c0577",
+   "shard": "ordinary-228",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "input-events/select-event-drag-remove.html",
+   "source": "input-events/select-event-drag-remove.html",
+   "blob": "f5c2e702e5783e3f9067c7735ab02f905d3de69b",
+   "shard": "ordinary-164",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "longtask-timing/longtask-detach-frame.html",
+   "source": "longtask-timing/longtask-detach-frame.html",
+   "blob": "94d0ad18f94ee090fe8bce10ef552cb55192bee7",
+   "shard": "ordinary-140",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-in-service-worker.https.html",
+   "source": "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-in-service-worker.https.html",
+   "blob": "389a30d0d940e12bda9f520886d2dbed68532bd0",
+   "shard": "ordinary-101",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-in-shared-worker.https.html",
+   "source": "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-in-shared-worker.https.html",
+   "blob": "deecfccad16f5df61028b9fc65e0e65e5f825e64",
+   "shard": "ordinary-214",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-in-worker.https.html",
+   "source": "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-in-worker.https.html",
+   "blob": "e0a8f2fc2792e2f0d0ca2b45735ae2d7a207e779",
+   "shard": "ordinary-073",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    3
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    3
+   ]
+  },
+  {
+   "url": "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-pipes-data-in-worker.https.html",
+   "source": "mediacapture-insertable-streams/legacy/MediaStreamTrackGenerator-pipes-data-in-worker.https.html",
+   "blob": "61a6f038c4b6c480053f39990bdcce1543dc9c76",
+   "shard": "ordinary-117",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "mediacapture-record/MediaRecorder-destroy-script-execution.html",
+   "source": "mediacapture-record/MediaRecorder-destroy-script-execution.html",
+   "blob": "3e9add3c61195a6b054df4b8585703e20477b2dc",
+   "shard": "ordinary-244",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "error",
+    "Error",
+    false,
+    0,
+    4
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    4,
+    4
+   ]
+  },
+  {
+   "url": "navigation-api/navigate-event/document-open-after-replaceState.html",
+   "source": "navigation-api/navigate-event/document-open-after-replaceState.html",
+   "blob": "d4ca4320516d42a24c91d60765a2a1297a9c48ee",
+   "shard": "ordinary-049",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "navigation-api/navigation-methods/navigate-from-initial-about-blank-gc.html",
+   "source": "navigation-api/navigation-methods/navigate-from-initial-about-blank-gc.html",
+   "blob": "d35121ec819a7074ce3673a88f56e75f2007ec1b",
+   "shard": "ordinary-275",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "navigation-api/per-entry-events/dispose-for-navigation-in-sibling-detach-frame.html",
+   "source": "navigation-api/per-entry-events/dispose-for-navigation-in-sibling-detach-frame.html",
+   "blob": "3725689104fe735c2e158f89447f4296d3937567",
+   "shard": "ordinary-271",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "orientation-event/device-orientation-events-of-detached-documents.https.html",
+   "source": "orientation-event/device-orientation-events-of-detached-documents.https.html",
+   "blob": "f05be6d0d205db65f6acb13249402db7749dba20",
+   "shard": "ordinary-257",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "orientation-event/device-orientation-events-unavailable-on-insecure-origins.html",
+   "source": "orientation-event/device-orientation-events-unavailable-on-insecure-origins.html",
+   "blob": "6d2eee402f7e0650ade6ede2d08504cbcc52c207",
+   "shard": "ordinary-000",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "error",
+    "Error",
+    false,
+    0,
+    4
+   ],
+   "signed": [
+    "error",
+    "Error",
+    false,
+    1,
+    4
+   ]
+  },
+  {
+   "url": "payment-request/payment-request-constructor-thcrash.https.html",
+   "source": "payment-request/payment-request-constructor-thcrash.https.html",
+   "blob": "b6003070851459a5c72218951fe47251cfec9dc6",
+   "shard": "ordinary-117",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-title-or-metadata",
+    "prior-explicit-fault-fixture"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    10
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ]
+  },
+  {
+   "url": "performance-timeline/navigation-id-detached-frame.tentative.html",
+   "source": "performance-timeline/navigation-id-detached-frame.tentative.html",
+   "blob": "add11255af45c00a596f8e34e909a3304a92881b",
+   "shard": "ordinary-263",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "performance-timeline/timing-removed-iframe.html",
+   "source": "performance-timeline/timing-removed-iframe.html",
+   "blob": "43988b21fbbe022d001c7177da87ae0d62f700ae",
+   "shard": "ordinary-091",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "preload/subresource-integrity-partial-image.html",
+   "source": "preload/subresource-integrity-partial-image.html",
+   "blob": "108897c4d6531ad53921f67c294b9754e987bbc7",
+   "shard": "ordinary-055",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "screen-details/getScreenDetails.tentative.https.window.html",
+   "source": "screen-details/getScreenDetails.tentative.https.window.js",
+   "blob": "06f0344f3ad98929cbad736c49ec9ab5fbebb7e0",
+   "shard": "ordinary-251",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    5
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    1,
+    5
+   ]
+  },
+  {
+   "url": "screen-wake-lock/chrome-bug-1348019.https.html",
+   "source": "screen-wake-lock/chrome-bug-1348019.https.html",
+   "blob": "7c9909581ca3974c375397797d241f64301885ea",
+   "shard": "ordinary-284",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "error",
+    "Error",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "scroll-animations/scroll-timelines/scroll-animation-effect-phases.tentative.html",
+   "source": "scroll-animations/scroll-timelines/scroll-animation-effect-phases.tentative.html",
+   "blob": "03c2c9c90ad26a3634ffee6ec3e29fbc1d5ee218",
+   "shard": "ordinary-109",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    28,
+    30
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    30,
+    30
+   ]
+  },
+  {
+   "url": "selection/anonymous/details-mutate.html",
+   "source": "selection/anonymous/details-mutate.html",
+   "blob": "3cd547511251ec80d82656a962b1ec3271423f9f",
+   "shard": "ordinary-174",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "selection/drag-disabled-textarea-shadow-dom.html",
+   "source": "selection/drag-disabled-textarea-shadow-dom.html",
+   "blob": "9270cfc5c6beaf428970ae5dec20bbc8e5ddb0c7",
+   "shard": "ordinary-257",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "selection/extend-selection-backward-on-input.html",
+   "source": "selection/extend-selection-backward-on-input.html",
+   "blob": "a87cdec21a3cef1e2043a81f0de7bcfbf9a389db",
+   "shard": "ordinary-227",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "selection/longpress-selection.html",
+   "source": "selection/longpress-selection.html",
+   "blob": "0a412a5f77f456195b001c14a5ba89b5addec2e4",
+   "shard": "ordinary-263",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "selection/selection-nested-video.html",
+   "source": "selection/selection-nested-video.html",
+   "blob": "7565665a7c8abbaec47f3720cb37e13b64aa6cdf",
+   "shard": "ordinary-111",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "error",
+    "Error",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "shadow-dom/build-deep-detached-shadow-then-append-text.html",
+   "source": "shadow-dom/build-deep-detached-shadow-then-append-text.html",
+   "blob": "65cbab68906e29983f5692dcf206f6f8c56ba908",
+   "shard": "ordinary-063",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "shadow-dom/declarative/declarative-parser-interaction.html",
+   "source": "shadow-dom/declarative/declarative-parser-interaction.html",
+   "blob": "82daa0cac563fdfab0a1ee5b52588172fff0589e",
+   "shard": "ordinary-049",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-disconnect-iframe.html",
+   "source": "shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-disconnect-iframe.html",
+   "blob": "aa2b35afadf630496dea5f0747a3321e651c70c6",
+   "shard": "ordinary-262",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-clonenode.html",
+   "source": "shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-clonenode.html",
+   "blob": "1672980d3fc78eef3a3900421162490e2b33e99d",
+   "shard": "ordinary-195",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    2,
+    11
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    2,
+    11
+   ]
+  },
+  {
+   "url": "shadow-dom/imperative-slot-api-cross-shadow-root.html",
+   "source": "shadow-dom/imperative-slot-api-cross-shadow-root.html",
+   "blob": "6958d57a7cefe9e8f03504644a05a72bac1b5923",
+   "shard": "guard-main-003",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    1,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "shadow-dom/imperative-slot-api-disconnected.html",
+   "source": "shadow-dom/imperative-slot-api-disconnected.html",
+   "blob": "9a006ad15a99841bfd4cf9cf628a2fb010e646cc",
+   "shard": "guard-main-017",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "signed-exchange/sxg-double-prefetch.tentative.html",
+   "source": "signed-exchange/sxg-double-prefetch.tentative.html",
+   "blob": "d682741744fed929bee8e62fbae4857a4bfbf1d5",
+   "shard": "ordinary-077",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "soft-navigation-heuristics/navigate-child.html",
+   "source": "soft-navigation-heuristics/navigate-child.html",
+   "blob": "24cbf4d57fad54a6cbf2a2803ecbdb2d363e76f2",
+   "shard": "ordinary-034",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "soft-navigation-heuristics/smoke/tentative/window-open-cross-scheduling.html",
+   "source": "soft-navigation-heuristics/smoke/tentative/window-open-cross-scheduling.html",
+   "blob": "1a41be6ddd2d716c4012b5524e8a30b9821ec3e3",
+   "shard": "ordinary-095",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "speculation-rules/prefetch/document-rules-details-element.https.html",
+   "source": "speculation-rules/prefetch/document-rules-details-element.https.html",
+   "blob": "923f5849d97b2e6ac407cbdaab4614be4a52a7fe",
+   "shard": "ordinary-260",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "error",
+    "Error",
+    false,
+    0,
+    0
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "speculation-rules/prerender/remove-script-element.https.html",
+   "source": "speculation-rules/prerender/remove-script-element.https.html",
+   "blob": "ce1a45c0739f135c5c66ddba1e0e028a8c5691c4",
+   "shard": "ordinary-186",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "error",
+    "Error",
+    false,
+    0,
+    0
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "streams/readable-byte-streams/respond-after-enqueue.any.html",
+   "source": "streams/readable-byte-streams/respond-after-enqueue.any.js",
+   "blob": "b93cec97391e13eb60d8d5dc9d580da4bcc303fd",
+   "shard": "guard-main-007",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ]
+  },
+  {
+   "url": "streams/readable-byte-streams/respond-after-enqueue.any.serviceworker.html",
+   "source": "streams/readable-byte-streams/respond-after-enqueue.any.js",
+   "blob": "b93cec97391e13eb60d8d5dc9d580da4bcc303fd",
+   "shard": "guard-main-012",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ]
+  },
+  {
+   "url": "streams/readable-byte-streams/respond-after-enqueue.any.sharedworker.html",
+   "source": "streams/readable-byte-streams/respond-after-enqueue.any.js",
+   "blob": "b93cec97391e13eb60d8d5dc9d580da4bcc303fd",
+   "shard": "guard-main-026",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ]
+  },
+  {
+   "url": "streams/readable-byte-streams/respond-after-enqueue.any.worker.html",
+   "source": "streams/readable-byte-streams/respond-after-enqueue.any.js",
+   "blob": "b93cec97391e13eb60d8d5dc9d580da4bcc303fd",
+   "shard": "guard-main-009",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    3,
+    3
+   ]
+  },
+  {
+   "url": "streams/readable-streams/reentrant-strategies.any.html",
+   "source": "streams/readable-streams/reentrant-strategies.any.js",
+   "blob": "b4988bc2433fd56c6527f0546ab47fa14b4c9f54",
+   "shard": "ordinary-051",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ]
+  },
+  {
+   "url": "streams/readable-streams/reentrant-strategies.any.serviceworker.html",
+   "source": "streams/readable-streams/reentrant-strategies.any.js",
+   "blob": "b4988bc2433fd56c6527f0546ab47fa14b4c9f54",
+   "shard": "ordinary-267",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ]
+  },
+  {
+   "url": "streams/readable-streams/reentrant-strategies.any.sharedworker.html",
+   "source": "streams/readable-streams/reentrant-strategies.any.js",
+   "blob": "b4988bc2433fd56c6527f0546ab47fa14b4c9f54",
+   "shard": "ordinary-136",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ]
+  },
+  {
+   "url": "streams/readable-streams/reentrant-strategies.any.worker.html",
+   "source": "streams/readable-streams/reentrant-strategies.any.js",
+   "blob": "b4988bc2433fd56c6527f0546ab47fa14b4c9f54",
+   "shard": "ordinary-250",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    10,
+    10
+   ]
+  },
+  {
+   "url": "svg/pservers/pattern-with-invalid-base-cloned-thcrash.html",
+   "source": "svg/pservers/pattern-with-invalid-base-cloned-thcrash.html",
+   "blob": "04a453545f5938489eb111a23a16c8c89065ed4e",
+   "shard": "guard-main-017",
+   "owner": "studio",
+   "reasonCodes": [
+    "prior-explicit-fault-fixture"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "svg/struct/scripted/svg-checkIntersection-001.svg",
+   "source": "svg/struct/scripted/svg-checkIntersection-001.svg",
+   "blob": "059cdef2a6b618385a7ae6f4f9522e4ca1a2a3d9",
+   "shard": "guard-main-005",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "svg/struct/scripted/svg-getIntersectionList-003.svg",
+   "source": "svg/struct/scripted/svg-getIntersectionList-003.svg",
+   "blob": "b08ea71b36074e1153f6e5a43e9e5ce390a0dd3a",
+   "shard": "guard-main-027",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "touch-events/pinch-zoom-change.html",
+   "source": "touch-events/pinch-zoom-change.html",
+   "blob": "406dd315dc7118a14b10271e643360d05706dd17",
+   "shard": "ordinary-218",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-addmodule-resolution.https.html",
+   "source": "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-addmodule-resolution.https.html",
+   "blob": "b42d81a825c5a9fe8d9887f34672d448438c49ba",
+   "shard": "guard-main-005",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "webaudio/the-audio-api/the-convolvernode-interface/convolver-response-4-chan.html",
+   "source": "webaudio/the-audio-api/the-convolvernode-interface/convolver-response-4-chan.html",
+   "blob": "f188d87b71f4c5d134feebd10ba95ffe165debb1",
+   "shard": "guard-main-018",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    51,
+    51
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    51,
+    51
+   ]
+  },
+  {
+   "url": "webmcp/declarative/duplicate-tool-name.https.html",
+   "source": "webmcp/declarative/duplicate-tool-name.https.html",
+   "blob": "17cdc4465c5f3a830df2e907a200c3bd5a0c5e8c",
+   "shard": "ordinary-125",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "error",
+    "Error",
+    false,
+    0,
+    4
+   ],
+   "signed": [
+    "error",
+    "Error",
+    false,
+    0,
+    4
+   ]
+  },
+  {
+   "url": "webmcp/declarative/no-frame-documents.https.html",
+   "source": "webmcp/declarative/no-frame-documents.https.html",
+   "blob": "55e6616dcb77aa3f97d4360943a4c6652e7ed995",
+   "shard": "ordinary-116",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    7
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    7
+   ]
+  },
+  {
+   "url": "webmessaging/MessageEvent_onmessage_postMessage_infinite_loop.html",
+   "source": "webmessaging/MessageEvent_onmessage_postMessage_infinite_loop.html",
+   "blob": "179bc0cc4a1253618e30ffd674fec139c3c0d52a",
+   "shard": "ordinary-029",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-infinite-loop-or-stack-exhaustion-oracle"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "webrtc/RTCDTMFSender-ontonechange.https.html",
+   "source": "webrtc/RTCDTMFSender-ontonechange.https.html",
+   "blob": "f8b97335500ced6ddea0fd03beedc77ce51724f8",
+   "shard": "ordinary-011",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    15
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    15,
+    15
+   ]
+  },
+  {
+   "url": "webrtc/RTCPeerConnection-setRemoteDescription-rollback.html?rest",
+   "source": "webrtc/RTCPeerConnection-setRemoteDescription-rollback.html",
+   "blob": "a69bd16a31d16e12e6bac345b9e7dc9b126cc04e",
+   "shard": "ordinary-188",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    20
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    19,
+    20
+   ]
+  },
+  {
+   "url": "webrtc/RTCRtpSender-encode-same-track-twice.https.html",
+   "source": "webrtc/RTCRtpSender-encode-same-track-twice.https.html",
+   "blob": "568543da70f8360a80f9ed0e633f55f35f57aa92",
+   "shard": "ordinary-070",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "webrtc/RTCRtpTransceiver-stop.html",
+   "source": "webrtc/RTCRtpTransceiver-stop.html",
+   "blob": "6d004a8a31cc1adde396528a74ad87e1f7681c60",
+   "shard": "ordinary-279",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    9
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    9,
+    9
+   ]
+  },
+  {
+   "url": "websockets/remove-own-iframe-during-onerror.window.html?default",
+   "source": "websockets/remove-own-iframe-during-onerror.window.js",
+   "blob": "aa1cf6028f211bb631a55bd50927457915ea2f98",
+   "shard": "ordinary-120",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "websockets/remove-own-iframe-during-onerror.window.html?wpt_flags=h2",
+   "source": "websockets/remove-own-iframe-during-onerror.window.js",
+   "blob": "aa1cf6028f211bb631a55bd50927457915ea2f98",
+   "shard": "ordinary-186",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "websockets/remove-own-iframe-during-onerror.window.html?wss",
+   "source": "websockets/remove-own-iframe-during-onerror.window.js",
+   "blob": "aa1cf6028f211bb631a55bd50927457915ea2f98",
+   "shard": "ordinary-085",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.html?default",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-244",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.html?wpt_flags=h2",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-017",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.html?wss",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-253",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.serviceworker.html?default",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-093",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.serviceworker.html?wpt_flags=h2",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-012",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.serviceworker.html?wss",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-166",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.sharedworker.html?default",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-080",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.sharedworker.html?wpt_flags=h2",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-273",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.sharedworker.html?wss",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-238",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.worker.html?default",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-103",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.worker.html?wpt_flags=h2",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-185",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ]
+  },
+  {
+   "url": "websockets/stream/tentative/write.any.worker.html?wss",
+   "source": "websockets/stream/tentative/write.any.js",
+   "blob": "7f859e125790cb91bf71d1d9e47f93fceac33797",
+   "shard": "ordinary-241",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    false,
+    0,
+    6
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    6,
+    6
+   ]
+  },
+  {
+   "url": "workers/SharedWorker-detach-frame-in-error-event.html",
+   "source": "workers/SharedWorker-detach-frame-in-error-event.html",
+   "blob": "7363265fbc3c42f498c78afda01a1cd51cb0aeac",
+   "shard": "ordinary-016",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "timeout",
+    "Timeout",
+    false,
+    0,
+    1
+   ]
+  },
+  {
+   "url": "workers/SharedWorker-replace-EventHandler.any.sharedworker.html",
+   "source": "workers/SharedWorker-replace-EventHandler.any.js",
+   "blob": "90c7d2d08d17a53cc953a602afa7ae999f44b37c",
+   "shard": "ordinary-159",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "workers/Worker-replace-event-handler.any.serviceworker.html",
+   "source": "workers/Worker-replace-event-handler.any.js",
+   "blob": "ff7c764f2bdd51ca83de1f6048a9fe00c29047d6",
+   "shard": "ordinary-263",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "workers/Worker-replace-event-handler.any.sharedworker.html",
+   "source": "workers/Worker-replace-event-handler.any.js",
+   "blob": "ff7c764f2bdd51ca83de1f6048a9fe00c29047d6",
+   "shard": "ordinary-170",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "workers/Worker-replace-event-handler.any.worker.html",
+   "source": "workers/Worker-replace-event-handler.any.js",
+   "blob": "ff7c764f2bdd51ca83de1f6048a9fe00c29047d6",
+   "shard": "ordinary-202",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "workers/Worker-terminate-forever-during-evaluation.html",
+   "source": "workers/Worker-terminate-forever-during-evaluation.html",
+   "blob": "ab66f29289f21d6821a3edccdec9ff3512f86919",
+   "shard": "ordinary-088",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    7,
+    7
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    7,
+    7
+   ]
+  },
+  {
+   "url": "workers/Worker-termination-with-port-messages.html",
+   "source": "workers/Worker-termination-with-port-messages.html",
+   "blob": "bc19784adae8e060813da4cf6f20dc47ef87ecf4",
+   "shard": "ordinary-071",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name",
+    "explicit-native-fault-title-or-metadata"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "xhr/abort-during-readystatechange.any.html",
+   "source": "xhr/abort-during-readystatechange.any.js",
+   "blob": "a036376c6c0adfd2a927f18d28c780b8b37442be",
+   "shard": "ordinary-211",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "xhr/abort-during-readystatechange.any.worker.html",
+   "source": "xhr/abort-during-readystatechange.any.js",
+   "blob": "a036376c6c0adfd2a927f18d28c780b8b37442be",
+   "shard": "ordinary-080",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-fault-purpose-in-source-description"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  },
+  {
+   "url": "xhr/abort-progress-events.any.html",
+   "source": "xhr/abort-progress-events.any.js",
+   "blob": "73ff76c492869ed8a3297ed511a42ac4255836cc",
+   "shard": "ordinary-039",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "xhr/abort-progress-events.any.worker.html",
+   "source": "xhr/abort-progress-events.any.js",
+   "blob": "73ff76c492869ed8a3297ed511a42ac4255836cc",
+   "shard": "ordinary-014",
+   "owner": "local",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "error",
+    null,
+    false,
+    0,
+    0
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2
+   ]
+  },
+  {
+   "url": "xhr/close-worker-with-xhr-in-progress.html",
+   "source": "xhr/close-worker-with-xhr-in-progress.html",
+   "blob": "4d03bea028fbc629b3a8f285478b845dbce432fb",
+   "shard": "ordinary-165",
+   "owner": "studio",
+   "reasonCodes": [
+    "explicit-native-fault-subtest-name"
+   ],
+   "prior": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ],
+   "signed": [
+    "complete",
+    "OK",
+    true,
+    1,
+    1
+   ]
+  }
+ ]
+}
