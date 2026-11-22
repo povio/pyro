@@ -70,7 +70,7 @@ fn config(value: Value<'_>) -> JsResult<Option<EncoderConfig>> {
         }
         Some(n as u32)
     };
-    let complexity = number("complexity", 5.)?;
+    let complexity = number("complexity", 9.)?;
     let packet_loss = number("packetlossperc", 0.)?;
     if complexity > 10. || packet_loss > 100. {
         return Ok(None);
