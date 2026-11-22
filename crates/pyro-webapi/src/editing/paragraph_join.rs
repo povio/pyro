@@ -386,9 +386,27 @@ pub(super) fn at_boundary(
         else { *value != layout.computed_style_value(dom, destination, name) }
     });
     let line = first_line(page, dom, source, host)?;
+    // A single inline element can carry the joined line's formatting itself.
+    // Inspect its original context before extraction clones a partial line.
+    let carrier = if !pre_join && source == right && carried.len() == 1 {
+        dom.first_child(source).ok()?.filter(|&el| formatting_element(dom, el)).map(|el| {
+            let explicit = ["white-space", "white-space-collapse", "text-wrap-mode", "text-wrap"]
+                .iter().any(|name| layout.style().inline_declared_value(dom, el, name).is_some());
+            (explicit, layout.computed_style_value(dom, el, "white-space"))
+        })
+    } else { None };
     let (fragment, styled) = extract_styled_line(page, dom, host, source, line, source != right)?;
     if len(dom, fragment) > 0 {
-        let content = if !carried.is_empty() {
+        let inline = carrier.filter(|_| len(dom, fragment) == 1);
+        let content = if let Some((explicit, original)) = inline {
+            let child = dom.first_child(fragment).ok()??;
+            if !explicit && !original.is_empty() && original != dest_style {
+                let existing = dom.get_attribute(child, "style").ok()?.unwrap_or("");
+                let style = format!("white-space: {original}; {existing}");
+                dom.set_attribute(child, "style", style.trim_end()).ok()?;
+            }
+            fragment
+        } else if !carried.is_empty() {
             let span = dom.create_element(dom.node_document(right).ok()?, "span").ok()?;
             dom.set_attribute(span, "style", &declaration_text(&carried)).ok()?;
             dom.append_child(span, fragment).ok()?;
