@@ -2110,6 +2110,17 @@ impl Io {
             if req.mode == RequestMode::SameOrigin && !same_origin {
                 return Err(NetError::Cors("Cross-origin request in same-origin mode".into()));
             }
+            // Mixed Content: a script-initiated request (fetch, XHR, EventSource, a beacon) of an
+            // https document to a URL that is not potentially trustworthy is blocked, on the first
+            // hop or after a redirect. Navigations and media keep their own rules.
+            if matches!(
+                req.destination,
+                Destination::Fetch | Destination::Xhr | Destination::EventSource | Destination::Beacon
+            ) && origin_url.as_ref().is_some_and(|o| o.scheme() == "https")
+                && !crate::secure_context::is_potentially_trustworthy_url(&req.url)
+            {
+                return Err(NetError::Blocked("net::ERR_BLOCKED_BY_CLIENT".into()));
+            }
             // Fetch "main fetch": a no-cors request that is not same-origin with basic tainting
             // may only follow redirects (`redirect: "manual"` would expose an opaque redirect).
             if req.mode == RequestMode::NoCors && !basic_tainting && req.redirect != RedirectMode::Follow {
