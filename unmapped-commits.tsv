@@ -1,0 +1,129 @@
+7a86b696e	Fall back to the minimal deferred-fetch quota when allow= does not enable it
+93cf2f04c	fix(net): an https document's fetch to an http URL is blocked as mixed content
+c73e9e3ff	fix(events): the embedder's listeners run in a document sandboxed without allow-scripts
+931311668	Drop a deferred lazy image adopted into another document
+7697f40b0	An img with a srcset is not complete before its request finishes
+4c9151ea3	fix(view-transitions): a skip only Pyro makes leaves ready handled
+c5fe0532b	Report a toBlob callback's exception in the callback's realm
+e449e43fd	fix(sandbox): localStorage and sessionStorage throw in sandboxed documents
+665f374a3	Start media at the #t= time of its URL's media fragment
+6b5540ca0	fix(events): content attribute handlers scope by this and bind no name of their own
+fe4f3cd1f	fix(transitions): getAnimations orders transitions by the style change event that started them
+917004324	fix(sandbox): no form submission without allow-forms
+4d224634b	Take pending play() promises before firing playing
+457992246	CSP enforcement for img/style/connect/font/media/frame/form-action/object/manifest/prefetch, inline scripts and eval
+a7e2f883e	CSP fetch check core: policy lists, source matching, request checks for scripts, workers and worklets
+0b6966d73	fix(sandbox): a sandboxed frame's Location navigation of other frames is checked
+8d0dc8a39	Show an img response that is an image whatever its status
+1215ead74	fix(navigation): beforeunload also fires in the documents of the navigated frame's descendants
+3db74cb02	An img whose src does not parse is complete once its steps ran
+f47805459	fix(window): window -> Window.prototype -> WindowProperties -> EventTarget.prototype (JSC patch 0041)
+be84ba523	Answer controlsList.supports() with Chromium's media tokens
+91f25aac4	fix(navigation): a javascript: URL into a new noopener window does not run
+8c117ae60	feat(cssom-view): smooth scrolling on the rendering-frame clock
+cd21430ab	An img with an empty selected source has an empty currentSrc
+165c3fa32	fix(sandbox): document.domain throws in sandboxed documents, CSP sandbox directive
+dd48f6082	fix(location): ancestorOrigins is stored when the document commits; only no-referrer and same-origin hide
+f0c162a8a	fix(style): permission elements clamp letter-spacing through GenericLetterSpacing
+9a244304e	fix(wright): scrollIntoViewIfNeeded resolves to undefined
+f07bf214a	fix(grid): a percentage track within float noise of a layout unit snaps to it
+012d066bd	Screenshots wait only on the lazy loads they started
+e9b1d47bc	fix(forms): SubmitEvent submitter type check; submit is composed
+fd8e172a4	fix(canvas): a drawable canvas paints no inline content in place on any paint path
+62d68f95f	fix(canvas): drawElementImage taints for a visited link around the element
+7bb67f14e	Avoid moving a matched slice in set_drawn_transform
+c33183561	fix(anchor): anchor() and anchor-size() interpolate in CSS animations and transitions
+d6178adf9	Store drawElementImage's element transform in the canvas box's CSS px
+0f28fc202	fix(forms): constraint validation follows where readonly and required apply
+6e4010b84	fix(forms): a lone "webauthn" autocomplete token is its own autofill value
+2e163c50a	fix(forms): option.text leaves out script contents
+d527b612e	fix(forms): labels is a live NodeList, null on a hidden input
+e78f7de78	fix(forms): setCustomValidity normalizes newlines
+a6706c23b	Place drawable elements by their canvas transform in getBoundingClientRect
+eb60ce3b2	feat(css): anchored(fallback ...) container queries with not/and/or, any and physical position-area matching
+227a9b4f3	fix(loader): a cross-origin blob: URL does not resolve for a subresource
+c0d6f0006	feat(css-contain): contentvisibilityautostatechange, and anchors keep content-visibility:auto relevant
+0206f4243	fix(history): an iframe navigated from its document's load or pageshow handler replaces its entry
+87f0ec899	fix(net): a redirect without a fragment keeps the request's fragment
+76e61d4e9	fix(media): a src with potentially dangling markup fails to load
+1694192a5	fix(fetch): Request.url keeps the URL's fragment
+1ccc4238d	fix(webapi): no window.caches outside a secure context
+bfe194f6c	fix(css-scroll-snap): an unsnapped mandatory snap container snaps after a style change
+7fb25f233	feat(css-scroll-snap): scrollsnapchanging and scrollsnapchange, and SnapEvent
+a8c9d7350	fix(wasm): async WebAssembly promises settle (JSC patch 0040, deferred work in our loop)
+193dc92e4	fix(view-transitions): element-scoped transitions mark their scope, hold its size and skip what Chrome skips (VT-3 scoped)
+f4cd4a657	feat(html): HTMLProgressElement.position
+5e371d9d4	fix(table): caption, tHead and tFoot setters; sectionRowIndex outside sections
+57023b90c	feat(css): scroll-initial-target (none | nearest) scrolls the nearest scroll container to its target
+75ae37859	fix(events): handler attributes compile with the spec's scopes and source text
+e2a672f65	fix(css-sizing): an embedder's script reads a responsive iframe at its content size
+60b40b21e	fix(canvas): an image loaded before any canvas use draws from the list of available images
+6f2c7a9ce	fix(paint-worklet): a module that throws synchronously, or threw before, fulfills addModule()
+ebe91c87e	fix(paint-worklet): addModule() rejects only when the graph fails to load or link; an evaluation error is reported
+d01495c1b	WebAssembly.compileStreaming and instantiateStreaming for windows and workers
+02e010b51	feat(css): scroll-state(scrollable) container queries
+1bdb367b5	fix(css): becoming a container or changing container-name restyles descendants
+877dfd082	fix(css): a table or internal table box is not a size query container
+bc1d28385	fix(css): a container query with an unknown feature selects no container
+f031dc059	fix(layout): min/max `stretch` on grid items and on flex items in wrapping lines
+eeb1ad1df	Taint drawElementImage for opaque external SVG filter, clip and mask documents
+d28cf3778	Classify drawElementImage images by the response's opaque flag
+5f1a92a62	feat(scroll-markers): a click on a ::scroll-button() scrolls its element by a page
+a320eb224	fix(cssom-view): elementsFromPoint lists every box holding the point, as Chrome's list hit test
+20aed722f	fix(cssom-view): Element and Window scroll methods return promises of a ScrollResult
+6086ada32	Snap scrollBy by its intended direction and honour scroll-snap-stop: always
+cbb4d1a73	Respect smaller snap areas inside oversized scroll targets
+235c4d421	Resolve logical scroll snap alignment and rank reachable signed offsets
+44120fbc2	fix(canvas): drawElementImage leaves out or taints SVG images
+e22e68a34	fix(taffy): the default overflow limit of a position-area box includes its original containing block
+b84cec3ac	fix(layout): a box empty in one axis still extends its scroller's scrollable overflow
+baf9d02be	fix(webapi): computedStyleMap() orders custom property names by UTF-16 code unit
+0e9ee2c56	fix(view-transitions): skip/abort sequencing for unobserved, detached and dead-realm transitions (VT-2)
+b3f272201	fix(view-transitions): ViewTransition IDL accessors and a ViewTransitionTypeSet setlike (VT-1)
+4b98e6a34	fix(focus): a focused text field matches :focus-visible however it was focused
+4c2782b4f	fix(focus): a label click focuses its control as a mouse focus
+aefd14747	fix(input): boundary events observe the new :hover state
+9b5cf3ec9	fix(style): a quirks-mode document matches ID and class selectors case-insensitively
+12c292733	fix(selectors): only the no-namespace class attribute gives an element classes
+23ca36d6d	fix(selectors): :lang() matches no range against a tag with a subtag over 8 characters
+64ae9c927	fix(selectors): comments and empty text nodes leave an element :empty
+c1ea139c5	fix(selectors): :lang() and :dir() may follow ::part()
+128060bcd	fix(input): any mouse button's press activates :active until its release
+ff3e834cd	fix(focus): a press that focuses nothing clears the pointer focus modality
+88528da0b	fix(focus): the rendering update blurs a focused element that is no longer rendered
+56915a791	fix(selectors): :hover, :active and :focus-within stop at the innermost top-layer element
+1d63703f3	Size drawElementImage from the border box and paint its text as screenshots do
+2c095884b	fix(transitions): a reversed transition is shortened by how far the one it reverses got
+b71b671ed	fix(transitions): only color transitions on a color change, and vertical-align keeps its name
+13625eebb	fix(transitions): getAnimations lists simultaneous transitions by property name
+d4e377163	fix(transitions): a later transition-property item decides, and stale running transitions cancel
+a7b148613	fix(transitions): removing or moving an element cancels its running transitions
+43e7fcf45	fix(grid): a subgrid keeps the space its parent's content distribution puts between tracks
+5ce7623dd	fix(layout): a fixed box's offset parent is the ancestor that establishes its containing block
+c8288f15a	fix(grid): percentage track sizes resolve to whole layout units
+3f3af5dee	fix(style): grid-template on an untemplated grid container resolves to its used tracks
+47aa9f2f6	fix(style): an unrendered child of a grid or flex container resolves min-width/height auto to 0px
+c85ec64b1	fix(grid): a min-width/height larger than the max still sets the flex fraction
+2cd3f80e0	Leave other-origin images out of drawElementImage instead of tainting
+f630e4c3d	One poll thread for captures and prints waiting on lazy loads
+d4afe87e2	Screenshots wait for the lazy content they start
+016c83b79	fix(canvas): drawElementImage taints by b8b222900's flag, not always
+e12a5fef8	fix(iframe): a lazy iframe's cancel marker is taken by the next attribute processing
+ec3524937	fix(canvas): a drawable canvas's inline children are not painted in place
+b8b222900	Taint the canvas when drawElementImage may show non-origin-clean content
+b14614c59	fix(stylo): overflow-clip-margin animates discretely
+05525cb9d	fix(css): computed animation-duration keeps auto unless animation-timeline is the initial auto
+5b02727aa	fix(navigation): a javascript: URL opened in a new window without a prebuilt popup runs there
+b35d4961e	fix(dom): DOMTokenList and focusGroupStart use the attribute in no namespace
+41920bbad	fix(contain): geometry queries lay out content-visibility: hidden contents
+50ab27bb1	fix(focusgroup): Tab out of an arrow-key control stays within its own group
+ac293e917	fix(focusgroup): Tab enters a segment at its focusgroupstart or first item in tree order
+7586d0400	fix(location): ancestorOrigins masks by the container's referrer policy snapshotted as the navigation began
+cd4ef7dea	fix(canvas): drawElementImage taints the canvas
+d5879729d	fix(focusgroup): arrows follow the focused item's direction; Home/End on an edge item stay
+45add0139	fix(location): ancestorOrigins masks a no-referrer container's document origin as null
+1d39a1d93	fix(select): a release whose mouseup is held back picks no picker option
+f8e7bb4eb	docs(page): image_complete's doc comment sits on image_complete again
+e6225cab3	fix(style): content under content-visibility: hidden is hidden to focus and checkVisibility
+ec3d24446	Drop stray backslashes from two streams.js comments
+1d432d2be	Review fixes: BOM flag and doc placement

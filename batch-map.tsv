@@ -1,0 +1,393 @@
+sha	row	state	subject
+7a86b696e	(unmapped)	-	Fall back to the minimal deferred-fetch quota when allow= does not enable it
+93cf2f04c	(unmapped)	-	fix(net): an https document's fetch to an http URL is blocked as mixed content
+c73e9e3ff	(unmapped)	-	fix(events): the embedder's listeners run in a document sandboxed without allow-scripts
+931311668	(unmapped)	-	Drop a deferred lazy image adopted into another document
+7697f40b0	(unmapped)	-	An img with a srcset is not complete before its request finishes
+4c9151ea3	(unmapped)	-	fix(view-transitions): a skip only Pyro makes leaves ready handled
+c5fe0532b	(unmapped)	-	Report a toBlob callback's exception in the callback's realm
+e449e43fd	(unmapped)	-	fix(sandbox): localStorage and sessionStorage throw in sandboxed documents
+665f374a3	(unmapped)	-	Start media at the #t= time of its URL's media fragment
+6b5540ca0	(unmapped)	-	fix(events): content attribute handlers scope by this and bind no name of their own
+fe4f3cd1f	(unmapped)	-	fix(transitions): getAnimations orders transitions by the style change event that started them
+917004324	(unmapped)	-	fix(sandbox): no form submission without allow-forms
+4d224634b	(unmapped)	-	Take pending play() promises before firing playing
+457992246	(unmapped)	-	CSP enforcement for img/style/connect/font/media/frame/form-action/object/manifest/prefetch, inline scripts and eval
+a7e2f883e	(unmapped)	-	CSP fetch check core: policy lists, source matching, request checks for scripts, workers and worklets
+0b6966d73	(unmapped)	-	fix(sandbox): a sandboxed frame's Location navigation of other frames is checked
+8d0dc8a39	(unmapped)	-	Show an img response that is an image whatever its status
+1215ead74	(unmapped)	-	fix(navigation): beforeunload also fires in the documents of the navigated frame's descendants
+3db74cb02	(unmapped)	-	An img whose src does not parse is complete once its steps ran
+f47805459	(unmapped)	-	fix(window): window -> Window.prototype -> WindowProperties -> EventTarget.prototype (JSC patch 0041)
+be84ba523	(unmapped)	-	Answer controlsList.supports() with Chromium's media tokens
+91f25aac4	(unmapped)	-	fix(navigation): a javascript: URL into a new noopener window does not run
+8c117ae60	(unmapped)	-	feat(cssom-view): smooth scrolling on the rendering-frame clock
+cd21430ab	(unmapped)	-	An img with an empty selected source has an empty currentSrc
+165c3fa32	(unmapped)	-	fix(sandbox): document.domain throws in sandboxed documents, CSP sandbox directive
+dd48f6082	(unmapped)	-	fix(location): ancestorOrigins is stored when the document commits; only no-referrer and same-origin hide
+f0c162a8a	(unmapped)	-	fix(style): permission elements clamp letter-spacing through GenericLetterSpacing
+6bda1ffdf	R-HTML-14b	active	Permission elements under a masked ancestor are style_invalid (R-HTML-14b)
+0dd6c3a0a	R-HTML-14b	active	Permission elements' children are not in innerText (R-HTML-14b)
+9a244304e	(unmapped)	-	fix(wright): scrollIntoViewIfNeeded resolves to undefined
+f07bf214a	(unmapped)	-	fix(grid): a percentage track within float noise of a layout unit snaps to it
+012d066bd	(unmapped)	-	Screenshots wait only on the lazy loads they started
+7932deb17	R-HTML-SANDBOX	reserved	fix(sandbox): window.open returns null without allow-popups
+e9b1d47bc	(unmapped)	-	fix(forms): SubmitEvent submitter type check; submit is composed
+fd8e172a4	(unmapped)	-	fix(canvas): a drawable canvas paints no inline content in place on any paint path
+62d68f95f	(unmapped)	-	fix(canvas): drawElementImage taints for a visited link around the element
+7bb67f14e	(unmapped)	-	Avoid moving a matched slice in set_drawn_transform
+c33183561	(unmapped)	-	fix(anchor): anchor() and anchor-size() interpolate in CSS animations and transitions
+d6178adf9	(unmapped)	-	Store drawElementImage's element transform in the canvas box's CSS px
+0f28fc202	(unmapped)	-	fix(forms): constraint validation follows where readonly and required apply
+6e4010b84	(unmapped)	-	fix(forms): a lone "webauthn" autocomplete token is its own autofill value
+2e163c50a	(unmapped)	-	fix(forms): option.text leaves out script contents
+d527b612e	(unmapped)	-	fix(forms): labels is a live NodeList, null on a hidden input
+e78f7de78	(unmapped)	-	fix(forms): setCustomValidity normalizes newlines
+a6706c23b	(unmapped)	-	Place drawable elements by their canvas transform in getBoundingClientRect
+eb60ce3b2	(unmapped)	-	feat(css): anchored(fallback ...) container queries with not/and/or, any and physical position-area matching
+4bfdd7f5c	R-HTML-24b	reserved	fix(html): list type and embedded align presentational hints, ASCII case-insensitive
+05e0149f1	R-HTML-16r	reserved	fix(stylo): a length media feature accepts a math function resolving to 0
+c4d9a5064	R-HTML-26r	active	fix(location): href, assign() and replace() encode the query in the entry document's encoding
+227a9b4f3	(unmapped)	-	fix(loader): a cross-origin blob: URL does not resolve for a subresource
+c0d6f0006	(unmapped)	-	feat(css-contain): contentvisibilityautostatechange, and anchors keep content-visibility:auto relevant
+c9827e928	R-HTML-31b	reserved	fix(media): readyState waits at HAVE_CURRENT_DATA for pending text tracks
+0206f4243	(unmapped)	-	fix(history): an iframe navigated from its document's load or pageshow handler replaces its entry
+87f0ec899	(unmapped)	-	fix(net): a redirect without a fragment keeps the request's fragment
+76e61d4e9	(unmapped)	-	fix(media): a src with potentially dangling markup fails to load
+7c34591e9	R-FETCH-LATER-C	reserved	Give a frame no deferred-fetch quota when allow= delegates it elsewhere
+d0803b57b	R-HTML-14b	active	Permission elements bound and ignore author styles as Chromium (R-HTML-14b)
+1694192a5	(unmapped)	-	fix(fetch): Request.url keeps the URL's fragment
+1ccc4238d	(unmapped)	-	fix(webapi): no window.caches outside a secure context
+bfe194f6c	(unmapped)	-	fix(css-scroll-snap): an unsnapped mandatory snap container snaps after a style change
+7fb25f233	(unmapped)	-	feat(css-scroll-snap): scrollsnapchanging and scrollsnapchange, and SnapEvent
+26fb4a8a6	R-FETCH-META	reserved	fix(preload): <link rel=preload> as=font, as=track and as=fetch destinations
+a8c9d7350	(unmapped)	-	fix(wasm): async WebAssembly promises settle (JSC patch 0040, deferred work in our loop)
+c93acfc91	R-FETCH-META	reserved	fix(fetch): a trailing-dot host is another site for Sec-Fetch-Site
+4a8d973cc	R-FETCH-META	reserved	fix(fetch): worker, sharedworker and serviceworker request destinations
+193dc92e4	(unmapped)	-	fix(view-transitions): element-scoped transitions mark their scope, hold its size and skip what Chrome skips (VT-3 scoped)
+f4cd4a657	(unmapped)	-	feat(html): HTMLProgressElement.position
+5e371d9d4	(unmapped)	-	fix(table): caption, tHead and tFoot setters; sectionRowIndex outside sections
+c289d09c4	R-HTML-32	reserved	feat(canvas): ImageBitmapRenderingContext (getContext('bitmaprenderer'))
+57023b90c	(unmapped)	-	feat(css): scroll-initial-target (none | nearest) scrolls the nearest scroll container to its target
+75ae37859	(unmapped)	-	fix(events): handler attributes compile with the spec's scopes and source text
+e2a672f65	(unmapped)	-	fix(css-sizing): an embedder's script reads a responsive iframe at its content size
+a1e51d089	R-HTML-29	implemented-unbuilt	fix(css): a <style> whose type is not CSS has no sheet
+259ac1d06	R-HTML-35	implemented-unbuilt	Media removal pauses at the stable state, before tasks queued meanwhile
+bd1b6f5ee	R-HTML-32	reserved	fix(canvas): createImageBitmap shows images as their EXIF orientation says
+60b40b21e	(unmapped)	-	fix(canvas): an image loaded before any canvas use draws from the list of available images
+04cc49dcf	R-HTML-9	claimed	Add HTML-in-Canvas captureElementImage, getElementImageDefaultSize and element geometry
+6f2c7a9ce	(unmapped)	-	fix(paint-worklet): a module that throws synchronously, or threw before, fulfills addModule()
+ebe91c87e	(unmapped)	-	fix(paint-worklet): addModule() rejects only when the graph fails to load or link; an evaluation error is reported
+d01495c1b	(unmapped)	-	WebAssembly.compileStreaming and instantiateStreaming for windows and workers
+02e010b51	(unmapped)	-	feat(css): scroll-state(scrollable) container queries
+1bdb367b5	(unmapped)	-	fix(css): becoming a container or changing container-name restyles descendants
+877dfd082	(unmapped)	-	fix(css): a table or internal table box is not a size query container
+bc1d28385	(unmapped)	-	fix(css): a container query with an unknown feature selects no container
+f031dc059	(unmapped)	-	fix(layout): min/max `stretch` on grid items and on flex items in wrapping lines
+eeb1ad1df	(unmapped)	-	Taint drawElementImage for opaque external SVG filter, clip and mask documents
+d28cf3778	(unmapped)	-	Classify drawElementImage images by the response's opaque flag
+5f1a92a62	(unmapped)	-	feat(scroll-markers): a click on a ::scroll-button() scrolls its element by a page
+a320eb224	(unmapped)	-	fix(cssom-view): elementsFromPoint lists every box holding the point, as Chrome's list hit test
+20aed722f	(unmapped)	-	fix(cssom-view): Element and Window scroll methods return promises of a ScrollResult
+6086ada32	(unmapped)	-	Snap scrollBy by its intended direction and honour scroll-snap-stop: always
+cbb4d1a73	(unmapped)	-	Respect smaller snap areas inside oversized scroll targets
+235c4d421	(unmapped)	-	Resolve logical scroll snap alignment and rank reachable signed offsets
+44120fbc2	(unmapped)	-	fix(canvas): drawElementImage leaves out or taints SVG images
+e22e68a34	(unmapped)	-	fix(taffy): the default overflow limit of a position-area box includes its original containing block
+b84cec3ac	(unmapped)	-	fix(layout): a box empty in one axis still extends its scroller's scrollable overflow
+baf9d02be	(unmapped)	-	fix(webapi): computedStyleMap() orders custom property names by UTF-16 code unit
+0e9ee2c56	(unmapped)	-	fix(view-transitions): skip/abort sequencing for unobserved, detached and dead-realm transitions (VT-2)
+b3f272201	(unmapped)	-	fix(view-transitions): ViewTransition IDL accessors and a ViewTransitionTypeSet setlike (VT-1)
+4b98e6a34	(unmapped)	-	fix(focus): a focused text field matches :focus-visible however it was focused
+4c2782b4f	(unmapped)	-	fix(focus): a label click focuses its control as a mouse focus
+aefd14747	(unmapped)	-	fix(input): boundary events observe the new :hover state
+9b5cf3ec9	(unmapped)	-	fix(style): a quirks-mode document matches ID and class selectors case-insensitively
+12c292733	(unmapped)	-	fix(selectors): only the no-namespace class attribute gives an element classes
+23ca36d6d	(unmapped)	-	fix(selectors): :lang() matches no range against a tag with a subtag over 8 characters
+64ae9c927	(unmapped)	-	fix(selectors): comments and empty text nodes leave an element :empty
+c1ea139c5	(unmapped)	-	fix(selectors): :lang() and :dir() may follow ::part()
+128060bcd	(unmapped)	-	fix(input): any mouse button's press activates :active until its release
+ff3e834cd	(unmapped)	-	fix(focus): a press that focuses nothing clears the pointer focus modality
+88528da0b	(unmapped)	-	fix(focus): the rendering update blurs a focused element that is no longer rendered
+56915a791	(unmapped)	-	fix(selectors): :hover, :active and :focus-within stop at the innermost top-layer element
+e4542b3ec	R-HTML-28	implemented-unbuilt	Send no referrer for a form submission with rel=noreferrer
+194f06a78	R-HTML-9	claimed	fix(canvas): drawElementImage taints for same-origin-URL images again
+84b274e4a	R-HTML-35	implemented-unbuilt	Pause a removed media element after a stable state, not at once
+1d63703f3	(unmapped)	-	Size drawElementImage from the border box and paint its text as screenshots do
+2c095884b	(unmapped)	-	fix(transitions): a reversed transition is shortened by how far the one it reverses got
+b71b671ed	(unmapped)	-	fix(transitions): only color transitions on a color change, and vertical-align keeps its name
+13625eebb	(unmapped)	-	fix(transitions): getAnimations lists simultaneous transitions by property name
+d4e377163	(unmapped)	-	fix(transitions): a later transition-property item decides, and stale running transitions cancel
+a7b148613	(unmapped)	-	fix(transitions): removing or moving an element cancels its running transitions
+43e7fcf45	(unmapped)	-	fix(grid): a subgrid keeps the space its parent's content distribution puts between tracks
+5ce7623dd	(unmapped)	-	fix(layout): a fixed box's offset parent is the ancestor that establishes its containing block
+c8288f15a	(unmapped)	-	fix(grid): percentage track sizes resolve to whole layout units
+3f3af5dee	(unmapped)	-	fix(style): grid-template on an untemplated grid container resolves to its used tracks
+47aa9f2f6	(unmapped)	-	fix(style): an unrendered child of a grid or flex container resolves min-width/height auto to 0px
+c85ec64b1	(unmapped)	-	fix(grid): a min-width/height larger than the max still sets the flex fraction
+f4150a963	R-HTML-B-20	implemented-unbuilt	Treat a whitespace-only script src as empty: fire error
+2cd3f80e0	(unmapped)	-	Leave other-origin images out of drawElementImage instead of tainting
+f630e4c3d	(unmapped)	-	One poll thread for captures and prints waiting on lazy loads
+d4afe87e2	(unmapped)	-	Screenshots wait for the lazy content they start
+016c83b79	(unmapped)	-	fix(canvas): drawElementImage taints by b8b222900's flag, not always
+e12a5fef8	(unmapped)	-	fix(iframe): a lazy iframe's cancel marker is taken by the next attribute processing
+ec3524937	(unmapped)	-	fix(canvas): a drawable canvas's inline children are not painted in place
+b8b222900	(unmapped)	-	Taint the canvas when drawElementImage may show non-origin-clean content
+b14614c59	(unmapped)	-	fix(stylo): overflow-clip-margin animates discretely
+05525cb9d	(unmapped)	-	fix(css): computed animation-duration keeps auto unless animation-timeline is the initial auto
+5b02727aa	(unmapped)	-	fix(navigation): a javascript: URL opened in a new window without a prebuilt popup runs there
+b35d4961e	(unmapped)	-	fix(dom): DOMTokenList and focusGroupStart use the attribute in no namespace
+41920bbad	(unmapped)	-	fix(contain): geometry queries lay out content-visibility: hidden contents
+50ab27bb1	(unmapped)	-	fix(focusgroup): Tab out of an arrow-key control stays within its own group
+ac293e917	(unmapped)	-	fix(focusgroup): Tab enters a segment at its focusgroupstart or first item in tree order
+7586d0400	(unmapped)	-	fix(location): ancestorOrigins masks by the container's referrer policy snapshotted as the navigation began
+cd4ef7dea	(unmapped)	-	fix(canvas): drawElementImage taints the canvas
+d5879729d	(unmapped)	-	fix(focusgroup): arrows follow the focused item's direction; Home/End on an edge item stay
+ec8fb83dc	R-HTML-9	claimed	Gate the HTML-in-Canvas paint step on a drawable canvas and add onpaint
+45add0139	(unmapped)	-	fix(location): ancestorOrigins masks a no-referrer container's document origin as null
+94fe1804b	R-HTML-9	claimed	Add HTML-in-Canvas CanvasRenderingContext2D.drawElementImage()
+1d39a1d93	(unmapped)	-	fix(select): a release whose mouseup is held back picks no picker option
+a799ad8bb	R-HTML-B-11	implemented-unbuilt	fix(history): CDP history covers child frames' steps; an abandoned traversal restores the page's step; dialogs need a fully active document
+9259003cd	R-HTML-9	claimed	Paint one element's subtree alone for HTML-in-Canvas drawElementImage
+93a1ffbc5	RECON-2026-11-22	open	hidden=until-found stays display: none in the engine (R-HTML-25 follow-up)
+98515b699	R-HTML-B-11	implemented-unbuilt	fix(history): a traversal whose document does not commit leaves the entry as it was
+c88053bc8	R-HTML-10	split	Key a lazy iframe's own-navigation marker by frame
+d7ee74c1b	F03	split	feat(select): lay out an open customizable select's picker and pick by click
+7cb9ef421	R-HTML-16	implemented-unbuilt	fix: review follow-ups to 2ba8826df (radio tab stops) and 48c9076ef (srcset)
+2b99c5fcc	R-HTML-10	split	Check lazy images from the first layout; full-page captures load all
+b6ab86049	R-HTML-B-3	implemented-unbuilt	Update the frame URL CDP reports when document.open() changes the document's URL
+cc806a11f	R-HTML-B-9	implemented-unbuilt	feat(serve): --navigation-rate-limit; the Playwright drop-in turns it off
+f219b1c51	R-HTML-9	claimed	Lay out the children of a content=drawable canvas without painting them in place
+8eaeaf5c8	R-HTML-B-12	implemented-unbuilt	Reveal a document that requests no animation frame after its load
+acf404f96	R-HTML-10	split	Start lazy content before screenshots and prints
+b026fdc9d	R-HTML-31	implemented-unbuilt	fix(media): selectDefaults queues change only at a TextTrackList that exists
+f8e7bb4eb	(unmapped)	-	docs(page): image_complete's doc comment sits on image_complete again
+6a90a0811	R-HTML-B-3	implemented-unbuilt	Stop a load's deferred scripts at once when document.open() aborts it
+e6225cab3	(unmapped)	-	fix(style): content under content-visibility: hidden is hidden to focus and checkVisibility
+9ff0bf71c	R-HTML-13	implemented-unbuilt	fix(focus): a child frame's autofocus candidates request the top-level page's frame
+4f6386134	R-HTML-B-13	implemented-unbuilt	Muted script errors follow a URL's latest fetch, so a CORS fetch unmutes it
+474605513	R-HTML-31	implemented-unbuilt	fix(media): loaded and default-selected text tracks run time marches on
+b9f5a8e4b	R-HTML-B-18	implemented-unbuilt	fix(popup): a message the opener posts to its popup reports the opener as event.source
+4c65e104f	R-HTML-B-8	blocked	fix(links): a link or form targeting a window name keeps its opener and opens with a popup ticket
+c827e098e	R-HTML-19	implemented-unbuilt	fix(collections): a named-property collection is the same object on each access
+e06c257ce	R-HTML-B-8	blocked	fix(window.open): a javascript: URL runs in the new window, not the opener
+4d0404da8	R-FETCH-9c	implemented-unbuilt	Store redirects with an explicit lifetime in the HTTP cache and follow them from it
+44e600dbf	R-HTML-10	split	fix(media): a deferred lazy media element stops delaying the load event
+b8c33f8d3	R-HTML-10	split	fix(iframe): loading=lazy defers only a src navigation, not srcdoc or about:blank
+e8365796f	R-HTML-B-8	blocked	fix(nav): a javascript: URL runs in a _top, _parent or named target only from the same origin
+e31d0f947	R-FETCH-fetchLater-a	implemented-unbuilt	Measure and validate fetchLater requests as Fetch specifies
+4ba31fc7d	R-HTML-AO	implemented-unbuilt	feat(location): location.ancestorOrigins
+ca6dcfa09	R-FETCH-9b	implemented-unbuilt	test(cache): stale-while-revalidate window lookups
+3dcd95408	R-HTML-17	implemented-unbuilt	fix(html): getSVGDocument() reads the content document's type from the DOM
+d245955ac	R-HTML-24	implemented-unbuilt	perf(forms): wrap=hard walks a long line by index
+c143728b3	CS	implemented-unbuilt	docs(net): decode_text's doc comment sits on decode_text again
+c835e19cb	R-FETCH-1	implemented-unbuilt	fix(request): new Request(streamRequest, {mode: 'no-cors'}) leaves the input's body unused
+294ba71d1	F03	split	fix(select): an insertion without an explicitly selected option skips the select's option walk
+841dd2fad	CM2b	implemented-unbuilt	fix(canvas): canvas getContext('2d') converts its settings in dictionary order
+38bef2179	F08d	implemented-unbuilt	Release a prepared script's stash when its event reaches no frame
+0d5d3c7bc	R-HTML-20	implemented-unbuilt	feat(dom): document.lastModified
+0facc5a71	R-HTML-14	split	Permission element interfaces: geolocation, install, usermedia, camera, microphone (R-HTML-14a)
+ff740683f	R-HTML-B-7	implemented-unbuilt	fix(navigation): a document a cross-document navigation leaves does not fire load
+cdb7e66bf	R-HTML-27	split	fix(dialog): requestClose needs a connected dialog of an active document and does not recurse
+1ae2525f6	R-HTML-B-7	implemented-unbuilt	Navigate an iframe whose document has loaded as a push, not a replace
+6ce66d3a7	R-FETCH-1	implemented-unbuilt	fix(fetch): fetchBuffered's settled fetch is a private native, not fetch()'s third argument
+fe55c103b	R-FETCH-1	implemented-unbuilt	fix(fetch): fetch() with a stream body refuses keepalive and no-cors
+b050d526a	R-FETCH-10	implemented-unbuilt	fix(cors): a Range value over 128 bytes is not CORS-safelisted
+2dbc12887	R-FETCH-9b	implemented-unbuilt	fix(cache): must-revalidate keeps a stale entry out of the stale-while-revalidate window
+b6382bb69	F08c	implemented-unbuilt	A written script that prepare returns from early becomes force async
+f10b98964	P02	merged	feat(history): joint session history across a page's frames
+d5cec724d	R-HTML-19	implemented-unbuilt	fix(document): an object is a named property of the Document by its id
+108eae481	R-HTML-9	claimed	Reflect canvas.content and add the HTML-in-Canvas child UA styles
+ade05aef5	R-HTML-B-12	implemented-unbuilt	Fire pageswap with its NavigationActivation before a document is navigated away
+2956fc1c4	R-HTML-B-12	implemented-unbuilt	Make pagereveal a PageRevealEvent with a null viewTransition
+a47ddc9d7	R-HTML-15	deferred	feat(css): interest-delay-start, interest-delay-end and the interest-delay shorthand
+2ba8826df	R-HTML-21	implemented-unbuilt	fix(focus): a radio group is one Tab stop, its checked or first radio
+ca9829603	F03	split	feat(select): a press on a list box option picks it
+72979c7af	R-HTML-1	implemented-unbuilt	fix(url): EventSource and frame sources encode their query in the document's encoding
+7247854c9	R-HTML-19	implemented-unbuilt	fix(window): a frame, object or embed named by `name` stands for its child window
+46abfec47	R-HTML-10	split	Cancel a lazy iframe's pending load when it is navigated otherwise
+b0d21d7f8	RECON-2026-11-22	open	hidden=until-found: content-visibility: hidden, ancestor revealing on fragment scroll (R-HTML-25)
+8e7a9f52f	F03	split	feat(select): keyboard of a customizable select's picker
+48c9076ef	R-HTML-16	implemented-unbuilt	fix(img): parse srcset descriptors as HTML does; first of equal densities wins
+2dbda236a	F04	claimed	fix(modules): imported modules are fetched with their importer's referrer and options (JSC patch 0039)
+cbc5b3ab3	R-HTML-31	implemented-unbuilt	fix(media): text track selection in a task, active cues from time marches on
+a332b50f3	SC-TOM-timing-keywords	implemented-unbuilt	Keep step-start and step-end keywords in specified timing functions
+69c012965	R-HTML-9	claimed	Add HTML-in-Canvas requestPaint() and paint events with changedElements
+671010bc8	F08f	implemented-unbuilt	document.open() gives a frame's document its entry document's URL
+6efaefdaf	F08g	implemented-unbuilt	Make about:blank documents quirks mode and document.open() reset to no-quirks
+116aaac86	R-HTML-17	implemented-unbuilt	feat(html): getSVGDocument() on iframe, embed and object
+03ca275aa	R-HTML-B-12	implemented-unbuilt	Fire pagereveal at a document's first rendering update
+d32849d4b	R-HTML-24	implemented-unbuilt	fix(forms): textarea wrap="hard" wraps the submitted value at cols
+a39d0a6b3	RECON-2026-11-22	open	fix(dnd): loaded images start drags; draggable reflects its auto state
+754a09506	RECON-2026-11-22	open	fix(dnd): an assigned dropEffect of "none" means no drag operation
+bd6c7d035	RECON-2026-11-22	open	fix(html): spellcheck and contentEditable keywords are ASCII case-insensitive
+23f82c17c	R-HTML-30	implemented-unbuilt	fix(media): resource selection follows moved and removed <source> candidates
+edb28212b	F03	split	feat(select): appearance: base-select and the customizable select's picker state
+49fe6769d	R-FETCH-6b	implemented-unbuilt	fix(cors): a preflight allow list with a non-ASCII value line fails
+acfc8b0e0	R-HTML-10	split	Defer resource selection of <video>/<audio loading=lazy>
+af91e97df	F05	implemented-unbuilt	Let dedicated workers start nested dedicated workers
+5225838c7	R-HTML-13	implemented-unbuilt	fix(focus): autofocus candidates flush at the rendering update, in insertion order
+c9216028f	R-HTML-B-3	implemented-unbuilt	Allow document.open() once the network parser has finished
+31b049121	F08e	implemented-unbuilt	Send credentials with classic script requests that have no crossorigin attribute
+6837c7c57	R-HTML-18	implemented-unbuilt	fix(canvas): unclean patterns taint when set; resizing resets origin-clean
+9796d5401	R-HTML-B-9	implemented-unbuilt	fix(history): rate-limit history updates and navigations as Chrome does; History methods need a fully active document
+8a8efd245	R-FETCH-2	implemented-unbuilt	fix(fetch): only 301, 302, 303, 307 and 308 are redirects
+79617c94b	R-HTML-B-8	blocked	fix(nav): _parent and _top choose the ancestor navigable from a child frame
+f57cdf2a5	R-HTML-B-2	implemented-unbuilt	Report timer, rAF and queueMicrotask callback exceptions in the callback's realm
+8f0a9f993	F02c	implemented-unbuilt	Restore focusgroup hunks reverted by 88224f9d8
+fd362425b	C05	split	fix(canvas): a vertical tab does not end the text's line
+471824a27	R-HTML-10	split	Defer <iframe loading=lazy> navigation until near the viewport
+6ec5bdf43	F16	implemented-unbuilt	feat(canvas): ImageData pixelFormat rgba-float16 and Web IDL argument order
+587041d48	R-HTML-B-13	implemented-unbuilt	Mute errors of classic scripts fetched CORS-cross-origin ("Script error.")
+6334dbc3e	R-FETCH-1	implemented-unbuilt	Validate RequestInit duplex and refuse unusable inputs for new Request()
+e65c5cc0d	R-FETCH-8	implemented-unbuilt	Cancel only the canceled stream when a Response clone still reads the body
+2b4881a84	R-FETCH-1	implemented-unbuilt	Lock and disturb a Request body stream first made after the body was consumed
+ab233b046	R-FETCH-8	implemented-unbuilt	Give a cloned script Response its own body bytes so both streams read the whole body
+bdb6a89a9	R-FETCH-15	implemented-unbuilt	Reject an invalid RequestInit priority in new Request() and fetch()
+ec3d24446	(unmapped)	-	Drop stray backslashes from two streams.js comments
+5f47ecc62	CS	implemented-unbuilt	Decode classic scripts with the element's charset, else the document's encoding
+16247d419	R-HTML-B-11	implemented-unbuilt	fix(history): while a traversal to another document is pending, later ones are ignored
+ee78275fd	R-HTML-10	split	Lazy-load <img loading=lazy> after load, near the viewport
+18e04022d	R-HTML-B-15	implemented-unbuilt	feat(nav): a javascript: URL whose result is a string replaces the document with it
+4b5374ce9	F04i	implemented-unbuilt	fix(events): an event handler attribute's parameters shadow its element's members
+147f68d86	F04	claimed	fix(modules): import() in a module service worker rejects once its script has run
+b50b5c942	F04	claimed	fix(modules): concurrent JSON, CSS and text module imports in a document join one fetch
+e160f4174	CM4	implemented-unbuilt	feat(canvas): drawFocusIfNeeded outlines the path of focused fallback content
+c6dae2105	R-HTML-B-4	implemented-unbuilt	Timers: wrap the delay as a WebIDL long and compile string handlers when they run
+2582eff1e	TM	implemented-unbuilt	Take a stylesheet-blocked inline script's source text at its end tag
+154d43545	R-HTML-B-10	implemented-unbuilt	fix(location): Location members are [LegacyUnforgeable] own properties
+041d68261	R-HTML-8	implemented-unbuilt	feat(svg): SVGImageElement.decode()
+dba597871	R-HTML-B-14	implemented-unbuilt	fix(frames): a removed iframe's window answers parent and top with null
+0b04361d1	R-HTML-18	implemented-unbuilt	fix(canvas): filters colored from a link's currentcolor taint the canvas
+77316c216	R-HTML-B-1	implemented-unbuilt	Compile on* content attribute handlers when first read or called
+48a766e9a	IP	implemented-unbuilt	Fire a parser-blocking script's load/error at its insertion point; error for unparseable src
+1d432d2be	(unmapped)	-	Review fixes: BOM flag and doc placement
+a36597e0b	CM2	implemented-unbuilt	fix(canvas): OffscreenCanvas getContext('2d') converts its settings in dictionary order
+7d5405d12	R-HTML-1	implemented-unbuilt	Send hyperlink auditing pings for <a ping> and <area ping>
+23b16fefc	F03d	implemented-unbuilt	fix(select): selectedness on replace-all, inserted selected options, multiple removal
+01b84fe5d	CM1	implemented-unbuilt	fix(canvas): createImageBitmap resolves in a task
+92c94e4d7	R-HTML-7	implemented-unbuilt	fix(forms): submit dirname entries with the control's directionality
+2d62e0765	C05	split	fix(canvas): small-caps text is drawn in synthesized small capitals
+96bd1dd68	R-FETCH-1	implemented-unbuilt	fix(fetch): fetchBuffered's own fetch call does not take the stream path again
+204692a00	R-HTML-11	claimed	Reflect the template element's for attribute as htmlFor
+0e0a520c7	R-HTML-11	claimed	Apply <template for> patches in the document's own HTML parser
+380ebc531	R-HTML-2	deferred	Add window.originAgentCluster from Origin-Agent-Cluster and the group's key map
+4d8b32f52	SC-Q09-contain-intrinsic-size-auto-remembered	implemented-unbuilt	css-sizing: last remembered sizes per logical axis, at the ResizeObserver step
+1437a682e	F01	implemented-unbuilt	Start module SharedWorkers: load failures apart, credentials honored
+b230f1d34	R-HTML-6	implemented-unbuilt	fix(forms): output's type, defaultValue and reset, constraint validation on output and object
+b957b5caf	C05	split	fix(canvas): text is shaped for the context's lang
+56bb3e11b	R-FETCH-1	implemented-unbuilt	feat(fetch): Request accepts a ReadableStream body; fetch(request) sends it
+236eadd43	R-FETCH-1	implemented-unbuilt	fix(fetch): a request whose body came from a ReadableStream fails on a redirect other than 303
+f399664be	R-FETCH-10	implemented-unbuilt	fix(net): range requests: identity encoding, CORS-safelisted simple ranges, case-sensitive unit
+088ae0370	R-HTML-B-5	implemented-unbuilt	fix(history): pushState/replaceState with an empty-string URL keep the document URL
+9dd317440	CG4	implemented-unbuilt	fix(canvas): wide strokes far off the canvas keep their miters
+9368be893	F04f	implemented-unbuilt	fix(modules): <script type=module src> loads join the document's module fetches
+755525407	R-HTML-4	implemented-unbuilt	Return getElementsByName as a live NodeList of HTML elements
+cda220e33	CG3	implemented-unbuilt	fix(canvas): isPointInPath under a non-invertible or overflowing transform
+e016f96f4	C05	split	fix(canvas): U+0000 in text takes no space
+59f1e5086	F03c	implemented-unbuilt	feat(select): setting HTMLOptionsCollection.length and select.length
+f61dc654c	R-FETCH-9b	implemented-unbuilt	feat(net): stale-while-revalidate in the HTTP cache
+170789e31	R-HTML-3	implemented-unbuilt	Reflect HTMLElement.translate as the element's translation mode
+479e63112	R-HTML-5	implemented-unbuilt	fix(focus): a showing popover with an invoker is navigated right after its invoker
+f1f589cf4	CG2	implemented-unbuilt	fix(canvas): isPointInStroke strokes in user space with the line dashes
+1933ab2dd	C05	split	fix(canvas): direction inherit takes the canvas element's direction
+0c7c960d4	OWN-mse-mp4	implemented-unbuilt	fix(mse): the attached-tone test drains the task loop between steps
+347613014	R-FETCH-fetchLater	split	Share the deferred-fetch quota with same-origin frames; give other frames the minimal quota
+66a6bc373	F04e	implemented-unbuilt	fix(modules): import() in a classic service worker rejects with a TypeError
+0baa26ab6	CG1	implemented-unbuilt	fix(canvas): arcs whose angles differ by 2π against the direction draw the whole circle
+da42af876	F09e	merged	Prepare script-inserted external and module scripts when they are inserted
+a8592dd02	F03b	implemented-unbuilt	feat(select): keep <selectedcontent> up to date with the selected option
+02245b282	C05	split	fix(canvas): hanging and ideographic baselines from the font's BASE table
+47efba4f3	R-IDB-ORIGIN	implemented-unbuilt	Resolve indexedDB.databases() from a queued task
+c90da1432	F04d	implemented-unbuilt	fix(modules): a blob: module URL is resolved when the module is requested
+c4786d148	R-FETCH-9a	implemented-unbuilt	fix(net): HTTP cache stores any final status with an explicit lifetime
+ae993d5b2	C05	split	fix(canvas): text draws with the document's and the worker's web fonts
+5aceb6d41	F09f	implemented-unbuilt	fix(html): scripts document.write puts in a document without a browsing context never run
+a966f580b	R-FETCH-fetchLater	split	Add fetchLater() and FetchLaterResult for deferred fetches
+6778ba036	F04c	implemented-unbuilt	fix(modules): failed module fetches are not cached; workers join concurrent module fetches
+473f40f43	R-FETCH-pf	implemented-unbuilt	fix(cors): a preflight's body is not waited for
+be28286a0	R-FETCH-err	implemented-unbuilt	fix(fetch): a network error after the headers errors response.body with no read pending
+dd166b5d8	R-FETCH-12	implemented-unbuilt	fix(fetch): block scripts by nosniff and by audio/image/video/CSV MIME types
+4149e5a6f	F08c	implemented-unbuilt	Run script-inserted async=false scripts in insertion order and add script force async
+a3c89258f	F09	deferred	fix(html): a document.write script without source, disconnected or a data block stays preparable
+c594d0cf1	R-FETCH-14	implemented-unbuilt	Keep body reads from resolving through a script's Object.prototype.then
+f91822dba	R-FETCH-5	implemented-unbuilt	Lock and disturb a Response body stream first made after the body was consumed
+d0bd0a5df	R-FETCH-7	implemented-unbuilt	Give script Responses the response header guard so Set-Cookie writes are ignored
+41ddc247c	F02c	implemented-unbuilt	Make grid no focusgroup and keep top-layer items out of focusgroups
+4955a99be	R-FETCH-6	split	fix(cors): a preflight whose allow lists are not tokens fails
+4da613b27	R-FETCH-6	split	fix(cors): several Access-Control-Allow-Origin header lines fail the CORS check
+d00b2fe6c	C15	implemented-unbuilt	feat(canvas): text layout with a page's web faces
+1df64a1fa	F09	deferred	fix(html): a classic script with event and for attributes runs only for window's onload
+2dc16d142	F04b	implemented-unbuilt	fix(modules): a graph that reaches a cached evaluation error or an unresolvable specifier runs and reports it
+fa832c81f	R-FETCH-3	implemented-unbuilt	Let a fetch or XHR body reach pyro-net's 256 MiB, not 16 MiB
+3c98fcd83	R-FETCH-13	implemented-unbuilt	fix(net): Cross-Origin-Resource-Policy check on no-cors responses
+7e2d92d6d	C15	implemented-unbuilt	feat(layout): a document's loaded web font bytes by URL
+11df4a677	R-FETCH-cred	implemented-unbuilt	fix(fetch): a CORS redirect to a URL with credentials is a network error
+744912916	R-FETCH-4	implemented-unbuilt	fix(fetch): a Location with bytes past ASCII is followed, each byte percent-encoded
+88224f9d8	F02c	implemented-unbuilt	fix(fetch): redirect modes as Fetch orders them; only HTTP(S) survives a redirect
+5da88db3e	Q12	implemented-unbuilt	Give canvas 2D contexts a color space and convert pixels across spaces
+45204abf7	R-ENC-5	implemented-unbuilt	Allow 1024 pending fetch and XHR requests per page
+396afe524	P07	implemented-unbuilt	Decode zstd response bodies (Content-Encoding: zstd) with ruzstd
+8c6b21ea5	F03a	implemented-unbuilt	fix(select): the list of options follows HTML's nearest ancestor select
+6de19bccc	SC-Q01-color-interp-8bit-rounding	implemented-unbuilt	Sample CSS animation and transition easings at full precision
+b2af52250	SC-Q02-border-like-width-snap-after-interp	implemented-unbuilt	Snap interpolated border-like widths to device pixels after a transition samples them
+18c7e8ff2	F02f	implemented-unbuilt	Keep grid focusgroups from navigating linearly
+694df20b3	F08b	implemented-unbuilt	Do not run, report or fire events for a script moved to another document after it was prepared
+1215c90fb	F02e	implemented-unbuilt	Order focusgroup items by reading flow
+216b53f2d	F09	deferred	fix(css): a parser-inserted link's @import sheets block the parser's scripts
+8182ff6fa	R-ENC-3	implemented-unbuilt	Remove only one BOM from an HTML document
+99c9c0fb3	F09	deferred	fix(html): SVG script elements in HTML run at their end tag, with href as their source
+9ea30b8a7	R-ENC-4	implemented-unbuilt	Reject an undefined TextDecoderStream chunk with a TypeError
+3208400de	R-ENC-1	implemented-unbuilt	Allow 1000 child frames per page like Blink
+0a97b8ad8	S02	implemented-unbuilt	fix(layout): an orthogonal block child stretches for justify-self: stretch
+753a0252c	F08	claimed	Do not run a parser-inserted script prepared outside its parser document
+fd9e97f2d	C04	implemented-unbuilt	Parse canvas font with Stylo's font shorthand; keep variant caps and stretch
+cd4abb412	F02d	implemented-unbuilt	Reflect focusGroup as a DOMTokenList and focusGroupStart as a boolean
+34b816eae	F04	claimed	fix(script): type="module" and "importmap" match the whole attribute, unstripped
+65df9eeac	OWN-studio-anim-display	implemented-unbuilt	fix(style): CSS animations of display sample through Stylo's Animate for Display
+51466498d	OWN-studio-margin-trim	implemented-unbuilt	fix(layout): block-end margin-trim reaches margins collapsing through the last child's bottom
+5222e5a26	Q09	implemented-unbuilt	feat(mathml): size <mspace> by its width, height and depth attributes
+e1924dc29	Q02	implemented-unbuilt	fix(style): a quirks-mode document's author sheets parse with the unitless length quirk
+e9332783f	Q05	implemented-unbuilt	Use the Fetch data URL processor for MIME serialization and forgiving base64
+23a9a7b82	P06	implemented-unbuilt	fix(events): <body onerror> compiles the Window's handler with five parameters
+65b515e5b	P06	implemented-unbuilt	fix(events): a mouseover or element error handler returning false cancels the event
+400ad99f4	P06	implemented-unbuilt	fix(events): an event handler IDL attribute keeps a non-callable object
+6a567af8c	P06	implemented-unbuilt	fix(events): onreadystatechange/onvisibilitychange are not element content attributes
+74d54863e	P06	implemented-unbuilt	fix(window): window.clientInformation is [Replaceable]
+0b747ed47	P06	implemented-unbuilt	fix(worker): WorkerNavigator has NavigatorID's appCodeName, appName, product and platform
+e2e3821f1	P06	implemented-unbuilt	feat(scheduler): scheduler.yield() inherits the running task's priority and signal
+bea87c3eb	P06	implemented-unbuilt	feat(runtime): scheduler continuation queues outrank tasks of their priority
+b4c716018	F02a	implemented-unbuilt	Keep focusgroup arrows on key-conflict items and out of the top layer
+c4e0e43b9	F02a	implemented-unbuilt	Make each focusgroup segment one tab stop with memory and focusgroupstart entry
+f73eb76b0	F02	proposed	Add scoped focusgroup arrow, Home and End navigation between focusgroup items
+4578ebc4a	C06	implemented-unbuilt	fix(canvas): images without a source or with a zero size draw nothing
+7cb231709	C13	implemented-unbuilt	feat(canvas): ImageData.pixelFormat
+b39aa4bf0	C12	implemented-unbuilt	fix(canvas): ctx.filter ignores values that are not filters
+0b3990bf5	C11	implemented-unbuilt	feat(canvas): CanvasTextDrawingStyles.lang
+8d4b9ff1b	C10	implemented-unbuilt	fix(canvas): letterSpacing and wordSpacing take CSS lengths only
+2edfe96e8	C09	implemented-unbuilt	fix(canvas): ImageData coordinates are [EnforceRange] long
+c06affd5c	C08	implemented-unbuilt	fix(canvas): conic gradients turn fully from any start angle
+476797372	C07	implemented-unbuilt	fix(canvas): roundRect with one negative side winds counter-clockwise
+78842e176	C06	implemented-unbuilt	fix(canvas): strokeRect with one zero side strokes a closed line
+9f2703e69	C02	implemented-unbuilt	fix(canvas): shadows of geometry off the bitmap reach it
+a3d8fe523	E01	implemented-unbuilt	Snapshot shared TextDecoder inputs with bytewise reads before native decoding
+5ed810d48	Q06	implemented-unbuilt	Run the input type change value mode transitions and the new state's free-text sanitization
+aae7a1f26	Q06	implemented-unbuilt	Clone the selected option into selectedcontent whenever the parser pops an option
+309b1d3a7	Q03	implemented-unbuilt	Add the HTML form-control resets the UA sheet lacked
+fa918da33	Q03	implemented-unbuilt	Isolate only valid dir values and the spec's element list in the UA unicode-bidi rules
+51f9c8087	OWN-byob-tee-min	implemented-unbuilt	Tee readable byte streams using the active branch reader
+e334c717d	F10b	implemented-unbuilt	Prescan the HTML image alias as an img element
+049a3e07f	E02	implemented-unbuilt	Enforce the TextEncoderStream receiver on its encoding getter
+c6ae4d6cc	OWN-mse-mp4	implemented-unbuilt	Implement Window MediaSource and buffered fMP4 playback
+00addcb9e	F10	claimed	Skip lazy images during speculative HTML scanning
+1b8f9e9bd	OWN-xhr-send-usp	implemented-unbuilt	fix(xhr): send(URLSearchParams) corrects an author-set non-UTF-8 charset
+6c6168927	E01	implemented-unbuilt	Read TextDecoder input bytes after converting decode options
+4f94a5f1f	P04	implemented-unbuilt	Check mutability and transient activation in same-origin showPicker() and expose navigator.userActivation
+3a92a7101	OWN-perfobserver-descriptors	implemented-unbuilt	Keep worker observer interfaces the page defined or deleted before the first read
+d8eefd5e7	OWN-body-textstream	implemented-unbuilt	Add Body mixin textStream() to Request and Response over the shared UTF-8 decoder pipe
+8a9618149	Q07	implemented-unbuilt	Hit-test image map areas over usemap images
+bd86a940d	C03	implemented-unbuilt	fix(canvas): drawImage of a canvas without a bitmap draws transparent black
+142925160	C03	implemented-unbuilt	fix(canvas): honour the 'clear' composite operator
+a9b2c0a78	OWN-perfobserver-descriptors	implemented-unbuilt	Give PerformanceObserver and PerformanceObserverEntryList Web IDL interface and operation shapes
+37932be8a	OWN-blob-textstream	implemented-unbuilt	Stream Blob text through a UTF-8 TextDecoderStream for Blob.textStream()
+841e4bfbf	C01	implemented-unbuilt	Parse canvas colors with Stylo and serialize them as HTML canvas does
