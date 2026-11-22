@@ -1,0 +1,20 @@
+{
+  "ordinal": 1,
+  "key": "guard-history-000",
+  "rawSHA": "6b4e4f02980eff48eaf7ed4634e1a68dd6e1292dd4fab57f559c9056cb4df393",
+  "selectorSHA": "05d34a9cb2ba7bb0eae98305d3dbb093d6ca25644662f3c90c38c11463005b32",
+  "portSHA": "d9a778f2db63e3a67328c823f15925a0b7e64e3083a2346c3cdf0a2afa773fd2",
+  "urls": 48,
+  "runnerPlanMatchesHistoricalOrder": true,
+  "currentNames": 25410,
+  "currentPass": 23824,
+  "previousNames": 25412,
+  "previousPass": 23706,
+  "signedNames": 25414,
+  "signedPass": 23865,
+  "gains": 126,
+  "losses": 8,
+  "currentStrict": 19,
+  "restarts": 0,
+  "watchdogs": 0
+}

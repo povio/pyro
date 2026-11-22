@@ -1,0 +1,19 @@
+{
+ "chrome": "158.0.8127.37",
+ "chromeFull": 24385,
+ "chromeOnly": 71522,
+ "completeShards": 320,
+ "currentFull": 15737,
+ "head": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+ "lpOnly": 12630,
+ "matchedPages": 30179,
+ "matchedSHA256SUMS": "0e37a85d307412d83d92f59b16a749306bde56624a07703819d536130f78e0d0",
+ "matchedSnapshot": "8fbfc4e57459f76264edd2a09547b20fda004f5e3ef23bc6da7c8befe768f01f",
+ "planSHA256": "4a3badc8428aa0743c1747b1aecf70082d30e1a69cd9e6a17d8ce200eeb6a63e",
+ "previous": "1f1be032436bfeee9f48cdb5acbc0f71d21d5af9",
+ "previousFull": 15344,
+ "strictGains": 403,
+ "strictLosses": 10,
+ "tree": "c4d45b20c3ea5429596bd4e7b7f2ca33c32065db",
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+}

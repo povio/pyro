@@ -1,0 +1,11 @@
+{
+  "verified": true,
+  "role": "combined",
+  "localRuntime": true,
+  "shardCount": 320,
+  "urls": 30179,
+  "counts": {
+    "chromeOnly": 71522,
+    "lpOnly": 12630
+  }
+}

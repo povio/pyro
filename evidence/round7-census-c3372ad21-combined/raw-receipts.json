@@ -1,0 +1,17 @@
+{
+  "even": {
+    "commit": "3ff3488ab07b1e141f1d823de274018d65396f88",
+    "path": "evidence/round7-census-c3372ad21-local/machine",
+    "ordinals": "0,2,...,318",
+    "urlCount": 15072,
+    "actualExecutor": "local"
+  },
+  "odd": {
+    "commit": "5595874120457838865631c7359b6fa72f7d8993",
+    "path": "evidence/round7-census-c3372ad21-odd/machine",
+    "ordinals": "1,3,...,319",
+    "urlCount": 15107,
+    "originalOwner": "studio",
+    "actualExecutor": "local"
+  }
+}
