@@ -320,6 +320,16 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn removing_italic_preserves_a_semantic_element_and_backward_selection() {
+    let e = env("<body><div id=ed contenteditable>left<cite style='color:red'>abcd</cite>right</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.innerHTML, cite=ed.firstElementChild, t=cite.firstChild; getSelection().setBaseAndExtent(t,3,t,1)");
+    assert_eq!(eval(r, "document.execCommand('italic'); [ed.firstElementChild===cite,getSelection().toString(),getSelection().direction,document.queryCommandState('italic')].join()"), "true,bc,backward,false");
+    assert_eq!(eval(r, "const selectedStyle=getComputedStyle(getSelection().focusNode.parentElement); [selectedStyle.fontStyle,selectedStyle.color,getComputedStyle(cite).fontStyle].join('|')"), "normal|rgb(255, 0, 0)|italic");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn removing_inherited_bold_preserves_heading_and_selected_color() {
     let e = env("<body><div id=ed contenteditable><h3 style='color:red'>abcd</h3></div></body>");
     let r = &e.main;
