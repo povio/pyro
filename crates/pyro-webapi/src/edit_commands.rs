@@ -1293,6 +1293,9 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
             if start == end {
                 return false;
             }
+            if matches!(tag, "u" | "strike") && decoration::change_selected(page, host, start, end, tag, input_type) {
+                return true;
+            }
             if matches!(tag, "sub" | "sup") && inline_value::change_selected_script(page, host, start, end, tag, input_type) {
                 return true;
             }

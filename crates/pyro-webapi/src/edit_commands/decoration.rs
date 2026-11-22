@@ -158,3 +158,79 @@ pub(super) fn apply(page: &PageDom, dom: &mut Dom, host: NodeId, typed: NodeId, 
     }
     Some(())
 }
+
+/// An authored line on a semantic element replaces its UA decoration. Isolate
+/// the selection before translating its effective lines into editing markup.
+pub(super) fn change_selected(
+    page: &std::rc::Rc<PageDom>, host: NodeId, start: super::Point, end: super::Point, tag: &str, input_type: &str,
+) -> bool {
+    let dom = page.dom.borrow();
+    let selected = super::inline_texts(page, &dom, host, start, end);
+    let [text] = selected.as_slice() else { return false };
+    let Ok(Some(carrier)) = dom.parent_element(*text) else { return false };
+    let name = editing::local(&dom, carrier);
+    if carrier == host || !matches!(name.as_str(), "s" | "u" | "span") { return false; }
+    let Some(inline_style) = dom.get_attribute(carrier, "style").ok().flatten() else { return false };
+    let style = DeclarationBlock::parse(inline_style);
+    let authored = style.value("text-decoration-line");
+    // Removing an override can leave a semantic U or S with an empty style
+    // attribute. Its UA line then supplies the starting state for a repeat.
+    if authored.is_empty() && (name == "span" || !inline_style.trim().is_empty()) { return false; }
+    if name == "span" && !dom.document_data(page.document()).is_ok_and(|d| d.style_with_css) { return false; }
+    let mut wanted = Lines::parse(&page.layout().computed_style_value(&dom, carrier, "text-decoration-line"));
+    wanted.toggle(tag);
+    let backward = editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
+    drop(dom);
+    editing::apply_edit(page, host, input_type, None, None, |page| {
+        let mut dom = page.dom.borrow_mut();
+        let texts = super::split_texts(&mut dom, selected, start, end);
+        let text = texts[0];
+        let mut points = [(text, 0), (text, editing::len(&dom, text))];
+        let Some(parent) = dom.parent_element(carrier).ok().flatten() else { return };
+        let Some(middle) = super::alignment::split_edge(&mut dom, parent, text, false, &mut points) else { return };
+        super::alignment::split_edge(&mut dom, parent, text, true, &mut points);
+        let Ok(doc) = dom.node_document(text) else { return };
+        let css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
+        let mut style = style;
+        style.remove("text-decoration-line");
+        for (property, initial) in [("text-decoration-style", "solid"), ("text-decoration-color", "currentcolor"), ("text-decoration-thickness", "auto")] {
+            if style.value(property).eq_ignore_ascii_case(initial) { style.remove(property); }
+        }
+        let mut lines = Vec::new();
+        if css && wanted.underline { lines.push("underline"); }
+        for line in authored.split_ascii_whitespace().filter(|v| matches!(*v, "overline" | "blink")) { lines.push(line); }
+        if css && wanted.strike { lines.push("line-through"); }
+        let ua = match name.as_str() {
+            "s" => Lines { strike: true, ..Lines::default() },
+            "u" => Lines { underline: true, ..Lines::default() },
+            _ => Lines::default(),
+        };
+        if name != "span" && wanted == ua {
+            let _ = dom.set_attribute(middle, "style", &style.css_text());
+            drop(dom);
+            super::select_texts(page, &texts, backward);
+            return;
+        }
+        if !lines.is_empty() { style.set("text-decoration-line", &lines.join(" "), false); }
+        if style.is_empty() { let _ = dom.remove_attribute(middle, "style"); }
+        else { let _ = dom.set_attribute(middle, "style", &style.css_text()); }
+        if dom.attributes(middle).is_ok_and(|attrs| attrs.is_empty()) {
+            super::indentation::unwrap(&mut dom, middle, &mut points);
+        } else if name != "span" {
+            super::indentation::rename(&mut dom, middle, "span", &mut points);
+        }
+        if !css {
+            for (needed, name) in [(wanted.underline, "u"), (wanted.strike, "strike")] {
+                if needed {
+                    let Ok(Some(parent)) = dom.parent_element(text) else { return };
+                    let Ok(el) = dom.create_element(doc, name) else { return };
+                    let _ = dom.insert_before(parent, el, Some(text));
+                    let _ = dom.append_child(el, text);
+                }
+            }
+        }
+        drop(dom);
+        super::select_texts(page, &texts, backward);
+    });
+    true
+}
