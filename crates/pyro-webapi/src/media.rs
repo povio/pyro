@@ -59,7 +59,8 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    lazy_globals!(def, MODULE, "TimeRanges", "MediaError", "TextTrackList", "VideoPlaybackQuality");
+    crate::text_tracks::define_globals(def);
+    lazy_globals!(def, MODULE, "TimeRanges", "MediaError", "VideoPlaybackQuality");
 }
 
 const NETWORK_EMPTY: u8 = 0;
@@ -1423,15 +1424,10 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         });
         time_ranges(s, n, &ranges)
     });
-    def.getter("textTracks", |s, n| {
-        let wrapper = node_value(s, n.page(), Some(n.id))?;
-        let wrapper = wrapper.as_object().ok_or(JsError::ContextDestroyed)?;
-        if let Some(list) = s.get_hidden(wrapper, "__lpTextTracks")? {
-            return Ok(list);
-        }
-        let list = MODULE.helper(s, n.page(), "textTrackList", &[])?;
-        s.set_hidden(wrapper, "__lpTextTracks", list)?;
-        Ok(list)
+    def.getter("textTracks", |s, n| crate::text_tracks::element_helper(s, n, "syncMedia", &[]));
+    def.method("addTextTrack", 1, |s, n, a| {
+        a.require(1, "addTextTrack")?;
+        crate::text_tracks::element_helper(s, n, "addTextTrack", &[a.get(0), a.get(1), a.get(2)])
     });
     def.accessor(
         "currentTime",

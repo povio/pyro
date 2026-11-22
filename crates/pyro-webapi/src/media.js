@@ -1,6 +1,6 @@
-// TimeRanges, MediaError, TextTrackList and VideoPlaybackQuality for one
+// TimeRanges, MediaError and VideoPlaybackQuality for one
 // realm, made on first use (media.rs). TimeRanges hold what media.rs
-// computed; no text track is ever added.
+// computed.
 (function () {
   'use strict';
   const secret = Symbol('pyro');
@@ -9,11 +9,6 @@
   const defineProperty = Object.defineProperty;
   const getOwnPropertyNames = Object.getOwnPropertyNames;
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-  const EventTargetC = EventTarget;
-  const addListener = EventTargetC.prototype.addEventListener;
-  const removeListener = EventTargetC.prototype.removeEventListener;
-  const apply = Reflect.apply;
-
   function illegal() { return new TypeErrorC('Illegal constructor'); }
   function webidl(C, tag) {
     for (const name of getOwnPropertyNames(C.prototype)) {
@@ -71,43 +66,6 @@
     }
   }
 
-  // No track is ever added: an empty list whose event handlers work.
-  const handlers = new WeakMap();
-  class TextTrackList extends EventTargetC {
-    constructor(token) {
-      if (token !== secret) throw illegal();
-      super();
-      handlers.set(this, { __proto__: null });
-    }
-    get length() { if (!handlers.has(this)) throw new TypeErrorC('Illegal invocation'); return 0; }
-    getTrackById(id) { if (!handlers.has(this)) throw new TypeErrorC('Illegal invocation'); String(id); return null; }
-  }
-  for (const type of ['change', 'addtrack', 'removetrack']) {
-    defineProperty(TextTrackList.prototype, 'on' + type, {
-      get() {
-        const h = handlers.get(this);
-        if (!h) throw new TypeErrorC('Illegal invocation');
-        return h[type] ? h[type].value : null;
-      },
-      set(value) {
-        const h = handlers.get(this);
-        if (!h) throw new TypeErrorC('Illegal invocation');
-        if (h[type]) apply(removeListener, this, [type, h[type].listener]);
-        h[type] = null;
-        if (typeof value === 'function' || (value !== null && typeof value === 'object')) {
-          const listener = function (event) {
-            return typeof value === 'function' ? apply(value, this, [event]) : undefined;
-          };
-          h[type] = { value, listener };
-          apply(addListener, this, [type, listener]);
-        }
-      },
-      enumerable: true,
-      configurable: true,
-    });
-  }
-  webidl(TextTrackList, 'TextTrackList');
-
   // HTMLVideoElement.getVideoPlaybackQuality(): nothing is ever dropped.
   const qualities = new WeakMap();
   function qualityOf(self) {
@@ -128,7 +86,7 @@
   webidl(VideoPlaybackQuality, 'VideoPlaybackQuality');
 
   return {
-    TimeRanges, MediaError, TextTrackList, VideoPlaybackQuality,
+    TimeRanges, MediaError, VideoPlaybackQuality,
     playbackQuality(creationTime, total) { return new VideoPlaybackQuality(secret, creationTime, total); },
     timeRanges(flat) {
       const list = [];
@@ -136,6 +94,5 @@
       return new TimeRanges(secret, list);
     },
     mediaError(code, message) { return new MediaError(secret, code, message); },
-    textTrackList() { return new TextTrackList(secret); },
   };
 })

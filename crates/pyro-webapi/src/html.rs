@@ -3638,6 +3638,11 @@ simple_class!(HtmlParamElement, "HTMLParamElement", HtmlElement, |def| {
     reflect_str!(def, "valueType", "valuetype");
 });
 simple_class!(HtmlTrackElement, "HTMLTrackElement", HtmlElement, |def| {
+    def.getter("track", |s, n| crate::text_tracks::element_helper(s, n, "elementTrack", &[]));
+    def.getter("readyState", |s, n| Ok(s.number(f64::from(crate::media::track_ready_state(n.page(), n.id)))));
+    for (name, value) in [("NONE", 0.), ("LOADING", 1.), ("LOADED", 2.), ("ERROR", 3.)] {
+        def.constant(name, value);
+    }
     reflect_enum!(def, "kind", "kind", TRACK_KIND);
     reflect_url!(def, "src", "src");
     reflect_str!(def, "srclang", "srclang");
