@@ -2,10 +2,10 @@
  "chrome": "158.0.8127.37",
  "counts": {
   "chrome": {
-   "observedNames": 439598,
-   "pages": 7459,
-   "passingNames": 425111,
-   "strictPages": 5995
+   "observedNames": 675321,
+   "pages": 11272,
+   "passingNames": 654852,
+   "strictPages": 9082
   },
   "chromeByArea:FileAPI": {
    "observedNames": 607,
@@ -14,44 +14,44 @@
    "strictPages": 44
   },
   "chromeByArea:IndexedDB": {
-   "observedNames": 1123,
-   "pages": 171,
-   "passingNames": 1122,
-   "strictPages": 170
+   "observedNames": 2437,
+   "pages": 308,
+   "passingNames": 2436,
+   "strictPages": 307
   },
   "chromeByArea:WebCryptoAPI": {
-   "observedNames": 17564,
-   "pages": 77,
-   "passingNames": 14825,
-   "strictPages": 42
+   "observedNames": 27554,
+   "pages": 123,
+   "passingNames": 21236,
+   "strictPages": 65
   },
   "chromeByArea:accelerometer": {
-   "observedNames": 4,
-   "pages": 2,
-   "passingNames": 3,
-   "strictPages": 1
+   "observedNames": 42,
+   "pages": 3,
+   "passingNames": 41,
+   "strictPages": 2
   },
   "chromeByArea:accname": {
-   "observedNames": 8,
-   "pages": 1,
-   "passingNames": 7,
-   "strictPages": 0
+   "observedNames": 46,
+   "pages": 5,
+   "passingNames": 33,
+   "strictPages": 1
   },
   "chromeByArea:ai": {
-   "observedNames": 34,
-   "pages": 40,
-   "passingNames": 5,
+   "observedNames": 48,
+   "pages": 63,
+   "passingNames": 6,
    "strictPages": 1
   },
   "chromeByArea:ambient-light": {
-   "observedNames": 15,
-   "pages": 2,
+   "observedNames": 19,
+   "pages": 4,
    "passingNames": 2,
    "strictPages": 0
   },
   "chromeByArea:animation-worklet": {
-   "observedNames": 50,
-   "pages": 12,
+   "observedNames": 53,
+   "pages": 16,
    "passingNames": 18,
    "strictPages": 0
   },
@@ -61,17 +61,23 @@
    "passingNames": 0,
    "strictPages": 0
   },
+  "chromeByArea:audio-session": {
+   "observedNames": 4,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
   "chromeByArea:background-fetch": {
-   "observedNames": 69,
-   "pages": 3,
-   "passingNames": 69,
-   "strictPages": 3
+   "observedNames": 83,
+   "pages": 6,
+   "passingNames": 82,
+   "strictPages": 5
   },
   "chromeByArea:background-sync": {
-   "observedNames": 17,
-   "pages": 1,
-   "passingNames": 17,
-   "strictPages": 1
+   "observedNames": 34,
+   "pages": 2,
+   "passingNames": 34,
+   "strictPages": 2
   },
   "chromeByArea:badging": {
    "observedNames": 6,
@@ -80,16 +86,16 @@
    "strictPages": 0
   },
   "chromeByArea:battery-status": {
-   "observedNames": 7,
-   "pages": 4,
-   "passingNames": 4,
+   "observedNames": 9,
+   "pages": 5,
+   "passingNames": 5,
    "strictPages": 1
   },
   "chromeByArea:beacon": {
-   "observedNames": 41,
-   "pages": 5,
-   "passingNames": 41,
-   "strictPages": 5
+   "observedNames": 46,
+   "pages": 8,
+   "passingNames": 45,
+   "strictPages": 7
   },
   "chromeByArea:bluetooth": {
    "observedNames": 209,
@@ -104,52 +110,52 @@
    "strictPages": 0
   },
   "chromeByArea:clear-site-data": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 1,
-   "strictPages": 1
-  },
-  "chromeByArea:client-hints": {
-   "observedNames": 36,
-   "pages": 26,
-   "passingNames": 36,
-   "strictPages": 24
-  },
-  "chromeByArea:clipboard-apis": {
-   "observedNames": 22,
-   "pages": 13,
-   "passingNames": 7,
-   "strictPages": 6
-  },
-  "chromeByArea:close-watcher": {
-   "observedNames": 8,
-   "pages": 8,
-   "passingNames": 5,
-   "strictPages": 5
-  },
-  "chromeByArea:compat": {
-   "observedNames": 52,
-   "pages": 2,
-   "passingNames": 52,
+   "observedNames": 14,
+   "pages": 4,
+   "passingNames": 10,
    "strictPages": 2
   },
+  "chromeByArea:client-hints": {
+   "observedNames": 66,
+   "pages": 46,
+   "passingNames": 65,
+   "strictPages": 43
+  },
+  "chromeByArea:clipboard-apis": {
+   "observedNames": 45,
+   "pages": 21,
+   "passingNames": 22,
+   "strictPages": 9
+  },
+  "chromeByArea:close-watcher": {
+   "observedNames": 15,
+   "pages": 15,
+   "passingNames": 10,
+   "strictPages": 10
+  },
+  "chromeByArea:compat": {
+   "observedNames": 53,
+   "pages": 3,
+   "passingNames": 53,
+   "strictPages": 3
+  },
   "chromeByArea:compression": {
-   "observedNames": 689,
-   "pages": 38,
-   "passingNames": 529,
+   "observedNames": 719,
+   "pages": 40,
+   "passingNames": 555,
    "strictPages": 7
   },
   "chromeByArea:compute-pressure": {
-   "observedNames": 5,
-   "pages": 4,
-   "passingNames": 3,
-   "strictPages": 2
+   "observedNames": 38,
+   "pages": 6,
+   "passingNames": 36,
+   "strictPages": 4
   },
   "chromeByArea:connection-allowlist": {
-   "observedNames": 94,
-   "pages": 22,
-   "passingNames": 88,
-   "strictPages": 15
+   "observedNames": 129,
+   "pages": 32,
+   "passingNames": 119,
+   "strictPages": 24
   },
   "chromeByArea:console": {
    "observedNames": 8,
@@ -158,8 +164,8 @@
    "strictPages": 2
   },
   "chromeByArea:container-timing": {
-   "observedNames": 7,
-   "pages": 7,
+   "observedNames": 9,
+   "pages": 9,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -170,10 +176,10 @@
    "strictPages": 0
   },
   "chromeByArea:content-security-policy": {
-   "observedNames": 816,
-   "pages": 157,
-   "passingNames": 687,
-   "strictPages": 127
+   "observedNames": 1447,
+   "pages": 264,
+   "passingNames": 1227,
+   "strictPages": 213
   },
   "chromeByArea:contenteditable": {
    "observedNames": 4,
@@ -182,22 +188,22 @@
    "strictPages": 0
   },
   "chromeByArea:cookies": {
-   "observedNames": 250,
-   "pages": 22,
-   "passingNames": 236,
-   "strictPages": 15
+   "observedNames": 352,
+   "pages": 35,
+   "passingNames": 337,
+   "strictPages": 27
   },
   "chromeByArea:cookiestore": {
-   "observedNames": 45,
-   "pages": 13,
-   "passingNames": 43,
-   "strictPages": 11
+   "observedNames": 64,
+   "pages": 21,
+   "passingNames": 62,
+   "strictPages": 19
   },
   "chromeByArea:cors": {
-   "observedNames": 241,
-   "pages": 11,
-   "passingNames": 240,
-   "strictPages": 10
+   "observedNames": 312,
+   "pages": 15,
+   "passingNames": 310,
+   "strictPages": 13
   },
   "chromeByArea:cpu-performance": {
    "observedNames": 1,
@@ -206,21 +212,21 @@
    "strictPages": 1
   },
   "chromeByArea:credential-management": {
-   "observedNames": 20,
-   "pages": 5,
-   "passingNames": 9,
-   "strictPages": 1
+   "observedNames": 23,
+   "pages": 6,
+   "passingNames": 12,
+   "strictPages": 2
   },
   "chromeByArea:custom-elements": {
-   "observedNames": 388,
-   "pages": 43,
-   "passingNames": 305,
-   "strictPages": 35
+   "observedNames": 717,
+   "pages": 64,
+   "passingNames": 592,
+   "strictPages": 52
   },
   "chromeByArea:device-bound-session-credentials": {
-   "observedNames": 10,
-   "pages": 7,
-   "passingNames": 0,
+   "observedNames": 24,
+   "pages": 12,
+   "passingNames": 1,
    "strictPages": 0
   },
   "chromeByArea:device-memory": {
@@ -236,22 +242,22 @@
    "strictPages": 0
   },
   "chromeByArea:digital-credentials": {
-   "observedNames": 22,
-   "pages": 4,
-   "passingNames": 14,
-   "strictPages": 2
+   "observedNames": 48,
+   "pages": 10,
+   "passingNames": 31,
+   "strictPages": 7
   },
   "chromeByArea:direct-sockets": {
-   "observedNames": 1,
-   "pages": 1,
+   "observedNames": 5,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
   "chromeByArea:document-picture-in-picture": {
-   "observedNames": 16,
-   "pages": 7,
-   "passingNames": 5,
-   "strictPages": 3
+   "observedNames": 18,
+   "pages": 9,
+   "passingNames": 7,
+   "strictPages": 5
   },
   "chromeByArea:document-policy": {
    "observedNames": 15,
@@ -260,10 +266,10 @@
    "strictPages": 0
   },
   "chromeByArea:dom": {
-   "observedNames": 20480,
-   "pages": 213,
-   "passingNames": 20437,
-   "strictPages": 203
+   "observedNames": 22958,
+   "pages": 313,
+   "passingNames": 22865,
+   "strictPages": 292
   },
   "chromeByArea:domparsing": {
    "observedNames": 960,
@@ -272,10 +278,10 @@
    "strictPages": 36
   },
   "chromeByArea:domxpath": {
-   "observedNames": 17,
-   "pages": 5,
-   "passingNames": 17,
-   "strictPages": 5
+   "observedNames": 36,
+   "pages": 10,
+   "passingNames": 36,
+   "strictPages": 10
   },
   "chromeByArea:dpub-aam": {
    "observedNames": 39,
@@ -290,70 +296,70 @@
    "strictPages": 196
   },
   "chromeByArea:element-timing": {
-   "observedNames": 14,
-   "pages": 11,
-   "passingNames": 10,
-   "strictPages": 7
-  },
-  "chromeByArea:encoding": {
-   "observedNames": 259317,
-   "pages": 315,
-   "passingNames": 259079,
-   "strictPages": 305
-  },
-  "chromeByArea:encoding-detection": {
-   "observedNames": 18,
+   "observedNames": 21,
    "pages": 18,
-   "passingNames": 15,
-   "strictPages": 15
-  },
-  "chromeByArea:encrypted-media": {
-   "observedNames": 38,
-   "pages": 23,
-   "passingNames": 26,
+   "passingNames": 17,
    "strictPages": 14
   },
+  "chromeByArea:encoding": {
+   "observedNames": 437985,
+   "pages": 509,
+   "passingNames": 437747,
+   "strictPages": 499
+  },
+  "chromeByArea:encoding-detection": {
+   "observedNames": 31,
+   "pages": 31,
+   "passingNames": 26,
+   "strictPages": 26
+  },
+  "chromeByArea:encrypted-media": {
+   "observedNames": 66,
+   "pages": 41,
+   "passingNames": 50,
+   "strictPages": 28
+  },
   "chromeByArea:entries-api": {
-   "observedNames": 3,
-   "pages": 1,
+   "observedNames": 5,
+   "pages": 2,
    "passingNames": 1,
    "strictPages": 0
   },
   "chromeByArea:event-timing": {
-   "observedNames": 30,
-   "pages": 17,
-   "passingNames": 30,
-   "strictPages": 17
-  },
-  "chromeByArea:eventsource": {
-   "observedNames": 37,
+   "observedNames": 39,
    "pages": 26,
-   "passingNames": 37,
+   "passingNames": 39,
    "strictPages": 26
   },
+  "chromeByArea:eventsource": {
+   "observedNames": 70,
+   "pages": 50,
+   "passingNames": 67,
+   "strictPages": 47
+  },
   "chromeByArea:fenced-frame": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 5,
+   "pages": 3,
+   "passingNames": 4,
+   "strictPages": 2
   },
   "chromeByArea:fetch": {
-   "observedNames": 2679,
-   "pages": 207,
-   "passingNames": 2403,
-   "strictPages": 161
+   "observedNames": 4301,
+   "pages": 331,
+   "passingNames": 3857,
+   "strictPages": 250
   },
   "chromeByArea:file-system-access": {
-   "observedNames": 24,
-   "pages": 4,
-   "passingNames": 24,
-   "strictPages": 4
+   "observedNames": 73,
+   "pages": 7,
+   "passingNames": 60,
+   "strictPages": 6
   },
   "chromeByArea:focus": {
-   "observedNames": 21,
-   "pages": 10,
-   "passingNames": 16,
-   "strictPages": 8
+   "observedNames": 24,
+   "pages": 13,
+   "passingNames": 19,
+   "strictPages": 11
   },
   "chromeByArea:font-access": {
    "observedNames": 21,
@@ -368,22 +374,34 @@
    "strictPages": 0
   },
   "chromeByArea:fs": {
-   "observedNames": 226,
-   "pages": 22,
-   "passingNames": 201,
-   "strictPages": 18
+   "observedNames": 366,
+   "pages": 33,
+   "passingNames": 319,
+   "strictPages": 27
   },
   "chromeByArea:fullscreen": {
-   "observedNames": 23,
-   "pages": 17,
-   "passingNames": 20,
-   "strictPages": 14
+   "observedNames": 77,
+   "pages": 29,
+   "passingNames": 73,
+   "strictPages": 25
+  },
+  "chromeByArea:gamepad": {
+   "observedNames": 88,
+   "pages": 2,
+   "passingNames": 83,
+   "strictPages": 0
+  },
+  "chromeByArea:generic-sensor": {
+   "observedNames": 36,
+   "pages": 1,
+   "passingNames": 36,
+   "strictPages": 1
   },
   "chromeByArea:geolocation": {
-   "observedNames": 10,
-   "pages": 3,
-   "passingNames": 10,
-   "strictPages": 3
+   "observedNames": 17,
+   "pages": 6,
+   "passingNames": 17,
+   "strictPages": 6
   },
   "chromeByArea:geolocation-sensor": {
    "observedNames": 1,
@@ -391,149 +409,173 @@
    "passingNames": 1,
    "strictPages": 1
   },
-  "chromeByArea:gyroscope": {
+  "chromeByArea:gpc": {
    "observedNames": 1,
    "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
+  "chromeByArea:gyroscope": {
+   "observedNames": 9,
+   "pages": 4,
+   "passingNames": 8,
+   "strictPages": 3
+  },
   "chromeByArea:hr-time": {
-   "observedNames": 43,
-   "pages": 6,
-   "passingNames": 43,
-   "strictPages": 6
+   "observedNames": 45,
+   "pages": 7,
+   "passingNames": 45,
+   "strictPages": 7
   },
   "chromeByArea:html": {
-   "observedNames": 38223,
-   "pages": 2013,
-   "passingNames": 37208,
-   "strictPages": 1764
+   "observedNames": 46773,
+   "pages": 3266,
+   "passingNames": 45149,
+   "strictPages": 2862
   },
   "chromeByArea:html-aam": {
-   "observedNames": 262,
-   "pages": 7,
-   "passingNames": 74,
-   "strictPages": 1
+   "observedNames": 303,
+   "pages": 13,
+   "passingNames": 94,
+   "strictPages": 2
   },
   "chromeByArea:https-upgrades": {
-   "observedNames": 1,
-   "pages": 1,
+   "observedNames": 2,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "chromeByArea:idle-detection": {
-   "observedNames": 3,
-   "pages": 1,
+   "observedNames": 13,
+   "pages": 2,
    "passingNames": 1,
    "strictPages": 0
   },
   "chromeByArea:imagebitmap-renderingcontext": {
-   "observedNames": 6,
-   "pages": 4,
-   "passingNames": 6,
-   "strictPages": 4
+   "observedNames": 9,
+   "pages": 7,
+   "passingNames": 9,
+   "strictPages": 7
   },
   "chromeByArea:import-maps": {
-   "observedNames": 83,
-   "pages": 12,
-   "passingNames": 83,
-   "strictPages": 12
+   "observedNames": 154,
+   "pages": 19,
+   "passingNames": 154,
+   "strictPages": 19
   },
   "chromeByArea:inert": {
-   "observedNames": 19,
-   "pages": 9,
+   "observedNames": 50,
+   "pages": 12,
+   "passingNames": 49,
+   "strictPages": 11
+  },
+  "chromeByArea:infrastructure": {
+   "observedNames": 66,
+   "pages": 38,
+   "passingNames": 47,
+   "strictPages": 18
+  },
+  "chromeByArea:input-events": {
+   "observedNames": 1960,
+   "pages": 14,
+   "passingNames": 1447,
+   "strictPages": 6
+  },
+  "chromeByArea:installedapp": {
+   "observedNames": 16,
+   "pages": 1,
+   "passingNames": 16,
+   "strictPages": 1
+  },
+  "chromeByArea:intersection-observer": {
+   "observedNames": 215,
+   "pages": 60,
+   "passingNames": 208,
+   "strictPages": 53
+  },
+  "chromeByArea:is-input-pending": {
+   "observedNames": 4,
+   "pages": 3,
+   "passingNames": 3,
+   "strictPages": 2
+  },
+  "chromeByArea:jpegxl": {
+   "observedNames": 11,
+   "pages": 6,
+   "passingNames": 11,
+   "strictPages": 6
+  },
+  "chromeByArea:js": {
+   "observedNames": 83,
+   "pages": 11,
+   "passingNames": 80,
+   "strictPages": 8
+  },
+  "chromeByArea:js-self-profiling": {
+   "observedNames": 7,
+   "pages": 6,
+   "passingNames": 2,
+   "strictPages": 2
+  },
+  "chromeByArea:keyboard-lock": {
+   "observedNames": 1,
+   "pages": 1,
+   "passingNames": 1,
+   "strictPages": 1
+  },
+  "chromeByArea:keyboard-map": {
+   "observedNames": 3,
+   "pages": 3,
+   "passingNames": 3,
+   "strictPages": 3
+  },
+  "chromeByArea:largest-contentful-paint": {
+   "observedNames": 27,
+   "pages": 25,
+   "passingNames": 27,
+   "strictPages": 25
+  },
+  "chromeByArea:layout-instability": {
+   "observedNames": 41,
+   "pages": 40,
+   "passingNames": 39,
+   "strictPages": 38
+  },
+  "chromeByArea:loading": {
+   "observedNames": 28,
+   "pages": 27,
+   "passingNames": 28,
+   "strictPages": 27
+  },
+  "chromeByArea:long-animation-frame": {
+   "observedNames": 23,
+   "pages": 11,
    "passingNames": 18,
    "strictPages": 8
   },
-  "chromeByArea:infrastructure": {
-   "observedNames": 48,
-   "pages": 27,
-   "passingNames": 34,
-   "strictPages": 13
+  "chromeByArea:longtask-timing": {
+   "observedNames": 10,
+   "pages": 10,
+   "passingNames": 8,
+   "strictPages": 8
   },
-  "chromeByArea:input-events": {
-   "observedNames": 1432,
-   "pages": 9,
-   "passingNames": 997,
-   "strictPages": 3
-  },
-  "chromeByArea:intersection-observer": {
-   "observedNames": 130,
-   "pages": 32,
-   "passingNames": 128,
-   "strictPages": 30
-  },
-  "chromeByArea:is-input-pending": {
-   "observedNames": 1,
+  "chromeByArea:magnetometer": {
+   "observedNames": 6,
    "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
-  "chromeByArea:jpegxl": {
-   "observedNames": 3,
-   "pages": 2,
-   "passingNames": 3,
-   "strictPages": 2
-  },
-  "chromeByArea:js": {
-   "observedNames": 55,
-   "pages": 5,
-   "passingNames": 53,
-   "strictPages": 3
-  },
-  "chromeByArea:js-self-profiling": {
-   "observedNames": 4,
-   "pages": 4,
-   "passingNames": 2,
-   "strictPages": 2
-  },
-  "chromeByArea:keyboard-map": {
-   "observedNames": 2,
-   "pages": 2,
-   "passingNames": 2,
-   "strictPages": 2
-  },
-  "chromeByArea:largest-contentful-paint": {
-   "observedNames": 18,
-   "pages": 16,
-   "passingNames": 18,
-   "strictPages": 16
-  },
-  "chromeByArea:layout-instability": {
-   "observedNames": 18,
-   "pages": 18,
-   "passingNames": 17,
-   "strictPages": 17
-  },
-  "chromeByArea:loading": {
-   "observedNames": 18,
-   "pages": 17,
-   "passingNames": 18,
-   "strictPages": 17
-  },
-  "chromeByArea:long-animation-frame": {
-   "observedNames": 13,
-   "pages": 7,
-   "passingNames": 10,
-   "strictPages": 6
-  },
-  "chromeByArea:longtask-timing": {
-   "observedNames": 8,
-   "pages": 8,
-   "passingNames": 7,
-   "strictPages": 7
-  },
   "chromeByArea:managed": {
-   "observedNames": 3,
-   "pages": 1,
+   "observedNames": 9,
+   "pages": 2,
    "passingNames": 3,
    "strictPages": 1
   },
   "chromeByArea:mathml": {
-   "observedNames": 919,
-   "pages": 54,
-   "passingNames": 884,
-   "strictPages": 43
+   "observedNames": 1599,
+   "pages": 78,
+   "passingNames": 1540,
+   "strictPages": 62
   },
   "chromeByArea:measure-memory": {
    "observedNames": 4,
@@ -542,27 +584,27 @@
    "strictPages": 4
   },
   "chromeByArea:media-capabilities": {
-   "observedNames": 165,
-   "pages": 6,
-   "passingNames": 147,
-   "strictPages": 2
+   "observedNames": 186,
+   "pages": 7,
+   "passingNames": 168,
+   "strictPages": 3
   },
   "chromeByArea:media-source": {
-   "observedNames": 209,
-   "pages": 21,
-   "passingNames": 171,
-   "strictPages": 16
+   "observedNames": 280,
+   "pages": 37,
+   "passingNames": 220,
+   "strictPages": 27
   },
   "chromeByArea:mediacapture-extensions": {
-   "observedNames": 16,
-   "pages": 3,
+   "observedNames": 17,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
   "chromeByArea:mediacapture-fromelement": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 1,
+   "observedNames": 12,
+   "pages": 3,
+   "passingNames": 3,
    "strictPages": 1
   },
   "chromeByArea:mediacapture-handle": {
@@ -572,10 +614,10 @@
    "strictPages": 1
   },
   "chromeByArea:mediacapture-image": {
-   "observedNames": 38,
-   "pages": 5,
-   "passingNames": 35,
-   "strictPages": 3
+   "observedNames": 41,
+   "pages": 6,
+   "passingNames": 38,
+   "strictPages": 4
   },
   "chromeByArea:mediacapture-insertable-streams": {
    "observedNames": 4,
@@ -584,16 +626,28 @@
    "strictPages": 0
   },
   "chromeByArea:mediacapture-record": {
-   "observedNames": 99,
-   "pages": 19,
-   "passingNames": 83,
-   "strictPages": 4
+   "observedNames": 381,
+   "pages": 38,
+   "passingNames": 325,
+   "strictPages": 14
   },
   "chromeByArea:mediacapture-streams": {
-   "observedNames": 37,
-   "pages": 13,
-   "passingNames": 2,
-   "strictPages": 1
+   "observedNames": 49,
+   "pages": 23,
+   "passingNames": 4,
+   "strictPages": 2
+  },
+  "chromeByArea:mediasession": {
+   "observedNames": 21,
+   "pages": 2,
+   "passingNames": 21,
+   "strictPages": 2
+  },
+  "chromeByArea:merchant-validation": {
+   "observedNames": 1,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
   },
   "chromeByArea:mimesniff": {
    "observedNames": 3842,
@@ -602,76 +656,82 @@
    "strictPages": 1
   },
   "chromeByArea:mixed-content": {
-   "observedNames": 607,
-   "pages": 101,
-   "passingNames": 589,
-   "strictPages": 89
+   "observedNames": 878,
+   "pages": 148,
+   "passingNames": 851,
+   "strictPages": 131
   },
   "chromeByArea:mst-content-hint": {
-   "observedNames": 6,
-   "pages": 1,
-   "passingNames": 6,
-   "strictPages": 1
+   "observedNames": 7,
+   "pages": 2,
+   "passingNames": 7,
+   "strictPages": 2
+  },
+  "chromeByArea:nav-tracking-mitigations": {
+   "observedNames": 2,
+   "pages": 2,
+   "passingNames": 2,
+   "strictPages": 2
   },
   "chromeByArea:navigation-api": {
-   "observedNames": 133,
-   "pages": 114,
-   "passingNames": 128,
-   "strictPages": 109
+   "observedNames": 220,
+   "pages": 182,
+   "passingNames": 212,
+   "strictPages": 175
   },
   "chromeByArea:navigation-timing": {
-   "observedNames": 207,
-   "pages": 12,
-   "passingNames": 206,
-   "strictPages": 11
+   "observedNames": 266,
+   "pages": 30,
+   "passingNames": 264,
+   "strictPages": 28
   },
   "chromeByArea:network-error-logging": {
+   "observedNames": 4,
+   "pages": 4,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "chromeByArea:notifications": {
+   "observedNames": 116,
+   "pages": 6,
+   "passingNames": 79,
+   "strictPages": 1
+  },
+  "chromeByArea:old-tests": {
+   "observedNames": 9,
+   "pages": 9,
+   "passingNames": 9,
+   "strictPages": 9
+  },
+  "chromeByArea:orientation-event": {
+   "observedNames": 12,
+   "pages": 7,
+   "passingNames": 3,
+   "strictPages": 1
+  },
+  "chromeByArea:orientation-sensor": {
+   "observedNames": 11,
+   "pages": 4,
+   "passingNames": 11,
+   "strictPages": 4
+  },
+  "chromeByArea:page-lifecycle": {
    "observedNames": 2,
    "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
-  "chromeByArea:notifications": {
-   "observedNames": 104,
-   "pages": 4,
-   "passingNames": 78,
-   "strictPages": 1
-  },
-  "chromeByArea:old-tests": {
-   "observedNames": 4,
-   "pages": 4,
-   "passingNames": 4,
-   "strictPages": 4
-  },
-  "chromeByArea:orientation-event": {
-   "observedNames": 9,
-   "pages": 5,
-   "passingNames": 2,
-   "strictPages": 0
-  },
-  "chromeByArea:orientation-sensor": {
-   "observedNames": 8,
+  "chromeByArea:page-visibility": {
+   "observedNames": 6,
    "pages": 3,
-   "passingNames": 8,
+   "passingNames": 6,
    "strictPages": 3
   },
-  "chromeByArea:page-lifecycle": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "chromeByArea:page-visibility": {
-   "observedNames": 5,
-   "pages": 2,
-   "passingNames": 5,
-   "strictPages": 2
-  },
   "chromeByArea:paint-timing": {
-   "observedNames": 9,
-   "pages": 9,
-   "passingNames": 9,
-   "strictPages": 9
+   "observedNames": 35,
+   "pages": 18,
+   "passingNames": 34,
+   "strictPages": 17
   },
   "chromeByArea:payment-method-basic-card": {
    "observedNames": 0,
@@ -680,34 +740,34 @@
    "strictPages": 0
   },
   "chromeByArea:payment-method-manifest": {
-   "observedNames": 8,
-   "pages": 3,
-   "passingNames": 8,
-   "strictPages": 3
+   "observedNames": 10,
+   "pages": 4,
+   "passingNames": 10,
+   "strictPages": 4
   },
   "chromeByArea:payment-request": {
-   "observedNames": 9,
-   "pages": 4,
-   "passingNames": 8,
-   "strictPages": 3
+   "observedNames": 14,
+   "pages": 6,
+   "passingNames": 13,
+   "strictPages": 5
   },
   "chromeByArea:performance-timeline": {
-   "observedNames": 21,
-   "pages": 17,
-   "passingNames": 17,
-   "strictPages": 13
+   "observedNames": 155,
+   "pages": 25,
+   "passingNames": 149,
+   "strictPages": 19
   },
   "chromeByArea:permissions": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 69,
+   "pages": 4,
+   "passingNames": 61,
+   "strictPages": 1
   },
   "chromeByArea:permissions-policy": {
-   "observedNames": 195,
-   "pages": 26,
-   "passingNames": 17,
-   "strictPages": 10
+   "observedNames": 223,
+   "pages": 43,
+   "passingNames": 37,
+   "strictPages": 19
   },
   "chromeByArea:permissions-request": {
    "observedNames": 7,
@@ -716,10 +776,10 @@
    "strictPages": 0
   },
   "chromeByArea:picture-in-picture": {
-   "observedNames": 74,
-   "pages": 4,
-   "passingNames": 74,
-   "strictPages": 4
+   "observedNames": 85,
+   "pages": 7,
+   "passingNames": 85,
+   "strictPages": 7
   },
   "chromeByArea:png": {
    "observedNames": 2,
@@ -728,28 +788,28 @@
    "strictPages": 2
   },
   "chromeByArea:pointerevents": {
-   "observedNames": 284,
-   "pages": 61,
-   "passingNames": 256,
-   "strictPages": 41
+   "observedNames": 432,
+   "pages": 90,
+   "passingNames": 378,
+   "strictPages": 57
   },
   "chromeByArea:pointerlock": {
-   "observedNames": 3,
-   "pages": 2,
-   "passingNames": 1,
-   "strictPages": 1
+   "observedNames": 6,
+   "pages": 5,
+   "passingNames": 4,
+   "strictPages": 4
   },
   "chromeByArea:preload": {
-   "observedNames": 110,
-   "pages": 17,
-   "passingNames": 101,
-   "strictPages": 13
+   "observedNames": 137,
+   "pages": 29,
+   "passingNames": 124,
+   "strictPages": 24
   },
   "chromeByArea:presentation-api": {
-   "observedNames": 3,
-   "pages": 3,
-   "passingNames": 3,
-   "strictPages": 3
+   "observedNames": 106,
+   "pages": 4,
+   "passingNames": 106,
+   "strictPages": 4
   },
   "chromeByArea:private-click-measurement": {
    "observedNames": 17,
@@ -758,124 +818,130 @@
    "strictPages": 0
   },
   "chromeByArea:push-api": {
-   "observedNames": 11,
-   "pages": 3,
-   "passingNames": 2,
-   "strictPages": 1
-  },
-  "chromeByArea:quirks": {
-   "observedNames": 3055,
-   "pages": 8,
-   "passingNames": 3052,
-   "strictPages": 7
-  },
-  "chromeByArea:referrer-policy": {
-   "observedNames": 2321,
-   "pages": 410,
-   "passingNames": 2317,
-   "strictPages": 404
-  },
-  "chromeByArea:remote-playback": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 1,
-   "strictPages": 1
-  },
-  "chromeByArea:reporting": {
-   "observedNames": 12,
+   "observedNames": 21,
    "pages": 6,
-   "passingNames": 7,
+   "passingNames": 6,
    "strictPages": 3
   },
+  "chromeByArea:quirks": {
+   "observedNames": 3059,
+   "pages": 9,
+   "passingNames": 3056,
+   "strictPages": 8
+  },
+  "chromeByArea:referrer-policy": {
+   "observedNames": 3179,
+   "pages": 567,
+   "passingNames": 3114,
+   "strictPages": 537
+  },
+  "chromeByArea:remote-playback": {
+   "observedNames": 2,
+   "pages": 2,
+   "passingNames": 2,
+   "strictPages": 2
+  },
+  "chromeByArea:reporting": {
+   "observedNames": 28,
+   "pages": 11,
+   "passingNames": 19,
+   "strictPages": 5
+  },
   "chromeByArea:requestidlecallback": {
-   "observedNames": 5,
-   "pages": 4,
-   "passingNames": 5,
-   "strictPages": 4
+   "observedNames": 7,
+   "pages": 6,
+   "passingNames": 6,
+   "strictPages": 5
   },
   "chromeByArea:resize-observer": {
-   "observedNames": 23,
-   "pages": 9,
-   "passingNames": 23,
-   "strictPages": 9
+   "observedNames": 81,
+   "pages": 16,
+   "passingNames": 80,
+   "strictPages": 15
   },
   "chromeByArea:resource-timing": {
-   "observedNames": 371,
-   "pages": 43,
-   "passingNames": 341,
-   "strictPages": 34
+   "observedNames": 486,
+   "pages": 63,
+   "passingNames": 439,
+   "strictPages": 46
   },
   "chromeByArea:sanitizer-api": {
-   "observedNames": 271,
-   "pages": 6,
-   "passingNames": 268,
-   "strictPages": 4
+   "observedNames": 307,
+   "pages": 9,
+   "passingNames": 304,
+   "strictPages": 7
   },
   "chromeByArea:savedata": {
-   "observedNames": 5,
-   "pages": 1,
-   "passingNames": 5,
-   "strictPages": 1
+   "observedNames": 10,
+   "pages": 2,
+   "passingNames": 10,
+   "strictPages": 2
   },
   "chromeByArea:scheduler": {
-   "observedNames": 84,
-   "pages": 22,
-   "passingNames": 84,
-   "strictPages": 22
+   "observedNames": 126,
+   "pages": 34,
+   "passingNames": 126,
+   "strictPages": 34
   },
   "chromeByArea:screen-capture": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 1,
-   "strictPages": 1
+   "observedNames": 32,
+   "pages": 5,
+   "passingNames": 24,
+   "strictPages": 2
   },
   "chromeByArea:screen-orientation": {
-   "observedNames": 11,
-   "pages": 5,
+   "observedNames": 15,
+   "pages": 6,
    "passingNames": 2,
    "strictPages": 0
   },
   "chromeByArea:screen-wake-lock": {
-   "observedNames": 4,
-   "pages": 2,
-   "passingNames": 4,
-   "strictPages": 2
+   "observedNames": 7,
+   "pages": 4,
+   "passingNames": 7,
+   "strictPages": 4
   },
   "chromeByArea:scroll-animations": {
-   "observedNames": 520,
-   "pages": 43,
-   "passingNames": 503,
-   "strictPages": 37
+   "observedNames": 721,
+   "pages": 70,
+   "passingNames": 701,
+   "strictPages": 61
   },
-  "chromeByArea:scroll-to-text-fragment": {
-   "observedNames": 67,
-   "pages": 10,
-   "passingNames": 64,
-   "strictPages": 8
-  },
-  "chromeByArea:secure-contexts": {
-   "observedNames": 8,
-   "pages": 2,
-   "passingNames": 8,
-   "strictPages": 2
-  },
-  "chromeByArea:secure-payment-confirmation": {
-   "observedNames": 3,
-   "pages": 2,
+  "chromeByArea:scroll-performance-timing": {
+   "observedNames": 2,
+   "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
-  "chromeByArea:selection": {
-   "observedNames": 3949,
-   "pages": 32,
-   "passingNames": 3934,
-   "strictPages": 28
+  "chromeByArea:scroll-to-text-fragment": {
+   "observedNames": 123,
+   "pages": 14,
+   "passingNames": 77,
+   "strictPages": 11
   },
-  "chromeByArea:serial": {
-   "observedNames": 11,
+  "chromeByArea:secure-contexts": {
+   "observedNames": 13,
    "pages": 3,
    "passingNames": 11,
-   "strictPages": 3
+   "strictPages": 2
+  },
+  "chromeByArea:secure-payment-confirmation": {
+   "observedNames": 14,
+   "pages": 7,
+   "passingNames": 3,
+   "strictPages": 0
+  },
+  "chromeByArea:selection": {
+   "observedNames": 19308,
+   "pages": 52,
+   "passingNames": 19288,
+   "strictPages": 46
+  },
+  "chromeByArea:serial": {
+   "observedNames": 14,
+   "pages": 4,
+   "passingNames": 14,
+   "strictPages": 4
   },
   "chromeByArea:server-timing": {
    "observedNames": 99,
@@ -884,40 +950,40 @@
    "strictPages": 3
   },
   "chromeByArea:service-workers": {
-   "observedNames": 958,
-   "pages": 71,
-   "passingNames": 896,
-   "strictPages": 53
+   "observedNames": 1412,
+   "pages": 125,
+   "passingNames": 1290,
+   "strictPages": 95
   },
   "chromeByArea:shadow-dom": {
-   "observedNames": 3991,
-   "pages": 84,
-   "passingNames": 3970,
-   "strictPages": 65
+   "observedNames": 4065,
+   "pages": 112,
+   "passingNames": 4032,
+   "strictPages": 86
   },
   "chromeByArea:shape-detection": {
-   "observedNames": 72,
-   "pages": 10,
+   "observedNames": 75,
+   "pages": 12,
    "passingNames": 21,
    "strictPages": 0
   },
   "chromeByArea:signed-exchange": {
-   "observedNames": 26,
-   "pages": 13,
+   "observedNames": 32,
+   "pages": 19,
    "passingNames": 3,
    "strictPages": 3
   },
   "chromeByArea:soft-navigation-heuristics": {
-   "observedNames": 30,
-   "pages": 19,
-   "passingNames": 30,
-   "strictPages": 19
+   "observedNames": 42,
+   "pages": 31,
+   "passingNames": 41,
+   "strictPages": 30
   },
   "chromeByArea:speculation-rules": {
-   "observedNames": 100,
-   "pages": 123,
-   "passingNames": 89,
-   "strictPages": 55
+   "observedNames": 164,
+   "pages": 207,
+   "passingNames": 141,
+   "strictPages": 92
   },
   "chromeByArea:speech-api": {
    "observedNames": 5,
@@ -926,34 +992,34 @@
    "strictPages": 3
   },
   "chromeByArea:storage": {
-   "observedNames": 79,
-   "pages": 10,
-   "passingNames": 79,
-   "strictPages": 10
+   "observedNames": 172,
+   "pages": 19,
+   "passingNames": 172,
+   "strictPages": 19
   },
   "chromeByArea:storage-access-api": {
-   "observedNames": 24,
-   "pages": 7,
-   "passingNames": 22,
-   "strictPages": 5
+   "observedNames": 52,
+   "pages": 13,
+   "passingNames": 46,
+   "strictPages": 9
   },
   "chromeByArea:streams": {
-   "observedNames": 1442,
-   "pages": 72,
-   "passingNames": 1394,
-   "strictPages": 65
+   "observedNames": 1922,
+   "pages": 105,
+   "passingNames": 1852,
+   "strictPages": 92
   },
   "chromeByArea:subapps": {
-   "observedNames": 5,
-   "pages": 1,
+   "observedNames": 7,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "chromeByArea:subresource-integrity": {
-   "observedNames": 97,
-   "pages": 8,
-   "passingNames": 93,
-   "strictPages": 7
+   "observedNames": 149,
+   "pages": 12,
+   "passingNames": 145,
+   "strictPages": 11
   },
   "chromeByArea:svg": {
    "observedNames": 2783,
@@ -962,16 +1028,22 @@
    "strictPages": 351
   },
   "chromeByArea:svg-aam": {
-   "observedNames": 29,
-   "pages": 3,
-   "passingNames": 13,
-   "strictPages": 0
+   "observedNames": 38,
+   "pages": 4,
+   "passingNames": 22,
+   "strictPages": 1
+  },
+  "chromeByArea:timing-entrytypes-registry": {
+   "observedNames": 4,
+   "pages": 1,
+   "passingNames": 4,
+   "strictPages": 1
   },
   "chromeByArea:touch-events": {
-   "observedNames": 149,
-   "pages": 4,
-   "passingNames": 107,
-   "strictPages": 1
+   "observedNames": 157,
+   "pages": 5,
+   "passingNames": 115,
+   "strictPages": 2
   },
   "chromeByArea:trust-tokens": {
    "observedNames": 7,
@@ -980,10 +1052,10 @@
    "strictPages": 2
   },
   "chromeByArea:trusted-types": {
-   "observedNames": 493,
-   "pages": 36,
-   "passingNames": 477,
-   "strictPages": 34
+   "observedNames": 765,
+   "pages": 55,
+   "passingNames": 736,
+   "strictPages": 49
   },
   "chromeByArea:ua-client-hints": {
    "observedNames": 8,
@@ -992,22 +1064,22 @@
    "strictPages": 1
   },
   "chromeByArea:uievents": {
-   "observedNames": 44,
-   "pages": 13,
-   "passingNames": 26,
-   "strictPages": 9
-  },
-  "chromeByArea:upgrade-insecure-requests": {
-   "observedNames": 189,
-   "pages": 37,
-   "passingNames": 137,
+   "observedNames": 262,
+   "pages": 31,
+   "passingNames": 237,
    "strictPages": 25
   },
+  "chromeByArea:upgrade-insecure-requests": {
+   "observedNames": 311,
+   "pages": 62,
+   "passingNames": 235,
+   "strictPages": 44
+  },
   "chromeByArea:url": {
-   "observedNames": 2981,
-   "pages": 18,
-   "passingNames": 2772,
-   "strictPages": 10
+   "observedNames": 4897,
+   "pages": 28,
+   "passingNames": 4632,
+   "strictPages": 17
   },
   "chromeByArea:urlpattern": {
    "observedNames": 2425,
@@ -1016,58 +1088,76 @@
    "strictPages": 12
   },
   "chromeByArea:user-timing": {
-   "observedNames": 115,
-   "pages": 10,
-   "passingNames": 115,
-   "strictPages": 10
+   "observedNames": 253,
+   "pages": 17,
+   "passingNames": 253,
+   "strictPages": 17
   },
   "chromeByArea:vibration": {
-   "observedNames": 16,
+   "observedNames": 17,
+   "pages": 2,
+   "passingNames": 17,
+   "strictPages": 2
+  },
+  "chromeByArea:video-rvfc": {
+   "observedNames": 5,
    "pages": 1,
-   "passingNames": 16,
+   "passingNames": 5,
    "strictPages": 1
+  },
+  "chromeByArea:viewport-segments": {
+   "observedNames": 1,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
   },
   "chromeByArea:visual-viewport": {
-   "observedNames": 13,
-   "pages": 7,
-   "passingNames": 12,
-   "strictPages": 6
+   "observedNames": 18,
+   "pages": 9,
+   "passingNames": 17,
+   "strictPages": 8
   },
   "chromeByArea:wai-aria": {
-   "observedNames": 93,
-   "pages": 6,
-   "passingNames": 39,
-   "strictPages": 1
+   "observedNames": 174,
+   "pages": 13,
+   "passingNames": 116,
+   "strictPages": 7
   },
   "chromeByArea:wasm": {
-   "observedNames": 2,
-   "pages": 1,
-   "passingNames": 2,
-   "strictPages": 1
+   "observedNames": 17,
+   "pages": 3,
+   "passingNames": 17,
+   "strictPages": 3
   },
   "chromeByArea:web-animations": {
-   "observedNames": 1761,
-   "pages": 30,
-   "passingNames": 1689,
-   "strictPages": 24
+   "observedNames": 2306,
+   "pages": 54,
+   "passingNames": 2210,
+   "strictPages": 43
   },
   "chromeByArea:web-based-payment-handler": {
-   "observedNames": 37,
-   "pages": 4,
-   "passingNames": 37,
-   "strictPages": 4
+   "observedNames": 65,
+   "pages": 8,
+   "passingNames": 65,
+   "strictPages": 8
   },
   "chromeByArea:web-bundle": {
-   "observedNames": 19,
-   "pages": 6,
+   "observedNames": 24,
+   "pages": 9,
+   "passingNames": 8,
+   "strictPages": 3
+  },
+  "chromeByArea:web-install": {
+   "observedNames": 4,
+   "pages": 2,
    "passingNames": 4,
-   "strictPages": 1
+   "strictPages": 2
   },
   "chromeByArea:web-locks": {
-   "observedNames": 153,
-   "pages": 19,
-   "passingNames": 150,
-   "strictPages": 16
+   "observedNames": 220,
+   "pages": 31,
+   "passingNames": 217,
+   "strictPages": 28
   },
   "chromeByArea:web-nfc": {
    "observedNames": 78,
@@ -1076,10 +1166,10 @@
    "strictPages": 0
   },
   "chromeByArea:web-share": {
-   "observedNames": 13,
-   "pages": 3,
-   "passingNames": 13,
-   "strictPages": 3
+   "observedNames": 19,
+   "pages": 6,
+   "passingNames": 19,
+   "strictPages": 6
   },
   "chromeByArea:webaudio": {
    "observedNames": 3127,
@@ -1088,22 +1178,22 @@
    "strictPages": 150
   },
   "chromeByArea:webauthn": {
-   "observedNames": 6,
-   "pages": 12,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 17,
+   "pages": 17,
+   "passingNames": 7,
+   "strictPages": 2
   },
   "chromeByArea:webcodecs": {
-   "observedNames": 535,
-   "pages": 63,
-   "passingNames": 522,
-   "strictPages": 60
+   "observedNames": 1474,
+   "pages": 100,
+   "passingNames": 1397,
+   "strictPages": 94
   },
   "chromeByArea:webgl": {
-   "observedNames": 18,
-   "pages": 4,
-   "passingNames": 18,
-   "strictPages": 4
+   "observedNames": 2122,
+   "pages": 8,
+   "passingNames": 2118,
+   "strictPages": 7
   },
   "chromeByArea:webhid": {
    "observedNames": 79,
@@ -1112,40 +1202,40 @@
    "strictPages": 2
   },
   "chromeByArea:webidl": {
-   "observedNames": 67,
-   "pages": 14,
-   "passingNames": 54,
-   "strictPages": 10
+   "observedNames": 154,
+   "pages": 22,
+   "passingNames": 137,
+   "strictPages": 16
   },
   "chromeByArea:webmcp": {
-   "observedNames": 39,
-   "pages": 17,
-   "passingNames": 1,
-   "strictPages": 0
+   "observedNames": 63,
+   "pages": 28,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "chromeByArea:webmessaging": {
-   "observedNames": 52,
-   "pages": 28,
-   "passingNames": 52,
-   "strictPages": 28
+   "observedNames": 82,
+   "pages": 51,
+   "passingNames": 82,
+   "strictPages": 51
   },
   "chromeByArea:webnn": {
-   "observedNames": 2848,
-   "pages": 139,
-   "passingNames": 2797,
-   "strictPages": 128
+   "observedNames": 4777,
+   "pages": 212,
+   "passingNames": 4699,
+   "strictPages": 196
   },
   "chromeByArea:webrtc": {
-   "observedNames": 736,
-   "pages": 46,
-   "passingNames": 685,
-   "strictPages": 32
+   "observedNames": 1038,
+   "pages": 90,
+   "passingNames": 947,
+   "strictPages": 59
   },
   "chromeByArea:webrtc-encoded-transform": {
-   "observedNames": 44,
-   "pages": 13,
-   "passingNames": 8,
-   "strictPages": 2
+   "observedNames": 125,
+   "pages": 20,
+   "passingNames": 18,
+   "strictPages": 3
   },
   "chromeByArea:webrtc-extensions": {
    "observedNames": 33,
@@ -1154,88 +1244,106 @@
    "strictPages": 2
   },
   "chromeByArea:webrtc-identity": {
-   "observedNames": 12,
+   "observedNames": 61,
+   "pages": 2,
+   "passingNames": 22,
+   "strictPages": 0
+  },
+  "chromeByArea:webrtc-priority": {
+   "observedNames": 2,
    "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
   "chromeByArea:webrtc-stats": {
-   "observedNames": 6,
-   "pages": 2,
-   "passingNames": 6,
-   "strictPages": 2
+   "observedNames": 10,
+   "pages": 4,
+   "passingNames": 9,
+   "strictPages": 3
   },
   "chromeByArea:webrtc-svc": {
-   "observedNames": 6,
-   "pages": 2,
-   "passingNames": 6,
-   "strictPages": 2
+   "observedNames": 11,
+   "pages": 3,
+   "passingNames": 11,
+   "strictPages": 3
   },
   "chromeByArea:websockets": {
-   "observedNames": 651,
-   "pages": 192,
-   "passingNames": 567,
-   "strictPages": 141
+   "observedNames": 875,
+   "pages": 292,
+   "passingNames": 751,
+   "strictPages": 209
   },
   "chromeByArea:webstorage": {
-   "observedNames": 23,
-   "pages": 9,
-   "passingNames": 23,
-   "strictPages": 9
+   "observedNames": 34,
+   "pages": 18,
+   "passingNames": 34,
+   "strictPages": 18
   },
   "chromeByArea:webtransport": {
-   "observedNames": 15,
-   "pages": 19,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "chromeByArea:webusb": {
-   "observedNames": 583,
-   "pages": 11,
-   "passingNames": 401,
-   "strictPages": 2
-  },
-  "chromeByArea:webvtt": {
-   "observedNames": 121,
-   "pages": 18,
-   "passingNames": 84,
-   "strictPages": 10
-  },
-  "chromeByArea:webxr": {
-   "observedNames": 351,
-   "pages": 50,
-   "passingNames": 177,
+   "observedNames": 299,
+   "pages": 39,
+   "passingNames": 143,
    "strictPages": 1
   },
-  "chromeByArea:workers": {
-   "observedNames": 381,
-   "pages": 71,
-   "passingNames": 336,
-   "strictPages": 63
+  "chromeByArea:webusb": {
+   "observedNames": 589,
+   "pages": 15,
+   "passingNames": 404,
+   "strictPages": 3
   },
-  "chromeByArea:worklets": {
-   "observedNames": 111,
-   "pages": 9,
-   "passingNames": 72,
-   "strictPages": 4
+  "chromeByArea:webvtt": {
+   "observedNames": 149,
+   "pages": 27,
+   "passingNames": 108,
+   "strictPages": 15
   },
-  "chromeByArea:xhr": {
-   "observedNames": 518,
-   "pages": 95,
-   "passingNames": 508,
-   "strictPages": 88
+  "chromeByArea:webxr": {
+   "observedNames": 395,
+   "pages": 63,
+   "passingNames": 192,
+   "strictPages": 3
   },
-  "chromeByArea:xml": {
-   "observedNames": 177,
-   "pages": 1,
+  "chromeByArea:window-management": {
+   "observedNames": 6,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
+  "chromeByArea:workers": {
+   "observedNames": 533,
+   "pages": 114,
+   "passingNames": 481,
+   "strictPages": 100
+  },
+  "chromeByArea:worklets": {
+   "observedNames": 177,
+   "pages": 12,
+   "passingNames": 96,
+   "strictPages": 5
+  },
+  "chromeByArea:x-frame-options": {
+   "observedNames": 18,
+   "pages": 1,
+   "passingNames": 18,
+   "strictPages": 1
+  },
+  "chromeByArea:xhr": {
+   "observedNames": 633,
+   "pages": 139,
+   "passingNames": 605,
+   "strictPages": 126
+  },
+  "chromeByArea:xml": {
+   "observedNames": 181,
+   "pages": 2,
+   "passingNames": 4,
+   "strictPages": 1
+  },
   "chromeByEnvironment:dedicatedworker": {
-   "observedNames": 18105,
-   "pages": 634,
-   "passingNames": 15239,
-   "strictPages": 535
+   "observedNames": 25697,
+   "pages": 987,
+   "passingNames": 21698,
+   "strictPages": 834
   },
   "chromeByEnvironment:dedicatedworker-module": {
    "observedNames": 2,
@@ -1244,56 +1352,56 @@
    "strictPages": 2
   },
   "chromeByEnvironment:serviceworker": {
-   "observedNames": 2927,
-   "pages": 162,
-   "passingNames": 2682,
-   "strictPages": 129
+   "observedNames": 3976,
+   "pages": 241,
+   "passingNames": 3693,
+   "strictPages": 195
   },
   "chromeByEnvironment:serviceworker-module": {
-   "observedNames": 5,
-   "pages": 3,
-   "passingNames": 4,
-   "strictPages": 2
+   "observedNames": 10,
+   "pages": 6,
+   "passingNames": 7,
+   "strictPages": 3
   },
   "chromeByEnvironment:sharedworker": {
-   "observedNames": 2629,
-   "pages": 146,
-   "passingNames": 2383,
-   "strictPages": 112
+   "observedNames": 3722,
+   "pages": 232,
+   "passingNames": 3381,
+   "strictPages": 187
   },
   "chromeByEnvironment:sharedworker-module": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 6,
+   "pages": 4,
+   "passingNames": 5,
+   "strictPages": 3
   },
   "chromeByEnvironment:window": {
-   "observedNames": 415923,
-   "pages": 6510,
-   "passingNames": 404801,
-   "strictPages": 5215
+   "observedNames": 641896,
+   "pages": 9798,
+   "passingNames": 626066,
+   "strictPages": 7858
   },
   "chromeByEnvironment:window-module": {
-   "observedNames": 6,
-   "pages": 1,
+   "observedNames": 12,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "chromeHarnessOutcomes": {
-   "Error": 67,
-   "None": 125,
-   "OK": 7173,
-   "Timeout": 94
+   "Error": 108,
+   "None": 199,
+   "OK": 10834,
+   "Timeout": 131
   },
   "chromePageOutcomes": {
-   "complete": 7173,
-   "error": 67,
-   "timeout": 219
+   "complete": 10834,
+   "error": 108,
+   "timeout": 330
   },
   "coverageByEnvironment:dedicatedworker": {
    "historicallyWithheld": 114,
    "newlyWithheld": 14,
-   "outsideRequestedShardSet": 2122
+   "outsideRequestedShardSet": 1769
   },
   "coverageByEnvironment:dedicatedworker-module": {
    "outsideRequestedShardSet": 7
@@ -1307,32 +1415,32 @@
   "coverageByEnvironment:serviceworker": {
    "historicallyWithheld": 21,
    "newlyWithheld": 7,
-   "outsideRequestedShardSet": 482
+   "outsideRequestedShardSet": 403
   },
   "coverageByEnvironment:serviceworker-module": {
-   "outsideRequestedShardSet": 5
+   "outsideRequestedShardSet": 2
   },
   "coverageByEnvironment:sharedworker": {
    "historicallyWithheld": 23,
    "newlyWithheld": 8,
-   "outsideRequestedShardSet": 522
+   "outsideRequestedShardSet": 436
   },
   "coverageByEnvironment:sharedworker-module": {
-   "outsideRequestedShardSet": 11
+   "outsideRequestedShardSet": 8
   },
   "coverageByEnvironment:window": {
    "historicallyWithheld": 1227,
    "newlyWithheld": 150,
-   "outsideRequestedShardSet": 19569
+   "outsideRequestedShardSet": 16281
   },
   "coverageByEnvironment:window-module": {
-   "outsideRequestedShardSet": 2
+   "outsideRequestedShardSet": 1
   },
   "current": {
-   "observedNames": 437306,
-   "pages": 7459,
-   "passingNames": 412790,
-   "strictPages": 3899
+   "observedNames": 671481,
+   "pages": 11272,
+   "passingNames": 632484,
+   "strictPages": 5886
   },
   "currentByArea:FileAPI": {
    "observedNames": 600,
@@ -1341,44 +1449,44 @@
    "strictPages": 33
   },
   "currentByArea:IndexedDB": {
-   "observedNames": 1123,
-   "pages": 171,
-   "passingNames": 1115,
-   "strictPages": 164
+   "observedNames": 2437,
+   "pages": 308,
+   "passingNames": 2427,
+   "strictPages": 300
   },
   "currentByArea:WebCryptoAPI": {
-   "observedNames": 17564,
-   "pages": 77,
-   "passingNames": 14567,
-   "strictPages": 56
+   "observedNames": 27554,
+   "pages": 123,
+   "passingNames": 19756,
+   "strictPages": 80
   },
   "currentByArea:accelerometer": {
-   "observedNames": 4,
-   "pages": 2,
-   "passingNames": 3,
+   "observedNames": 42,
+   "pages": 3,
+   "passingNames": 5,
    "strictPages": 1
   },
   "currentByArea:accname": {
-   "observedNames": 8,
-   "pages": 1,
-   "passingNames": 7,
-   "strictPages": 0
+   "observedNames": 46,
+   "pages": 5,
+   "passingNames": 39,
+   "strictPages": 2
   },
   "currentByArea:ai": {
-   "observedNames": 88,
-   "pages": 40,
+   "observedNames": 126,
+   "pages": 63,
    "passingNames": 1,
    "strictPages": 0
   },
   "currentByArea:ambient-light": {
-   "observedNames": 15,
-   "pages": 2,
+   "observedNames": 19,
+   "pages": 4,
    "passingNames": 2,
    "strictPages": 0
   },
   "currentByArea:animation-worklet": {
-   "observedNames": 50,
-   "pages": 12,
+   "observedNames": 53,
+   "pages": 16,
    "passingNames": 18,
    "strictPages": 0
   },
@@ -1388,16 +1496,22 @@
    "passingNames": 0,
    "strictPages": 0
   },
+  "currentByArea:audio-session": {
+   "observedNames": 4,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
   "currentByArea:background-fetch": {
-   "observedNames": 69,
-   "pages": 3,
+   "observedNames": 83,
+   "pages": 6,
    "passingNames": 7,
    "strictPages": 0
   },
   "currentByArea:background-sync": {
-   "observedNames": 17,
-   "pages": 1,
-   "passingNames": 8,
+   "observedNames": 34,
+   "pages": 2,
+   "passingNames": 16,
    "strictPages": 0
   },
   "currentByArea:badging": {
@@ -1407,16 +1521,16 @@
    "strictPages": 0
   },
   "currentByArea:battery-status": {
-   "observedNames": 7,
-   "pages": 4,
+   "observedNames": 9,
+   "pages": 5,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:beacon": {
-   "observedNames": 41,
-   "pages": 5,
-   "passingNames": 41,
-   "strictPages": 5
+   "observedNames": 46,
+   "pages": 8,
+   "passingNames": 45,
+   "strictPages": 7
   },
   "currentByArea:bluetooth": {
    "observedNames": 209,
@@ -1431,52 +1545,52 @@
    "strictPages": 0
   },
   "currentByArea:clear-site-data": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
+   "observedNames": 16,
+   "pages": 4,
+   "passingNames": 9,
    "strictPages": 0
   },
   "currentByArea:client-hints": {
-   "observedNames": 36,
-   "pages": 26,
-   "passingNames": 27,
-   "strictPages": 12
+   "observedNames": 66,
+   "pages": 46,
+   "passingNames": 41,
+   "strictPages": 17
   },
   "currentByArea:clipboard-apis": {
-   "observedNames": 22,
-   "pages": 13,
-   "passingNames": 16,
-   "strictPages": 10
+   "observedNames": 45,
+   "pages": 21,
+   "passingNames": 29,
+   "strictPages": 14
   },
   "currentByArea:close-watcher": {
-   "observedNames": 8,
-   "pages": 8,
+   "observedNames": 15,
+   "pages": 15,
    "passingNames": 2,
    "strictPages": 2
   },
   "currentByArea:compat": {
-   "observedNames": 52,
-   "pages": 2,
-   "passingNames": 52,
-   "strictPages": 2
+   "observedNames": 53,
+   "pages": 3,
+   "passingNames": 53,
+   "strictPages": 3
   },
   "currentByArea:compression": {
-   "observedNames": 689,
-   "pages": 38,
-   "passingNames": 623,
-   "strictPages": 26
+   "observedNames": 719,
+   "pages": 40,
+   "passingNames": 652,
+   "strictPages": 27
   },
   "currentByArea:compute-pressure": {
-   "observedNames": 3,
-   "pages": 4,
-   "passingNames": 0,
+   "observedNames": 36,
+   "pages": 6,
+   "passingNames": 1,
    "strictPages": 0
   },
   "currentByArea:connection-allowlist": {
-   "observedNames": 82,
-   "pages": 22,
-   "passingNames": 32,
-   "strictPages": 3
+   "observedNames": 106,
+   "pages": 32,
+   "passingNames": 39,
+   "strictPages": 4
   },
   "currentByArea:console": {
    "observedNames": 8,
@@ -1485,8 +1599,8 @@
    "strictPages": 0
   },
   "currentByArea:container-timing": {
-   "observedNames": 7,
-   "pages": 7,
+   "observedNames": 9,
+   "pages": 9,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -1497,10 +1611,10 @@
    "strictPages": 0
   },
   "currentByArea:content-security-policy": {
-   "observedNames": 847,
-   "pages": 157,
-   "passingNames": 436,
-   "strictPages": 51
+   "observedNames": 1470,
+   "pages": 264,
+   "passingNames": 716,
+   "strictPages": 74
   },
   "currentByArea:contenteditable": {
    "observedNames": 4,
@@ -1509,22 +1623,22 @@
    "strictPages": 1
   },
   "currentByArea:cookies": {
-   "observedNames": 158,
-   "pages": 22,
-   "passingNames": 146,
-   "strictPages": 11
+   "observedNames": 257,
+   "pages": 35,
+   "passingNames": 234,
+   "strictPages": 17
   },
   "currentByArea:cookiestore": {
-   "observedNames": 45,
-   "pages": 13,
+   "observedNames": 64,
+   "pages": 21,
    "passingNames": 4,
    "strictPages": 0
   },
   "currentByArea:cors": {
-   "observedNames": 241,
-   "pages": 11,
-   "passingNames": 219,
-   "strictPages": 5
+   "observedNames": 312,
+   "pages": 15,
+   "passingNames": 278,
+   "strictPages": 7
   },
   "currentByArea:cpu-performance": {
    "observedNames": 1,
@@ -1533,21 +1647,21 @@
    "strictPages": 0
   },
   "currentByArea:credential-management": {
-   "observedNames": 14,
-   "pages": 5,
+   "observedNames": 17,
+   "pages": 6,
    "passingNames": 1,
    "strictPages": 1
   },
   "currentByArea:custom-elements": {
-   "observedNames": 388,
-   "pages": 43,
-   "passingNames": 263,
-   "strictPages": 27
+   "observedNames": 717,
+   "pages": 64,
+   "passingNames": 567,
+   "strictPages": 43
   },
   "currentByArea:device-bound-session-credentials": {
-   "observedNames": 10,
-   "pages": 7,
-   "passingNames": 0,
+   "observedNames": 24,
+   "pages": 12,
+   "passingNames": 1,
    "strictPages": 0
   },
   "currentByArea:device-memory": {
@@ -1563,20 +1677,20 @@
    "strictPages": 0
   },
   "currentByArea:digital-credentials": {
-   "observedNames": 22,
-   "pages": 4,
-   "passingNames": 1,
+   "observedNames": 48,
+   "pages": 10,
+   "passingNames": 5,
    "strictPages": 1
   },
   "currentByArea:direct-sockets": {
-   "observedNames": 1,
-   "pages": 1,
+   "observedNames": 5,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:document-picture-in-picture": {
-   "observedNames": 16,
-   "pages": 7,
+   "observedNames": 18,
+   "pages": 9,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -1587,10 +1701,10 @@
    "strictPages": 0
   },
   "currentByArea:dom": {
-   "observedNames": 20476,
-   "pages": 213,
-   "passingNames": 20389,
-   "strictPages": 189
+   "observedNames": 22952,
+   "pages": 313,
+   "passingNames": 22797,
+   "strictPages": 269
   },
   "currentByArea:domparsing": {
    "observedNames": 960,
@@ -1599,10 +1713,10 @@
    "strictPages": 20
   },
   "currentByArea:domxpath": {
-   "observedNames": 17,
-   "pages": 5,
-   "passingNames": 17,
-   "strictPages": 5
+   "observedNames": 36,
+   "pages": 10,
+   "passingNames": 36,
+   "strictPages": 10
   },
   "currentByArea:dpub-aam": {
    "observedNames": 39,
@@ -1617,70 +1731,70 @@
    "strictPages": 138
   },
   "currentByArea:element-timing": {
-   "observedNames": 14,
-   "pages": 11,
+   "observedNames": 21,
+   "pages": 18,
    "passingNames": 3,
    "strictPages": 0
   },
   "currentByArea:encoding": {
-   "observedNames": 259317,
-   "pages": 315,
-   "passingNames": 259211,
-   "strictPages": 312
+   "observedNames": 437985,
+   "pages": 509,
+   "passingNames": 437878,
+   "strictPages": 505
   },
   "currentByArea:encoding-detection": {
-   "observedNames": 18,
-   "pages": 18,
+   "observedNames": 31,
+   "pages": 31,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:encrypted-media": {
-   "observedNames": 33,
-   "pages": 23,
+   "observedNames": 58,
+   "pages": 41,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:entries-api": {
-   "observedNames": 3,
-   "pages": 1,
+   "observedNames": 5,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:event-timing": {
-   "observedNames": 30,
-   "pages": 17,
+   "observedNames": 39,
+   "pages": 26,
    "passingNames": 14,
    "strictPages": 1
   },
   "currentByArea:eventsource": {
-   "observedNames": 37,
-   "pages": 26,
-   "passingNames": 34,
-   "strictPages": 25
+   "observedNames": 70,
+   "pages": 50,
+   "passingNames": 61,
+   "strictPages": 46
   },
   "currentByArea:fenced-frame": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 5,
+   "pages": 3,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "currentByArea:fetch": {
-   "observedNames": 2598,
-   "pages": 207,
-   "passingNames": 1896,
-   "strictPages": 105
+   "observedNames": 4196,
+   "pages": 331,
+   "passingNames": 3167,
+   "strictPages": 165
   },
   "currentByArea:file-system-access": {
-   "observedNames": 24,
-   "pages": 4,
-   "passingNames": 24,
+   "observedNames": 73,
+   "pages": 7,
+   "passingNames": 48,
    "strictPages": 4
   },
   "currentByArea:focus": {
-   "observedNames": 21,
-   "pages": 10,
-   "passingNames": 8,
-   "strictPages": 6
+   "observedNames": 24,
+   "pages": 13,
+   "passingNames": 10,
+   "strictPages": 8
   },
   "currentByArea:font-access": {
    "observedNames": 21,
@@ -1695,22 +1809,34 @@
    "strictPages": 0
   },
   "currentByArea:fs": {
-   "observedNames": 226,
-   "pages": 22,
-   "passingNames": 178,
-   "strictPages": 11
+   "observedNames": 364,
+   "pages": 33,
+   "passingNames": 313,
+   "strictPages": 20
   },
   "currentByArea:fullscreen": {
-   "observedNames": 23,
-   "pages": 17,
-   "passingNames": 11,
-   "strictPages": 6
+   "observedNames": 77,
+   "pages": 29,
+   "passingNames": 59,
+   "strictPages": 12
+  },
+  "currentByArea:gamepad": {
+   "observedNames": 88,
+   "pages": 2,
+   "passingNames": 34,
+   "strictPages": 0
+  },
+  "currentByArea:generic-sensor": {
+   "observedNames": 36,
+   "pages": 1,
+   "passingNames": 2,
+   "strictPages": 0
   },
   "currentByArea:geolocation": {
-   "observedNames": 10,
-   "pages": 3,
-   "passingNames": 5,
-   "strictPages": 0
+   "observedNames": 17,
+   "pages": 6,
+   "passingNames": 11,
+   "strictPages": 2
   },
   "currentByArea:geolocation-sensor": {
    "observedNames": 1,
@@ -1718,149 +1844,173 @@
    "passingNames": 1,
    "strictPages": 1
   },
-  "currentByArea:gyroscope": {
+  "currentByArea:gpc": {
    "observedNames": 1,
    "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:gyroscope": {
+   "observedNames": 9,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:hr-time": {
-   "observedNames": 43,
-   "pages": 6,
-   "passingNames": 40,
-   "strictPages": 4
-  },
-  "currentByArea:html": {
-   "observedNames": 38148,
-   "pages": 2013,
-   "passingNames": 35175,
-   "strictPages": 1228
-  },
-  "currentByArea:html-aam": {
-   "observedNames": 262,
+   "observedNames": 45,
    "pages": 7,
-   "passingNames": 88,
-   "strictPages": 1
-  },
-  "currentByArea:https-upgrades": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:idle-detection": {
-   "observedNames": 3,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:imagebitmap-renderingcontext": {
-   "observedNames": 6,
-   "pages": 4,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:import-maps": {
-   "observedNames": 83,
-   "pages": 12,
-   "passingNames": 32,
-   "strictPages": 3
-  },
-  "currentByArea:inert": {
-   "observedNames": 19,
-   "pages": 9,
-   "passingNames": 9,
+   "passingNames": 42,
    "strictPages": 5
   },
-  "currentByArea:infrastructure": {
-   "observedNames": 48,
-   "pages": 27,
-   "passingNames": 34,
-   "strictPages": 13
+  "currentByArea:html": {
+   "observedNames": 46631,
+   "pages": 3266,
+   "passingNames": 41920,
+   "strictPages": 2020
   },
-  "currentByArea:input-events": {
-   "observedNames": 1396,
-   "pages": 9,
-   "passingNames": 852,
-   "strictPages": 0
+  "currentByArea:html-aam": {
+   "observedNames": 303,
+   "pages": 13,
+   "passingNames": 108,
+   "strictPages": 2
   },
-  "currentByArea:intersection-observer": {
-   "observedNames": 119,
-   "pages": 32,
-   "passingNames": 86,
-   "strictPages": 9
-  },
-  "currentByArea:is-input-pending": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:jpegxl": {
-   "observedNames": 3,
-   "pages": 2,
-   "passingNames": 1,
-   "strictPages": 1
-  },
-  "currentByArea:js": {
-   "observedNames": 55,
-   "pages": 5,
-   "passingNames": 51,
-   "strictPages": 1
-  },
-  "currentByArea:js-self-profiling": {
-   "observedNames": 4,
-   "pages": 4,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:keyboard-map": {
+  "currentByArea:https-upgrades": {
    "observedNames": 2,
    "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
-  "currentByArea:largest-contentful-paint": {
-   "observedNames": 18,
-   "pages": 16,
+  "currentByArea:idle-detection": {
+   "observedNames": 13,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
-  "currentByArea:layout-instability": {
-   "observedNames": 18,
-   "pages": 18,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:loading": {
-   "observedNames": 18,
-   "pages": 17,
-   "passingNames": 6,
-   "strictPages": 5
-  },
-  "currentByArea:long-animation-frame": {
-   "observedNames": 0,
+  "currentByArea:imagebitmap-renderingcontext": {
+   "observedNames": 9,
    "pages": 7,
    "passingNames": 0,
    "strictPages": 0
   },
-  "currentByArea:longtask-timing": {
-   "observedNames": 6,
-   "pages": 8,
+  "currentByArea:import-maps": {
+   "observedNames": 154,
+   "pages": 19,
+   "passingNames": 56,
+   "strictPages": 6
+  },
+  "currentByArea:inert": {
+   "observedNames": 50,
+   "pages": 12,
+   "passingNames": 26,
+   "strictPages": 7
+  },
+  "currentByArea:infrastructure": {
+   "observedNames": 66,
+   "pages": 38,
+   "passingNames": 47,
+   "strictPages": 18
+  },
+  "currentByArea:input-events": {
+   "observedNames": 1924,
+   "pages": 14,
+   "passingNames": 1316,
+   "strictPages": 1
+  },
+  "currentByArea:installedapp": {
+   "observedNames": 16,
+   "pages": 1,
+   "passingNames": 14,
+   "strictPages": 0
+  },
+  "currentByArea:intersection-observer": {
+   "observedNames": 189,
+   "pages": 60,
+   "passingNames": 113,
+   "strictPages": 15
+  },
+  "currentByArea:is-input-pending": {
+   "observedNames": 4,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
-  "currentByArea:managed": {
-   "observedNames": 3,
+  "currentByArea:jpegxl": {
+   "observedNames": 11,
+   "pages": 6,
+   "passingNames": 2,
+   "strictPages": 2
+  },
+  "currentByArea:js": {
+   "observedNames": 83,
+   "pages": 11,
+   "passingNames": 77,
+   "strictPages": 5
+  },
+  "currentByArea:js-self-profiling": {
+   "observedNames": 7,
+   "pages": 6,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:keyboard-lock": {
+   "observedNames": 1,
    "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
-  "currentByArea:mathml": {
-   "observedNames": 919,
-   "pages": 54,
-   "passingNames": 240,
+  "currentByArea:keyboard-map": {
+   "observedNames": 3,
+   "pages": 3,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:largest-contentful-paint": {
+   "observedNames": 27,
+   "pages": 25,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:layout-instability": {
+   "observedNames": 40,
+   "pages": 40,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:loading": {
+   "observedNames": 27,
+   "pages": 27,
+   "passingNames": 9,
    "strictPages": 8
+  },
+  "currentByArea:long-animation-frame": {
+   "observedNames": 0,
+   "pages": 11,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:longtask-timing": {
+   "observedNames": 8,
+   "pages": 10,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:magnetometer": {
+   "observedNames": 6,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:managed": {
+   "observedNames": 9,
+   "pages": 2,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:mathml": {
+   "observedNames": 1599,
+   "pages": 78,
+   "passingNames": 514,
+   "strictPages": 12
   },
   "currentByArea:measure-memory": {
    "observedNames": 4,
@@ -1869,26 +2019,26 @@
    "strictPages": 0
   },
   "currentByArea:media-capabilities": {
-   "observedNames": 145,
-   "pages": 6,
+   "observedNames": 166,
+   "pages": 7,
    "passingNames": 22,
    "strictPages": 0
   },
   "currentByArea:media-source": {
-   "observedNames": 191,
-   "pages": 21,
-   "passingNames": 55,
+   "observedNames": 241,
+   "pages": 37,
+   "passingNames": 65,
    "strictPages": 0
   },
   "currentByArea:mediacapture-extensions": {
-   "observedNames": 16,
-   "pages": 3,
+   "observedNames": 17,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:mediacapture-fromelement": {
-   "observedNames": 1,
-   "pages": 1,
+   "observedNames": 5,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -1899,8 +2049,8 @@
    "strictPages": 0
   },
   "currentByArea:mediacapture-image": {
-   "observedNames": 38,
-   "pages": 5,
+   "observedNames": 41,
+   "pages": 6,
    "passingNames": 11,
    "strictPages": 0
   },
@@ -1911,14 +2061,26 @@
    "strictPages": 0
   },
   "currentByArea:mediacapture-record": {
-   "observedNames": 107,
-   "pages": 19,
+   "observedNames": 139,
+   "pages": 38,
    "passingNames": 2,
    "strictPages": 0
   },
   "currentByArea:mediacapture-streams": {
-   "observedNames": 37,
-   "pages": 13,
+   "observedNames": 49,
+   "pages": 23,
+   "passingNames": 1,
+   "strictPages": 1
+  },
+  "currentByArea:mediasession": {
+   "observedNames": 21,
+   "pages": 2,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:merchant-validation": {
+   "observedNames": 1,
+   "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -1929,75 +2091,81 @@
    "strictPages": 1
   },
   "currentByArea:mixed-content": {
-   "observedNames": 605,
-   "pages": 101,
-   "passingNames": 405,
-   "strictPages": 15
+   "observedNames": 868,
+   "pages": 148,
+   "passingNames": 583,
+   "strictPages": 25
   },
   "currentByArea:mst-content-hint": {
-   "observedNames": 6,
-   "pages": 1,
+   "observedNames": 7,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
+  "currentByArea:nav-tracking-mitigations": {
+   "observedNames": 2,
+   "pages": 2,
+   "passingNames": 2,
+   "strictPages": 2
+  },
   "currentByArea:navigation-api": {
-   "observedNames": 133,
-   "pages": 114,
-   "passingNames": 73,
-   "strictPages": 61
+   "observedNames": 220,
+   "pages": 182,
+   "passingNames": 114,
+   "strictPages": 95
   },
   "currentByArea:navigation-timing": {
-   "observedNames": 207,
-   "pages": 12,
-   "passingNames": 170,
-   "strictPages": 6
+   "observedNames": 266,
+   "pages": 30,
+   "passingNames": 217,
+   "strictPages": 17
   },
   "currentByArea:network-error-logging": {
+   "observedNames": 4,
+   "pages": 4,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:notifications": {
+   "observedNames": 116,
+   "pages": 6,
+   "passingNames": 57,
+   "strictPages": 1
+  },
+  "currentByArea:old-tests": {
+   "observedNames": 9,
+   "pages": 9,
+   "passingNames": 6,
+   "strictPages": 6
+  },
+  "currentByArea:orientation-event": {
+   "observedNames": 12,
+   "pages": 7,
+   "passingNames": 1,
+   "strictPages": 1
+  },
+  "currentByArea:orientation-sensor": {
+   "observedNames": 11,
+   "pages": 4,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:page-lifecycle": {
    "observedNames": 2,
    "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
-  "currentByArea:notifications": {
-   "observedNames": 104,
-   "pages": 4,
-   "passingNames": 56,
-   "strictPages": 1
-  },
-  "currentByArea:old-tests": {
-   "observedNames": 4,
-   "pages": 4,
-   "passingNames": 3,
+  "currentByArea:page-visibility": {
+   "observedNames": 6,
+   "pages": 3,
+   "passingNames": 6,
    "strictPages": 3
   },
-  "currentByArea:orientation-event": {
-   "observedNames": 9,
-   "pages": 5,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:orientation-sensor": {
-   "observedNames": 8,
-   "pages": 3,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:page-lifecycle": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:page-visibility": {
-   "observedNames": 5,
-   "pages": 2,
-   "passingNames": 5,
-   "strictPages": 2
-  },
   "currentByArea:paint-timing": {
-   "observedNames": 9,
-   "pages": 9,
-   "passingNames": 0,
+   "observedNames": 35,
+   "pages": 18,
+   "passingNames": 8,
    "strictPages": 0
   },
   "currentByArea:payment-method-basic-card": {
@@ -2007,33 +2175,33 @@
    "strictPages": 0
   },
   "currentByArea:payment-method-manifest": {
-   "observedNames": 8,
-   "pages": 3,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "currentByArea:payment-request": {
-   "observedNames": 9,
+   "observedNames": 10,
    "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
+  "currentByArea:payment-request": {
+   "observedNames": 14,
+   "pages": 6,
+   "passingNames": 0,
+   "strictPages": 0
+  },
   "currentByArea:performance-timeline": {
-   "observedNames": 21,
-   "pages": 17,
-   "passingNames": 14,
-   "strictPages": 10
+   "observedNames": 155,
+   "pages": 25,
+   "passingNames": 124,
+   "strictPages": 14
   },
   "currentByArea:permissions": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 1,
+   "observedNames": 69,
+   "pages": 4,
+   "passingNames": 31,
    "strictPages": 1
   },
   "currentByArea:permissions-policy": {
-   "observedNames": 192,
-   "pages": 26,
-   "passingNames": 4,
+   "observedNames": 211,
+   "pages": 43,
+   "passingNames": 7,
    "strictPages": 1
   },
   "currentByArea:permissions-request": {
@@ -2043,8 +2211,8 @@
    "strictPages": 0
   },
   "currentByArea:picture-in-picture": {
-   "observedNames": 74,
-   "pages": 4,
+   "observedNames": 85,
+   "pages": 7,
    "passingNames": 26,
    "strictPages": 0
   },
@@ -2055,27 +2223,27 @@
    "strictPages": 2
   },
   "currentByArea:pointerevents": {
-   "observedNames": 250,
-   "pages": 61,
-   "passingNames": 175,
-   "strictPages": 21
+   "observedNames": 336,
+   "pages": 90,
+   "passingNames": 219,
+   "strictPages": 30
   },
   "currentByArea:pointerlock": {
-   "observedNames": 3,
-   "pages": 2,
+   "observedNames": 5,
+   "pages": 5,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:preload": {
-   "observedNames": 110,
-   "pages": 17,
-   "passingNames": 31,
-   "strictPages": 5
+   "observedNames": 134,
+   "pages": 29,
+   "passingNames": 47,
+   "strictPages": 9
   },
   "currentByArea:presentation-api": {
-   "observedNames": 3,
-   "pages": 3,
-   "passingNames": 0,
+   "observedNames": 106,
+   "pages": 4,
+   "passingNames": 16,
    "strictPages": 0
   },
   "currentByArea:private-click-measurement": {
@@ -2085,122 +2253,128 @@
    "strictPages": 0
   },
   "currentByArea:push-api": {
-   "observedNames": 11,
-   "pages": 3,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 21,
+   "pages": 6,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "currentByArea:quirks": {
-   "observedNames": 3055,
-   "pages": 8,
-   "passingNames": 2971,
-   "strictPages": 2
+   "observedNames": 3059,
+   "pages": 9,
+   "passingNames": 2975,
+   "strictPages": 3
   },
   "currentByArea:referrer-policy": {
-   "observedNames": 2321,
-   "pages": 410,
-   "passingNames": 2229,
-   "strictPages": 369
+   "observedNames": 3179,
+   "pages": 567,
+   "passingNames": 2991,
+   "strictPages": 487
   },
   "currentByArea:remote-playback": {
-   "observedNames": 1,
-   "pages": 1,
+   "observedNames": 2,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:reporting": {
-   "observedNames": 12,
-   "pages": 6,
-   "passingNames": 1,
-   "strictPages": 0
-  },
-  "currentByArea:requestidlecallback": {
-   "observedNames": 5,
-   "pages": 4,
-   "passingNames": 5,
-   "strictPages": 4
-  },
-  "currentByArea:resize-observer": {
-   "observedNames": 13,
-   "pages": 9,
-   "passingNames": 7,
-   "strictPages": 4
-  },
-  "currentByArea:resource-timing": {
-   "observedNames": 369,
-   "pages": 43,
-   "passingNames": 226,
-   "strictPages": 18
-  },
-  "currentByArea:sanitizer-api": {
-   "observedNames": 271,
-   "pages": 6,
-   "passingNames": 58,
-   "strictPages": 1
-  },
-  "currentByArea:savedata": {
-   "observedNames": 5,
-   "pages": 1,
+   "observedNames": 28,
+   "pages": 11,
    "passingNames": 3,
    "strictPages": 0
   },
+  "currentByArea:requestidlecallback": {
+   "observedNames": 7,
+   "pages": 6,
+   "passingNames": 6,
+   "strictPages": 5
+  },
+  "currentByArea:resize-observer": {
+   "observedNames": 71,
+   "pages": 16,
+   "passingNames": 63,
+   "strictPages": 9
+  },
+  "currentByArea:resource-timing": {
+   "observedNames": 484,
+   "pages": 63,
+   "passingNames": 313,
+   "strictPages": 23
+  },
+  "currentByArea:sanitizer-api": {
+   "observedNames": 307,
+   "pages": 9,
+   "passingNames": 61,
+   "strictPages": 1
+  },
+  "currentByArea:savedata": {
+   "observedNames": 10,
+   "pages": 2,
+   "passingNames": 6,
+   "strictPages": 0
+  },
   "currentByArea:scheduler": {
-   "observedNames": 84,
-   "pages": 22,
-   "passingNames": 72,
-   "strictPages": 17
+   "observedNames": 126,
+   "pages": 34,
+   "passingNames": 114,
+   "strictPages": 29
   },
   "currentByArea:screen-capture": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
+   "observedNames": 33,
+   "pages": 5,
+   "passingNames": 13,
    "strictPages": 0
   },
   "currentByArea:screen-orientation": {
-   "observedNames": 11,
-   "pages": 5,
+   "observedNames": 15,
+   "pages": 6,
    "passingNames": 2,
    "strictPages": 0
   },
   "currentByArea:screen-wake-lock": {
-   "observedNames": 4,
-   "pages": 2,
+   "observedNames": 7,
+   "pages": 4,
+   "passingNames": 1,
+   "strictPages": 1
+  },
+  "currentByArea:scroll-animations": {
+   "observedNames": 721,
+   "pages": 70,
+   "passingNames": 370,
+   "strictPages": 29
+  },
+  "currentByArea:scroll-performance-timing": {
+   "observedNames": 2,
+   "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
-  "currentByArea:scroll-animations": {
-   "observedNames": 520,
-   "pages": 43,
-   "passingNames": 264,
-   "strictPages": 19
-  },
   "currentByArea:scroll-to-text-fragment": {
-   "observedNames": 62,
-   "pages": 10,
-   "passingNames": 23,
+   "observedNames": 118,
+   "pages": 14,
+   "passingNames": 29,
    "strictPages": 0
   },
   "currentByArea:secure-contexts": {
-   "observedNames": 8,
-   "pages": 2,
-   "passingNames": 7,
+   "observedNames": 13,
+   "pages": 3,
+   "passingNames": 8,
    "strictPages": 1
   },
   "currentByArea:secure-payment-confirmation": {
-   "observedNames": 3,
-   "pages": 2,
-   "passingNames": 0,
+   "observedNames": 14,
+   "pages": 7,
+   "passingNames": 3,
    "strictPages": 0
   },
   "currentByArea:selection": {
-   "observedNames": 3949,
-   "pages": 32,
-   "passingNames": 3897,
-   "strictPages": 19
+   "observedNames": 19308,
+   "pages": 52,
+   "passingNames": 19253,
+   "strictPages": 37
   },
   "currentByArea:serial": {
-   "observedNames": 11,
-   "pages": 3,
+   "observedNames": 14,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -2211,40 +2385,40 @@
    "strictPages": 2
   },
   "currentByArea:service-workers": {
-   "observedNames": 939,
-   "pages": 71,
-   "passingNames": 635,
-   "strictPages": 26
+   "observedNames": 1389,
+   "pages": 125,
+   "passingNames": 930,
+   "strictPages": 48
   },
   "currentByArea:shadow-dom": {
-   "observedNames": 4351,
-   "pages": 84,
-   "passingNames": 4284,
-   "strictPages": 55
+   "observedNames": 4425,
+   "pages": 112,
+   "passingNames": 4333,
+   "strictPages": 72
   },
   "currentByArea:shape-detection": {
-   "observedNames": 72,
-   "pages": 10,
+   "observedNames": 75,
+   "pages": 12,
    "passingNames": 2,
    "strictPages": 0
   },
   "currentByArea:signed-exchange": {
-   "observedNames": 26,
-   "pages": 13,
+   "observedNames": 32,
+   "pages": 19,
    "passingNames": 2,
    "strictPages": 2
   },
   "currentByArea:soft-navigation-heuristics": {
-   "observedNames": 30,
-   "pages": 19,
+   "observedNames": 42,
+   "pages": 31,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:speculation-rules": {
-   "observedNames": 1,
-   "pages": 123,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 4,
+   "pages": 207,
+   "passingNames": 1,
+   "strictPages": 1
   },
   "currentByArea:speech-api": {
    "observedNames": 5,
@@ -2253,33 +2427,33 @@
    "strictPages": 0
   },
   "currentByArea:storage": {
-   "observedNames": 79,
-   "pages": 10,
-   "passingNames": 64,
-   "strictPages": 1
+   "observedNames": 172,
+   "pages": 19,
+   "passingNames": 87,
+   "strictPages": 2
   },
   "currentByArea:storage-access-api": {
-   "observedNames": 15,
-   "pages": 7,
-   "passingNames": 2,
-   "strictPages": 1
+   "observedNames": 26,
+   "pages": 13,
+   "passingNames": 3,
+   "strictPages": 2
   },
   "currentByArea:streams": {
-   "observedNames": 1440,
-   "pages": 72,
-   "passingNames": 1329,
-   "strictPages": 52
+   "observedNames": 1920,
+   "pages": 105,
+   "passingNames": 1788,
+   "strictPages": 80
   },
   "currentByArea:subapps": {
-   "observedNames": 5,
-   "pages": 1,
+   "observedNames": 7,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:subresource-integrity": {
-   "observedNames": 97,
-   "pages": 8,
-   "passingNames": 52,
+   "observedNames": 149,
+   "pages": 12,
+   "passingNames": 75,
    "strictPages": 3
   },
   "currentByArea:svg": {
@@ -2289,15 +2463,21 @@
    "strictPages": 174
   },
   "currentByArea:svg-aam": {
-   "observedNames": 29,
-   "pages": 3,
-   "passingNames": 13,
-   "strictPages": 0
+   "observedNames": 38,
+   "pages": 4,
+   "passingNames": 22,
+   "strictPages": 1
+  },
+  "currentByArea:timing-entrytypes-registry": {
+   "observedNames": 4,
+   "pages": 1,
+   "passingNames": 4,
+   "strictPages": 1
   },
   "currentByArea:touch-events": {
-   "observedNames": 149,
-   "pages": 4,
-   "passingNames": 104,
+   "observedNames": 157,
+   "pages": 5,
+   "passingNames": 111,
    "strictPages": 1
   },
   "currentByArea:trust-tokens": {
@@ -2307,10 +2487,10 @@
    "strictPages": 0
   },
   "currentByArea:trusted-types": {
-   "observedNames": 493,
-   "pages": 36,
-   "passingNames": 285,
-   "strictPages": 11
+   "observedNames": 765,
+   "pages": 55,
+   "passingNames": 511,
+   "strictPages": 17
   },
   "currentByArea:ua-client-hints": {
    "observedNames": 8,
@@ -2319,22 +2499,22 @@
    "strictPages": 0
   },
   "currentByArea:uievents": {
-   "observedNames": 44,
-   "pages": 13,
-   "passingNames": 20,
-   "strictPages": 8
+   "observedNames": 259,
+   "pages": 31,
+   "passingNames": 221,
+   "strictPages": 22
   },
   "currentByArea:upgrade-insecure-requests": {
-   "observedNames": 187,
-   "pages": 37,
-   "passingNames": 80,
-   "strictPages": 15
+   "observedNames": 307,
+   "pages": 62,
+   "passingNames": 109,
+   "strictPages": 21
   },
   "currentByArea:url": {
-   "observedNames": 2981,
-   "pages": 18,
-   "passingNames": 2981,
-   "strictPages": 18
+   "observedNames": 4897,
+   "pages": 28,
+   "passingNames": 4897,
+   "strictPages": 28
   },
   "currentByArea:urlpattern": {
    "observedNames": 2425,
@@ -2343,58 +2523,76 @@
    "strictPages": 12
   },
   "currentByArea:user-timing": {
-   "observedNames": 115,
-   "pages": 10,
-   "passingNames": 114,
-   "strictPages": 9
+   "observedNames": 253,
+   "pages": 17,
+   "passingNames": 250,
+   "strictPages": 14
   },
   "currentByArea:vibration": {
-   "observedNames": 16,
-   "pages": 1,
+   "observedNames": 17,
+   "pages": 2,
    "passingNames": 14,
    "strictPages": 0
   },
+  "currentByArea:video-rvfc": {
+   "observedNames": 5,
+   "pages": 1,
+   "passingNames": 3,
+   "strictPages": 0
+  },
+  "currentByArea:viewport-segments": {
+   "observedNames": 1,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
   "currentByArea:visual-viewport": {
-   "observedNames": 13,
-   "pages": 7,
-   "passingNames": 9,
-   "strictPages": 4
+   "observedNames": 18,
+   "pages": 9,
+   "passingNames": 14,
+   "strictPages": 6
   },
   "currentByArea:wai-aria": {
-   "observedNames": 93,
-   "pages": 6,
-   "passingNames": 39,
-   "strictPages": 1
+   "observedNames": 174,
+   "pages": 13,
+   "passingNames": 116,
+   "strictPages": 7
   },
   "currentByArea:wasm": {
-   "observedNames": 2,
-   "pages": 1,
-   "passingNames": 2,
-   "strictPages": 1
+   "observedNames": 17,
+   "pages": 3,
+   "passingNames": 17,
+   "strictPages": 3
   },
   "currentByArea:web-animations": {
-   "observedNames": 1765,
-   "pages": 30,
-   "passingNames": 1594,
-   "strictPages": 19
+   "observedNames": 2302,
+   "pages": 54,
+   "passingNames": 2105,
+   "strictPages": 35
   },
   "currentByArea:web-based-payment-handler": {
-   "observedNames": 29,
-   "pages": 4,
-   "passingNames": 11,
-   "strictPages": 0
+   "observedNames": 57,
+   "pages": 8,
+   "passingNames": 37,
+   "strictPages": 2
   },
   "currentByArea:web-bundle": {
    "observedNames": 3,
-   "pages": 6,
+   "pages": 9,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "currentByArea:web-install": {
+   "observedNames": 4,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:web-locks": {
-   "observedNames": 147,
-   "pages": 19,
-   "passingNames": 69,
-   "strictPages": 5
+   "observedNames": 214,
+   "pages": 31,
+   "passingNames": 97,
+   "strictPages": 9
   },
   "currentByArea:web-nfc": {
    "observedNames": 78,
@@ -2403,8 +2601,8 @@
    "strictPages": 0
   },
   "currentByArea:web-share": {
-   "observedNames": 13,
-   "pages": 3,
+   "observedNames": 19,
+   "pages": 6,
    "passingNames": 1,
    "strictPages": 0
   },
@@ -2415,21 +2613,21 @@
    "strictPages": 73
   },
   "currentByArea:webauthn": {
-   "observedNames": 6,
-   "pages": 12,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 17,
+   "pages": 17,
+   "passingNames": 1,
+   "strictPages": 1
   },
   "currentByArea:webcodecs": {
-   "observedNames": 531,
-   "pages": 63,
-   "passingNames": 154,
-   "strictPages": 4
+   "observedNames": 1322,
+   "pages": 100,
+   "passingNames": 524,
+   "strictPages": 9
   },
   "currentByArea:webgl": {
-   "observedNames": 15,
-   "pages": 4,
-   "passingNames": 0,
+   "observedNames": 2119,
+   "pages": 8,
+   "passingNames": 4,
    "strictPages": 0
   },
   "currentByArea:webhid": {
@@ -2439,39 +2637,39 @@
    "strictPages": 1
   },
   "currentByArea:webidl": {
-   "observedNames": 67,
-   "pages": 14,
-   "passingNames": 51,
-   "strictPages": 8
+   "observedNames": 154,
+   "pages": 22,
+   "passingNames": 133,
+   "strictPages": 14
   },
   "currentByArea:webmcp": {
-   "observedNames": 39,
-   "pages": 17,
-   "passingNames": 1,
-   "strictPages": 0
+   "observedNames": 63,
+   "pages": 28,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "currentByArea:webmessaging": {
-   "observedNames": 52,
-   "pages": 28,
-   "passingNames": 47,
-   "strictPages": 25
+   "observedNames": 78,
+   "pages": 51,
+   "passingNames": 68,
+   "strictPages": 42
   },
   "currentByArea:webnn": {
-   "observedNames": 976,
-   "pages": 139,
-   "passingNames": 21,
+   "observedNames": 2096,
+   "pages": 212,
+   "passingNames": 248,
    "strictPages": 1
   },
   "currentByArea:webrtc": {
-   "observedNames": 736,
-   "pages": 46,
-   "passingNames": 19,
-   "strictPages": 0
+   "observedNames": 1042,
+   "pages": 90,
+   "passingNames": 20,
+   "strictPages": 1
   },
   "currentByArea:webrtc-encoded-transform": {
-   "observedNames": 44,
-   "pages": 13,
-   "passingNames": 0,
+   "observedNames": 116,
+   "pages": 20,
+   "passingNames": 7,
    "strictPages": 0
   },
   "currentByArea:webrtc-extensions": {
@@ -2481,88 +2679,106 @@
    "strictPages": 0
   },
   "currentByArea:webrtc-identity": {
-   "observedNames": 12,
+   "observedNames": 61,
+   "pages": 2,
+   "passingNames": 21,
+   "strictPages": 0
+  },
+  "currentByArea:webrtc-priority": {
+   "observedNames": 2,
    "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:webrtc-stats": {
-   "observedNames": 6,
-   "pages": 2,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 10,
+   "pages": 4,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "currentByArea:webrtc-svc": {
-   "observedNames": 6,
-   "pages": 2,
+   "observedNames": 11,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByArea:websockets": {
-   "observedNames": 644,
-   "pages": 192,
-   "passingNames": 489,
-   "strictPages": 134
+   "observedNames": 868,
+   "pages": 292,
+   "passingNames": 601,
+   "strictPages": 197
   },
   "currentByArea:webstorage": {
-   "observedNames": 23,
-   "pages": 9,
-   "passingNames": 22,
-   "strictPages": 8
+   "observedNames": 34,
+   "pages": 18,
+   "passingNames": 33,
+   "strictPages": 17
   },
   "currentByArea:webtransport": {
-   "observedNames": 15,
-   "pages": 19,
-   "passingNames": 0,
+   "observedNames": 299,
+   "pages": 39,
+   "passingNames": 2,
    "strictPages": 0
   },
   "currentByArea:webusb": {
-   "observedNames": 583,
-   "pages": 11,
+   "observedNames": 589,
+   "pages": 15,
    "passingNames": 46,
    "strictPages": 0
   },
   "currentByArea:webvtt": {
-   "observedNames": 119,
-   "pages": 18,
-   "passingNames": 3,
+   "observedNames": 147,
+   "pages": 27,
+   "passingNames": 6,
    "strictPages": 0
   },
   "currentByArea:webxr": {
-   "observedNames": 339,
-   "pages": 50,
-   "passingNames": 28,
+   "observedNames": 383,
+   "pages": 63,
+   "passingNames": 36,
    "strictPages": 0
   },
-  "currentByArea:workers": {
-   "observedNames": 381,
-   "pages": 71,
-   "passingNames": 294,
-   "strictPages": 47
-  },
-  "currentByArea:worklets": {
-   "observedNames": 111,
-   "pages": 9,
-   "passingNames": 27,
-   "strictPages": 0
-  },
-  "currentByArea:xhr": {
-   "observedNames": 518,
-   "pages": 95,
-   "passingNames": 482,
-   "strictPages": 83
-  },
-  "currentByArea:xml": {
-   "observedNames": 177,
-   "pages": 1,
+  "currentByArea:window-management": {
+   "observedNames": 6,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
+  "currentByArea:workers": {
+   "observedNames": 532,
+   "pages": 114,
+   "passingNames": 365,
+   "strictPages": 72
+  },
+  "currentByArea:worklets": {
+   "observedNames": 177,
+   "pages": 12,
+   "passingNames": 27,
+   "strictPages": 0
+  },
+  "currentByArea:x-frame-options": {
+   "observedNames": 18,
+   "pages": 1,
+   "passingNames": 18,
+   "strictPages": 1
+  },
+  "currentByArea:xhr": {
+   "observedNames": 633,
+   "pages": 139,
+   "passingNames": 574,
+   "strictPages": 117
+  },
+  "currentByArea:xml": {
+   "observedNames": 181,
+   "pages": 2,
+   "passingNames": 4,
+   "strictPages": 1
+  },
   "currentByEnvironment:dedicatedworker": {
-   "observedNames": 18085,
-   "pages": 634,
-   "passingNames": 15027,
-   "strictPages": 455
+   "observedNames": 25529,
+   "pages": 987,
+   "passingNames": 20152,
+   "strictPages": 707
   },
   "currentByEnvironment:dedicatedworker-module": {
    "observedNames": 2,
@@ -2571,89 +2787,89 @@
    "strictPages": 2
   },
   "currentByEnvironment:serviceworker": {
-   "observedNames": 2919,
-   "pages": 162,
-   "passingNames": 2499,
-   "strictPages": 105
+   "observedNames": 3968,
+   "pages": 241,
+   "passingNames": 3455,
+   "strictPages": 158
   },
   "currentByEnvironment:serviceworker-module": {
-   "observedNames": 2,
-   "pages": 3,
-   "passingNames": 1,
-   "strictPages": 1
+   "observedNames": 7,
+   "pages": 6,
+   "passingNames": 4,
+   "strictPages": 2
   },
   "currentByEnvironment:sharedworker": {
-   "observedNames": 2629,
-   "pages": 146,
-   "passingNames": 2317,
-   "strictPages": 96
+   "observedNames": 3722,
+   "pages": 232,
+   "passingNames": 3102,
+   "strictPages": 151
   },
   "currentByEnvironment:sharedworker-module": {
    "observedNames": 0,
-   "pages": 1,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentByEnvironment:window": {
-   "observedNames": 413663,
-   "pages": 6510,
-   "passingNames": 392944,
-   "strictPages": 3240
+   "observedNames": 638241,
+   "pages": 9798,
+   "passingNames": 605769,
+   "strictPages": 4866
   },
   "currentByEnvironment:window-module": {
-   "observedNames": 6,
-   "pages": 1,
+   "observedNames": 12,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "currentChrome": {
-   "commonPass": 407831,
-   "firstOnly": 4959,
-   "firstOnlyNewlyObserved": 870,
-   "firstOnlyPage": 182,
-   "firstOnlyPreviouslyObserved": 4089,
-   "firstPass": 412790,
-   "matchedPages": 7459,
-   "missingFirstName": 3478,
-   "missingSecondName": 1186,
-   "secondOnly": 17280,
-   "secondOnlyNowMissing": 3086,
-   "secondOnlyNowObserved": 14194,
-   "secondOnlyPage": 2278,
-   "secondPass": 425111
+   "commonPass": 626721,
+   "firstOnly": 5763,
+   "firstOnlyNewlyObserved": 881,
+   "firstOnlyPage": 251,
+   "firstOnlyPreviouslyObserved": 4882,
+   "firstPass": 632484,
+   "matchedPages": 11272,
+   "missingFirstName": 5118,
+   "missingSecondName": 1278,
+   "secondOnly": 28131,
+   "secondOnlyNowMissing": 4610,
+   "secondOnlyNowObserved": 23521,
+   "secondOnlyPage": 3447,
+   "secondPass": 654852
   },
   "currentHarnessOutcomes": {
-   "Error": 297,
-   "None": 66,
-   "OK": 6761,
-   "Timeout": 335
+   "Error": 464,
+   "None": 100,
+   "OK": 10207,
+   "Timeout": 501
   },
   "currentPageOutcomes": {
-   "complete": 6761,
-   "error": 299,
-   "timeout": 399
+   "complete": 10207,
+   "error": 466,
+   "timeout": 599
   },
   "currentPrevious": {
-   "commonPass": 411235,
-   "firstOnly": 1555,
-   "firstOnlyNewlyObserved": 197,
-   "firstOnlyPage": 114,
-   "firstOnlyPreviouslyObserved": 1358,
-   "firstPass": 412790,
-   "matchedPages": 7459,
-   "missingFirstName": 51,
-   "missingSecondName": 276,
-   "secondOnly": 36,
-   "secondOnlyNowMissing": 3,
-   "secondOnlyNowObserved": 33,
-   "secondOnlyPage": 2,
-   "secondPass": 411271
+   "commonPass": 630371,
+   "firstOnly": 2113,
+   "firstOnlyNewlyObserved": 289,
+   "firstOnlyPage": 158,
+   "firstOnlyPreviouslyObserved": 1824,
+   "firstPass": 632484,
+   "matchedPages": 11272,
+   "missingFirstName": 56,
+   "missingSecondName": 369,
+   "secondOnly": 60,
+   "secondOnlyNowMissing": 4,
+   "secondOnlyNowObserved": 56,
+   "secondOnlyPage": 3,
+   "secondPass": 630431
   },
   "previous": {
-   "observedNames": 437081,
-   "pages": 7459,
-   "passingNames": 411271,
-   "strictPages": 3787
+   "observedNames": 671168,
+   "pages": 11272,
+   "passingNames": 630431,
+   "strictPages": 5731
   },
   "previousByArea:FileAPI": {
    "observedNames": 600,
@@ -2662,44 +2878,44 @@
    "strictPages": 32
   },
   "previousByArea:IndexedDB": {
-   "observedNames": 1123,
-   "pages": 171,
-   "passingNames": 1087,
-   "strictPages": 146
+   "observedNames": 2437,
+   "pages": 308,
+   "passingNames": 2358,
+   "strictPages": 268
   },
   "previousByArea:WebCryptoAPI": {
-   "observedNames": 17564,
-   "pages": 77,
-   "passingNames": 14567,
-   "strictPages": 56
+   "observedNames": 27554,
+   "pages": 123,
+   "passingNames": 19756,
+   "strictPages": 80
   },
   "previousByArea:accelerometer": {
-   "observedNames": 4,
-   "pages": 2,
-   "passingNames": 3,
+   "observedNames": 42,
+   "pages": 3,
+   "passingNames": 5,
    "strictPages": 1
   },
   "previousByArea:accname": {
-   "observedNames": 8,
-   "pages": 1,
-   "passingNames": 7,
-   "strictPages": 0
+   "observedNames": 46,
+   "pages": 5,
+   "passingNames": 39,
+   "strictPages": 2
   },
   "previousByArea:ai": {
-   "observedNames": 88,
-   "pages": 40,
+   "observedNames": 126,
+   "pages": 63,
    "passingNames": 1,
    "strictPages": 0
   },
   "previousByArea:ambient-light": {
-   "observedNames": 15,
-   "pages": 2,
+   "observedNames": 19,
+   "pages": 4,
    "passingNames": 2,
    "strictPages": 0
   },
   "previousByArea:animation-worklet": {
-   "observedNames": 50,
-   "pages": 12,
+   "observedNames": 53,
+   "pages": 16,
    "passingNames": 18,
    "strictPages": 0
   },
@@ -2709,16 +2925,22 @@
    "passingNames": 0,
    "strictPages": 0
   },
+  "previousByArea:audio-session": {
+   "observedNames": 4,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
   "previousByArea:background-fetch": {
-   "observedNames": 69,
-   "pages": 3,
+   "observedNames": 83,
+   "pages": 6,
    "passingNames": 7,
    "strictPages": 0
   },
   "previousByArea:background-sync": {
-   "observedNames": 17,
-   "pages": 1,
-   "passingNames": 8,
+   "observedNames": 34,
+   "pages": 2,
+   "passingNames": 16,
    "strictPages": 0
   },
   "previousByArea:badging": {
@@ -2728,16 +2950,16 @@
    "strictPages": 0
   },
   "previousByArea:battery-status": {
-   "observedNames": 7,
-   "pages": 4,
+   "observedNames": 9,
+   "pages": 5,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:beacon": {
-   "observedNames": 41,
-   "pages": 5,
-   "passingNames": 41,
-   "strictPages": 5
+   "observedNames": 46,
+   "pages": 8,
+   "passingNames": 45,
+   "strictPages": 7
   },
   "previousByArea:bluetooth": {
    "observedNames": 209,
@@ -2752,52 +2974,52 @@
    "strictPages": 0
   },
   "previousByArea:clear-site-data": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
+   "observedNames": 16,
+   "pages": 4,
+   "passingNames": 9,
    "strictPages": 0
   },
   "previousByArea:client-hints": {
-   "observedNames": 36,
-   "pages": 26,
-   "passingNames": 27,
-   "strictPages": 12
+   "observedNames": 66,
+   "pages": 46,
+   "passingNames": 41,
+   "strictPages": 17
   },
   "previousByArea:clipboard-apis": {
-   "observedNames": 22,
-   "pages": 13,
-   "passingNames": 16,
-   "strictPages": 10
+   "observedNames": 46,
+   "pages": 21,
+   "passingNames": 29,
+   "strictPages": 14
   },
   "previousByArea:close-watcher": {
-   "observedNames": 8,
-   "pages": 8,
+   "observedNames": 15,
+   "pages": 15,
    "passingNames": 2,
    "strictPages": 2
   },
   "previousByArea:compat": {
-   "observedNames": 52,
-   "pages": 2,
-   "passingNames": 52,
-   "strictPages": 2
+   "observedNames": 53,
+   "pages": 3,
+   "passingNames": 53,
+   "strictPages": 3
   },
   "previousByArea:compression": {
-   "observedNames": 689,
-   "pages": 38,
-   "passingNames": 623,
-   "strictPages": 26
+   "observedNames": 719,
+   "pages": 40,
+   "passingNames": 652,
+   "strictPages": 27
   },
   "previousByArea:compute-pressure": {
-   "observedNames": 3,
-   "pages": 4,
-   "passingNames": 0,
+   "observedNames": 36,
+   "pages": 6,
+   "passingNames": 1,
    "strictPages": 0
   },
   "previousByArea:connection-allowlist": {
-   "observedNames": 82,
-   "pages": 22,
-   "passingNames": 32,
-   "strictPages": 3
+   "observedNames": 106,
+   "pages": 32,
+   "passingNames": 39,
+   "strictPages": 4
   },
   "previousByArea:console": {
    "observedNames": 8,
@@ -2806,8 +3028,8 @@
    "strictPages": 0
   },
   "previousByArea:container-timing": {
-   "observedNames": 7,
-   "pages": 7,
+   "observedNames": 9,
+   "pages": 9,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -2818,10 +3040,10 @@
    "strictPages": 0
   },
   "previousByArea:content-security-policy": {
-   "observedNames": 847,
-   "pages": 157,
-   "passingNames": 434,
-   "strictPages": 49
+   "observedNames": 1470,
+   "pages": 264,
+   "passingNames": 714,
+   "strictPages": 72
   },
   "previousByArea:contenteditable": {
    "observedNames": 4,
@@ -2830,22 +3052,22 @@
    "strictPages": 1
   },
   "previousByArea:cookies": {
-   "observedNames": 158,
-   "pages": 22,
-   "passingNames": 146,
-   "strictPages": 11
+   "observedNames": 257,
+   "pages": 35,
+   "passingNames": 234,
+   "strictPages": 17
   },
   "previousByArea:cookiestore": {
-   "observedNames": 45,
-   "pages": 13,
+   "observedNames": 64,
+   "pages": 21,
    "passingNames": 4,
    "strictPages": 0
   },
   "previousByArea:cors": {
-   "observedNames": 241,
-   "pages": 11,
-   "passingNames": 219,
-   "strictPages": 5
+   "observedNames": 312,
+   "pages": 15,
+   "passingNames": 278,
+   "strictPages": 7
   },
   "previousByArea:cpu-performance": {
    "observedNames": 1,
@@ -2854,21 +3076,21 @@
    "strictPages": 0
   },
   "previousByArea:credential-management": {
-   "observedNames": 14,
-   "pages": 5,
+   "observedNames": 17,
+   "pages": 6,
    "passingNames": 1,
    "strictPages": 1
   },
   "previousByArea:custom-elements": {
-   "observedNames": 388,
-   "pages": 43,
-   "passingNames": 247,
-   "strictPages": 21
+   "observedNames": 651,
+   "pages": 64,
+   "passingNames": 408,
+   "strictPages": 29
   },
   "previousByArea:device-bound-session-credentials": {
-   "observedNames": 10,
-   "pages": 7,
-   "passingNames": 0,
+   "observedNames": 24,
+   "pages": 12,
+   "passingNames": 1,
    "strictPages": 0
   },
   "previousByArea:device-memory": {
@@ -2884,20 +3106,20 @@
    "strictPages": 0
   },
   "previousByArea:digital-credentials": {
-   "observedNames": 22,
-   "pages": 4,
-   "passingNames": 1,
+   "observedNames": 48,
+   "pages": 10,
+   "passingNames": 5,
    "strictPages": 1
   },
   "previousByArea:direct-sockets": {
-   "observedNames": 1,
-   "pages": 1,
+   "observedNames": 5,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:document-picture-in-picture": {
-   "observedNames": 16,
-   "pages": 7,
+   "observedNames": 18,
+   "pages": 9,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -2908,10 +3130,10 @@
    "strictPages": 0
   },
   "previousByArea:dom": {
-   "observedNames": 20475,
-   "pages": 213,
-   "passingNames": 20384,
-   "strictPages": 188
+   "observedNames": 22951,
+   "pages": 313,
+   "passingNames": 22786,
+   "strictPages": 268
   },
   "previousByArea:domparsing": {
    "observedNames": 880,
@@ -2920,10 +3142,10 @@
    "strictPages": 20
   },
   "previousByArea:domxpath": {
-   "observedNames": 17,
-   "pages": 5,
-   "passingNames": 17,
-   "strictPages": 5
+   "observedNames": 36,
+   "pages": 10,
+   "passingNames": 36,
+   "strictPages": 10
   },
   "previousByArea:dpub-aam": {
    "observedNames": 39,
@@ -2938,70 +3160,70 @@
    "strictPages": 101
   },
   "previousByArea:element-timing": {
-   "observedNames": 14,
-   "pages": 11,
+   "observedNames": 21,
+   "pages": 18,
    "passingNames": 3,
    "strictPages": 0
   },
   "previousByArea:encoding": {
-   "observedNames": 259317,
-   "pages": 315,
-   "passingNames": 259211,
-   "strictPages": 312
+   "observedNames": 437985,
+   "pages": 509,
+   "passingNames": 437878,
+   "strictPages": 505
   },
   "previousByArea:encoding-detection": {
-   "observedNames": 18,
-   "pages": 18,
+   "observedNames": 31,
+   "pages": 31,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:encrypted-media": {
-   "observedNames": 33,
-   "pages": 23,
+   "observedNames": 58,
+   "pages": 41,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:entries-api": {
-   "observedNames": 3,
-   "pages": 1,
+   "observedNames": 5,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:event-timing": {
-   "observedNames": 30,
-   "pages": 17,
+   "observedNames": 39,
+   "pages": 26,
    "passingNames": 14,
    "strictPages": 1
   },
   "previousByArea:eventsource": {
-   "observedNames": 37,
-   "pages": 26,
-   "passingNames": 34,
-   "strictPages": 25
+   "observedNames": 70,
+   "pages": 50,
+   "passingNames": 61,
+   "strictPages": 46
   },
   "previousByArea:fenced-frame": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 5,
+   "pages": 3,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "previousByArea:fetch": {
-   "observedNames": 2598,
-   "pages": 207,
-   "passingNames": 1895,
-   "strictPages": 104
+   "observedNames": 4196,
+   "pages": 331,
+   "passingNames": 3166,
+   "strictPages": 164
   },
   "previousByArea:file-system-access": {
-   "observedNames": 24,
-   "pages": 4,
-   "passingNames": 16,
+   "observedNames": 73,
+   "pages": 7,
+   "passingNames": 34,
    "strictPages": 0
   },
   "previousByArea:focus": {
-   "observedNames": 21,
-   "pages": 10,
-   "passingNames": 8,
-   "strictPages": 6
+   "observedNames": 24,
+   "pages": 13,
+   "passingNames": 10,
+   "strictPages": 8
   },
   "previousByArea:font-access": {
    "observedNames": 21,
@@ -3016,22 +3238,34 @@
    "strictPages": 0
   },
   "previousByArea:fs": {
-   "observedNames": 226,
-   "pages": 22,
-   "passingNames": 5,
+   "observedNames": 366,
+   "pages": 33,
+   "passingNames": 9,
    "strictPages": 0
   },
   "previousByArea:fullscreen": {
-   "observedNames": 23,
-   "pages": 17,
-   "passingNames": 11,
-   "strictPages": 6
+   "observedNames": 77,
+   "pages": 29,
+   "passingNames": 59,
+   "strictPages": 12
+  },
+  "previousByArea:gamepad": {
+   "observedNames": 88,
+   "pages": 2,
+   "passingNames": 34,
+   "strictPages": 0
+  },
+  "previousByArea:generic-sensor": {
+   "observedNames": 36,
+   "pages": 1,
+   "passingNames": 2,
+   "strictPages": 0
   },
   "previousByArea:geolocation": {
-   "observedNames": 10,
-   "pages": 3,
-   "passingNames": 5,
-   "strictPages": 0
+   "observedNames": 17,
+   "pages": 6,
+   "passingNames": 11,
+   "strictPages": 2
   },
   "previousByArea:geolocation-sensor": {
    "observedNames": 1,
@@ -3039,149 +3273,173 @@
    "passingNames": 1,
    "strictPages": 1
   },
-  "previousByArea:gyroscope": {
+  "previousByArea:gpc": {
    "observedNames": 1,
    "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:gyroscope": {
+   "observedNames": 9,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:hr-time": {
-   "observedNames": 43,
-   "pages": 6,
-   "passingNames": 40,
-   "strictPages": 4
-  },
-  "previousByArea:html": {
-   "observedNames": 38119,
-   "pages": 2013,
-   "passingNames": 35105,
-   "strictPages": 1221
-  },
-  "previousByArea:html-aam": {
-   "observedNames": 262,
+   "observedNames": 45,
    "pages": 7,
-   "passingNames": 88,
-   "strictPages": 1
-  },
-  "previousByArea:https-upgrades": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:idle-detection": {
-   "observedNames": 3,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:imagebitmap-renderingcontext": {
-   "observedNames": 6,
-   "pages": 4,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:import-maps": {
-   "observedNames": 83,
-   "pages": 12,
-   "passingNames": 32,
-   "strictPages": 3
-  },
-  "previousByArea:inert": {
-   "observedNames": 19,
-   "pages": 9,
-   "passingNames": 10,
+   "passingNames": 42,
    "strictPages": 5
   },
-  "previousByArea:infrastructure": {
-   "observedNames": 48,
-   "pages": 27,
-   "passingNames": 34,
-   "strictPages": 13
+  "previousByArea:html": {
+   "observedNames": 46577,
+   "pages": 3266,
+   "passingNames": 41718,
+   "strictPages": 2006
   },
-  "previousByArea:input-events": {
-   "observedNames": 1396,
-   "pages": 9,
-   "passingNames": 838,
-   "strictPages": 0
+  "previousByArea:html-aam": {
+   "observedNames": 303,
+   "pages": 13,
+   "passingNames": 108,
+   "strictPages": 2
   },
-  "previousByArea:intersection-observer": {
-   "observedNames": 119,
-   "pages": 32,
-   "passingNames": 86,
-   "strictPages": 9
-  },
-  "previousByArea:is-input-pending": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:jpegxl": {
-   "observedNames": 3,
-   "pages": 2,
-   "passingNames": 1,
-   "strictPages": 1
-  },
-  "previousByArea:js": {
-   "observedNames": 55,
-   "pages": 5,
-   "passingNames": 51,
-   "strictPages": 1
-  },
-  "previousByArea:js-self-profiling": {
-   "observedNames": 4,
-   "pages": 4,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:keyboard-map": {
+  "previousByArea:https-upgrades": {
    "observedNames": 2,
    "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
-  "previousByArea:largest-contentful-paint": {
-   "observedNames": 18,
-   "pages": 16,
+  "previousByArea:idle-detection": {
+   "observedNames": 13,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
-  "previousByArea:layout-instability": {
-   "observedNames": 18,
-   "pages": 18,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:loading": {
-   "observedNames": 18,
-   "pages": 17,
-   "passingNames": 6,
-   "strictPages": 5
-  },
-  "previousByArea:long-animation-frame": {
-   "observedNames": 0,
+  "previousByArea:imagebitmap-renderingcontext": {
+   "observedNames": 9,
    "pages": 7,
    "passingNames": 0,
    "strictPages": 0
   },
-  "previousByArea:longtask-timing": {
-   "observedNames": 6,
-   "pages": 8,
+  "previousByArea:import-maps": {
+   "observedNames": 154,
+   "pages": 19,
+   "passingNames": 56,
+   "strictPages": 6
+  },
+  "previousByArea:inert": {
+   "observedNames": 50,
+   "pages": 12,
+   "passingNames": 24,
+   "strictPages": 6
+  },
+  "previousByArea:infrastructure": {
+   "observedNames": 66,
+   "pages": 38,
+   "passingNames": 47,
+   "strictPages": 18
+  },
+  "previousByArea:input-events": {
+   "observedNames": 1924,
+   "pages": 14,
+   "passingNames": 1302,
+   "strictPages": 1
+  },
+  "previousByArea:installedapp": {
+   "observedNames": 16,
+   "pages": 1,
+   "passingNames": 14,
+   "strictPages": 0
+  },
+  "previousByArea:intersection-observer": {
+   "observedNames": 189,
+   "pages": 60,
+   "passingNames": 113,
+   "strictPages": 15
+  },
+  "previousByArea:is-input-pending": {
+   "observedNames": 4,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
-  "previousByArea:managed": {
-   "observedNames": 3,
+  "previousByArea:jpegxl": {
+   "observedNames": 11,
+   "pages": 6,
+   "passingNames": 2,
+   "strictPages": 2
+  },
+  "previousByArea:js": {
+   "observedNames": 83,
+   "pages": 11,
+   "passingNames": 77,
+   "strictPages": 5
+  },
+  "previousByArea:js-self-profiling": {
+   "observedNames": 7,
+   "pages": 6,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:keyboard-lock": {
+   "observedNames": 1,
    "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
-  "previousByArea:mathml": {
-   "observedNames": 919,
-   "pages": 54,
-   "passingNames": 240,
+  "previousByArea:keyboard-map": {
+   "observedNames": 3,
+   "pages": 3,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:largest-contentful-paint": {
+   "observedNames": 27,
+   "pages": 25,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:layout-instability": {
+   "observedNames": 40,
+   "pages": 40,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:loading": {
+   "observedNames": 27,
+   "pages": 27,
+   "passingNames": 9,
    "strictPages": 8
+  },
+  "previousByArea:long-animation-frame": {
+   "observedNames": 0,
+   "pages": 11,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:longtask-timing": {
+   "observedNames": 8,
+   "pages": 10,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:magnetometer": {
+   "observedNames": 6,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:managed": {
+   "observedNames": 9,
+   "pages": 2,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:mathml": {
+   "observedNames": 1599,
+   "pages": 78,
+   "passingNames": 514,
+   "strictPages": 12
   },
   "previousByArea:measure-memory": {
    "observedNames": 4,
@@ -3190,26 +3448,26 @@
    "strictPages": 0
   },
   "previousByArea:media-capabilities": {
-   "observedNames": 145,
-   "pages": 6,
+   "observedNames": 166,
+   "pages": 7,
    "passingNames": 22,
    "strictPages": 0
   },
   "previousByArea:media-source": {
-   "observedNames": 191,
-   "pages": 21,
-   "passingNames": 55,
+   "observedNames": 241,
+   "pages": 37,
+   "passingNames": 65,
    "strictPages": 0
   },
   "previousByArea:mediacapture-extensions": {
-   "observedNames": 16,
-   "pages": 3,
+   "observedNames": 17,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:mediacapture-fromelement": {
-   "observedNames": 1,
-   "pages": 1,
+   "observedNames": 5,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -3220,8 +3478,8 @@
    "strictPages": 0
   },
   "previousByArea:mediacapture-image": {
-   "observedNames": 38,
-   "pages": 5,
+   "observedNames": 41,
+   "pages": 6,
    "passingNames": 11,
    "strictPages": 0
   },
@@ -3232,14 +3490,26 @@
    "strictPages": 0
   },
   "previousByArea:mediacapture-record": {
-   "observedNames": 107,
-   "pages": 19,
+   "observedNames": 139,
+   "pages": 38,
    "passingNames": 2,
    "strictPages": 0
   },
   "previousByArea:mediacapture-streams": {
-   "observedNames": 37,
-   "pages": 13,
+   "observedNames": 49,
+   "pages": 23,
+   "passingNames": 1,
+   "strictPages": 1
+  },
+  "previousByArea:mediasession": {
+   "observedNames": 21,
+   "pages": 2,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:merchant-validation": {
+   "observedNames": 1,
+   "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -3250,75 +3520,81 @@
    "strictPages": 1
   },
   "previousByArea:mixed-content": {
-   "observedNames": 605,
-   "pages": 101,
-   "passingNames": 405,
-   "strictPages": 15
+   "observedNames": 868,
+   "pages": 148,
+   "passingNames": 583,
+   "strictPages": 25
   },
   "previousByArea:mst-content-hint": {
-   "observedNames": 6,
-   "pages": 1,
+   "observedNames": 7,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
+  "previousByArea:nav-tracking-mitigations": {
+   "observedNames": 2,
+   "pages": 2,
+   "passingNames": 2,
+   "strictPages": 2
+  },
   "previousByArea:navigation-api": {
-   "observedNames": 133,
-   "pages": 114,
-   "passingNames": 73,
-   "strictPages": 61
+   "observedNames": 220,
+   "pages": 182,
+   "passingNames": 114,
+   "strictPages": 95
   },
   "previousByArea:navigation-timing": {
-   "observedNames": 207,
-   "pages": 12,
-   "passingNames": 170,
-   "strictPages": 6
+   "observedNames": 266,
+   "pages": 30,
+   "passingNames": 217,
+   "strictPages": 17
   },
   "previousByArea:network-error-logging": {
+   "observedNames": 4,
+   "pages": 4,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:notifications": {
+   "observedNames": 116,
+   "pages": 6,
+   "passingNames": 57,
+   "strictPages": 1
+  },
+  "previousByArea:old-tests": {
+   "observedNames": 9,
+   "pages": 9,
+   "passingNames": 6,
+   "strictPages": 6
+  },
+  "previousByArea:orientation-event": {
+   "observedNames": 12,
+   "pages": 7,
+   "passingNames": 1,
+   "strictPages": 1
+  },
+  "previousByArea:orientation-sensor": {
+   "observedNames": 11,
+   "pages": 4,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:page-lifecycle": {
    "observedNames": 2,
    "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
-  "previousByArea:notifications": {
-   "observedNames": 104,
-   "pages": 4,
-   "passingNames": 56,
-   "strictPages": 1
-  },
-  "previousByArea:old-tests": {
-   "observedNames": 4,
-   "pages": 4,
-   "passingNames": 3,
+  "previousByArea:page-visibility": {
+   "observedNames": 6,
+   "pages": 3,
+   "passingNames": 6,
    "strictPages": 3
   },
-  "previousByArea:orientation-event": {
-   "observedNames": 9,
-   "pages": 5,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:orientation-sensor": {
-   "observedNames": 8,
-   "pages": 3,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:page-lifecycle": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:page-visibility": {
-   "observedNames": 5,
-   "pages": 2,
-   "passingNames": 5,
-   "strictPages": 2
-  },
   "previousByArea:paint-timing": {
-   "observedNames": 9,
-   "pages": 9,
-   "passingNames": 0,
+   "observedNames": 35,
+   "pages": 18,
+   "passingNames": 8,
    "strictPages": 0
   },
   "previousByArea:payment-method-basic-card": {
@@ -3328,33 +3604,33 @@
    "strictPages": 0
   },
   "previousByArea:payment-method-manifest": {
-   "observedNames": 8,
-   "pages": 3,
-   "passingNames": 0,
-   "strictPages": 0
-  },
-  "previousByArea:payment-request": {
-   "observedNames": 9,
+   "observedNames": 10,
    "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
+  "previousByArea:payment-request": {
+   "observedNames": 14,
+   "pages": 6,
+   "passingNames": 0,
+   "strictPages": 0
+  },
   "previousByArea:performance-timeline": {
-   "observedNames": 21,
-   "pages": 17,
-   "passingNames": 14,
-   "strictPages": 10
+   "observedNames": 155,
+   "pages": 25,
+   "passingNames": 124,
+   "strictPages": 14
   },
   "previousByArea:permissions": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 1,
+   "observedNames": 69,
+   "pages": 4,
+   "passingNames": 31,
    "strictPages": 1
   },
   "previousByArea:permissions-policy": {
-   "observedNames": 192,
-   "pages": 26,
-   "passingNames": 4,
+   "observedNames": 211,
+   "pages": 43,
+   "passingNames": 7,
    "strictPages": 1
   },
   "previousByArea:permissions-request": {
@@ -3364,8 +3640,8 @@
    "strictPages": 0
   },
   "previousByArea:picture-in-picture": {
-   "observedNames": 74,
-   "pages": 4,
+   "observedNames": 85,
+   "pages": 7,
    "passingNames": 26,
    "strictPages": 0
   },
@@ -3376,27 +3652,27 @@
    "strictPages": 2
   },
   "previousByArea:pointerevents": {
-   "observedNames": 250,
-   "pages": 61,
-   "passingNames": 174,
-   "strictPages": 20
+   "observedNames": 336,
+   "pages": 90,
+   "passingNames": 218,
+   "strictPages": 29
   },
   "previousByArea:pointerlock": {
-   "observedNames": 3,
-   "pages": 2,
+   "observedNames": 5,
+   "pages": 5,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:preload": {
-   "observedNames": 110,
-   "pages": 17,
-   "passingNames": 31,
-   "strictPages": 5
+   "observedNames": 134,
+   "pages": 29,
+   "passingNames": 47,
+   "strictPages": 9
   },
   "previousByArea:presentation-api": {
-   "observedNames": 3,
-   "pages": 3,
-   "passingNames": 0,
+   "observedNames": 106,
+   "pages": 4,
+   "passingNames": 16,
    "strictPages": 0
   },
   "previousByArea:private-click-measurement": {
@@ -3406,122 +3682,128 @@
    "strictPages": 0
   },
   "previousByArea:push-api": {
-   "observedNames": 11,
-   "pages": 3,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 21,
+   "pages": 6,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "previousByArea:quirks": {
-   "observedNames": 3055,
-   "pages": 8,
-   "passingNames": 2971,
-   "strictPages": 2
+   "observedNames": 3059,
+   "pages": 9,
+   "passingNames": 2975,
+   "strictPages": 3
   },
   "previousByArea:referrer-policy": {
-   "observedNames": 2321,
-   "pages": 410,
-   "passingNames": 2229,
-   "strictPages": 369
+   "observedNames": 3179,
+   "pages": 567,
+   "passingNames": 2991,
+   "strictPages": 487
   },
   "previousByArea:remote-playback": {
-   "observedNames": 1,
-   "pages": 1,
+   "observedNames": 2,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:reporting": {
-   "observedNames": 12,
-   "pages": 6,
-   "passingNames": 1,
+   "observedNames": 28,
+   "pages": 11,
+   "passingNames": 3,
    "strictPages": 0
   },
   "previousByArea:requestidlecallback": {
-   "observedNames": 5,
-   "pages": 4,
-   "passingNames": 5,
-   "strictPages": 4
+   "observedNames": 7,
+   "pages": 6,
+   "passingNames": 6,
+   "strictPages": 5
   },
   "previousByArea:resize-observer": {
-   "observedNames": 13,
-   "pages": 9,
-   "passingNames": 7,
-   "strictPages": 4
+   "observedNames": 71,
+   "pages": 16,
+   "passingNames": 63,
+   "strictPages": 9
   },
   "previousByArea:resource-timing": {
-   "observedNames": 369,
-   "pages": 43,
-   "passingNames": 226,
-   "strictPages": 18
+   "observedNames": 484,
+   "pages": 63,
+   "passingNames": 313,
+   "strictPages": 23
   },
   "previousByArea:sanitizer-api": {
-   "observedNames": 271,
-   "pages": 6,
+   "observedNames": 307,
+   "pages": 9,
    "passingNames": 57,
    "strictPages": 1
   },
   "previousByArea:savedata": {
-   "observedNames": 5,
-   "pages": 1,
-   "passingNames": 3,
+   "observedNames": 10,
+   "pages": 2,
+   "passingNames": 6,
    "strictPages": 0
   },
   "previousByArea:scheduler": {
-   "observedNames": 84,
-   "pages": 22,
-   "passingNames": 72,
-   "strictPages": 17
+   "observedNames": 126,
+   "pages": 34,
+   "passingNames": 114,
+   "strictPages": 29
   },
   "previousByArea:screen-capture": {
-   "observedNames": 1,
-   "pages": 1,
-   "passingNames": 0,
+   "observedNames": 33,
+   "pages": 5,
+   "passingNames": 13,
    "strictPages": 0
   },
   "previousByArea:screen-orientation": {
-   "observedNames": 11,
-   "pages": 5,
+   "observedNames": 15,
+   "pages": 6,
    "passingNames": 2,
    "strictPages": 0
   },
   "previousByArea:screen-wake-lock": {
-   "observedNames": 4,
-   "pages": 2,
+   "observedNames": 7,
+   "pages": 4,
+   "passingNames": 1,
+   "strictPages": 1
+  },
+  "previousByArea:scroll-animations": {
+   "observedNames": 721,
+   "pages": 70,
+   "passingNames": 370,
+   "strictPages": 29
+  },
+  "previousByArea:scroll-performance-timing": {
+   "observedNames": 2,
+   "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
-  "previousByArea:scroll-animations": {
-   "observedNames": 520,
-   "pages": 43,
-   "passingNames": 264,
-   "strictPages": 19
-  },
   "previousByArea:scroll-to-text-fragment": {
-   "observedNames": 62,
-   "pages": 10,
-   "passingNames": 23,
+   "observedNames": 118,
+   "pages": 14,
+   "passingNames": 29,
    "strictPages": 0
   },
   "previousByArea:secure-contexts": {
-   "observedNames": 8,
-   "pages": 2,
-   "passingNames": 5,
+   "observedNames": 13,
+   "pages": 3,
+   "passingNames": 6,
    "strictPages": 1
   },
   "previousByArea:secure-payment-confirmation": {
-   "observedNames": 3,
-   "pages": 2,
-   "passingNames": 0,
+   "observedNames": 14,
+   "pages": 7,
+   "passingNames": 3,
    "strictPages": 0
   },
   "previousByArea:selection": {
-   "observedNames": 3949,
-   "pages": 32,
-   "passingNames": 3894,
-   "strictPages": 17
+   "observedNames": 19308,
+   "pages": 52,
+   "passingNames": 19250,
+   "strictPages": 35
   },
   "previousByArea:serial": {
-   "observedNames": 11,
-   "pages": 3,
+   "observedNames": 14,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
@@ -3532,40 +3814,40 @@
    "strictPages": 2
   },
   "previousByArea:service-workers": {
-   "observedNames": 939,
-   "pages": 71,
-   "passingNames": 635,
-   "strictPages": 26
+   "observedNames": 1389,
+   "pages": 125,
+   "passingNames": 930,
+   "strictPages": 48
   },
   "previousByArea:shadow-dom": {
-   "observedNames": 4351,
-   "pages": 84,
-   "passingNames": 4280,
-   "strictPages": 52
+   "observedNames": 4425,
+   "pages": 112,
+   "passingNames": 4328,
+   "strictPages": 68
   },
   "previousByArea:shape-detection": {
-   "observedNames": 72,
-   "pages": 10,
+   "observedNames": 75,
+   "pages": 12,
    "passingNames": 2,
    "strictPages": 0
   },
   "previousByArea:signed-exchange": {
-   "observedNames": 26,
-   "pages": 13,
+   "observedNames": 32,
+   "pages": 19,
    "passingNames": 2,
    "strictPages": 2
   },
   "previousByArea:soft-navigation-heuristics": {
-   "observedNames": 30,
-   "pages": 19,
+   "observedNames": 42,
+   "pages": 31,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:speculation-rules": {
-   "observedNames": 1,
-   "pages": 123,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 4,
+   "pages": 207,
+   "passingNames": 2,
+   "strictPages": 2
   },
   "previousByArea:speech-api": {
    "observedNames": 5,
@@ -3574,33 +3856,33 @@
    "strictPages": 0
   },
   "previousByArea:storage": {
-   "observedNames": 79,
-   "pages": 10,
-   "passingNames": 64,
-   "strictPages": 1
+   "observedNames": 172,
+   "pages": 19,
+   "passingNames": 87,
+   "strictPages": 2
   },
   "previousByArea:storage-access-api": {
-   "observedNames": 15,
-   "pages": 7,
-   "passingNames": 2,
-   "strictPages": 1
+   "observedNames": 26,
+   "pages": 13,
+   "passingNames": 3,
+   "strictPages": 2
   },
   "previousByArea:streams": {
-   "observedNames": 1440,
-   "pages": 72,
-   "passingNames": 1329,
-   "strictPages": 52
+   "observedNames": 1920,
+   "pages": 105,
+   "passingNames": 1788,
+   "strictPages": 80
   },
   "previousByArea:subapps": {
-   "observedNames": 5,
-   "pages": 1,
+   "observedNames": 7,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:subresource-integrity": {
-   "observedNames": 97,
-   "pages": 8,
-   "passingNames": 52,
+   "observedNames": 149,
+   "pages": 12,
+   "passingNames": 75,
    "strictPages": 3
   },
   "previousByArea:svg": {
@@ -3610,15 +3892,21 @@
    "strictPages": 168
   },
   "previousByArea:svg-aam": {
-   "observedNames": 29,
-   "pages": 3,
-   "passingNames": 13,
-   "strictPages": 0
+   "observedNames": 38,
+   "pages": 4,
+   "passingNames": 22,
+   "strictPages": 1
+  },
+  "previousByArea:timing-entrytypes-registry": {
+   "observedNames": 4,
+   "pages": 1,
+   "passingNames": 4,
+   "strictPages": 1
   },
   "previousByArea:touch-events": {
-   "observedNames": 149,
-   "pages": 4,
-   "passingNames": 104,
+   "observedNames": 157,
+   "pages": 5,
+   "passingNames": 111,
    "strictPages": 1
   },
   "previousByArea:trust-tokens": {
@@ -3628,10 +3916,10 @@
    "strictPages": 0
   },
   "previousByArea:trusted-types": {
-   "observedNames": 493,
-   "pages": 36,
-   "passingNames": 285,
-   "strictPages": 11
+   "observedNames": 765,
+   "pages": 55,
+   "passingNames": 511,
+   "strictPages": 17
   },
   "previousByArea:ua-client-hints": {
    "observedNames": 8,
@@ -3640,22 +3928,22 @@
    "strictPages": 0
   },
   "previousByArea:uievents": {
-   "observedNames": 44,
-   "pages": 13,
-   "passingNames": 20,
-   "strictPages": 8
+   "observedNames": 259,
+   "pages": 31,
+   "passingNames": 220,
+   "strictPages": 21
   },
   "previousByArea:upgrade-insecure-requests": {
-   "observedNames": 187,
-   "pages": 37,
-   "passingNames": 80,
-   "strictPages": 15
+   "observedNames": 307,
+   "pages": 62,
+   "passingNames": 109,
+   "strictPages": 21
   },
   "previousByArea:url": {
-   "observedNames": 2981,
-   "pages": 18,
-   "passingNames": 2981,
-   "strictPages": 18
+   "observedNames": 4897,
+   "pages": 28,
+   "passingNames": 4897,
+   "strictPages": 28
   },
   "previousByArea:urlpattern": {
    "observedNames": 2425,
@@ -3664,58 +3952,76 @@
    "strictPages": 12
   },
   "previousByArea:user-timing": {
-   "observedNames": 98,
-   "pages": 10,
-   "passingNames": 97,
-   "strictPages": 8
+   "observedNames": 236,
+   "pages": 17,
+   "passingNames": 233,
+   "strictPages": 13
   },
   "previousByArea:vibration": {
-   "observedNames": 16,
-   "pages": 1,
+   "observedNames": 17,
+   "pages": 2,
    "passingNames": 14,
    "strictPages": 0
   },
+  "previousByArea:video-rvfc": {
+   "observedNames": 5,
+   "pages": 1,
+   "passingNames": 3,
+   "strictPages": 0
+  },
+  "previousByArea:viewport-segments": {
+   "observedNames": 1,
+   "pages": 1,
+   "passingNames": 0,
+   "strictPages": 0
+  },
   "previousByArea:visual-viewport": {
-   "observedNames": 13,
-   "pages": 7,
-   "passingNames": 9,
-   "strictPages": 4
+   "observedNames": 18,
+   "pages": 9,
+   "passingNames": 14,
+   "strictPages": 6
   },
   "previousByArea:wai-aria": {
-   "observedNames": 93,
-   "pages": 6,
-   "passingNames": 39,
-   "strictPages": 1
+   "observedNames": 174,
+   "pages": 13,
+   "passingNames": 116,
+   "strictPages": 7
   },
   "previousByArea:wasm": {
-   "observedNames": 2,
-   "pages": 1,
-   "passingNames": 2,
-   "strictPages": 1
+   "observedNames": 17,
+   "pages": 3,
+   "passingNames": 17,
+   "strictPages": 3
   },
   "previousByArea:web-animations": {
-   "observedNames": 1765,
-   "pages": 30,
-   "passingNames": 1593,
-   "strictPages": 19
+   "observedNames": 2302,
+   "pages": 54,
+   "passingNames": 2104,
+   "strictPages": 35
   },
   "previousByArea:web-based-payment-handler": {
-   "observedNames": 29,
-   "pages": 4,
-   "passingNames": 11,
-   "strictPages": 0
+   "observedNames": 57,
+   "pages": 8,
+   "passingNames": 37,
+   "strictPages": 2
   },
   "previousByArea:web-bundle": {
    "observedNames": 3,
-   "pages": 6,
+   "pages": 9,
+   "passingNames": 0,
+   "strictPages": 0
+  },
+  "previousByArea:web-install": {
+   "observedNames": 4,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:web-locks": {
-   "observedNames": 147,
-   "pages": 19,
-   "passingNames": 69,
-   "strictPages": 5
+   "observedNames": 214,
+   "pages": 31,
+   "passingNames": 97,
+   "strictPages": 9
   },
   "previousByArea:web-nfc": {
    "observedNames": 78,
@@ -3724,8 +4030,8 @@
    "strictPages": 0
   },
   "previousByArea:web-share": {
-   "observedNames": 13,
-   "pages": 3,
+   "observedNames": 19,
+   "pages": 6,
    "passingNames": 1,
    "strictPages": 0
   },
@@ -3736,21 +4042,21 @@
    "strictPages": 69
   },
   "previousByArea:webauthn": {
-   "observedNames": 6,
-   "pages": 12,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 17,
+   "pages": 17,
+   "passingNames": 1,
+   "strictPages": 1
   },
   "previousByArea:webcodecs": {
-   "observedNames": 531,
-   "pages": 63,
-   "passingNames": 137,
-   "strictPages": 2
+   "observedNames": 1322,
+   "pages": 100,
+   "passingNames": 440,
+   "strictPages": 5
   },
   "previousByArea:webgl": {
-   "observedNames": 15,
-   "pages": 4,
-   "passingNames": 0,
+   "observedNames": 2119,
+   "pages": 8,
+   "passingNames": 4,
    "strictPages": 0
   },
   "previousByArea:webhid": {
@@ -3760,39 +4066,39 @@
    "strictPages": 1
   },
   "previousByArea:webidl": {
-   "observedNames": 67,
-   "pages": 14,
-   "passingNames": 51,
-   "strictPages": 8
+   "observedNames": 154,
+   "pages": 22,
+   "passingNames": 133,
+   "strictPages": 14
   },
   "previousByArea:webmcp": {
-   "observedNames": 39,
-   "pages": 17,
-   "passingNames": 1,
-   "strictPages": 0
+   "observedNames": 63,
+   "pages": 28,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "previousByArea:webmessaging": {
-   "observedNames": 52,
-   "pages": 28,
-   "passingNames": 47,
-   "strictPages": 25
+   "observedNames": 78,
+   "pages": 51,
+   "passingNames": 68,
+   "strictPages": 42
   },
   "previousByArea:webnn": {
-   "observedNames": 958,
-   "pages": 139,
-   "passingNames": 21,
+   "observedNames": 2078,
+   "pages": 212,
+   "passingNames": 248,
    "strictPages": 1
   },
   "previousByArea:webrtc": {
-   "observedNames": 736,
-   "pages": 46,
-   "passingNames": 19,
-   "strictPages": 0
+   "observedNames": 1042,
+   "pages": 90,
+   "passingNames": 20,
+   "strictPages": 1
   },
   "previousByArea:webrtc-encoded-transform": {
-   "observedNames": 44,
-   "pages": 13,
-   "passingNames": 0,
+   "observedNames": 116,
+   "pages": 20,
+   "passingNames": 7,
    "strictPages": 0
   },
   "previousByArea:webrtc-extensions": {
@@ -3802,88 +4108,106 @@
    "strictPages": 0
   },
   "previousByArea:webrtc-identity": {
-   "observedNames": 12,
+   "observedNames": 61,
+   "pages": 2,
+   "passingNames": 21,
+   "strictPages": 0
+  },
+  "previousByArea:webrtc-priority": {
+   "observedNames": 2,
    "pages": 1,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:webrtc-stats": {
-   "observedNames": 6,
-   "pages": 2,
-   "passingNames": 0,
-   "strictPages": 0
+   "observedNames": 10,
+   "pages": 4,
+   "passingNames": 2,
+   "strictPages": 1
   },
   "previousByArea:webrtc-svc": {
-   "observedNames": 6,
-   "pages": 2,
+   "observedNames": 11,
+   "pages": 3,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByArea:websockets": {
-   "observedNames": 643,
-   "pages": 192,
-   "passingNames": 488,
-   "strictPages": 133
+   "observedNames": 867,
+   "pages": 292,
+   "passingNames": 600,
+   "strictPages": 196
   },
   "previousByArea:webstorage": {
-   "observedNames": 23,
-   "pages": 9,
-   "passingNames": 22,
-   "strictPages": 8
+   "observedNames": 34,
+   "pages": 18,
+   "passingNames": 33,
+   "strictPages": 17
   },
   "previousByArea:webtransport": {
-   "observedNames": 15,
-   "pages": 19,
-   "passingNames": 0,
+   "observedNames": 299,
+   "pages": 39,
+   "passingNames": 2,
    "strictPages": 0
   },
   "previousByArea:webusb": {
-   "observedNames": 583,
-   "pages": 11,
+   "observedNames": 589,
+   "pages": 15,
    "passingNames": 46,
    "strictPages": 0
   },
   "previousByArea:webvtt": {
-   "observedNames": 119,
-   "pages": 18,
-   "passingNames": 3,
+   "observedNames": 147,
+   "pages": 27,
+   "passingNames": 6,
    "strictPages": 0
   },
   "previousByArea:webxr": {
-   "observedNames": 339,
-   "pages": 50,
-   "passingNames": 28,
+   "observedNames": 383,
+   "pages": 63,
+   "passingNames": 36,
    "strictPages": 0
   },
-  "previousByArea:workers": {
-   "observedNames": 381,
-   "pages": 71,
-   "passingNames": 286,
-   "strictPages": 45
-  },
-  "previousByArea:worklets": {
-   "observedNames": 111,
-   "pages": 9,
-   "passingNames": 27,
-   "strictPages": 0
-  },
-  "previousByArea:xhr": {
-   "observedNames": 518,
-   "pages": 95,
-   "passingNames": 476,
-   "strictPages": 81
-  },
-  "previousByArea:xml": {
-   "observedNames": 177,
-   "pages": 1,
+  "previousByArea:window-management": {
+   "observedNames": 6,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
+  "previousByArea:workers": {
+   "observedNames": 532,
+   "pages": 114,
+   "passingNames": 357,
+   "strictPages": 70
+  },
+  "previousByArea:worklets": {
+   "observedNames": 177,
+   "pages": 12,
+   "passingNames": 27,
+   "strictPages": 0
+  },
+  "previousByArea:x-frame-options": {
+   "observedNames": 18,
+   "pages": 1,
+   "passingNames": 18,
+   "strictPages": 1
+  },
+  "previousByArea:xhr": {
+   "observedNames": 633,
+   "pages": 139,
+   "passingNames": 567,
+   "strictPages": 114
+  },
+  "previousByArea:xml": {
+   "observedNames": 181,
+   "pages": 2,
+   "passingNames": 4,
+   "strictPages": 1
+  },
   "previousByEnvironment:dedicatedworker": {
-   "observedNames": 18085,
-   "pages": 634,
-   "passingNames": 14962,
-   "strictPages": 444
+   "observedNames": 25529,
+   "pages": 987,
+   "passingNames": 19861,
+   "strictPages": 688
   },
   "previousByEnvironment:dedicatedworker-module": {
    "observedNames": 2,
@@ -3892,58 +4216,58 @@
    "strictPages": 2
   },
   "previousByEnvironment:serviceworker": {
-   "observedNames": 2919,
-   "pages": 162,
-   "passingNames": 2427,
-   "strictPages": 99
+   "observedNames": 3968,
+   "pages": 241,
+   "passingNames": 3360,
+   "strictPages": 148
   },
   "previousByEnvironment:serviceworker-module": {
-   "observedNames": 2,
-   "pages": 3,
-   "passingNames": 1,
-   "strictPages": 1
+   "observedNames": 7,
+   "pages": 6,
+   "passingNames": 4,
+   "strictPages": 2
   },
   "previousByEnvironment:sharedworker": {
-   "observedNames": 2629,
-   "pages": 146,
-   "passingNames": 2277,
-   "strictPages": 86
+   "observedNames": 3722,
+   "pages": 232,
+   "passingNames": 3049,
+   "strictPages": 136
   },
   "previousByEnvironment:sharedworker-module": {
    "observedNames": 0,
-   "pages": 1,
+   "pages": 4,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousByEnvironment:window": {
-   "observedNames": 413438,
-   "pages": 6510,
-   "passingNames": 391602,
-   "strictPages": 3155
+   "observedNames": 637928,
+   "pages": 9798,
+   "passingNames": 604155,
+   "strictPages": 4755
   },
   "previousByEnvironment:window-module": {
-   "observedNames": 6,
-   "pages": 1,
+   "observedNames": 12,
+   "pages": 2,
    "passingNames": 0,
    "strictPages": 0
   },
   "previousHarnessOutcomes": {
-   "Error": 304,
-   "None": 69,
-   "OK": 6752,
-   "Timeout": 334
+   "Error": 479,
+   "None": 103,
+   "OK": 10191,
+   "Timeout": 499
   },
   "previousPageOutcomes": {
-   "complete": 6752,
-   "error": 309,
-   "timeout": 398
+   "complete": 10191,
+   "error": 484,
+   "timeout": 597
   }
  },
  "coverage": {
   "historicallyWithheld": 1469,
-  "measured": 7459,
+  "measured": 11272,
   "newlyWithheld": 179,
-  "outsideRequestedShardSet": 22720
+  "outsideRequestedShardSet": 18907
  },
  "fullCensusComplete": false,
  "head": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
@@ -3956,10 +4280,10 @@
  "referencePublication": "01f49f43da24a20ecb20d99c967fc5de54272120",
  "requestedScopeComplete": true,
  "scheduledUrls": 30179,
- "shardsComplete": 80,
- "shardsRequested": 80,
+ "shardsComplete": 120,
+ "shardsRequested": 120,
  "shardsScheduled": 320,
- "snapshot": "7b11f12395062292922d658cfb658dafa642d8ce8aa47dcbc93eb454331e2a81",
+ "snapshot": "da974ac4f77c6b16a21125e749c7e7410ce648b9656f3e7234d4bbe83adbf594",
  "tree": "c4d45b20c3ea5429596bd4e7b7f2ca33c32065db",
  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
 }

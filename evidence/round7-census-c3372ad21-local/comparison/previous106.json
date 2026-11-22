@@ -2230,12 +2230,21 @@
   "shard": "ordinary-114"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sRGB-FF0000CC.png, Context srgb, ImageData srgb, cropSource=false"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "error",
+   "Error",
+   false,
+   95,
+   208
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sRGB-FF0000CC.png, Context srgb, ImageData srgb, cropSource=false",
    "chrome158": [
@@ -2359,12 +2368,21 @@
   "shard": "ordinary-143"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "<!doctype html><isindex>x</isindex>x"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "<!doctype html><isindex>x</isindex>x",
    "chrome158": [
@@ -2399,12 +2417,21 @@
   "shard": "ordinary-148"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "<form><isindex>"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "<form><isindex>",
    "chrome158": [
@@ -2439,12 +2466,21 @@
   "shard": "ordinary-148"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "<isindex name=\"A\" action=\"B\" prompt=\"C\" foo=\"D\">"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "<isindex name=\"A\" action=\"B\" prompt=\"C\" foo=\"D\">",
    "chrome158": [
@@ -2479,12 +2515,21 @@
   "shard": "ordinary-148"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "<isindex>"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "<isindex>",
    "chrome158": [
@@ -2562,12 +2607,21 @@
   "shard": "ordinary-149"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sRGB-BB0000FF.png, Context srgb, ImageData srgb, scaleImage=false"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   103,
+   240
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sRGB-BB0000FF.png, Context srgb, ImageData srgb, scaleImage=false",
    "chrome158": [
