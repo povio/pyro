@@ -39,60 +39,60 @@
     "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/http-cache": 3,
     "fetch/nosniff": 3,
+    "fetch/http-cache": 3,
     "xhr": 2,
     "quirks": 1,
-    "html/rendering": 1,
     "svg/styling": 1,
+    "html/rendering": 1,
     "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 161,
+    "macbook_in_scope": 166,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 15,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 151,
+   "distinct_census_pages": 156,
    "owner_reported_unlisted": 0,
-   "selector_union": 405,
-   "owner_estimate_reduction": 254,
-   "of_which_tentative": 229,
+   "selector_union": 384,
+   "owner_estimate_reduction": 228,
+   "of_which_tentative": 230,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 169,
+    "html/semantics": 172,
     "html/canvas": 167,
     "html/syntax": 30,
-    "html/browsers": 26,
-    "fetch/api": 5,
     "html/dom": 5,
-    "html/webappapis": 3
+    "fetch/api": 5,
+    "html/webappapis": 3,
+    "html/browsers": 2
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 34,
+    "macbook_in_scope": 29,
     "studio_in_scope": 142,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 81,
+   "distinct_census_pages": 76,
    "owner_reported_unlisted": 0,
-   "selector_union": 105,
+   "selector_union": 100,
    "owner_estimate_reduction": 24,
-   "of_which_tentative": 6,
+   "of_which_tentative": 5,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/browsers": 38,
+    "html/browsers": 36,
     "content-security-policy": 20,
     "webidl": 19,
-    "html/semantics": 13,
+    "html/semantics": 10,
     "html/interaction": 5,
     "svg/path": 4,
     "workers": 3,
@@ -1405,7 +1405,7 @@
    "tentative": 0
   },
   "R-HTML-2": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 33,
    "out_of_scope_pages": 0,
    "pages": 33,
@@ -1895,7 +1895,7 @@
    "tentative": 0
   },
   "R-HTML-35": {
-   "state": "proposed",
+   "state": "reserved",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
@@ -1937,7 +1937,7 @@
    "tentative": 0
   },
   "R-HTML-B-18": {
-   "state": "proposed",
+   "state": "reserved",
    "in_scope_pages": 2,
    "out_of_scope_pages": 0,
    "pages": 2,
