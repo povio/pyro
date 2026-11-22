@@ -3,22 +3,22 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 865,
+    "macbook_in_scope": 869,
     "studio_in_scope": 111,
     "other_dirs_out_of_scope": 21,
-    "macbook_worker_variants_if_enabled": 194,
+    "macbook_worker_variants_if_enabled": 196,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1164,
+   "distinct_census_pages": 1170,
    "owner_reported_unlisted": 5,
-   "selector_union": 1358,
+   "selector_union": 1364,
    "owner_estimate_reduction": 199,
    "of_which_tentative": 188,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
     "html/semantics": 370,
-    "html/canvas": 342,
+    "html/canvas": 348,
     "html/interaction": 115,
     "referrer-policy": 78,
     "fetch/api": 72,
@@ -28,8 +28,8 @@
     "fetch/fetch-later": 29,
     "html/dom": 24,
     "fetch/content-encoding": 21,
-    "html/infrastructure": 20,
     "html/webappapis": 20,
+    "html/infrastructure": 20,
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
@@ -40,31 +40,31 @@
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "fetch/nosniff": 3,
-    "fetch/http-cache": 3,
     "html/rendering": 3,
+    "fetch/http-cache": 3,
     "xhr": 2,
-    "IndexedDB": 1,
     "quirks": 1,
-    "svg/styling": 1
+    "svg/styling": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 183,
+    "macbook_in_scope": 179,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 37,
+    "macbook_worker_variants_if_enabled": 35,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 196,
+   "distinct_census_pages": 190,
    "owner_reported_unlisted": 0,
-   "selector_union": 439,
+   "selector_union": 433,
    "owner_estimate_reduction": 243,
    "of_which_tentative": 201,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/canvas": 232,
+    "html/canvas": 226,
     "html/semantics": 141,
     "html/syntax": 30,
     "html/browsers": 26,
@@ -661,6 +661,13 @@
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
+   "tentative": 0
+  },
+  "C05f": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 6,
+   "out_of_scope_pages": 0,
+   "pages": 6,
    "tentative": 0
   },
   "P01": {
@@ -1868,14 +1875,14 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1202,
+ "implemented_total_estimate": 1208,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 865,
+ "macbook_in_scope_implemented": 869,
  "macbook_in_scope_milestones": [
   100,
   200,
