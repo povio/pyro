@@ -1085,6 +1085,14 @@ impl ModuleFetcher for PageModuleFetcher {
             }
             return;
         }
+        // A blob: URL names the blob it named when the module was requested
+        // (URL parsing takes the blob URL entry): one revoked right after
+        // `import()` still loads.
+        let blob = if url.starts_with("blob:") {
+            realm.scope().ok().and_then(|s| pyro_webapi::target::page_of(&s).ok()).and_then(|page| page.blob_url(&url))
+        } else {
+            None
+        };
         // Called from inside JS: defer the network request to a task, where
         // `&mut Browser` is available.
         let realm = realm.downgrade();
@@ -1143,6 +1151,15 @@ impl ModuleFetcher for PageModuleFetcher {
                     scope.report_exception(&e);
                 }
             };
+            if let Some((bytes, mime)) = blob {
+                let essence = pyro_net::parse_content_type(&mime).0;
+                let result = match pyro_webapi::module_script::mime_error(ty, &essence, &url) {
+                    Some(e) => Err(e),
+                    None => Ok(pyro_webapi::module_script::utf8_decode(&bytes)),
+                };
+                complete(b, result);
+                return;
+            }
             // A modulepreload of this URL already fetched (or is fetching) it
             // as a JavaScript module.
             if let Some(credentials) = worklet_credentials {

@@ -796,6 +796,11 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
             }
             in_flight.insert(key.clone(), Vec::new());
         }
+        // A blob: URL names the blob it named when the module was requested
+        // (URL parsing takes the blob URL entry): one revoked right after
+        // `import()` still loads.
+        let blob =
+            if url.starts_with("blob:") { self.page.upgrade().and_then(|page| page.blob_url(&url)) } else { None };
         let realm = realm.downgrade();
         let (page, net, shared, origin, in_flight) =
             (self.page.clone(), self.net.clone(), self.shared.clone(), self.origin.clone(), self.in_flight.clone());
@@ -821,7 +826,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                 Some(e) => Err(e),
                 None => {
                     let source = match (page.upgrade(), pyro_net::Url::parse(&url)) {
-                        (Some(page), Ok(parsed)) => match page.blob_url(&url) {
+                        (Some(page), Ok(parsed)) => match blob.clone().or_else(|| page.blob_url(&url)) {
                             Some((bytes, mime)) => Ok((bytes, pyro_net::parse_content_type(&mime).0)),
                             None => {
                                 // A JSON module is fetched with destination "json"
@@ -831,7 +836,16 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                     pyro_js::ModuleType::Text => Destination::Text,
                                     _ => Destination::Script,
                                 };
-                                fetch_script(&page, &net, &shared, &origin, parsed, destination, RequestMode::Cors, false)
+                                fetch_script(
+                                    &page,
+                                    &net,
+                                    &shared,
+                                    &origin,
+                                    parsed,
+                                    destination,
+                                    RequestMode::Cors,
+                                    false,
+                                )
                             }
                         },
                         _ => Err("invalid URL".to_owned()),
