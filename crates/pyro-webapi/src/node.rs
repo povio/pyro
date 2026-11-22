@@ -1595,7 +1595,13 @@ impl JsClass for Element {
         });
         def.accessor(
             "innerHTML",
-            |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
+            // An element of an XML document serializes its children as XML (DOM Parsing
+            // "fragment serializing"), as `outerHTML` does.
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                let xml = dom.node_document(n.id).is_ok_and(|d| dom.is_xml_document(d));
+                Ok(s.string(&if xml { dom.xml_inner(n.id) } else { dom.inner_html(n.id) }.js()?))
+            },
             |s, n, v| {
                 let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element innerHTML", true)?;
                 crate::input::blur_before_removal(n.page(), n.id, true);

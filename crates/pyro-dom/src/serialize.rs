@@ -253,15 +253,41 @@ impl Dom {
 
     /// `XMLSerializer.serializeToString` with scoped namespace fixup.
     pub fn xml_serialize(&self, id: NodeId) -> DomResult<String> {
+        let root = self.check(id)?;
+        Ok(self.xml_serialize_idx(root, None))
+    }
+
+    /// `innerHTML` of an element of an XML document (DOM Parsing "fragment serializing" with the
+    /// XML serialization): its children (a template's contents), each serialized with the
+    /// element's namespace as the default one in scope, so a child in another namespace (an
+    /// HTML-parsed `<p>` under a no-namespace root) carries its own `xmlns`.
+    pub fn xml_inner(&self, id: NodeId) -> DomResult<String> {
+        let i = self.check(id)?;
+        let (src, context) = match self.n(i).element() {
+            Some(e) => (if e.template_contents != NIL { e.template_contents } else { i }, Some(e.name.ns.to_string())),
+            None => (i, None),
+        };
+        let mut out = String::new();
+        for k in self.child_idx_iter(src).collect::<Vec<_>>() {
+            out.push_str(&self.xml_serialize_idx(k, context.as_deref()));
+        }
+        Ok(out)
+    }
+
+    /// [`Dom::xml_serialize`] of node index `root`, with `context_ns` (when not empty) as the
+    /// default namespace already in scope.
+    fn xml_serialize_idx(&self, root: u32, context_ns: Option<&str>) -> String {
         enum Step {
             Enter(u32),
             Close(String),
             PopScope(usize),
         }
-        let root = self.check(id)?;
         let mut out = String::new();
         let xhtml = ns!(html);
         let mut namespaces = XmlNamespaces::new();
+        if let Some(ns) = context_ns.filter(|ns| !ns.is_empty()) {
+            namespaces.bind("", ns);
+        }
         let mut stack = vec![Step::Enter(root)];
         while let Some(step) = stack.pop() {
             match step {
@@ -347,7 +373,7 @@ impl Dom {
                 },
             }
         }
-        Ok(out)
+        out
     }
 
     /// `getHTML({serializableShadowRoots, shadowRoots})` on an element or
