@@ -303,7 +303,7 @@
     }
     return out;
   };
-  const copyChunkInput = (bytes, transfers) => {
+  const copyChunkInput = (bytes, transfers, size) => {
     const seen = new Set_();
     for (let i = 0; i < transfers.length; i++) {
       const entry = transfers[i];
@@ -313,7 +313,9 @@
       catch (_) { throw new CloneException('Detached transfer', 'DataCloneError'); }
     }
     // Take a snapshot, including for shared data, before detaching any input.
-    const snapshot = new Uint8Array_(bytes);
+    const input = size === undefined ? bytes :
+        new Uint8Array_(apply(viewBuffer, bytes, []), apply(viewOffset, bytes, []), size);
+    const snapshot = new Uint8Array_(input);
     for (let i = 0; i < transfers.length; i++) apply(transferBuffer, transfers[i], [0]);
     return snapshot;
   };
@@ -356,7 +358,7 @@
 
   return {
     blobParts,
-    encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, chunkTransferList, copyChunkInput, copyChunkTo },
+    encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, chunkTransferList, copyChunkInput, copyChunkTo, webIdlNumber: value => +value },
     mutationOptions,
     intersection: [intersectionThresholds, freeze],
     formData: [formDataPopulated, formDataIteratorPopulated],
