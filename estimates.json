@@ -3,15 +3,15 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 430,
+    "macbook_in_scope": 444,
     "studio_in_scope": 29,
     "other_dirs_out_of_scope": 16,
     "macbook_worker_variants_if_enabled": 164,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 621,
+   "distinct_census_pages": 635,
    "owner_reported_unlisted": 5,
-   "selector_union": 667,
+   "selector_union": 681,
    "owner_estimate_reduction": 51,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
@@ -21,34 +21,34 @@
     "html/interaction": 100,
     "html/semantics": 97,
     "fetch/api": 46,
+    "fetch/fetch-later": 29,
     "fetch/content-encoding": 21,
     "scheduler": 19,
-    "fetch/fetch-later": 15,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
     "encoding": 7,
     "FileAPI": 4,
     "fetch/nosniff": 3,
-    "fetch/http-cache": 3,
     "fetch/data-urls": 3,
+    "fetch/http-cache": 3,
     "xhr": 2,
-    "IndexedDB": 1,
-    "svg/styling": 1,
     "html/rendering": 1,
-    "quirks": 1
+    "quirks": 1,
+    "svg/styling": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 150,
+    "macbook_in_scope": 136,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 41,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 175,
+   "distinct_census_pages": 161,
    "owner_reported_unlisted": 0,
-   "selector_union": 268,
+   "selector_union": 254,
    "owner_estimate_reduction": 93,
    "of_which_tentative": 38,
    "studio_css_reported_pages_not_deduped": 4,
@@ -57,8 +57,7 @@
     "html/semantics": 132,
     "html/canvas": 69,
     "html/syntax": 30,
-    "fetch/api": 23,
-    "fetch/fetch-later": 14
+    "fetch/api": 23
    }
   },
   "queued": {
@@ -81,8 +80,8 @@
     "html/canvas": 160,
     "html/browsers": 71,
     "html/semantics": 58,
-    "intersection-observer": 36,
     "referrer-policy": 36,
+    "intersection-observer": 36,
     "html/webappapis": 23,
     "content-security-policy": 20,
     "webidl": 19,
@@ -1101,7 +1100,7 @@
    "tentative": 0
   },
   "R-FETCH-fetchLater-b": {
-   "state": "active",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 14,
    "out_of_scope_pages": 0,
    "pages": 14,
@@ -1472,12 +1471,12 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 650,
+ "implemented_total_estimate": 664,
  "milestones_reached": [
   250,
   500
  ],
- "macbook_in_scope_implemented": 430,
+ "macbook_in_scope_implemented": 444,
  "macbook_in_scope_milestones": [
   100,
   200,
