@@ -2278,7 +2278,8 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
                     }
                     let memory = page.focusgroup_memory.borrow().get(&owner).copied();
                     let memory = memory.filter(|&m| dom.focusgroup_owner_of(m).is_some_and(|(o, f)| o == owner && f.memory));
-                    dom.focusgroup_entry(&segment, memory)
+                    let order = dom.focusgroup_items_in_order(owner, &area, Some(&layout));
+                    dom.focusgroup_entry(&segment, &order, memory)
                 }
                 None => Some(n),
             },

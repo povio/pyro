@@ -285,19 +285,28 @@ impl Dom {
     }
 
     /// The element Tab or Shift+Tab lands on when entering a focusgroup
-    /// segment (`segment`: its items in tree order, one tab stop for all):
-    /// the owner's remembered item when it is in the segment and the owner
-    /// keeps memory, else the first item with `focusgroupstart`, else the
-    /// first item.
-    pub fn focusgroup_entry(&self, segment: &[NodeId], memory: Option<NodeId>) -> Option<NodeId> {
+    /// segment (`segment`: its items, one tab stop for all; `order`: the
+    /// owner's items in tree order, [`Dom::focusgroup_items_in_order`]): the
+    /// owner's remembered item when it is in the segment and the owner keeps
+    /// memory, else the first item in tree order with `focusgroupstart`, else
+    /// the first item in tree order. Tree order, not the tab order the
+    /// segment was collected in: they differ for positive tabindex values.
+    pub fn focusgroup_entry(&self, segment: &[NodeId], order: &[NodeId], memory: Option<NodeId>) -> Option<NodeId> {
         if let Some(m) = memory.filter(|m| segment.contains(m)) {
             return Some(m);
         }
-        segment
+        // Items missing from `order` (a stale layout) keep their segment order, after the others.
+        let mut ranked: Vec<(usize, usize, NodeId)> = segment
             .iter()
-            .copied()
+            .enumerate()
+            .map(|(i, &n)| (order.iter().position(|&o| o == n).unwrap_or(usize::MAX), i, n))
+            .collect();
+        ranked.sort_unstable_by_key(|&(rank, i, _)| (rank, i));
+        ranked
+            .iter()
+            .map(|&(_, _, n)| n)
             .find(|&n| self.element(n).is_ok_and(|e| e.attr("focusgroupstart").is_some()))
-            .or_else(|| segment.first().copied())
+            .or_else(|| ranked.first().map(|&(_, _, n)| n))
     }
 
     /// `a` precedes `b` in shadow-including tree order.
