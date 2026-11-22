@@ -170,6 +170,36 @@ fn toggle_and_command_event_interfaces() {
 }
 
 #[test]
+fn command_and_toggle_source_follow_the_observing_listener() {
+    let e = env("<body><div id=host></div></body>");
+    assert_eq!(
+        e.eval(
+            "(() => {
+                const root = host.attachShadow({mode:'closed'});
+                const button = root.appendChild(document.createElement('button'));
+                const target = root.appendChild(document.createElement('span'));
+                const seen = [];
+                for (const Interface of [CommandEvent, ToggleEvent]) {
+                    const type = Interface.name;
+                    seen.push(!new Interface(type, {source:button}).composed);
+                    const ev = new Interface(type, {source:button, bubbles:true, composed:true});
+                    seen.push(ev.source === host);
+                    for (const capture of [true, false]) {
+                        root.addEventListener(type, e => seen.push(e.source === button), capture);
+                        host.addEventListener(type, e => seen.push(e.source === host), capture);
+                    }
+                    target.dispatchEvent(ev);
+                    seen.push(ev.source === host);
+                }
+                return seen.length === 14 && seen.every(Boolean);
+            })()"
+        ),
+        "true"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn popover_events_are_sync_beforetoggle_and_coalesced_toggle() {
     let e = env("<body><div id=p popover>P</div></body>");
     assert_eq!(
