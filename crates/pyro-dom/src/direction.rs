@@ -36,6 +36,13 @@ impl Dom {
         Ok(self.directionality_idx(idx))
     }
 
+    /// The language of element `id` (HTML "the language"): its nearest inclusive ancestor's
+    /// `xml:lang` or `lang`, else the document's default language; `None` when unknown.
+    pub fn language(&self, id: NodeId) -> DomResult<Option<String>> {
+        let idx = self.check(id)?;
+        Ok(self.language_idx(idx))
+    }
+
     fn dir_attr(&self, idx: u32) -> Option<&str> {
         let value = self.n(idx).element()?.attr_local(&local_name!("dir"))?;
         for k in ["ltr", "rtl", "auto"] {

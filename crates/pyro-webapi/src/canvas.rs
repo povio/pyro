@@ -1318,7 +1318,7 @@ fn draw_text(s: &Scope<'_>, c: &ContextData, a: Args<'_>, fill: bool) -> JsResul
         return Ok(());
     }
     let state = c.state.borrow();
-    let layout = layout_text(&c.page, &text, &state);
+    let layout = layout_text(c, &text, &state);
     if layout.runs.is_empty() {
         return Ok(());
     }
@@ -1439,7 +1439,21 @@ fn spacing_px(value: &str, font_size: f64) -> f32 {
     }) as f32
 }
 
-fn layout_text(page: &PageDom, text: &str, state: &State) -> pyro_canvas::text::TextLayout {
+/// The language canvas text is shaped for: `lang`, where `inherit` is the language of a
+/// `<canvas>` (its or an ancestor's `lang`, else the document's) and unknown for an
+/// OffscreenCanvas; `None` when unknown (`""`).
+fn text_lang(c: &ContextData, state: &State) -> Option<String> {
+    let lang = match (state.lang.as_str(), c.target) {
+        ("inherit", Target::Element(canvas)) => c.page.dom.try_borrow().ok()?.language(canvas).ok()??,
+        ("inherit", Target::Offscreen) => return None,
+        (lang, _) => lang.to_owned(),
+    };
+    (!lang.is_empty()).then_some(lang)
+}
+
+fn layout_text(c: &ContextData, text: &str, state: &State) -> pyro_canvas::text::TextLayout {
+    let page = &*c.page;
+    let lang = text_lang(c, state);
     let font = &state.font;
     let style = pyro_canvas::text::TextStyle {
         family: &font.family,
@@ -1448,6 +1462,7 @@ fn layout_text(page: &PageDom, text: &str, state: &State) -> pyro_canvas::text::
         italic: font.style != "normal",
         letter_spacing: spacing_px(&state.letter_spacing, font.size),
         word_spacing: spacing_px(&state.word_spacing, font.size),
+        lang: lang.as_deref(),
     };
     let (key, faces) = canvas_web_faces(page, &font.family);
     pyro_canvas::text::layout_with_faces(text, &style, key, &faces)
@@ -2051,7 +2066,7 @@ impl ContextData {
         def.method("measureText", 1, |s, c, a| {
             let text = arg_string(&a, 0, "CanvasRenderingContext2D.measureText")?;
             let state = c.state.borrow();
-            let layout = layout_text(&c.page, &text, &state);
+            let layout = layout_text(c, &text, &state);
             let (width, ascent, descent) = (layout.width, layout.ascent, layout.descent);
             // Where the text starts relative to the alignment point.
             let start = match align_of(c, &state) {

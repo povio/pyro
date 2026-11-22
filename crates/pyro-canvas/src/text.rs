@@ -27,6 +27,9 @@ pub struct TextStyle<'a> {
     pub italic: bool,
     pub letter_spacing: f32,
     pub word_spacing: f32,
+    /// BCP 47 language the text is shaped for (OpenType `locl`, such as Turkish
+    /// keeping `fi` apart), `None` when unknown.
+    pub lang: Option<&'a str>,
 }
 
 /// Glyphs of one font, positioned relative to the text's origin (the
@@ -207,6 +210,9 @@ fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
     }
     if style.word_spacing.is_finite() && style.word_spacing != 0.0 {
         builder.push_default(StyleProperty::WordSpacing(style.word_spacing));
+    }
+    if let Some(lang) = style.lang.and_then(|l| parley::Language::parse(l).ok()) {
+        builder.push_default(StyleProperty::Locale(Some(lang)));
     }
     let mut layout: Layout<()> = builder.build(text);
     layout.break_all_lines(None);
