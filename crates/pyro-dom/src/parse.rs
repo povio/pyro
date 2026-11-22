@@ -735,6 +735,9 @@ pub struct DocumentParser {
     /// document's), before the UTF-8 default.
     fallback_charset: Option<&'static encoding_rs::Encoding>,
     decoder: Option<encoding_rs::Decoder>,
+    /// The first input chunk has been seen. Only one BOM is ever removed:
+    /// by the decoder for bytes, or here once for input that came as text.
+    bom_checked: bool,
     decoded: String,
     /// Bytes held back until 1024 bytes (or EOF) are available for prescan.
     sniff: Vec<u8>,
@@ -991,7 +994,8 @@ impl DocumentParser {
         let sink = Sink::new(dom.clone(), d, element_flags::PARSER_INSERTED, scripting);
         let tb_opts = TreeBuilderOpts { scripting_enabled: scripting, ..Default::default() };
         let tb = TreeBuilder::new(sink, tb_opts);
-        let tok = Tokenizer::new(tb, TokenizerOpts::default());
+        // html5ever would drop a U+FEFF at the head of every feed; `feed` removes the one BOM instead.
+        let tok = Tokenizer::new(tb, TokenizerOpts { discard_bom: false, ..Default::default() });
         Ok(DocumentParser {
             tok,
             input: BufferQueue::default(),
@@ -1002,6 +1006,7 @@ impl DocumentParser {
             transport_charset: None,
             fallback_charset: None,
             decoder: None,
+            bom_checked: false,
             decoded: String::new(),
             sniff: Vec::new(),
             saved: Vec::new(),
@@ -1162,7 +1167,16 @@ impl DocumentParser {
             if self.saved.is_empty() {
                 self.appended += chunk.len();
             }
-            self.input.push_back(StrTendril::from_slice(chunk));
+            let mut chunk = chunk;
+            if !self.bom_checked {
+                self.bom_checked = true;
+                if self.decoder.is_none() && self.saved.is_empty() {
+                    chunk = chunk.strip_prefix('\u{feff}').unwrap_or(chunk);
+                }
+            }
+            if !chunk.is_empty() {
+                self.input.push_back(StrTendril::from_slice(chunk));
+            }
         }
         self.resume()
     }
