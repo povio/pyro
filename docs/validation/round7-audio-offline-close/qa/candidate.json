@@ -1,0 +1,101 @@
+{
+  "mode": "candidate",
+  "version": {
+    "protocolVersion": "1.3",
+    "product": "Chrome/158.0.8127.37",
+    "revision": "@b8c2be851f62f6a394ec57955d7f31335d7cb6d4",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/158.0.0.0 Safari/537.36",
+    "jsVersion": "15.8.62.31"
+  },
+  "flags": [
+    "--headless=new",
+    "--no-first-run",
+    "--disable-default-apps",
+    "--disable-background-networking",
+    "--remote-debugging-pipe",
+    "--enable-blink-features=OfflineAudioContextIncrementalRendering",
+    "about:blank"
+  ],
+  "sourceSHA256": "cbb13a60e7c422aa6f633411c047cd6e1cbbbdb1b6340d3522e0df19a42360b9",
+  "results": {
+    "positionalNull": {
+      "error": "NotSupportedError",
+      "message": "Failed to construct 'OfflineAudioContext': The number of frames provided (0) is less than or equal to the minimum bound (0)."
+    },
+    "indefiniteQueue": {
+      "length": null,
+      "stereo": [
+        [
+          128,
+          2,
+          0
+        ],
+        [
+          128,
+          2,
+          0
+        ],
+        [
+          256,
+          2,
+          0
+        ]
+      ],
+      "order": [
+        0,
+        1,
+        2
+      ],
+      "frame": 512,
+      "before": "running",
+      "close": "fulfilled",
+      "after": "closed",
+      "renderAfter": "InvalidStateError",
+      "closeAgain": "InvalidStateError"
+    },
+    "activeCloseTiming": [
+      "running",
+      "running",
+      "closed"
+    ],
+    "finiteFresh": [
+      "closed",
+      "fulfilled",
+      "closed",
+      "InvalidStateError"
+    ],
+    "finiteEnd": [
+      [
+        517,
+        2,
+        0
+      ],
+      "closed",
+      "InvalidStateError"
+    ],
+    "suspension": [
+      [
+        "suspended",
+        128
+      ],
+      [
+        384,
+        2,
+        0
+      ],
+      384,
+      "fulfilled"
+    ],
+    "finitePausedClose": [
+      [
+        "suspended",
+        128
+      ],
+      "fulfilled",
+      "closed",
+      "AbortError",
+      "AbortError",
+      "closed"
+    ]
+  }
+}
