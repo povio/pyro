@@ -194,6 +194,10 @@ onmessage = async (e) => {
 };
 "#;
 
+/// Module fixtures are never reused from the HTTP cache: each fetch reports
+/// its own Cookie header.
+const MODULE_JS: [(&str, &str); 2] = [("Content-Type", "text/javascript"), ("Cache-Control", "no-store")];
+
 struct Server {
     origin: String,
     hits: Arc<Mutex<Vec<String>>>,
@@ -227,10 +231,15 @@ impl Server {
                 }
                 let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
                 let mut length = 0;
+                // What the module shared worker fixtures report back.
+                let mut cookie = String::from("none");
                 loop {
                     let mut line = String::new();
                     if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
                         break;
+                    }
+                    if line.to_ascii_lowercase().starts_with("cookie:") {
+                        cookie = line["cookie:".len()..].trim().to_string();
                     }
                     if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
                         length = v.trim().parse().unwrap_or(0);
@@ -301,6 +310,42 @@ impl Server {
                     "/throws.js" => respond(&mut stream, "200 OK", &js, b"throw new Error('top level')"),
                     "/ports-worker.js" => respond(&mut stream, "200 OK", &js, PORTS_WORKER.as_bytes()),
                     "/shared-worker.js" => respond(&mut stream, "200 OK", &js, SHARED_WORKER.as_bytes()),
+                    // Module shared workers: each fixture reports the Cookie
+                    // header its main script and its import were fetched with.
+                    "/module-shared-worker.js" => {
+                        let body = format!(
+                            "import {{ cookie }} from './module-dep.js'; const main = {cookie:?}; let n = 0; \
+                             onconnect = (e) => e.ports[0].postMessage(self.name + ':' + main + ':' + cookie + ':' + (++n));"
+                        );
+                        respond(&mut stream, "200 OK", &MODULE_JS, body.as_bytes())
+                    }
+                    "/module-dep.js" => {
+                        respond(&mut stream, "200 OK", &MODULE_JS, format!("export const cookie = {cookie:?};").as_bytes())
+                    }
+                    "/module-missing-import.js" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &MODULE_JS,
+                        b"import './missing-module.js'; onconnect = (e) => e.ports[0].postMessage('ran');",
+                    ),
+                    "/module-syntax.js" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &MODULE_JS,
+                        b"onconnect = (e) => e.ports[0].postMessage('ran'); export let = ;",
+                    ),
+                    "/module-bad-link.js" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &MODULE_JS,
+                        b"import { missing } from './module-dep.js'; onconnect = (e) => e.ports[0].postMessage('ran' + missing);",
+                    ),
+                    "/module-throws.js" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &MODULE_JS,
+                        b"onconnect = (e) => e.ports[0].postMessage('after-throw'); throw new Error('top level');",
+                    ),
                     "/replaceable-worker.js" => respond(&mut stream, "200 OK", &js, REPLACEABLE_WORKER.as_bytes()),
                     "/real" | "/api/passthrough" => {
                         respond(&mut stream, "200 OK", &[("Content-Type", "text/plain")], b"from network")
@@ -1299,11 +1344,97 @@ fn shared_workers_are_shared_between_documents_by_url_and_name() {
     eval(&thread, a, connect);
     until(&mut thread, a, "got.length === 1");
     assert_eq!(eval(&thread, a, "got.join()"), "one:1");
+    // A module worker with the key of the live classic one: `error` at the
+    // new object, no connection. Without the engine's module loader the
+    // constructor throws, as `Worker`'s does.
+    let module = "(() => { try { const m = new SharedWorker('/shared-worker.js', {type: 'module'}); \
+        globalThis.mismatch = []; m.onerror = (e) => mismatch.push(e.type); return 'made' } catch (e) { return e.name } })()";
+    if module_shared_workers() {
+        assert_eq!(eval(&thread, a, module), "made");
+        until(&mut thread, a, "mismatch.length === 1");
+        assert_eq!(eval(&thread, a, "mismatch.join()"), "error");
+    } else {
+        assert_eq!(eval(&thread, a, module), "NotSupportedError");
+    }
+}
+
+/// Whether this engine runs module shared workers: the module loader in its
+/// two steps, which tell a graph that fails to load from a throw.
+fn module_shared_workers() -> bool {
+    pyro_js::Capabilities::detect().modules && pyro_js::Scope::has_module_phases()
+}
+
+/// A module `SharedWorker` starts once its graph loaded and is shared like a
+/// classic one; its main script and imports are fetched with its
+/// `credentials` mode (`omit` sends no cookie); a key that matches a live
+/// worker of another credentials mode gets `error`.
+#[test]
+fn module_shared_workers_start_and_fetch_with_their_credentials() {
+    if !module_shared_workers() {
+        return;
+    }
+    let (server, mut thread) = setup();
+    let a = open(&mut thread, &server, "/page");
+    assert_eq!(eval(&thread, a, CONNECT_MODULE), "k=v");
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'same'}, 'same'); 'ok'");
+    until(&mut thread, a, "got.length === 1");
+    assert_eq!(eval(&thread, a, "got.join()"), "same>same:k=v:k=v:1");
+    // The same worker, a second connection.
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'same'}, 'again'); 'ok'");
+    until(&mut thread, a, "got.length === 2");
+    assert_eq!(eval(&thread, a, "got[1]"), "again>same:k=v:k=v:2");
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'omit', credentials: 'omit'}, 'omit'); 'ok'");
+    until(&mut thread, a, "got.length === 3");
+    assert_eq!(eval(&thread, a, "got[2]"), "omit>omit:none:none:1");
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'include', credentials: 'include'}, 'include'); 'ok'");
+    until(&mut thread, a, "got.length === 4");
+    assert_eq!(eval(&thread, a, "got[3]"), "include>include:k=v:k=v:1");
+    // The live 'same' worker is same-origin: an `omit` construction does not join it.
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'same', credentials: 'omit'}, 'mismatch'); 'ok'");
+    until(&mut thread, a, "errors.length === 1");
+    spin(&mut thread, a);
+    assert_eq!(eval(&thread, a, "errors.join() + '|' + got.length"), "mismatch>error|4");
     assert_eq!(
-        eval(&thread, a, "(() => { try { new SharedWorker('/shared-worker.js', {type: 'module'}); } catch (e) { return e.name } })()"),
-        "NotSupportedError"
+        eval(&thread, a, "(() => { try { new SharedWorker('/module-shared-worker.js', {type: 'module', credentials: 'bogus'}); } catch (e) { return e.name } })()"),
+        "TypeError"
     );
 }
+
+/// A module `SharedWorker` whose graph fails to fetch, parse or link fails to
+/// load: `error` at every object waiting on it and no `connect`. A throw of
+/// its evaluation is the worker's own: its connections go through.
+#[test]
+fn module_shared_worker_load_failures_reach_every_client_without_connecting() {
+    if !module_shared_workers() {
+        return;
+    }
+    let (server, mut thread) = setup();
+    let a = open(&mut thread, &server, "/page");
+    assert_eq!(eval(&thread, a, CONNECT_MODULE), "k=v");
+    for (n, path) in ["/module-missing-import.js", "/module-syntax.js", "/module-bad-link.js"].iter().enumerate() {
+        // Two objects wait on the same worker before it fails.
+        eval(&thread, a, &format!("connect('{path}', {{type: 'module'}}, 'first'); connect('{path}', {{type: 'module'}}, 'second'); 'ok'"));
+        until(&mut thread, a, &format!("errors.length === {}", 2 * (n + 1)));
+        spin(&mut thread, a);
+        spin(&mut thread, a);
+        assert_eq!(
+            eval(&thread, a, &format!("errors.slice({}).join() + '|' + got.length", 2 * n)),
+            "first>error,second>error|0",
+            "{path}"
+        );
+    }
+    eval(&thread, a, "connect('/module-throws.js', {type: 'module'}, 'throws'); 'ok'");
+    until(&mut thread, a, "got.length === 1");
+    spin(&mut thread, a);
+    assert_eq!(eval(&thread, a, "got.join() + '|' + errors.length"), "throws>after-throw|6");
+}
+
+/// Sets a cookie and defines `connect(url, options, key)`: a `SharedWorker`
+/// whose messages go to `got` and `error` events to `errors`, as `key>…`.
+const CONNECT_MODULE: &str = "document.cookie = 'k=v; path=/'; globalThis.got = []; globalThis.errors = []; \
+    globalThis.connect = (url, options, key) => { const w = new SharedWorker(url, options); \
+    w.port.onmessage = (e) => got.push(key + '>' + e.data); w.onerror = (e) => errors.push(key + '>' + e.type); return w; }; \
+    document.cookie";
 
 /// [Replaceable] `origin` (Window and workers) and `name` (dedicated and
 /// shared workers): assignment shadows the attribute with an own writable,

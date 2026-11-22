@@ -10,9 +10,20 @@
 //! (`dispose`), until it calls `close()`, or until its script fails to load
 //! (an `error` event at every `SharedWorker` object connected to it).
 //!
-//! Gaps: module shared workers (`{type: 'module'}`) throw NotSupportedError;
-//! uncaught errors inside the worker are reported to its console only, as in
-//! browsers; no inspector target is announced for it.
+//! Module shared workers (`{type: 'module'}`) fetch their graph, then link
+//! and evaluate it (`worker_scope::start_module_graph`): a graph that fails
+//! to fetch, parse or link is a failure to load (`error` at every connected
+//! object, no `connect`), a throw of its evaluation is the worker's own. They
+//! need the engine's module loader with its two steps
+//! (`pyro_js::Scope::has_module_phases`, JSC patch 0037); without them the
+//! constructor throws NotSupportedError. `credentials` is the credentials mode
+//! of the main script and of every module the worker fetches. A
+//! construction that finds a live worker of another type or credentials mode
+//! gets `error` instead of a connection (HTML "run a worker" matching, step
+//! "worker global scope is not null").
+//!
+//! Gaps: uncaught errors inside the worker are reported to its console only,
+//! as in browsers; no inspector target is announced for it.
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -20,6 +31,7 @@ use std::sync::{Arc, Mutex};
 
 use pyro_dom::events::TargetKey;
 use pyro_js::{ClassDef, JsClass, JsError, WeakRealm};
+use pyro_net::Credentials;
 use pyro_runtime::LoopHandle;
 use rustc_hash::FxHashMap;
 
@@ -58,6 +70,10 @@ struct WorkerKey {
 struct SharedInner {
     id: u64,
     key: WorkerKey,
+    /// What the worker was started with: a later construction with the same
+    /// key and another type or credentials mode does not connect to it.
+    module: bool,
+    credentials: Credentials,
     shared: Arc<Shared>,
     state: RefCell<State>,
     clients: RefCell<Vec<Client>>,
@@ -191,6 +207,22 @@ pub(crate) fn dispose(page: &PageDom) {
     }
 }
 
+/// A construction that matched a live worker of another type or credentials
+/// mode: `error` at that one object, in a later task, and it is not kept alive.
+fn reject_client_later(client: Client) {
+    let Some(page) = client.page.upgrade() else { return };
+    page.post_task(Box::new(move || {
+        let Some(page) = client.page.upgrade().filter(|p| !p.is_disposed()) else { return };
+        let ev = EventCore::trusted(&page, EventInterface::Event, "error", false, false);
+        fire(&page, client.key, &ev);
+        if let Some(realm) = client.realm.upgrade() {
+            if let Ok(s) = realm.scope() {
+                unpin_target(&s, &page, client.key);
+            }
+        }
+    }));
+}
+
 const PORT: &str = "__lpSharedWorkerPort";
 
 pub struct SharedWorkerData(EventTargetData);
@@ -210,12 +242,40 @@ impl JsClass for SharedWorker {
             }
             let input = dom_string(a.get(0))?;
             let mut name = String::new();
+            let mut module = false;
+            let mut credentials = Credentials::SameOrigin;
             let options = a.get(1);
             if let Some(options) = options.as_object().filter(|_| !options.is_null()) {
+                // `WorkerOptions` members in dictionary order: credentials, name, type.
+                let value = options.get_atom("credentials")?;
+                if !value.is_undefined() {
+                    credentials = match dom_string(value)?.as_str() {
+                        "omit" => Credentials::Omit,
+                        "same-origin" => Credentials::SameOrigin,
+                        "include" => Credentials::Include,
+                        other => {
+                            return Err(JsError::Type(
+                                format!(
+                                    "Failed to construct 'SharedWorker': '{other}' is not a valid RequestCredentials."
+                                )
+                                .into(),
+                            ))
+                        }
+                    };
+                }
+                let value = options.get_atom("name")?;
+                if !value.is_undefined() {
+                    name = dom_string(value)?;
+                }
                 let kind = options.get_atom("type")?;
                 if !kind.is_undefined() {
                     match dom_string(kind)?.as_str() {
                         "classic" => {}
+                        // Needs the engine's module loader in two steps, so
+                        // a graph that fails to load is told from a throw.
+                        "module" if pyro_js::Capabilities::detect().modules && pyro_js::Scope::has_module_phases() => {
+                            module = true
+                        }
                         "module" => {
                             return Err(JsError::dom(
                                 "NotSupportedError",
@@ -229,10 +289,6 @@ impl JsClass for SharedWorker {
                             ))
                         }
                     }
-                }
-                let value = options.get_atom("name")?;
-                if !value.is_undefined() {
-                    name = dom_string(value)?;
                 }
             } else if !options.is_undefined() {
                 // `(USVString scriptURL, optional (DOMString or WorkerOptions) options)`.
@@ -276,7 +332,12 @@ impl JsClass for SharedWorker {
                 name: name.clone(),
             };
             let existing = WORKERS.with(|w| w.borrow().get(&key).cloned());
+            let client = Client { page: Rc::downgrade(&page), key: client_key, realm: s.realm().downgrade() };
             let worker = match existing {
+                Some(worker) if worker.module != module || worker.credentials != credentials => {
+                    reject_client_later(client);
+                    return Ok(object);
+                }
                 Some(worker) => worker,
                 None => {
                     let id = crate::worker::NEXT_WORKER.fetch_add(1, Ordering::Relaxed);
@@ -289,6 +350,8 @@ impl JsClass for SharedWorker {
                     });
                     let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
                         start.shared_worker = true;
+                        start.module = module;
+                        start.credentials = credentials;
                         start
                     });
                     // A template process (`serve --fork`) starts no thread.
@@ -299,6 +362,8 @@ impl JsClass for SharedWorker {
                     let worker = Rc::new(SharedInner {
                         id,
                         key: key.clone(),
+                        module,
+                        credentials,
                         shared,
                         state: RefCell::new(state),
                         clients: RefCell::new(Vec::new()),
@@ -308,11 +373,7 @@ impl JsClass for SharedWorker {
                     worker
                 }
             };
-            worker.clients.borrow_mut().push(Client {
-                page: Rc::downgrade(&page),
-                key: client_key,
-                realm: s.realm().downgrade(),
-            });
+            worker.clients.borrow_mut().push(client);
             if matches!(*worker.state.borrow(), State::Failed) {
                 worker.fail_later();
                 return Ok(object);

@@ -128,9 +128,17 @@ connected to it goes away.
 - Module workers have no import maps of their own, and `import.meta.resolve` follows
   the engine. Without the engine's module loader (system JavaScriptCore),
   `{type: 'module'}` throws NotSupportedError.
-- Module shared workers (`new SharedWorker(url, {type: 'module'})`) throw
-  NotSupportedError. Uncaught errors inside a shared worker reach its console only,
-  as in browsers, and it has no inspector target.
+- Module shared workers (`new SharedWorker(url, {type: 'module'})`) need the
+  engine's module loader in its two steps (`Scope::has_module_phases`, JSC
+  patch 0037), so that a graph that fails to fetch, parse or link (`error` at
+  every connected `SharedWorker`, no `connect`) is told from a throw of its
+  evaluation (the worker's own exception); without them the constructor throws
+  NotSupportedError. Their `credentials` is the credentials mode of the main
+  script and every module they fetch. A `SharedWorker` whose type or
+  `credentials` differ from the live worker it matches gets `error` and no
+  connection. Module dedicated workers still ignore `credentials`. Uncaught
+  errors inside a shared worker reach its console only, as in browsers, and it
+  has no inspector target.
 - Service workers reuse this machinery (threads, the cross-VM message format and
   cross-thread ports): see [Service workers](SERVICE_WORKER.md).
 - Host objects other than Blob, File, FileList, CryptoKey, ImageBitmap and

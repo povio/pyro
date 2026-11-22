@@ -92,6 +92,10 @@ pub(crate) struct WorkerStart {
     web_locks: crate::web_locks::LockService,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
+    /// `WorkerOptions.credentials`: a module worker's main script and every
+    /// module of its realm are fetched with it (HTML "fetch a module worker
+    /// script graph"). A classic worker's fetches stay same-origin.
+    pub(crate) credentials: Credentials,
     pub(crate) early: Vec<Early>,
     /// A service worker version: its global is a `ServiceWorkerGlobalScope`.
     pub(crate) service: Option<crate::service_worker_scope::ServiceStart>,
@@ -138,6 +142,7 @@ impl WorkerStart {
             permissions: page.context_services().permissions.clone(),
             web_locks: page.context_services().web_locks.clone(),
             module: false,
+            credentials: Credentials::SameOrigin,
             early: Vec::new(),
             service: None,
             shared_worker: false,
@@ -185,6 +190,7 @@ impl WorkerStart {
             permissions: page.context_services().permissions.clone(),
             web_locks: page.context_services().web_locks.clone(),
             module,
+            credentials: Credentials::SameOrigin,
             early: Vec::new(),
             service: Some(service),
             shared_worker: false,
@@ -492,6 +498,9 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
         return;
     }
     let (id, shared, poster, module) = (start.id, start.shared.clone(), start.poster.clone(), start.module);
+    // A module shared worker's graph is fetched and linked before it runs:
+    // a failure there is a failure to load, not an exception of the worker.
+    let phased = module && start.shared_worker;
     let service = start.service.as_ref().map(|s| s.version);
     // A service worker's version learns whether its script ran.
     let evaluated = |ok: bool| {
@@ -504,7 +513,8 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
     match set_up(&event_loop, start) {
         Ok((mut state, script)) => {
             if let Some(script) = script {
-                let ok = !shared.closing.load(Ordering::Acquire) && run_script(&state, &script, module);
+                let ok = !shared.closing.load(Ordering::Acquire)
+                    && if phased { start_module_graph(&state, &script) } else { run_script(&state, &script, module) };
                 evaluated(ok);
                 run_collecting_when_quiet(&mut event_loop, &mut state, &shared);
             } else {
@@ -651,6 +661,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         page: Rc::downgrade(&page),
         net: start.net.clone(),
         shared: start.shared.clone(),
+        credentials: script_credentials(&start),
         origin: worker_origin,
         url: start.url.to_string(),
         sched: event_loop.scheduler(),
@@ -710,6 +721,7 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
                 start.url.clone(),
                 Destination::Script,
                 RequestMode::SameOrigin,
+                script_credentials(start),
                 true,
             )
             .ok()?;
@@ -722,6 +734,15 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
         }
     };
     Some(script_text(&bytes))
+}
+
+/// The credentials mode of a worker's main script and module fetches.
+fn script_credentials(start: &WorkerStart) -> Credentials {
+    if start.module {
+        start.credentials
+    } else {
+        Credentials::SameOrigin
+    }
 }
 
 fn script_text(bytes: &[u8]) -> String {
@@ -764,6 +785,63 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
     true
 }
 
+/// A module shared worker's script in HTML's two steps
+/// ([`Scope::load_module_graph`], then [`Scope::link_and_evaluate_module`]).
+/// A graph that fails to fetch, parse or link is a failure to load: the
+/// document side hears `Up::LoadFailed` (`error` at every connected
+/// `SharedWorker`) and ends the worker, and what waits in `held` is never
+/// delivered (`starting` stays set). A throw of the evaluation is the
+/// worker's own exception: it is reported, and what waits is delivered.
+/// The constructor admits module shared workers only with the two steps.
+fn start_module_graph(state: &WorkerLoop, script: &(String, String)) -> bool {
+    let Ok(s) = state.realm.scope() else { return false };
+    let id = state.id;
+    state.starting.set(true);
+    let loaded = match s.load_module_graph(&script.0, &script.1) {
+        Ok(Some(loaded)) => loaded,
+        Ok(None) | Err(_) => {
+            load_failed(&state.poster, id);
+            return false;
+        }
+    };
+    let (url, starting) = (script.1.clone(), state.starting.clone());
+    let (link_poster, fetch_poster) = (state.poster.clone(), state.poster.clone());
+    let watched = s.then(
+        loaded,
+        move |s, _| match s.link_and_evaluate_module(&url) {
+            Ok(promise) => {
+                let (settled, failed) = (starting.clone(), starting.clone());
+                let reported = s.then(
+                    promise,
+                    move |_, _| settled.set(false),
+                    move |s, error| {
+                        failed.set(false);
+                        s.report_exception(&JsError::thrown(Persistent::new(s, error)))
+                    },
+                );
+                if let Err(e) = reported {
+                    starting.set(false);
+                    s.report_exception(&e);
+                }
+            }
+            // A link error (or a parse error JSC reports at link time).
+            Err(_) => load_failed(&link_poster, id),
+        },
+        // A fetch failed, a module's MIME type was refused, or it did not parse.
+        move |_, _| load_failed(&fetch_poster, id),
+    );
+    if watched.is_err() {
+        load_failed(&state.poster, id);
+        return false;
+    }
+    true
+}
+
+/// Tells the document side that worker `id` failed to load.
+fn load_failed(poster: &RemotePoster, id: u64) {
+    poster(Box::new(move || deliver_up(id, Up::LoadFailed)));
+}
+
 /// The ES module source of a worker's realm: each module is fetched in a task
 /// of the worker's loop, as `importScripts` fetches (CORS mode, as module
 /// scripts are).
@@ -771,6 +849,7 @@ struct WorkerModuleFetcher {
     page: std::rc::Weak<PageDom>,
     net: NetClient,
     shared: Arc<Shared>,
+    credentials: Credentials,
     origin: Option<String>,
     url: String,
     sched: Scheduler<WorkerLoop>,
@@ -816,8 +895,14 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
         let blob =
             if url.starts_with("blob:") { self.page.upgrade().and_then(|page| page.blob_url(&url)) } else { None };
         let realm = realm.downgrade();
-        let (page, net, shared, origin, in_flight) =
-            (self.page.clone(), self.net.clone(), self.shared.clone(), self.origin.clone(), self.in_flight.clone());
+        let (page, net, shared, origin, in_flight, credentials) = (
+            self.page.clone(),
+            self.net.clone(),
+            self.shared.clone(),
+            self.origin.clone(),
+            self.in_flight.clone(),
+            self.credentials,
+        );
         let request = RefCell::new(Some(request));
         self.sched.post(TaskSource::Networking, move |_| {
             // Every request of the fetch, taken out before any completes: one
@@ -858,6 +943,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                     parsed,
                                     destination,
                                     RequestMode::Cors,
+                                    credentials,
                                     false,
                                 )
                             }
@@ -900,6 +986,7 @@ fn tear_down(event_loop: EventLoop<WorkerLoop>, state: WorkerLoop) {
 /// is told to stop, with its MIME type essence. The `main` script's
 /// `Referrer-Policy` header becomes the worker's policy; an imported
 /// script's does not.
+#[allow(clippy::too_many_arguments)]
 fn fetch_script(
     page: &Rc<PageDom>,
     net: &NetClient,
@@ -908,11 +995,12 @@ fn fetch_script(
     url: pyro_net::Url,
     destination: Destination,
     mode: RequestMode,
+    credentials: Credentials,
     main: bool,
 ) -> Result<(Bytes, String), String> {
     let mut request = Request::get(url, destination);
     request.mode = mode;
-    request.credentials = Credentials::SameOrigin;
+    request.credentials = credentials;
     request.origin = origin.clone();
     request.frame_id = page.request_context().frame_id;
     request.max_body = Some(MAX_SCRIPT_BYTES);
@@ -1173,7 +1261,7 @@ impl JsClass for WorkerGlobalScope {
                 let bytes =
                     match page.blob_url(&name) {
                         Some((bytes, _)) => bytes,
-                        None => fetch_script(page, &net, &g.shared, &origin, url, Destination::Script, RequestMode::NoCors, false).map(|(b, _)| b).map_err(
+                        None => fetch_script(page, &net, &g.shared, &origin, url, Destination::Script, RequestMode::NoCors, Credentials::SameOrigin, false).map(|(b, _)| b).map_err(
                             |e| {
                                 JsError::dom(
                             "NetworkError",
