@@ -311,6 +311,12 @@ fn construct<'s>(
             ).into()));
         }
     }
+    // RequestInit `duplex` is a RequestDuplex enum: "half" is its only value.
+    if let Some(duplex) = string_option(s, init, "duplex")?.filter(|d| d != "half") {
+        return Err(JsError::Type(format!(
+            "Failed to construct 'Request': The provided value '{duplex}' is not a valid enum value of type RequestDuplex."
+        ).into()));
+    }
     let window_option = option(s, init, "window")?;
     if !window_option.is_undefined() && !window_option.is_null() {
         return Err(JsError::Type("Failed to construct 'Request': 'window' member must be null".into()));
@@ -436,6 +442,11 @@ fn construct<'s>(
                     "Failed to construct 'Request': The body stream is locked or disturbed".into(),
                 ));
             }
+            if fields.keepalive {
+                return Err(JsError::Type(
+                    "Failed to construct 'Request': keepalive cannot be set for a request with a streaming body".into(),
+                ));
+            }
             stream_body = Some(body_option);
             body_bytes = Some(Bytes::new());
             body_mime = String::new();
@@ -455,6 +466,13 @@ fn construct<'s>(
                     "Failed to construct 'Request': Request with GET/HEAD method cannot have body.".into(),
                 ));
             }
+            // An input whose body stream a reader locked or read cannot lend it.
+            let (locked, disturbed) = stream_state(s, r)?;
+            if locked || disturbed {
+                return Err(JsError::Type(
+                    "Failed to construct 'Request': Cannot construct a Request with a Request object that has already been used.".into(),
+                ));
+            }
             if r.script_stream.get() {
                 // The input's stream moves: the input's body is used from now on.
                 if r.used.replace(true) {
@@ -470,6 +488,9 @@ fn construct<'s>(
     // The body's MIME type is the request's Content-Type header.
     if let Some((_, ct)) = headers.iter().find(|(n, _)| n == "content-type") {
         body_mime = ct.clone();
+    }
+    if stream_body.is_some() && fields.mode == "no-cors" {
+        return Err(JsError::Type("Failed to construct 'Request': A no-cors request cannot have a streaming body".into()));
     }
     let headers = HeadersData::from_pairs(headers, false).guard_request(fields.mode == "no-cors");
     let request = wrap(s, new_target, fields, headers, body_bytes, body_mime, signal)?;
@@ -626,7 +647,8 @@ fn stream_state(s: &Scope<'_>, data: &RequestData) -> JsResult<(bool, bool)> {
 
 fn consume<'s>(s: &Scope<'s>, data: &RequestData, kind: ReadKind) -> JsResult<Value<'s>> {
     let (locked, disturbed) = stream_state(s, data)?;
-    if locked || disturbed {
+    // A script stream body that moved to another Request is that Request's now.
+    if locked || disturbed || (data.script_stream.get() && data.used.get()) {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
         deferred.reject(s, JsError::Type("Request body has already been consumed".into()).to_value(s))?;
