@@ -462,6 +462,8 @@ pub struct PageDom {
     pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
     /// That worklet's module map (every module of its graphs: entries and imports).
     pub(crate) paint_worklet_modules: pyro_js::WorkletModuleMap,
+    /// The AudioWorkletGlobalScopes of this realm's BaseAudioContexts (`crate::audio_worklet`).
+    pub(crate) audio_worklets: RefCell<Vec<Rc<crate::audio_worklet::AudioWorkletGlobal>>>,
     /// A range slider being dragged (`crate::input`): the element and its value at the press.
     pub(crate) range_drag: RefCell<Option<(NodeId, String)>>,
     /// The window's `load` event is being dispatched (`lifecycle::load`).
@@ -1117,6 +1119,7 @@ impl PageDom {
             fullscreen_allowed: Cell::new(true),
             paint_worklet: RefCell::new(None),
             paint_worklet_modules: Default::default(),
+            audio_worklets: RefCell::new(Vec::new()),
             range_drag: RefCell::new(None),
             dispatching_load: Cell::new(false),
             opaque_origin_token: Cell::new(None),
@@ -1353,6 +1356,7 @@ impl PageDom {
         crate::message_channel::dispose(self);
         crate::web_locks::dispose(self);
         drop(self.paint_worklet.take());
+        crate::audio_worklet::dispose(self);
         crate::service_worker::client_gone(self);
         crate::indexeddb::dispose(self);
         crate::media::dispose(self);

@@ -12,6 +12,7 @@ const GLOBALS: &[&str] = &[
     "Lock",
     "MediaDevices",
     "Worklet",
+    "AudioWorklet",
     "ImageDecoder",
     "ImageTrackList",
     "ImageTrack",
