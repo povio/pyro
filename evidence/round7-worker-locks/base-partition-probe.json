@@ -1,0 +1,18 @@
+{
+  "top": [
+    true,
+    false
+  ],
+  "same": [
+    true,
+    false
+  ],
+  "crossOrigin": [
+    false,
+    true
+  ],
+  "nested": [
+    true,
+    false
+  ]
+}

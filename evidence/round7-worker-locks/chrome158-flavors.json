@@ -1,0 +1,30 @@
+{
+  "dedicated": [
+    "function",
+    "function",
+    true,
+    true,
+    true
+  ],
+  "nested": [
+    "function",
+    "function",
+    true,
+    true,
+    true
+  ],
+  "shared": [
+    "function",
+    "function",
+    true,
+    true,
+    true
+  ],
+  "service": [
+    "function",
+    "function",
+    true,
+    true,
+    true
+  ]
+}

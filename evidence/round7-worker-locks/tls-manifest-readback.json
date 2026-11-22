@@ -1,0 +1,51 @@
+[
+  {
+    "source": "f29218a2886f578160e163b4886d5197e002f97d",
+    "missingClassification": [
+      "association::OWNERS",
+      "custom::CONSTRUCTIONS",
+      "structured_clone::WIRE_CHUNKS"
+    ],
+    "listedButAbsent": [],
+    "webLocksInventory": [
+      "web_locks::CANCELLED",
+      "web_locks::MANAGERS",
+      "web_locks::NEXT_ID"
+    ],
+    "webLocksClassification": [
+      "web_locks::CANCELLED",
+      "web_locks::MANAGERS",
+      "web_locks::NEXT_ID"
+    ]
+  },
+  {
+    "source": "a51615099c35d21b062977b8b5feb7a3128458f1",
+    "missingClassification": [
+      "association::OWNERS",
+      "custom::CONSTRUCTIONS",
+      "structured_clone::WIRE_CHUNKS"
+    ],
+    "listedButAbsent": [],
+    "webLocksInventory": [
+      "web_locks::CLIENTS"
+    ],
+    "webLocksClassification": [
+      "web_locks::CLIENTS"
+    ]
+  },
+  {
+    "source": "d5edcc2cd6134ce96fc6703a2519e952c5fab327",
+    "missingClassification": [
+      "association::OWNERS",
+      "custom::CONSTRUCTIONS",
+      "structured_clone::WIRE_CHUNKS"
+    ],
+    "listedButAbsent": [],
+    "webLocksInventory": [
+      "web_locks::CLIENTS"
+    ],
+    "webLocksClassification": [
+      "web_locks::CLIENTS"
+    ]
+  }
+]

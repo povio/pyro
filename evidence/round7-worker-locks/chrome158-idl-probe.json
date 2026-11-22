@@ -1,0 +1,50 @@
+{
+  "window": {
+    "surface": true,
+    "arity": [
+      0,
+      0,
+      2
+    ],
+    "members": [
+      "get name",
+      "get mode",
+      true,
+      true
+    ],
+    "brand": [
+      "TypeError",
+      "TypeError",
+      "TypeError"
+    ],
+    "data": [
+      "ordinary-idl",
+      "exclusive",
+      true
+    ]
+  },
+  "dedicated": {
+    "surface": true,
+    "arity": [
+      0,
+      0,
+      2
+    ],
+    "members": [
+      "get name",
+      "get mode",
+      true,
+      true
+    ],
+    "brand": [
+      "TypeError",
+      "TypeError",
+      "TypeError"
+    ],
+    "data": [
+      "ordinary-idl",
+      "exclusive",
+      true
+    ]
+  }
+}

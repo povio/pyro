@@ -1,0 +1,38 @@
+{
+  "window": true,
+  "worker": [
+    "function",
+    "function",
+    true,
+    true
+  ],
+  "whileHeld": true,
+  "queues": [
+    1,
+    1,
+    true,
+    true,
+    true
+  ],
+  "granted": [
+    "granted",
+    "ordinary",
+    "exclusive",
+    true
+  ],
+  "workerQuery": [
+    "query",
+    true,
+    0
+  ],
+  "afterGrant": true,
+  "release": "released",
+  "postRelease": true,
+  "beforeTerminate": [
+    "granted",
+    "ordinary",
+    "exclusive",
+    true
+  ],
+  "termination": true
+}

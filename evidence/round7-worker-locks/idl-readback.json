@@ -1,0 +1,162 @@
+[
+  {
+    "url": "web-locks/idlharness.https.any.html",
+    "name": "Lock interface object length",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.html",
+    "name": "Lock interface: attribute mode",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.html",
+    "name": "Lock interface: attribute name",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.html",
+    "name": "LockManager interface object length",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.serviceworker.html",
+    "name": "Lock interface object length",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.serviceworker.html",
+    "name": "Lock interface: attribute mode",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.serviceworker.html",
+    "name": "Lock interface: attribute name",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.serviceworker.html",
+    "name": "LockManager interface object length",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.sharedworker.html",
+    "name": "Lock interface object length",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.sharedworker.html",
+    "name": "Lock interface: attribute mode",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.sharedworker.html",
+    "name": "Lock interface: attribute name",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.sharedworker.html",
+    "name": "LockManager interface object length",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.worker.html",
+    "name": "Lock interface object length",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.worker.html",
+    "name": "Lock interface: attribute mode",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.worker.html",
+    "name": "Lock interface: attribute name",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  },
+  {
+    "url": "web-locks/idlharness.https.any.worker.html",
+    "name": "LockManager interface object length",
+    "status": {
+      "base": "Fail",
+      "broker": "Fail",
+      "candidate": "Pass",
+      "chrome158": "Pass"
+    }
+  }
+]

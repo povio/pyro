@@ -608,6 +608,41 @@ fn message_ports_and_streams_cross_to_a_dedicated_worker() {
     assert_eq!(eval(&thread, page, "detachedPost + ':' + locked"), "DataCloneError:true");
 }
 
+/// A blob worker uses its creator's lock manager; ending its event loop
+/// releases even a lock whose callback returned an unresolved promise.
+#[test]
+fn terminated_blob_worker_releases_web_lock_to_window() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(&thread, page, r#"
+        globalThis.log = [];
+        const url = URL.createObjectURL(new Blob([`
+            navigator.locks.request('worker-held', lock => {
+                postMessage([lock.name, lock.mode, lock instanceof Lock, navigator.locks instanceof LockManager]);
+                return new Promise(() => {});
+            });
+        `], {type: 'text/javascript'}));
+        const holder = new Worker(url);
+        holder.onmessage = e => {
+            log.push(e.data.join(','));
+            navigator.locks.request('worker-held', {ifAvailable: true}, lock => {
+                log.push(lock === null ? 'busy' : 'available');
+            });
+        };
+        "ok"
+    "#);
+    until(&mut thread, page, "log.length === 2");
+    assert_eq!(eval(&thread, page, "log.join('|')"), "worker-held,exclusive,true,true|busy");
+    eval(&thread, page, r#"
+        navigator.locks.request('worker-held', lock => log.push('granted:' + lock.name));
+        holder.terminate();
+        URL.revokeObjectURL(url);
+        "ok"
+    "#);
+    until(&mut thread, page, "log.length === 3");
+    assert_eq!(eval(&thread, page, "log[2]"), "granted:worker-held");
+}
+
 /// Runs the thread's loop for a moment, so tasks other threads posted run.
 fn spin(thread: &mut BrowserThread, page: PageId) {
     eval(thread, page, "globalThis.spun = false; setTimeout(() => { spun = true; }, 30); 'ok'");
