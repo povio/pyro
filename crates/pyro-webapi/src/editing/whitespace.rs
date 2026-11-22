@@ -104,6 +104,23 @@ pub(super) fn at_line_end(page: &PageDom, dom: &Dom, host: NodeId, (node, offset
     matches!(adjacent(page, dom, host, node, true), Next::Boundary)
 }
 
+/// In a plaintext editor a terminal preserved LF can serve the same purpose
+/// as a padding BR. Typing consumes it only on an otherwise empty last line.
+pub(super) fn consume_padding_lf(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Point) {
+    let Ok(text) = dom.char_data(node) else { return };
+    if !text.ends_with('\n') || offset.checked_add(1) != Some(pyro_dom::dom::utf16_len(text)) {
+        return;
+    }
+    let empty_line = text.ends_with("\n\n")
+        || (text == "\n" && matches!(adjacent(page, dom, host, node, false), Next::Boundary | Next::Break));
+    if empty_line && editing::plaintext_at(dom, node)
+        && crate::edit_commands::newlines_significant_in(page, dom, node)
+        && matches!(adjacent(page, dom, host, node, true), Next::Boundary)
+    {
+        let _ = dom.replace_data(node, offset, 1, "");
+    }
+}
+
 type Segment = (NodeId, u32, u32);
 
 /// Extend the local run through adjacent collapsing Text nodes.
