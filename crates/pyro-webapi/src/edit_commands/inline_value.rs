@@ -871,6 +871,22 @@ pub(super) fn change_selected_script(
         for &text in &texts {
             while let Some((carrier, active)) = script_carrier(page, &dom, text, host) {
                 if !remove && active == tag { break; }
+                // Lift a selected prefix from a plain script carrier in place.
+                // The original wrapper still owns the unselected suffix.
+                if texts.len() > 1 && dom.parent_element(text).ok().flatten() == Some(carrier)
+                    && dom.first_child(carrier).ok().flatten() == Some(text) && dom.next_sibling(text).ok().flatten().is_some() {
+                    let name = editing::local(&dom, carrier);
+                    let bare = dom.attributes(carrier).is_ok_and(|attrs| match name.as_str() {
+                        "sub" | "sup" => attrs.is_empty(),
+                        "span" if attrs.len() == 1 && attrs[0].name.local == markup5ever::local_name!("style") => {
+                            let declarations = crate::css::parse_declarations(&attrs[0].value);
+                            matches!(declarations.as_slice(), [d] if d.name == "vertical-align")
+                        }
+                        _ => false,
+                    });
+                    if bare && dom.parent_element(carrier).ok().flatten()
+                        .is_some_and(|parent| dom.insert_before(parent, text, Some(carrier)).is_ok()) { continue; }
+                }
                 if clear_script(page, &mut dom, text, host) != Some(true)
                     || script_carrier(page, &dom, text, host).is_some_and(|(next, _)| next == carrier) { break; }
             }
