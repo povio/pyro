@@ -2443,6 +2443,93 @@ fn listify_bare_text(
     Some(((content, from), (content, to)))
 }
 
+fn local_html(dom: &Dom, node: NodeId, name: &str) -> bool {
+    dom.element(node).is_ok_and(|el| el.is_html() && &**el.local_name() == name)
+}
+
+/// A table selected by its outer boundaries is a single list item.
+/// A selection inside the cells formats their contents independently:
+/// the row must keep its cells even when the selection spans rows.
+fn listify_table_selection(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<(Point, Point)> {
+    let doc = dom.node_document(host).ok()?;
+    if start.0 == end.0 && end.1.checked_sub(start.1) == Some(1) {
+        if let Some(table) = dom.child_at(start.0, start.1).ok()?.filter(|&n|
+            dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "table")
+                && editing::editing_host(dom, n) == Some(host)) {
+            let item = start.0;
+            if local_html(dom, item, "li") && dom.child_count(item).ok()? == 1 {
+                let list = dom.parent_element(item).ok()??;
+                if local_html(dom, list, tag) && list != host && dom.child_count(list).ok()? == 1 {
+                    let mut points = [start, end];
+                    indentation::unwrap(dom, item, &mut points)?;
+                    indentation::unwrap(dom, list, &mut points)?;
+                    return Some((points[0], points[1]));
+                }
+                return None;
+            }
+            let list = dom.create_element(doc, tag).ok()?;
+            let item = dom.create_element(doc, "li").ok()?;
+            dom.insert_before(start.0, list, Some(table)).ok()?;
+            dom.append_child(list, item).ok()?;
+            dom.append_child(item, table).ok()?;
+            return Some(((item, 0), (item, 1)));
+        }
+    }
+
+    let first = editing::deep_forward(dom, start);
+    let last = if start == end { first } else { editing::deep_backward(dom, end) };
+    let first_cell = editing::enclosing_html(dom, first.0, &["td", "th"])?;
+    let last_cell = editing::enclosing_html(dom, last.0, &["td", "th"])?;
+    let table = editing::enclosing_html(dom, first_cell, &["table"])?;
+    if editing::enclosing_html(dom, last_cell, &["table"])? != table || !dom.contains(host, table).ok()? { return None; }
+    // Include intervening cells even if they contain a BR or no text.
+    // A nested table is a single piece of content in its outer cell.
+    let mut containers = Vec::new();
+    let mut selected = false;
+    for cell in dom.descendants(table).ok()? {
+        if !local_html(dom, cell, "td") && !local_html(dom, cell, "th") { continue; }
+        if editing::enclosing_html(dom, cell, &["table"]) != Some(table) { continue; }
+        selected |= cell == first_cell;
+        if selected && editing::editing_host(dom, cell) == Some(host) && editing::rendered(page, dom, cell) {
+            let child = dom.first_child(cell).ok()?;
+            let container = child.filter(|&c| dom.child_count(cell).ok() == Some(1)
+                && (local_html(dom, c, "p") || local_html(dom, c, "div"))).unwrap_or(cell);
+            let list = dom.first_child(container).ok()?.filter(|&l| dom.child_count(container).ok() == Some(1)
+                && (local_html(dom, l, "ol") || local_html(dom, l, "ul")));
+            let list_item = list.and_then(|l| dom.first_child(l).ok().flatten().filter(|&item|
+                dom.child_count(l).ok() == Some(1) && local_html(dom, item, "li")).map(|item| (l, item)));
+            if list.is_some() && list_item.is_none() { return None; }
+            containers.push((container, list_item));
+        }
+        if cell == last_cell { break; }
+    }
+    let remove = !containers.is_empty() && containers.iter().all(|(_, list)| list.is_some_and(|(l, _)| local_html(dom, l, tag)));
+    let mut points = [first, last];
+    for (container, existing) in containers {
+        if let Some((list, item)) = existing {
+            if remove {
+                indentation::unwrap(dom, item, &mut points)?;
+                indentation::unwrap(dom, list, &mut points)?;
+            } else if !local_html(dom, list, tag) {
+                indentation::rename(dom, list, tag, &mut points)?;
+            }
+            continue;
+        }
+        let list = dom.create_element(doc, tag).ok()?;
+        let item = dom.create_element(doc, "li").ok()?;
+        while let Some(child) = dom.first_child(container).ok()? {
+            dom.append_child(item, child).ok()?;
+        }
+        if dom.child_count(item).ok()? == 0 {
+            let br = dom.create_element(doc, "br").ok()?;
+            dom.append_child(item, br).ok()?;
+        }
+        dom.append_child(list, item).ok()?;
+        dom.append_child(container, list).ok()?;
+    }
+    Some((points[0], points[1]))
+}
+
 /// insertOrderedList / insertUnorderedList: the selected blocks become
 /// items of a new list; inside such a list already, its items become `div`
 /// lines again.
@@ -2458,6 +2545,11 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
                 return;
             }
             if let Some((a, b)) = listify_bare_text(page, &mut dom, host, tag, start, end) {
+                drop(dom);
+                editing::set_selection(page, a, b);
+                return;
+            }
+            if let Some((a, b)) = listify_table_selection(page, &mut dom, host, tag, start, end) {
                 drop(dom);
                 editing::set_selection(page, a, b);
                 return;
@@ -2609,14 +2701,18 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
         "stylewithcss" => page.dom.borrow().document_data(doc).is_ok_and(|d| d.style_with_css),
         "insertorderedlist" | "insertunorderedlist" => {
             let tag = if cmd == "insertorderedlist" { "ol" } else { "ul" };
-            let Some((start, _)) = editing::selection_range(page) else {
+            let Some((start, end)) = editing::selection_range(page) else {
                 return false;
             };
             let dom = page.dom.borrow();
             let Some(host) = editing::editing_host(&dom, start.0) else {
                 return false;
             };
-            ancestor_named(&dom, start.0, host, &[tag]).is_some()
+            let list = ancestor_named(&dom, start.0, host, &[tag]);
+            if start != end && ancestor_named(&dom, start.0, host, &["td", "th"]).is_some() {
+                return list.is_some() && list == ancestor_named(&dom, end.0, host, &[tag]);
+            }
+            list.is_some()
         }
         _ if format_of(&cmd).is_some() => format_state(page, &cmd).1,
         _ => false,
@@ -2731,10 +2827,59 @@ enum Caret {
     Host(Point),
 }
 
+/// Flat text offsets cannot distinguish selecting a table from starting
+/// inside its first cell, or ending a cell from starting the next one.
+struct TableSelection {
+    path: Vec<u32>,
+    cell: Option<&'static str>,
+    anchor: u32,
+    focus: u32,
+}
+
+impl TableSelection {
+    fn capture(dom: &Dom, host: NodeId, anchor: Point, focus: Point) -> Option<Self> {
+        if anchor.0 != focus.0 || anchor.1 == focus.1 { return None; }
+        let mut node = anchor.0;
+        let start = anchor.1.min(focus.1);
+        let end = anchor.1.max(focus.1);
+        let cell = if start == 0 && end == editing::len(dom, node) && local_html(dom, node, "td") { Some("td") }
+            else if start == 0 && end == editing::len(dom, node) && local_html(dom, node, "th") { Some("th") }
+            else if end - start == 1 && dom.child_at(node, start).ok()?.is_some_and(|n| local_html(dom, n, "table")) { None }
+            else { return None };
+        let mut path = Vec::new();
+        while node != host {
+            path.push(dom.index_in_parent(node).ok()?);
+            node = dom.parent(node).ok()??;
+        }
+        path.reverse();
+        Some(Self { path, cell, anchor: anchor.1, focus: focus.1 })
+    }
+
+    fn resolve(&self, dom: &Dom, host: NodeId) -> Option<(Point, Point)> {
+        let mut node = host;
+        for &index in &self.path { node = dom.child_at(node, index).ok()??; }
+        if editing::editing_host(dom, node) != Some(host) { return None; }
+        let start = self.anchor.min(self.focus);
+        let end = self.anchor.max(self.focus);
+        let count = dom.child_count(node).ok()?;
+        if end > count { return None; }
+        let (a, b) = if let Some(tag) = self.cell {
+            if !local_html(dom, node, tag) || start != 0 || end != count { return None; }
+            (editing::deep_forward(dom, (node, start)), editing::deep_backward(dom, (node, end)))
+        } else {
+            if end - start != 1 || !local_html(dom, dom.child_at(node, start).ok()??, "table") { return None; }
+            ((node, start), (node, end))
+        };
+        if editing::editing_host(dom, a.0) != Some(host) || editing::editing_host(dom, b.0) != Some(host)
+            || crate::range::compare_boundary_points_dom(dom, a, b) > 0 { return None; }
+        Some(if self.anchor < self.focus { (a, b) } else { (b, a) })
+    }
+}
+
 enum Saved {
     Control { value: String, selection: ControlSelection, opposite: Option<ControlSelection> },
     /// Saved anchor and focus offsets, in selection direction.
-    Host { html: String, selection: Option<(u32, u32)> },
+    Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection> },
 }
 
 struct Step {
@@ -2751,7 +2896,7 @@ impl Saved {
     fn bytes(&self) -> usize {
         match self {
             Saved::Control { value, .. } => value.len(),
-            Saved::Host { html, .. } => html.len(),
+            Saved::Host { html, table_selection, .. } => html.len() + table_selection.as_ref().map_or(0, |s| s.path.len() * size_of::<u32>()),
         }
     }
 }
@@ -2787,6 +2932,7 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
     }
     let html = dom.inner_html(target).ok()?;
     drop(dom);
+    let mut table_selection = None;
     let selection = editing::selection(page).and_then(|(anchor, focus)| {
         let dom = page.dom.borrow();
         let inside =
@@ -2795,10 +2941,11 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
         inside.then(|| {
             let flat = Flat::build(page, target);
             let dom = page.dom.borrow();
+            table_selection = TableSelection::capture(&dom, target, anchor, focus);
             (flat.pos_of(&dom, anchor), flat.pos_of(&dom, focus))
         })
     });
-    Some(Saved::Host { html, selection })
+    Some(Saved::Host { html, selection, table_selection })
 }
 
 fn caret(page: &PageDom, target: NodeId, control: bool) -> Option<Caret> {
@@ -2879,9 +3026,13 @@ fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
             }
             editing::queue_control_selectionchange(page, target);
         }
-        Saved::Host { html, selection } => {
+        Saved::Host { html, selection, table_selection } => {
             let ok = pyro_dom::parse::set_inner_html(&mut page.dom.borrow_mut(), target, &html).is_ok();
             if !ok {
+                return;
+            }
+            if let Some((anchor, focus)) = table_selection.and_then(|s| s.resolve(&page.dom.borrow(), target)) {
+                editing::set_selection(page, anchor, focus);
                 return;
             }
             let flat = Flat::build(page, target);
