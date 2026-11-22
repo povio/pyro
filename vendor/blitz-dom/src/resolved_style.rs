@@ -368,7 +368,7 @@ impl BaseDocument {
                 basis = self.auto_basis_in_block_flow(node_id, width, percent);
                 value
             }
-            (Size::CalcSizeAny(_), Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value)) if !width => {
+            (Size::CalcSizeAny(_), Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeFitContent(value)) if !width => {
                 basis = self.auto_basis_in_block_flow(node_id, false, percent);
                 value
             }
