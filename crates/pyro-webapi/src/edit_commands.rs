@@ -1683,7 +1683,18 @@ fn unlink_styled_fragment(dom: &mut Dom, anchor: NodeId, text: NodeId, whole: bo
     let parent = dom.parent_element(anchor).ok()??;
     let selected = if whole { anchor } else {
         let selected = alignment::split_edge(dom, parent, text, false, &mut [])?;
+        let following = dom.next_sibling(selected).ok()?;
         alignment::split_edge(dom, parent, text, true, &mut [])?;
+        // split_edge keeps the ID on the first fragment. When that fragment
+        // is the selected prefix, move the ID to the newly created suffix.
+        if selected == anchor {
+            if let Some(suffix) = dom.next_sibling(selected).ok()?.filter(|&n| Some(n) != following) {
+                if let Some(id) = dom.get_attribute(selected, "id").ok()?.map(str::to_owned) {
+                    dom.remove_attribute(selected, "id").ok()?;
+                    dom.set_attribute(suffix, "id", &id).ok()?;
+                }
+            }
+        }
         selected
     };
     let doc = dom.node_document(selected).ok()?;
