@@ -84,7 +84,8 @@
     }
     function cueValues(list) {
       const {s, onlyActive} = slot(cueLists, list);
-      return onlyActive ? (s.mode !== 'disabled' && s.media ? active(s, mediaTime.call(s.media)) : []) : sorted(s);
+      // The active cues are those "time marches on" last found (not the cues at the current time).
+      return onlyActive ? (s.mode !== 'disabled' ? s.active : []) : sorted(s);
     }
     const index = key => typeof key === 'string' && String(key >>> 0) === key && key !== '4294967295';
     class TextTrackCueList {
@@ -155,12 +156,19 @@
         if (owner) removeFrom(slot(tracks,owner),cue);
         setCueOwner(cue,this);
         s.cues.push(cue);
+        cuesChanged(s);
       }
       removeCue(cue) {
         const s=slot(tracks,this); required(arguments.length); updateSource(s);
         if (cueOwner(cue) !== this) throw new DE('Cue is not in this track','NotFoundError');
         removeFrom(s,cue);
+        cuesChanged(s);
       }
+    }
+    // HTML: a change to the cues of a media element's track runs "time marches on" at once.
+    function cuesChanged(s) {
+      const list = s.media && mediaLists.get(s.media);
+      if (list) updatePlayback(lists.get(list), false);
     }
     function removeFrom(s,cue) {
       s.cues.splice(s.cues.indexOf(cue),1);
@@ -181,7 +189,8 @@
       let pause=false;
       for (let trackIndex=0;trackIndex<l.items.length;trackIndex++) {
         const track=l.items[trackIndex], s=tracks.get(track);
-        const ordered=sorted(s), next=s.mode==='disabled' ? [] : active(s,now);
+        // While the show poster flag is set no cue is current (as before playback or a seek).
+        const ordered=sorted(s), next=s.mode==='disabled' || native.showPoster(l.media) ? [] : active(s,now);
         const previous=s.active;
         const count=events.length;
         for (const cue of new Set([...ordered,...previous])) {
@@ -240,17 +249,32 @@
       for (let i=0;i<items.length;i++) if (old[i]!==items[i])
         Object.defineProperty(list,i,{enumerable:true,configurable:true,get:()=>{syncMedia(media);return l.items[i];}});
       for (let i=items.length;i<old.length;i++) delete list[i];
-      // Select the first default in each kind group when the user has made no selection.
-      const groups=new Set();
-      for (const t of elements) {
-        const s=tracks.get(t), group=['subtitles','captions'].includes(t.kind)?'captions':t.kind;
-        if (s.mode!=='disabled') groups.add(group);
+      // HTML "honor user preferences for automatic text track selection" runs in a queued task.
+      if (!l.selecting) {
+        l.selecting=true;
+        native.postTask(()=>{ l.selecting=false; selectDefaults(l); });
+      }
+      return list;
+    }
+    // The first default track of each kind group shows when the user has made no
+    // selection; every default metadata track becomes hidden.
+    function selectDefaults(l) {
+      const groups=new Set(), changed=[];
+      for (const t of l.items) {
+        const s=tracks.get(t);
+        if (!s.element || s.media!==l.media) continue;
+        const group=['subtitles','captions'].includes(t.kind)?'captions':t.kind;
+        if (group==='metadata') {
+          if (s.mode==='disabled' && !s.explicit && attr(s.element,'default')!==null) {
+            s.mode='hidden'; changed.push(s);
+          }
+        } else if (s.mode!=='disabled') groups.add(group);
         else if (!s.explicit && !groups.has(group) && attr(s.element,'default')!==null) {
-          s.mode=group==='metadata'?'hidden':'showing';
+          s.mode='showing'; changed.push(s);
           groups.add(group);
         }
       }
-      return list;
+      for (const s of changed) native.check(s.element);
     }
     function addTextTrack(media,kind,label,language) {
       kind=string(kind);

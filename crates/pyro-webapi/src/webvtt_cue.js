@@ -58,6 +58,8 @@
   function cueHTML(text) {
     const doc = document, root = doc.createDocumentFragment();
     const stack = [{ name: '', node: root }];
+    // Empty cue text still makes one (empty) Text node.
+    if (text === '') root.appendChild(doc.createTextNode(''));
     let pos = 0;
     while (pos < text.length) {
       const current = stack[stack.length - 1];

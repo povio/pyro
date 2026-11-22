@@ -147,6 +147,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })?.value(),
     )?;
     methods.set_atom(
+        "showPoster",
+        s.function("mediaShowPoster", |s, _, a| {
+            let n = s.unwrap::<Node>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
+            Ok(s.boolean(crate::media::show_poster(n.page(), n.id)))
+        })?
+        .value(),
+    )?;
+    methods.set_atom(
         "check",
         s.function("checkTrackResource", |s, _, a| {
             let n = s.unwrap::<Node>(a.get(0)).ok_or(JsError::ContextDestroyed)?;

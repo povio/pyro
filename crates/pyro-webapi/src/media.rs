@@ -573,6 +573,11 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
     }
 }
 
+/// HTML "show poster flag": no text track cue is current while it is set.
+pub(crate) fn show_poster(page: &PageDom, node: NodeId) -> bool {
+    peek(page, node, |st| st.show_poster)
+}
+
 fn has_src(page: &PageDom, node: NodeId) -> bool {
     page.dom.borrow().get_attribute(node, "src").ok().flatten().is_some()
 }
@@ -793,10 +798,11 @@ fn complete_seek(page: &Rc<PageDom>, node: NodeId, generation: u32, serial: u32)
 
 /// HTML "notify about playing": `playing`, then the pending play() promises resolve.
 fn notify_playing(page: &Rc<PageDom>, node: NodeId, generation: u32) {
+    // The cues current at the playback position are active by `playing`.
+    crate::text_tracks::playback(page, node, false);
     if !fire(page, node, generation, "playing") {
         return;
     }
-    crate::text_tracks::playback(page, node, false);
     let pending = with(page, node, |st| std::mem::take(&mut st.pending_play));
     resolve_all(pending);
 }
@@ -860,6 +866,8 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
         st.presented = None;
     });
     update_pin(page, node);
+    // The show poster flag is set again: no cue stays active.
+    crate::text_tracks::playback(page, node, false);
     resource_selection(page, node);
 }
 
@@ -1772,13 +1780,17 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         if ended {
             seek(&page, n.id, 0.0);
         }
-        let (was_paused, ready) = with(&page, n.id, |st| {
+        let (was_paused, ready, poster) = with(&page, n.id, |st| {
             let was_paused = st.paused;
+            let poster = std::mem::replace(&mut st.show_poster, false);
             st.paused = false;
             st.can_autoplay = false;
-            st.show_poster = false;
-            (was_paused, st.ready)
+            (was_paused, st.ready, poster)
         });
+        // HTML play(): clearing the show poster flag runs "time marches on".
+        if poster {
+            crate::text_tracks::playback(&page, n.id, false);
+        }
         if let Some((resource, source)) = suspended {
             // preload=none: playback requested, the fetch goes ahead.
             with(&page, n.id, |st| st.network = NETWORK_LOADING);
