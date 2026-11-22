@@ -6,12 +6,12 @@
     "macbook_in_scope": 430,
     "studio_in_scope": 29,
     "other_dirs_out_of_scope": 16,
-    "macbook_worker_variants_if_enabled": 163,
+    "macbook_worker_variants_if_enabled": 164,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 620,
+   "distinct_census_pages": 621,
    "owner_reported_unlisted": 5,
-   "selector_union": 666,
+   "selector_union": 667,
    "owner_estimate_reduction": 51,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
@@ -19,7 +19,7 @@
    "by_dir": {
     "html/canvas": 321,
     "html/interaction": 100,
-    "html/semantics": 96,
+    "html/semantics": 97,
     "fetch/api": 46,
     "fetch/content-encoding": 21,
     "scheduler": 19,
@@ -32,29 +32,29 @@
     "fetch/http-cache": 3,
     "fetch/data-urls": 3,
     "xhr": 2,
-    "quirks": 1,
-    "svg/styling": 1,
     "IndexedDB": 1,
-    "html/rendering": 1
+    "svg/styling": 1,
+    "html/rendering": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 151,
+    "macbook_in_scope": 150,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 42,
+    "macbook_worker_variants_if_enabled": 41,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 177,
+   "distinct_census_pages": 175,
    "owner_reported_unlisted": 0,
-   "selector_union": 269,
-   "owner_estimate_reduction": 92,
+   "selector_union": 268,
+   "owner_estimate_reduction": 93,
    "of_which_tentative": 38,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 133,
+    "html/semantics": 132,
     "html/canvas": 69,
     "html/syntax": 30,
     "fetch/api": 23,
@@ -81,19 +81,19 @@
     "html/canvas": 160,
     "html/browsers": 71,
     "html/semantics": 58,
-    "referrer-policy": 36,
     "intersection-observer": 36,
+    "referrer-policy": 36,
     "html/webappapis": 23,
     "content-security-policy": 20,
     "webidl": 19,
     "html/dom": 13,
     "workers": 6,
     "fetch/stale-while-revalidate": 5,
-    "fetch/range": 5,
     "html/interaction": 5,
+    "fetch/range": 5,
     "svg/path": 4,
-    "fetch/data-urls": 3,
     "html/infrastructure": 3,
+    "fetch/data-urls": 3,
     "dom/nodes": 1
    }
   }
@@ -848,6 +848,13 @@
    "pages": 4,
    "tentative": 0
   },
+  "F04e": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
+   "tentative": 0
+  },
   "F05": {
    "state": "proposed",
    "in_scope_pages": 36,
@@ -1465,7 +1472,7 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 649,
+ "implemented_total_estimate": 650,
  "milestones_reached": [
   250,
   500
