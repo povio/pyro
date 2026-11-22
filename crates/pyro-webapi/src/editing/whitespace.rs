@@ -278,6 +278,48 @@ fn wraps(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     }
 }
 
+/// Delete the remaining text after an ordinary space at the end of a line.
+/// The run occupied one space before the edit, unless it began the line.
+pub(super) fn delete_after_spaces(
+    page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Point,
+) -> Option<Point> {
+    let node = from.0;
+    if node != to.0 || from.1 >= to.1 || from.1 == 0 { return None; }
+    let text = dom.char_data(node).ok()?;
+    let (cut, end) = pyro_dom::dom::utf16_range(text, from.1, to.1 - from.1).ok()?;
+    if end != text.len() || !text[..cut].ends_with(' ') || text[cut..].chars().any(char::is_whitespace) {
+        return None;
+    }
+    if !collapses(page, dom, node) || !matches!(adjacent(page, dom, host, node, true), Next::Boundary) {
+        return None;
+    }
+    let prefix = text[..cut].trim_end_matches(' ');
+    let begin = pyro_dom::dom::utf16_len(prefix);
+    if begin != 0 && !prefix.ends_with(char::is_whitespace) {
+        dom.replace_data(node, begin, to.1 - begin, " ").ok()?;
+        return Some((node, begin + 1));
+    }
+    if begin != 0 || !matches!(adjacent(page, dom, host, node, false), Next::Boundary | Next::Break) {
+        return None;
+    }
+    // The line's only visible content was deleted. Put its placeholder at
+    // that line's position, leaving neighboring block paragraphs untouched.
+    let mut empty = node;
+    let mut parent = dom.parent_element(empty).ok()??;
+    while parent != host && dom.child_count(parent).ok()? == 1
+        && matches!(editing::local(dom, parent).as_str(), "b" | "i" | "em" | "strong" | "u" | "s" | "span")
+        && dom.attributes(parent).ok()?.is_empty()
+        && page.layout().computed_style_value(dom, parent, "display") == "inline"
+    {
+        empty = parent;
+        parent = dom.parent_element(empty).ok()??;
+    }
+    let offset = dom.index_in_parent(empty).ok()?;
+    let br = dom.create_element(dom.node_document(parent).ok()?, "br").ok()?;
+    dom.replace_child(parent, br, empty).ok()?;
+    Some((parent, offset))
+}
+
 pub(super) enum Repair {
     Exposed,
     Deleted,
