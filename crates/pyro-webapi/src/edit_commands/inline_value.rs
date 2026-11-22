@@ -477,6 +477,15 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
     let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
     let mut run = text;
     if let Some(carrier) = value_carrier(dom, text, host, fmt) {
+        if fmt.kind == Kind::Size && editing::local(dom, carrier) == "font"
+            && dom.get_attribute(carrier, "size").ok()? == fmt.legacy.as_deref()
+            && equivalent(fmt, &effective(page, dom, Kind::Size, text))
+        {
+            // Only a plain legacy FONT at the end of its run can absorb a
+            // following selection without spreading unrelated styling.
+            return (legacy.is_some() && dom.attributes(carrier).ok()?.len() == 1
+                && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
+        }
         let outer = dom.parent_element(carrier).ok()??;
         let mut points = [(text, 0), (text, editing::len(dom, text))];
         let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
@@ -506,6 +515,13 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
         }
     }
     if inherited_format(page, dom, fmt, parent) { return None; }
+    if fmt.kind == Kind::Size && legacy.is_some() && run == text && parent != host
+        && editing::local(dom, parent) == "font" && dom.child_count(parent).ok()? == 1
+        && dom.attributes(parent).ok()?.len() == 1 && dom.get_attribute(parent, "size").ok()?.is_some()
+    {
+        apply_to(dom, parent, fmt, legacy);
+        return Some(parent);
+    }
     if single && run != text && (legacy.is_none() || editing::local(dom, run) == "font") {
         apply_to(dom, run, fmt, legacy);
         // A carrier with other attributes belongs only to its original text.
