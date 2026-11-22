@@ -140,6 +140,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         .value(),
     )?;
     methods.set_atom(
+        "sourceURL",
+        s.function("trackSourceURL", |s, _, a| {
+            let n = s.unwrap::<Node>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
+            Ok(s.string(&crate::media::track_url(n.page(), n.id)))
+        })?.value(),
+    )?;
+    methods.set_atom(
         "check",
         s.function("checkTrackResource", |s, _, a| {
             let n = s.unwrap::<Node>(a.get(0)).ok_or(JsError::ContextDestroyed)?;

@@ -63,7 +63,7 @@
     }
     function updateSource(s) {
       if (!s.element) return;
-      const src = attr(s.element, 'src');
+      const src = native.sourceURL(s.element);
       if (src !== s.src) {
         s.src = src;
         resetCues(s);
@@ -169,7 +169,7 @@
     function elementTrack(el) {
       let track=elementTracks.get(el);
       if (!track) {
-        track=new TextTrack(token,{element:el,media:null,mode:'disabled',src:attr(el,'src')});
+        track=new TextTrack(token,{element:el,media:null,mode:'disabled',src:native.sourceURL(el)});
         elementTracks.set(el,track);
       }
       return track;
@@ -290,7 +290,7 @@
       },
       resetResourceCues(el) {
         const s=tracks.get(elementTrack(el));
-        s.src=attr(el,'src');
+        s.src=native.sourceURL(el);
         resetCues(s);
       },
       trackMode(el) {return tracks.get(elementTrack(el)).mode;},
