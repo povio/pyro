@@ -4831,9 +4831,21 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
         return Ok(());
     }
     let info = {
-        let dom = page.dom.borrow();
+        let mut dom = page.dom.borrow_mut();
         let Ok(info) = dom.script_info(node) else { return Ok(()) };
         if info.already_started {
+            return Ok(());
+        }
+        // HTML "prepare the script element", as the loader's `prepare_script`: an element
+        // without source text, a disconnected one and a data block return before "already
+        // started" is set, and are no longer parser-inserted, so a later `src`, text or
+        // insertion prepares them like a script-created element
+        // (html/semantics/scripting-1/the-script-element/execution-timing/026.html).
+        if (info.src.is_none() && info.inline_text.is_empty())
+            || !dom.is_connected(node).unwrap_or(false)
+            || info.kind == ScriptKind::Data
+        {
+            let _ = dom.clear_parser_inserted(node);
             return Ok(());
         }
         info
@@ -4849,7 +4861,7 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
             register_written_import_map(page, doc, &info);
             return Ok(());
         }
-        // nomodule classic scripts and data blocks do not run.
+        // nomodule classic scripts do not run.
         _ => {
             let _ = page.dom.borrow_mut().mark_script_started(node);
             return Ok(());
