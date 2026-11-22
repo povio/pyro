@@ -1102,6 +1102,8 @@ impl JsClass for DomTokenList {
                 ],
                 "blocking" => &["render"],
                 // Scoped focusgroup tokens (WPT focusgroup/tentative/idl-reflection.html).
+                // Chromium's media controlsList (WICG): what `supports()` answers there.
+                "controlslist" => &["nodownload", "nofullscreen", "noplaybackrate", "noremoteplayback"],
                 "focusgroup" => &[
                     "toolbar",
                     "tablist",
