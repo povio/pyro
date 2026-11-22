@@ -189,6 +189,14 @@ input {
     appearance: auto;
 }
 
+/* pyro: Chromium's html.css: hidden, file and image inputs have no native appearance (HTML
+   "Widgets": they are not native-appearance controls), whatever `input` above gives. */
+input[type="hidden" i],
+input[type="file" i],
+input[type="image" i] {
+    appearance: none;
+}
+
 textarea {
     appearance: auto;
     color: FieldText;

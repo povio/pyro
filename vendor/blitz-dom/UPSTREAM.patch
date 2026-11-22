@@ -108,7 +108,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  input {
      display: inline-block;
  }
-@@ -59,25 +104,107 @@
+@@ -59,25 +104,115 @@
      display: none !important;
  }
  
@@ -201,6 +201,14 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    padding-inline: 2px;
 +    background-color: Field;
 +    appearance: auto;
++}
++
++/* pyro: Chromium's html.css: hidden, file and image inputs have no native appearance (HTML
++   "Widgets": they are not native-appearance controls), whatever `input` above gives. */
++input[type="hidden" i],
++input[type="file" i],
++input[type="image" i] {
++    appearance: none;
  }
  
 -input,
@@ -224,7 +232,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  input,
-@@ -86,10 +213,86 @@
+@@ -86,10 +221,86 @@
      font-family: system-ui, sans-serif;
  }
  
@@ -311,7 +319,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -108,6 +311,34 @@
+@@ -108,6 +319,34 @@
      text-shadow: initial;
  }
  
@@ -346,7 +354,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#the-select-element-2
     (select only has native appearance here) */
  select {
-@@ -121,17 +352,38 @@
+@@ -121,17 +360,38 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -390,7 +398,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +402,42 @@
+@@ -150,6 +410,42 @@
      background-color: transparent;
  }
  
@@ -433,7 +441,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +457,45 @@
+@@ -169,8 +465,45 @@
      padding-inline-end: 2px;
  }
  
@@ -480,7 +488,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -186,13 +511,15 @@
+@@ -186,13 +519,15 @@
   * inherited value) to the transformed element."
   *
   * and the rules in http://dev.w3.org/html5/spec/rendering.html#rendering
@@ -497,7 +505,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  caption,
  center,
  col,
-@@ -202,7 +529,6 @@
+@@ -202,7 +537,6 @@
  div,
  dl,
  dt,
@@ -505,7 +513,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  figcaption,
  figure,
  footer,
-@@ -216,7 +542,6 @@
+@@ -216,7 +550,6 @@
  header,
  hgroup,
  hr,
@@ -513,7 +521,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  legend,
  li,
  listing,
-@@ -249,15 +574,17 @@
+@@ -249,15 +582,17 @@
      unicode-bidi: isolate;
  }
  
@@ -536,7 +544,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +896,19 @@
+@@ -569,6 +904,19 @@
      text-align: center;
  }
  
@@ -556,7 +564,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -762,6 +1102,14 @@
+@@ -762,6 +1110,14 @@
      text-align: match-parent;
  }
  
@@ -571,7 +579,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* nested lists have no top/bottom margins */
  :is(ul, ol, dir, menu, dl) ul,
  :is(ul, ol, dir, menu, dl) ol,
-@@ -832,16 +1180,51 @@
+@@ -832,16 +1188,51 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -623,7 +631,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1234,34 @@
+@@ -851,8 +1242,34 @@
      user-select: none;
  }
  
@@ -658,7 +666,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1295,15 @@
+@@ -886,14 +1303,15 @@
      display: none;
  }
  
@@ -677,7 +685,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1332,11 @@
+@@ -922,6 +1340,11 @@
      display: none !important;
  }
  
@@ -689,7 +697,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,11 +1407,18 @@
+@@ -992,11 +1415,18 @@
      height: -moz-fit-content;
  }
  
@@ -709,7 +717,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1017,6 +1439,8 @@
+@@ -1017,6 +1447,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -718,7 +726,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1506,9 @@
+@@ -1082,9 +1514,9 @@
      font-size: unset;
  }
  
@@ -730,7 +738,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1552,68 @@
+@@ -1128,37 +1560,68 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
