@@ -2967,6 +2967,12 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         chain
     });
     let global_name = realm.global_class.map(|gid| reg.classes[gid as usize].name);
+    let global_getters: Vec<_> = global_chain
+        .iter()
+        .flatten()
+        .flat_map(|id| reg.classes[*id as usize].def.global_getters.iter().copied())
+        .collect();
+    let member_class = reg.member;
     // The pure getters of the global's classes, root-first (see below).
     let global_pure: Vec<(ClassId, &'static str, u16, bool)> = global_chain
         .iter()
@@ -3043,6 +3049,17 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             let part = MemberPart::Instance(target);
             install_members_raw(scope.ctx, &realm.engine, Some(realm), gid, global, interface, helpers, part)?;
             realm.global_members_on_instance.set(true);
+        }
+        if !global_getters.is_empty() {
+            let accessor = realm.helper(scope, "accessor")?;
+            let function_proto = scope.function_prototype()?;
+            for (name, call) in global_getters {
+                let getter = make_member_fn(scope.ctx, &realm.engine, member_class, call, None, name, 0, &keys)?;
+                if let Some(proto) = function_proto {
+                    getter.set_prototype(proto);
+                }
+                accessor.call(None, &[global.value(), scope.string(name), getter.value(), scope.undefined()])?;
+            }
         }
     }
     Ok(())
