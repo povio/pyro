@@ -7823,6 +7823,34 @@ fn a_run_in_lets_go_of_its_block_when_it_stops_running_in() {
 }
 
 #[test]
+fn ruby_display_values_compute_as_chrome() {
+    // WPT css-display parsing/display-computed.html, and Chrome 158 on the UA sheet: `<ruby>`
+    // is `ruby`, `<rt>` `ruby-text`, `<rb>` and `<rtc>` `inline` (Chrome has no `ruby-base` or
+    // ruby containers); a float blockifies `ruby` to `block ruby` and `ruby-text` to `block`.
+    // The `<ruby>` still lays out as an inline box: its base and annotation keep their line.
+    let e = env(
+        "<body style='margin:0;font:20px/20px monospace'>\
+         <div><ruby id=r>base<rb id=rb>b</rb><rt id=rt>note</rt><rtc id=rtc>c</rtc></ruby><span id=after>x</span></div>\
+         <div id=t></div></body>",
+    );
+    let result = eval(
+        &e.main,
+        "const d=e=>getComputedStyle(e).display;const out=[d(r),d(rb),d(rt),d(rtc)];\
+         for(const v of ['ruby','inline ruby','ruby block','ruby-text','ruby-base','run-in ruby']){\
+           t.style.display='';t.style.display=v;out.push(t.style.display+'/'+d(t));\
+           t.style.float='left';out.push(d(t));t.style.float='';}\
+         out.push(String(Math.round(r.getBoundingClientRect().right)===Math.round(after.getBoundingClientRect().left)));\
+         out.join(',')",
+    );
+    assert_eq!(
+        result,
+        "ruby,inline,ruby-text,inline,ruby/ruby,block ruby,ruby/ruby,block ruby,block ruby/block ruby,block ruby,\
+         ruby-text/ruby-text,block,/block,block,/block,block,true"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn script_scroll_offsets_of_a_zoomed_element_are_in_its_own_css_px() {
     // `zoom: 2`: each 100px child is 200px laid out; scrolling to 100 shows the second child at
     // the top (WPT cssom-view `scrollTo-zoom`).
