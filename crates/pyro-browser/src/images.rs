@@ -1222,8 +1222,11 @@ impl Browser {
             let key = finish_key.borrow_mut().take();
             b.finish_object(page, &loader, &bindings, node, generation, result, image, key);
         };
-        if url.starts_with("blob:") {
-            let ok = bindings.blob_url(&url).is_some();
+        // An `<object>`'s about: URL (about:blank) is a document of its own, never fetched: it
+        // loads, as in Chromium (an SVG `<image>`'s is no image and fails).
+        let about = !image && url::Url::parse(&url).is_ok_and(|u| u.scheme() == "about");
+        if url.starts_with("blob:") || about {
+            let ok = about || bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
                 finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, timing: None, partial: None, nosniff: false, opaque: false }) } else { Err("revoked or unknown blob URL".into()) })
             });
