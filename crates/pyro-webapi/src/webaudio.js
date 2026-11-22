@@ -849,6 +849,14 @@
       while (bit && (reversed & bit)) { reversed ^= bit; bit >>= 1; }
       reversed ^= bit;
     }
+    transformBitReversed(real, imaginary);
+    for (let bin = 0; bin < size / 2; bin++) {
+      state.spectrum[bin] = state.smoothing * state.spectrum[bin] + (1 - state.smoothing) * hypot(real[bin], imaginary[bin]) / size;
+    }
+    state.dirty = false;
+  }
+  function transformBitReversed(real, imaginary) {
+    const size = real.length;
     for (let width = 2; width <= size; width *= 2) {
       const half = width / 2;
       for (let offset = 0; offset < half; offset++) {
@@ -862,10 +870,6 @@
         }
       }
     }
-    for (let bin = 0; bin < size / 2; bin++) {
-      state.spectrum[bin] = state.smoothing * state.spectrum[bin] + (1 - state.smoothing) * hypot(real[bin], imaginary[bin]) / size;
-    }
-    state.dirty = false;
   }
   function readAnalyser(self, array, frequency, bytes) {
     const state = analyserOf(self);
@@ -1796,6 +1800,61 @@
     return out;
   }
 
+  const periodicWaves = new WeakMap();
+  function waveCoefficients(value) {
+    if (value === undefined) return undefined;
+    if (value === null || (typeof value !== 'object' && typeof value !== 'function')) throw new TypeErrorC('Expected a coefficient sequence.');
+    const iterator = value[Symbol.iterator];
+    if (typeof iterator !== 'function') throw new TypeErrorC('Expected a coefficient sequence.');
+    return Array.from({[Symbol.iterator]: () => apply(iterator, value, [])}, entry => finite(fround(entry), 'construct', 'PeriodicWave'));
+  }
+  function waveTable(state, last) {
+    const {size, harmonics} = state, real = new F64(size), imaginary = new F64(size);
+    for (let index = 0; index < harmonics.length && harmonics[index][0] <= last; index++) {
+      const [order, cosine, sine] = harmonics[index];
+      let slot = 0;
+      for (let bit = 1; bit < size; bit *= 2) slot = slot * 2 + Number((order & bit) !== 0);
+      real[slot] = cosine; imaginary[slot] = sine;
+    }
+    transformBitReversed(real, imaginary);
+    return real;
+  }
+  class PeriodicWave {
+    constructor(context, options = {}) {
+      contextArg(context, 'PeriodicWave');
+      if (options != null && typeof options !== 'object' && typeof options !== 'function') throw new TypeErrorC('Invalid PeriodicWaveOptions.');
+      const normalize = !options?.disableNormalization;
+      const imag = waveCoefficients(options?.imag), real = waveCoefficients(options?.real);
+      const length = real?.length ?? imag?.length ?? 2;
+      if (length < 2 || (imag && imag.length !== length)) throw new DE('Invalid coefficient lengths.', 'IndexSizeError');
+      const harmonics = [];
+      for (let order = 1; order < length; order++) {
+        const cosine = real?.[order] ?? 0, sine = imag?.[order] ?? Number(!real && !imag && order === 1);
+        if (cosine || sine) harmonics.push([order, cosine, sine]);
+      }
+      const highest = harmonics.at(-1)?.[0] ?? 0;
+      const state = {harmonics, highest, size: 2 ** ceil(Math.log2(max(4096, 4 * highest))), scale: 1};
+      if (normalize && highest) {
+        const table = waveTable(state, highest);
+        let peak = 0;
+        for (const sample of table) peak = max(peak, abs(sample));
+        if (peak) state.scale = 1 / peak;
+      }
+      periodicWaves.set(this, state);
+    }
+  }
+  webidl(PeriodicWave, 'PeriodicWave');
+  function customSample(state, phase, frequency, rate) {
+    const limit = frequency ? rate / (2 * abs(frequency)) : Infinity;
+    let sample = 0;
+    for (const [order, cosine, sine] of state.harmonics) {
+      if (order >= limit) break;
+      const angle = 2 * PI * order * phase;
+      sample += cosine * cos(angle) + sine * sin(angle);
+    }
+    return state.scale * sample;
+  }
+
   class OscillatorNode extends AudioScheduledSourceNode {
     constructor(context, options) {
       contextArg(context, 'OscillatorNode');
@@ -1805,7 +1864,8 @@
       n.frequency = nodeParam(n, 440, -nyquist, nyquist);
       n.detune = nodeParam(n, 0, -153600, 153600);
       const o = nodeOptions(n, options, 'OscillatorNode');
-      if (o.type !== undefined) {
+      if (o.periodicWave !== undefined) this.setPeriodicWave(o.periodicWave);
+      else if (o.type !== undefined) {
         if (o.type === 'custom') throw new DE("Failed to construct 'OscillatorNode': A PeriodicWave must be specified if the type is set to \"custom\"", 'InvalidStateError');
         this.type = o.type;
       }
@@ -1822,7 +1882,7 @@
         let phase = n.phase;
         for (let i = from; i < to; i++) {
           const f = fr[i] * pow(2, dt[i] / 1200);
-          out[i] = wave(n.type, phase);
+          out[i] = n.type === 'custom' ? customSample(n.periodicWave, phase, f, rate) : wave(n.type, phase);
           phase += f / rate;
           phase -= floor(phase);
         }
@@ -1838,6 +1898,11 @@
         throw new DE("Failed to set the 'type' property on 'OscillatorNode': 'type' cannot be set directly to 'custom'.  Use setPeriodicWave() to create a custom Oscillator type.", 'InvalidStateError');
       }
       if (t === 'sine' || t === 'square' || t === 'sawtooth' || t === 'triangle') nodeOf(this).type = t;
+    }
+    setPeriodicWave(periodicWave) {
+      const node = nodeOf(this), state = periodicWaves.get(periodicWave);
+      if (!state) throw new TypeErrorC('Expected a PeriodicWave.');
+      node.periodicWave = state; node.type = 'custom';
     }
     get frequency() { return nodeOf(this).frequency; }
     get detune() { return nodeOf(this).detune; }
@@ -1934,6 +1999,13 @@
     createChannelSplitter(numberOfOutputs = 6) { return new ChannelSplitterNode(this, {numberOfOutputs}); }
     createChannelMerger(numberOfInputs = 6) { return new ChannelMergerNode(this, {numberOfInputs}); }
     createOscillator() { return new OscillatorNode(this); }
+    createPeriodicWave(real, imag, constraints = {}) {
+      ctxOf(this);
+      const cosine = waveCoefficients(real), sine = waveCoefficients(imag);
+      if (!cosine || !sine) throw new TypeErrorC('Two coefficient sequences are required.');
+      if (constraints != null && typeof constraints !== 'object' && typeof constraints !== 'function') throw new TypeErrorC('Invalid PeriodicWaveConstraints.');
+      return new PeriodicWave(this, {real: cosine, imag: sine, disableNormalization: constraints?.disableNormalization});
+    }
     createConstantSource() { return new ConstantSourceNode(this); }
     decodeAudioData(audioData, successCallback, errorCallback) {
       const c = ctxOf(this);
@@ -2234,7 +2306,7 @@
 
   return {
     localImpulseInfo, BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
-    AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
+    AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, PeriodicWave,
     ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })
