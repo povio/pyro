@@ -249,34 +249,48 @@ fn security_error() -> JsError {
     JsError::dom("SecurityError", "The canvas has been tainted by cross-origin data.")
 }
 
-/// A CSS color as canvas serializes it: `#rrggbb` when opaque, else
-/// `rgba(r, g, b, a)`. `currentcolor` is black (no element style applies).
+/// A CSS color as canvas serializes it (`pyro_dom::canvas_color`): `#rrggbb`
+/// or `rgba(r, g, b, a)` for legacy sRGB syntaxes, CSS serialization for the
+/// rest. `currentcolor` is black (no element style applies). `None` when
+/// `value` is not a CSS color: the caller keeps its previous value.
 pub(crate) fn canvas_color(value: &str) -> Option<String> {
-    let css = pyro_dom::computed::serialize_color(value, &mut || Some("rgb(0, 0, 0)".into()))?;
-    let Some(inner) = css.strip_prefix("rgb(").and_then(|r| r.strip_suffix(')')) else { return Some(css) };
-    let mut hex = String::from("#");
-    for part in inner.split(',') {
-        let v: u8 = part.trim().parse().ok()?;
-        hex.push_str(&format!("{v:02x}"));
-    }
-    Some(hex)
+    parsed_color(value).map(|c| c.css)
+}
+
+fn parsed_color(value: &str) -> Option<pyro_dom::canvas_color::CanvasColor> {
+    pyro_dom::canvas_color::parse(value, [0.0, 0.0, 0.0, 1.0])
+}
+
+/// `value` as a fill, stroke or shadow color of `c`: `currentcolor` is the
+/// computed `color` of a connected `<canvas>` when the color is set, else
+/// black (an OffscreenCanvas, a disconnected element).
+fn context_color(c: &ContextData, value: &str) -> Option<pyro_dom::canvas_color::CanvasColor> {
+    let black = [0.0, 0.0, 0.0, 1.0];
+    let current = match c.target {
+        Target::Element(canvas) if value.to_ascii_lowercase().contains("currentcolor") => {
+            let color = c.page.try_layout().map(|layout| layout.computed_style_value(&c.page.dom.borrow(), canvas, "color"));
+            color.and_then(|v| pyro_dom::canvas_color::parse(&v, black)).map_or(black, |v| v.rgba)
+        }
+        _ => black,
+    };
+    pyro_dom::canvas_color::parse(value, current)
 }
 
 /// The color of a [`canvas_color`] serialization.
 fn color_of(serialized: &str) -> Color {
-    if let Some(hex) = serialized.strip_prefix('#') {
-        let v = u32::from_str_radix(hex, 16).unwrap_or(0);
+    if let Some(v) = serialized.strip_prefix('#').filter(|h| h.len() == 6).and_then(|h| u32::from_str_radix(h, 16).ok()) {
         return Color::from_rgba8((v >> 16) as u8, (v >> 8) as u8, v as u8, 255);
     }
-    let inner = serialized
-        .strip_prefix("rgba(")
-        .or_else(|| serialized.strip_prefix("rgb("))
-        .and_then(|r| r.strip_suffix(')'))
-        .unwrap_or("");
-    let mut parts = inner.split(',').map(|p| p.trim().parse::<f32>().unwrap_or(0.0));
-    let (r, g, b) = (parts.next().unwrap_or(0.0), parts.next().unwrap_or(0.0), parts.next().unwrap_or(0.0));
-    let a = parts.next().unwrap_or(1.0);
-    Color::new([r / 255.0, g / 255.0, b / 255.0, a.clamp(0.0, 1.0)])
+    // `rgba(r, g, b, a)` as canvas_color prints it (the shadow color of every
+    // draw): read directly; other serializations (`color(...)`, `lab(...)`)
+    // go through the parser.
+    if let Some(inner) = serialized.strip_prefix("rgba(").and_then(|r| r.strip_suffix(')')) {
+        let parts: Vec<f32> = inner.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        if let [r, g, b, a] = parts[..] {
+            return Color::new([r / 255.0, g / 255.0, b / 255.0, a.clamp(0.0, 1.0)]);
+        }
+    }
+    parsed_color(serialized).map_or(Color::BLACK, |c| Color::new(c.rgba))
 }
 
 /// A gradient or pattern's paint, made again when its record's version
@@ -1410,7 +1424,7 @@ fn style_value<'s>(s: &Scope<'s>, style: &Style) -> Value<'s> {
 }
 
 fn set_style(s: &Scope<'_>, c: &ContextData, v: Value<'_>, fill: bool) -> JsResult<()> {
-    let color = |text: String| canvas_color(&text).map(|c| Style::Color(c.clone(), color_of(&c)));
+    let color = |text: String| context_color(c, &text).map(|c| Style::Color(c.css, Color::new(c.rgba)));
     let style = if v.is_object() {
         if !module_helper(s, c, "isFillStyle", &[v])?.to_bool() {
             // Any other object is converted to a string, as for a color.
@@ -1686,8 +1700,8 @@ impl ContextData {
             "shadowColor",
             |s, c| Ok(s.string(&c.state.borrow().shadow_color)),
             |_s, c, v| {
-                if let Some(color) = canvas_color(&dom_string(v)?) {
-                    c.state.borrow_mut().shadow_color = color;
+                if let Some(color) = context_color(c, &dom_string(v)?) {
+                    c.state.borrow_mut().shadow_color = color.css;
                 }
                 Ok(())
             },
