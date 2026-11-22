@@ -3,22 +3,22 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 847,
+    "macbook_in_scope": 856,
     "studio_in_scope": 111,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 189,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1141,
+   "distinct_census_pages": 1150,
    "owner_reported_unlisted": 5,
-   "selector_union": 1320,
+   "selector_union": 1329,
    "owner_estimate_reduction": 184,
    "of_which_tentative": 188,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
+    "html/canvas": 354,
     "html/semantics": 353,
-    "html/canvas": 345,
     "html/interaction": 115,
     "referrer-policy": 78,
     "html/browsers": 65,
@@ -39,13 +39,13 @@
     "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "html/rendering": 3,
+    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
     "xhr": 2,
+    "IndexedDB": 1,
     "svg/styling": 1,
-    "quirks": 1,
-    "IndexedDB": 1
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -1752,16 +1752,44 @@
    "out_of_scope_pages": 0,
    "pages": 2,
    "tentative": 0
+  },
+  "CM1": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
+   "tentative": 0
+  },
+  "CM2": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
+   "tentative": 0
+  },
+  "CM3": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 4,
+   "out_of_scope_pages": 0,
+   "pages": 4,
+   "tentative": 0
+  },
+  "CM4": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
+   "tentative": 0
   }
  },
- "implemented_total_estimate": 1179,
+ "implemented_total_estimate": 1188,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 847,
+ "macbook_in_scope_implemented": 856,
  "macbook_in_scope_milestones": [
   100,
   200,
