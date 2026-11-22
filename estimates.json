@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 940,
-    "studio_in_scope": 179,
+    "studio_in_scope": 203,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -14,7 +14,7 @@
    "selector_union": 1507,
    "owner_estimate_reduction": 233,
    "of_which_tentative": 170,
-   "studio_css_reported_pages_not_deduped": 30,
+   "studio_css_reported_pages_not_deduped": 54,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 430,
@@ -32,24 +32,24 @@
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
-    "html/infrastructure": 9,
     "workers": 9,
+    "html/infrastructure": 9,
     "encoding": 7,
-    "fetch/data-urls": 6,
     "fetch/corb": 6,
-    "fetch/range": 5,
+    "fetch/data-urls": 6,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
     "html/rendering": 3,
     "fetch/orb": 2,
     "xhr": 2,
-    "IndexedDB": 1,
     "svg/styling": 1,
-    "quirks": 1,
+    "fetch/redirect-navigate": 1,
+    "IndexedDB": 1,
     "fetch/security": 1,
-    "fetch/redirect-navigate": 1
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -76,17 +76,17 @@
     "html/infrastructure": 11,
     "fetch/fetch-later": 10,
     "fetch/api": 7,
-    "html/browsers": 6,
     "IndexedDB": 6,
+    "html/browsers": 6,
     "html/dom": 5,
     "html/webappapis": 5,
     "fetch/security": 4,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/http-cache": 1,
-    "fetch/content-type": 1,
     "fetch/range": 1,
-    "fetch/images": 1,
-    "fetch/redirects": 1
+    "fetch/http-cache": 1,
+    "fetch/redirects": 1,
+    "fetch/content-type": 1,
+    "fetch/images": 1
    }
   },
   "queued": {
@@ -2424,9 +2424,58 @@
    "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
+  },
+  "SC-VT-idl-skip": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-TOM-custom-prop-order": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-overflow-zero-axis": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-anchor-overflow-limit": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-snap-directional": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-scroll-promises": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-elementsFromPoint-order": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
   }
  },
- "implemented_total_estimate": 1358,
+ "implemented_total_estimate": 1382,
  "milestones_reached": [
   250,
   500,
