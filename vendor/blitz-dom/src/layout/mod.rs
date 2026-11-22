@@ -3341,6 +3341,18 @@ impl taffy::LayoutFlexboxContainer for LayoutPassState<'_> {
     where
         Self: 'a;
 
+    fn record_flex_item_positions(&mut self, owner: NodeId, items: impl Iterator<Item = (NodeId, usize, usize)>) {
+        let node = self.node_from_id_mut(owner);
+        let requested = node.primary_styles().is_some_and(|s| s.get_position().reading_flow == style::values::computed::ReadingFlow::FlexVisual);
+        if let Some(el) = node.element_data_mut() {
+            if requested {
+                el.detailed_layout_info = DetailedLayoutInfo::FlexReadingOrder(Box::new(items.collect()));
+            } else if matches!(el.detailed_layout_info, DetailedLayoutInfo::FlexReadingOrder(_)) {
+                el.detailed_layout_info = DetailedLayoutInfo::None;
+            }
+        }
+    }
+
     fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
         self.get_core_container_style(node_id)
     }

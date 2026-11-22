@@ -884,6 +884,9 @@ pub enum DetailedLayoutInfo<S: CheapCloneStr = DefaultCheapStr> {
     /// Enum variant for [`DetailedGridInfo`](crate::compute::grid::DetailedGridInfo)
     #[cfg(feature = "grid")]
     Grid(crate::util::sys::Box<crate::compute::grid::DetailedGridInfo<S>>),
+    /// Flex line and item positions when requested by an embedder for reading order.
+    #[cfg(feature = "flexbox")]
+    FlexReadingOrder(crate::util::sys::Box<crate::util::sys::Vec<(crate::NodeId, usize, usize)>>),
     /// For node that hasn't had any detailed information yet
     None,
     /// Unused variant which exists only to consume the `S` type parameter when no variant

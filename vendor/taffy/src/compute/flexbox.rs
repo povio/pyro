@@ -632,6 +632,10 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
     debug_log!("final_layout_pass");
     let inflow_overflow_rect = final_layout_pass(tree, &mut flex_lines, &constants);
 
+    tree.record_flex_item_positions(node, flex_lines.iter().enumerate().flat_map(|(line_index, line)| {
+        line.items.iter().enumerate().map(move |(index, item)| (item.node, line_index, index))
+    }));
+
     // Collect out-of-flow candidates in document order (direct out-of-flow children interleaved
     // with candidates bubbled from in-flow children's subtrees). These are laid out by the
     // out-of-flow positioning pass (`compute_oof_layout`), which runs after this algorithm.
