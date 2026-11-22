@@ -485,9 +485,31 @@ impl Surface {
         let user = t.inverse() * guard_path(path, self.width, self.height);
         let mut stroke = stroke.clone();
         // A pen wider than the canvas many times over covers what the
-        // canvas shows; the stroker's work grows with the width.
+        // canvas shows; the stroker's work grows with the width. pyro: the
+        // pen is narrowed no further than twice the extent of the path and
+        // the canvas together (user space; up to 16 times the plain limit):
+        // every canvas point then lies within half a pen of every path
+        // point, so the body, caps and joins (miters scale about their
+        // corner) cover the canvas as the wider pen does (WPT
+        // 2d.line.miter.obtuse: a 1600 px miter corner 800 px off a 100 px
+        // canvas).
         let scale = stretch(t);
-        let limit = 4.0 * (f64::from(self.width) + f64::from(self.height)) / scale.max(1e-9);
+        let mut limit = 4.0 * (f64::from(self.width) + f64::from(self.height)) / scale.max(1e-9);
+        if stroke.width > limit {
+            let inverse = t.inverse();
+            let canvas = Rect::new(0.0, 0.0, f64::from(self.width), f64::from(self.height));
+            let corners = [
+                canvas.origin(),
+                Point::new(canvas.x1, 0.0),
+                Point::new(0.0, canvas.y1),
+                Point::new(canvas.x1, canvas.y1),
+            ];
+            let reach = corners.iter().fold(user.bounding_box(), |r, c| r.union_pt(inverse * *c));
+            let extent = 2.0 * reach.width().hypot(reach.height());
+            if extent.is_finite() {
+                limit = limit.max(extent.min(16.0 * limit));
+            }
+        }
         if stroke.width > limit {
             stroke.width = limit;
         }
