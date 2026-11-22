@@ -1,0 +1,1256 @@
+{
+  "identity": {
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "manifestSha256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+    "version": "158.0.8127.37",
+    "channel": "Google Chrome stable",
+    "os": "macOS 27.2.1 arm64",
+    "GoogleTeam": "EQHXZ8M8AV",
+    "executableSHA256": "b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e",
+    "frameworkSHA256": "a04d264c815c317ba1ffa89d388144ec639ec0e4a1a114a2ba524ad4bdd130c8",
+    "dmgSHA256": "75b9fdb7573aab8a89f1b00319692a1f785fb4e6fd07e97916a13b00b3d34bae",
+    "codesignResult": "codesign --verify --deep --strict passed",
+    "viewport": [
+      800,
+      600,
+      1
+    ],
+    "server": "wptserve",
+    "testdriver": true,
+    "http2": true,
+    "jobsPerShard": 4,
+    "context": "fresh per page; private profile per process",
+    "noNativeReplayRunnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+    "expectedRunnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+    "PlaywrightCore": "1.65.1",
+    "PlaywrightTarballSHA256": "6f5a60be62a4fddfbe7d10c448d8fbd54547da3358f2f8a04211440471ee863e",
+    "profileSHA256": "9249fd4ed0c99ddcc34ca0ba377af793a2d49184152d3cdd59c23ee80b2a1ab9",
+    "previous157ProfileSHA256": "4eca5733609fe2839db2fd930210e161a41b575ff52a4bc077896c20e93cdbb8",
+    "serializations": "Manifest-first testharness with original names, structured harness results, per-URL protocol and environment."
+  },
+  "sources": {
+    "ordinary-275.json": {
+      "path": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-275.json",
+      "sha256": "69acdb1f4bb2d17eef88b61c680a2b659ba86658bead91d47f44f2cf20d6ffbc",
+      "urls": [
+        "IndexedDB/key_invalid.any.serviceworker.html"
+      ]
+    },
+    "ordinary-075.json": {
+      "path": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-075.json",
+      "sha256": "a78d2014aacb34e030cacc9524334053395fe05e3d75759839f40b81ef1c2e1f",
+      "urls": [
+        "IndexedDB/key_invalid.any.html"
+      ]
+    },
+    "ordinary-087.json": {
+      "path": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-087.json",
+      "sha256": "9f5b5f824cdb80a95a2b0cbc011d427c76f1f5d2f110d8ecc5569dbb887bb552",
+      "urls": [
+        "IndexedDB/key_valid.any.worker.html"
+      ]
+    },
+    "ordinary-244.json": {
+      "path": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-244.json",
+      "sha256": "94384fff92d2db8e68a70819871e15d7d5232eb691603e04c61eec38c1545050",
+      "urls": [
+        "IndexedDB/key_invalid.any.sharedworker.html"
+      ]
+    },
+    "ordinary-271.json": {
+      "path": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-271.json",
+      "sha256": "04868987e3857e8e9c43e6c5da84385ffc543555ef297cbc3df47b535dc8abe3",
+      "urls": [
+        "IndexedDB/key_valid.any.html"
+      ]
+    },
+    "ordinary-046.json": {
+      "path": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-046.json",
+      "sha256": "d6969743b07bb74f33b540b78bd8c1337cd77505b997e6ef8ddef744b3faf9da",
+      "urls": [
+        "IndexedDB/key_valid.any.sharedworker.html"
+      ]
+    },
+    "ordinary-246.json": {
+      "path": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-246.json",
+      "sha256": "06ba0253c6551a860826f29fb2920538239e0a977dd83a07e25756097d8f5e2f",
+      "urls": [
+        "IndexedDB/key_valid.any.serviceworker.html"
+      ]
+    },
+    "ordinary-112.json": {
+      "path": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-112.json",
+      "sha256": "e195ced5c0c70d8cc477fd39216b4a97607b85a839b36d82a527f36bfae2671a",
+      "urls": [
+        "IndexedDB/key_invalid.any.worker.html"
+      ]
+    }
+  },
+  "results": [
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/key_invalid.any.serviceworker.html",
+      "source": "IndexedDB/key_invalid.any.js",
+      "blob": "2d673ed5e9191b459e527829ed4a45392886224c",
+      "environment": "serviceworker",
+      "long": false,
+      "protocol": "https",
+      "status": "complete",
+      "ms": 67,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Invalid key - true",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - false",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - null",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - NaN",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - undefined",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - undefined2",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - function() {}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - {}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - { obj: 1 }",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Math",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - {length:0,constructor:Array}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Array clone\u2019s instance",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Array (object)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - String (object)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new String()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Number()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Boolean()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [{}]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [[], [], [], [[ Date ]]]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [undefined]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [,1]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Date(NaN)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Date(Infinity)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - /foo/",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new RegExp()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - sparse array",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - sparse array 2",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [[1], [3], [7], [[ sparse array ]]]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [1,2,3,,]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array directly contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array indirectly contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array member contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - proxy of an array",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/key_invalid.any.html",
+      "source": "IndexedDB/key_invalid.any.js",
+      "blob": "2d673ed5e9191b459e527829ed4a45392886224c",
+      "environment": "window",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 139,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Invalid key - true",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - false",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - null",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - NaN",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - undefined",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - undefined2",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - function() {}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - {}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - { obj: 1 }",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Math",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - {length:0,constructor:Array}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Array clone\u2019s instance",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Array (object)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - String (object)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new String()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Number()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Boolean()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [{}]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [[], [], [], [[ Date ]]]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [undefined]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [,1]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - document.getElementsByTagName(\"script\")",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Date(NaN)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Date(Infinity)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - /foo/",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new RegExp()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - sparse array",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - sparse array 2",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [[1], [3], [7], [[ sparse array ]]]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [1,2,3,,]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array directly contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array indirectly contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array member contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - proxy of an array",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/key_valid.any.worker.html",
+      "source": "IndexedDB/key_valid.any.js",
+      "blob": "8c015d331bafba5c1944fca4b41461d55f343ce3",
+      "environment": "dedicatedworker",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 738,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Valid key - new Date()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - new Date(0)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - []",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - new Array()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - [\"undefined\"]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - Infinity",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - -Infinity",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 0",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 1.5",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 3e38",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 3e-38",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"foo\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\n\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\\"\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\u1234\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\u0000\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"NaN\"",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/key_invalid.any.sharedworker.html",
+      "source": "IndexedDB/key_invalid.any.js",
+      "blob": "2d673ed5e9191b459e527829ed4a45392886224c",
+      "environment": "sharedworker",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 66,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Invalid key - true",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - false",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - null",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - NaN",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - undefined",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - undefined2",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - function() {}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - {}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - { obj: 1 }",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Math",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - {length:0,constructor:Array}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Array clone\u2019s instance",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Array (object)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - String (object)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new String()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Number()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Boolean()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [{}]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [[], [], [], [[ Date ]]]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [undefined]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [,1]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Date(NaN)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Date(Infinity)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - /foo/",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new RegExp()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - sparse array",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - sparse array 2",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [[1], [3], [7], [[ sparse array ]]]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [1,2,3,,]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array directly contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array indirectly contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array member contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - proxy of an array",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/key_valid.any.html",
+      "source": "IndexedDB/key_valid.any.js",
+      "blob": "8c015d331bafba5c1944fca4b41461d55f343ce3",
+      "environment": "window",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 39,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Valid key - new Date()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - new Date(0)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - []",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - new Array()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - [\"undefined\"]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - Infinity",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - -Infinity",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 0",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 1.5",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 3e38",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 3e-38",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"foo\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\n\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\\"\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\u1234\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\u0000\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"NaN\"",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/key_valid.any.sharedworker.html",
+      "source": "IndexedDB/key_valid.any.js",
+      "blob": "8c015d331bafba5c1944fca4b41461d55f343ce3",
+      "environment": "sharedworker",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 102,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Valid key - new Date()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - new Date(0)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - []",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - new Array()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - [\"undefined\"]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - Infinity",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - -Infinity",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 0",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 1.5",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 3e38",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 3e-38",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"foo\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\n\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\\"\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\u1234\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\u0000\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"NaN\"",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/key_valid.any.serviceworker.html",
+      "source": "IndexedDB/key_valid.any.js",
+      "blob": "8c015d331bafba5c1944fca4b41461d55f343ce3",
+      "environment": "serviceworker",
+      "long": false,
+      "protocol": "https",
+      "status": "complete",
+      "ms": 61,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Valid key - new Date()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - new Date(0)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - []",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - new Array()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - [\"undefined\"]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - Infinity",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - -Infinity",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 0",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 1.5",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 3e38",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - 3e-38",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"foo\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\n\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\\"\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\u1234\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"\\u0000\"",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Valid key - \"NaN\"",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "IndexedDB",
+      "url": "IndexedDB/key_invalid.any.worker.html",
+      "source": "IndexedDB/key_invalid.any.js",
+      "blob": "2d673ed5e9191b459e527829ed4a45392886224c",
+      "environment": "dedicatedworker",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 139,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Invalid key - true",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - false",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - null",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - NaN",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - undefined",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - undefined2",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - function() {}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - {}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - { obj: 1 }",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Math",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - {length:0,constructor:Array}",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Array clone\u2019s instance",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - Array (object)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - String (object)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new String()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Number()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Boolean()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [{}]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [[], [], [], [[ Date ]]]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [undefined]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [,1]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Date(NaN)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new Date(Infinity)",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - /foo/",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - new RegExp()",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - sparse array",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - sparse array 2",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [[1], [3], [7], [[ sparse array ]]]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - [1,2,3,,]",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array directly contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array indirectly contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - array member contains self",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Invalid key - proxy of an array",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    }
+  ]
+}
