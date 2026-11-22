@@ -3638,6 +3638,16 @@ simple_class!(HtmlProgressElement, "HTMLProgressElement", HtmlElement, |def| {
         |s, n, v| set_double(s, n, "value", v, false),
     );
     reflect_positive_double!(def, "max", "max", 1.0);
+    // HTML: -1 for an indeterminate progress bar (no value attribute), else the current value
+    // divided by the maximum.
+    def.getter("position", |s, n| {
+        if n.page().dom.borrow().get_attribute(n.id, "value").js()?.is_none() {
+            return Ok(s.number(-1.0));
+        }
+        let max = parsed_attr(n, "max", parse_html_float)?.filter(|&m| m > 0.0).unwrap_or(1.0);
+        let value = parsed_attr(n, "value", parse_html_float)?.unwrap_or(0.0).clamp(0.0, max);
+        Ok(s.number(value / max))
+    });
 });
 simple_class!(HtmlMeterElement, "HTMLMeterElement", HtmlElement, |def| {
     define_labels(def);
