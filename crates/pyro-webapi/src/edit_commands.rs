@@ -1709,7 +1709,6 @@ fn format_lines(page: &PageDom, dom: &Dom, host: NodeId, start: Point, end: Poin
 /// host without blocks is wrapped in one).
 fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
     let (start, end) = editing::host_range(page, host);
-    let backward = editing::selection(page).is_some_and(|(a, _)| a == end && start != end);
     editing::apply_edit(page, host, "formatBlock", None, None, |page| {
         let selection = {
             let mut dom = page.dom.borrow_mut();
@@ -1749,7 +1748,14 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
                                 (b, kids.first().copied(), kids, None)
                             } else {
                                 let Some(p) = dom.parent(b).ok().flatten() else { continue };
-                                (p, Some(b), kids, Some(b))
+                                // CSS display can create a paragraph boundary on
+                                // a custom or preformatted element. Wrap that
+                                // element intact unless its tag is replaceable.
+                                if dom.element(b).is_ok_and(|el| el.is_html()) && FORMAT_BLOCKS.contains(&old_tag.as_str()) {
+                                    (p, Some(b), kids, Some(b))
+                                } else {
+                                    (p, Some(b), vec![b], None)
+                                }
                             }
                         }
                         FormatLine::Inline(kids) => (host, kids.first().copied(), kids, None),
@@ -1783,7 +1789,7 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
             let p = editing::host_start(&page.dom.borrow(), host);
             (p, p)
         });
-        if backward { editing::set_selection(page, e, s); } else { editing::set_selection(page, s, e); }
+        editing::set_selection(page, s, e);
     });
 }
 

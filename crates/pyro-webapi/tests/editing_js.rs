@@ -320,6 +320,16 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn format_block_keeps_custom_blocks_and_joins_selected_lines() {
+    let e = env("<body><div id=ed contenteditable><x-block style='display:block'>alpha</x-block><p>beta</p></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original=ed.firstChild, a=original.firstChild, b=ed.lastChild.firstChild; getSelection().setBaseAndExtent(b,3,a,1)");
+    assert_eq!(eval(r, "document.queryCommandValue('formatBlock')"), "");
+    assert_eq!(eval(r, "document.execCommand('formatBlock',false,'h1'); [ed.firstChild.localName,ed.firstChild.firstChild===original,original.firstChild===a,ed.firstChild.lastChild===b,document.queryCommandValue('formatBlock')].join()"), "h1,true,true,true,h1");
+    assert_eq!(eval(r, "const s=getSelection(); [s.anchorNode===a,s.anchorOffset,s.focusNode===b,s.focusOffset].join()"), "true,1,true,3");
+}
+
+#[test]
 fn exec_command_formatting_and_structure() {
     let e = env("<body><div id=ed contenteditable><p id=p>one two three</p></div></body>");
     let r = &e.main;
