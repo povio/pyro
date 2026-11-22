@@ -12,8 +12,10 @@
 // and works with its operations, as the spec's platform objects do whatever
 // their realm.
 //
-// Byte streams are simplified: chunks are copied rather than transferred, and
-// `byobRequest` views a private buffer whose bytes are enqueued on respond().
+// Byte streams follow the spec's pull-into descriptors: enqueue() and BYOB
+// reads transfer buffers, `byobRequest` views the pending read's own buffer,
+// and a released reader's partly filled read carries over to the next reader.
+// Byte tee is still built on a default reader (chunks cloned for branch 2).
 (function (natives) {
   'use strict';
   const token = Symbol('pyro');
@@ -48,6 +50,12 @@
     Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array };
   if (typeof Float16Array !== 'undefined') typedCtors.Float16Array = Float16Array;
   const transferBuffer = ArrayBuffer.prototype.transfer;
+  const bufferLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
+  const detachedGetter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'detached');
+  // TransferArrayBuffer and IsDetachedBuffer (byteLength 0 where the engine
+  // has no `detached`; the callers never hold zero-length buffers otherwise).
+  const transfer = (b) => (transferBuffer ? apply(transferBuffer, b, []) : b);
+  const isDetached = (b) => (detachedGetter ? apply(detachedGetter.get, b, []) : apply(bufferLength, b, []) === 0);
   const parseJSON = JSON.parse;
   const TextDecoderC = TextDecoder;
   const TextEncoderC = TextEncoder;
@@ -178,9 +186,12 @@
     const rd = st.reader;
     if (!rd) return;
     rd.closed.resolve(undefined);
+    // ReadableStreamClose settles a default reader's read requests; a BYOB
+    // reader's read-into requests wait for respond(0), unless canceled.
+    if (rd.byob && !canceled) return;
     const reqs = rd.reqs;
     rd.reqs = [];
-    for (let i = 0; i < reqs.length; i++) reqs[i].close(canceled);
+    for (let i = 0; i < reqs.length; i++) reqs[i].close(undefined);
   }
   function rsError(st, e) {
     st.state = 'errored';
@@ -201,7 +212,7 @@
     const c = st.controller;
     c.queue = [];
     c.queueSize = 0;
-    c.byobRequest = null;
+    if (c.byte) bcClearPending(c);
     const r = c.cancelAlg(reason);
     rcClear(c);
     return then(r, noop);
@@ -211,7 +222,7 @@
   function rcSetup(st, byte, start, pullAlg, cancelAlg, hwm, size, autoAllocate) {
     const c = {
       stream: st, byte, queue: [], queueSize: 0, started: false, closeRequested: false, pullAgain: false, pulling: false,
-      hwm, size, pullAlg, cancelAlg, autoAllocate, byobRequest: null, wrapper: undefined,
+      hwm, size, pullAlg, cancelAlg, autoAllocate, byobRequest: null, pending: [], wrapper: undefined,
     };
     st.controller = c;
     c.wrapper = byte ? new ReadableByteStreamController(token, c) : new ReadableStreamDefaultController(token, c);
@@ -261,9 +272,9 @@
   function rcError(c, e) {
     const st = c.stream;
     if (st.state !== 'readable') return;
+    if (c.byte) bcClearPending(c);
     c.queue = [];
     c.queueSize = 0;
-    c.byobRequest = null;
     rcClear(c);
     rsError(st, e);
   }
@@ -295,6 +306,30 @@
     rcCallPull(c);
   }
   function rcPullSteps(c, req) {
+    if (c.byte) {
+      // ReadableByteStreamController [[PullSteps]].
+      if (c.queueSize > 0) {
+        bcFillReadRequest(c, req);
+        return;
+      }
+      const size = c.autoAllocate;
+      if (size !== undefined) {
+        let buffer;
+        try {
+          buffer = new ArrayBuffer(size);
+        } catch (e) {
+          req.error(e);
+          return;
+        }
+        c.pending.push({
+          buffer, bufferByteLength: size, byteOffset: 0, byteLength: size, bytesFilled: 0,
+          minimumFill: 1, elementSize: 1, ctor: Uint8ArrayC, readerType: 'default',
+        });
+      }
+      c.stream.reader.reqs.push(req);
+      rcCallPull(c);
+      return;
+    }
     if (c.queue.length > 0) {
       const { value, size } = c.queue.shift();
       c.queueSize -= size;
@@ -312,87 +347,242 @@
     }
   }
 
-  // Byte streams: `value` is a private Uint8Array.
+  // Byte streams (ReadableByteStreamController). A queue entry's `value` is a
+  // Uint8Array over a buffer the controller owns. `c.pending` holds the
+  // pull-into descriptors: {buffer, bufferByteLength, byteOffset, byteLength,
+  // bytesFilled, minimumFill, elementSize, ctor, readerType} with readerType
+  // 'default', 'byob' or 'none' (its reader was released).
+  const bcPush = (c, bytes) => {
+    c.queue.push({ value: bytes, size: bytes.length });
+    c.queueSize += bytes.length;
+  };
+  // ReadableByteStreamControllerEnqueueClonedChunkToQueue.
+  const bcPushClone = (c, buffer, offset, length) => {
+    const copy = new Uint8ArrayC(length);
+    copy.set(new Uint8ArrayC(buffer, offset, length));
+    bcPush(c, copy);
+  };
+  function bcInvalidate(c) {
+    const req = c.byobRequest;
+    if (!req) return;
+    ReadableStreamBYOBRequest$c.set(req, undefined);
+    ReadableStreamBYOBRequest$view.set(req, null);
+    c.byobRequest = null;
+  }
+  const bcClearPending = (c) => {
+    bcInvalidate(c);
+    c.pending = [];
+  };
+  // ReadableByteStreamControllerHandleQueueDrain.
+  function bcDrain(c) {
+    if (c.queueSize === 0 && c.closeRequested) {
+      rcClear(c);
+      rsClose(c.stream);
+    } else {
+      rcCallPull(c);
+    }
+  }
+  // ReadableByteStreamControllerEnqueueDetachedPullIntoToQueue.
+  function bcEnqueueDetached(c, d) {
+    if (d.bytesFilled > 0) bcPushClone(c, d.buffer, d.byteOffset, d.bytesFilled);
+    c.pending.shift();
+  }
+  // ReadableByteStreamControllerFillPullIntoDescriptorFromQueue.
+  function bcFillFromQueue(c, d) {
+    const maxCopy = Math.min(c.queueSize, d.byteLength - d.bytesFilled);
+    const maxFilled = d.bytesFilled + maxCopy;
+    const aligned = maxFilled - (maxFilled % d.elementSize);
+    let remaining = maxCopy;
+    let ready = false;
+    if (aligned >= d.minimumFill) {
+      remaining = aligned - d.bytesFilled;
+      ready = true;
+    }
+    while (remaining > 0) {
+      const head = c.queue[0];
+      const n = Math.min(remaining, head.size);
+      new Uint8ArrayC(d.buffer, d.byteOffset + d.bytesFilled, n).set(n === head.size ? head.value : head.value.subarray(0, n));
+      if (n === head.size) {
+        c.queue.shift();
+      } else {
+        head.value = head.value.subarray(n);
+        head.size -= n;
+      }
+      c.queueSize -= n;
+      d.bytesFilled += n;
+      remaining -= n;
+    }
+    return ready;
+  }
+  // ReadableByteStreamControllerProcessPullIntoDescriptorsUsingQueue.
+  function bcProcessPending(c) {
+    const filled = [];
+    while (c.pending.length > 0 && c.queueSize > 0) {
+      if (bcFillFromQueue(c, c.pending[0])) filled.push(c.pending.shift());
+    }
+    return filled;
+  }
+  // ReadableByteStreamControllerConvertPullIntoDescriptor.
+  const bcConvert = (d) => new d.ctor(transfer(d.buffer), d.byteOffset, d.bytesFilled / d.elementSize);
+  // ReadableByteStreamControllerCommitPullIntoDescriptor: fulfills the
+  // reader's first request (read request or read-into request).
+  function bcCommit(c, d) {
+    const st = c.stream;
+    const done = st.state === 'closed';
+    const view = bcConvert(d);
+    const rd = st.reader;
+    if (!rd || rd.reqs.length === 0) return;
+    const req = rd.reqs.shift();
+    if (d.readerType === 'default') {
+      if (done) req.close();
+      else req.chunk(view);
+    } else if (done) {
+      req.close(view);
+    } else {
+      req.chunk(view);
+    }
+  }
+  const bcCommitAll = (c, filled) => {
+    for (let i = 0; i < filled.length; i++) bcCommit(c, filled[i]);
+  };
+  // ReadableByteStreamControllerFillReadRequestFromQueue.
+  function bcFillReadRequest(c, req) {
+    const { value, size } = c.queue.shift();
+    c.queueSize -= size;
+    if (c.queueSize < 0) c.queueSize = 0;
+    bcDrain(c);
+    req.chunk(value);
+  }
+  // ReadableByteStreamControllerEnqueue, over bytes the controller owns
+  // (the public enqueue() transfers the chunk's buffer first).
   function bcEnqueue(c, bytes) {
     if (!rcCanClose(c)) return;
-    c.byobRequest = null;
+    if (c.pending.length > 0) {
+      const first = c.pending[0];
+      if (isDetached(first.buffer)) throw new TypeErrorC('The BYOB request\'s buffer has been detached and so cannot be filled with an enqueued chunk');
+      bcInvalidate(c);
+      first.buffer = transfer(first.buffer);
+      if (first.readerType === 'none') bcEnqueueDetached(c, first);
+    }
     const rd = c.stream.reader;
-    if (rd && rd.byob) {
-      c.queue.push({ value: bytes, size: bytes.length });
-      c.queueSize += bytes.length;
-      bcFill(c);
-    } else if (rd && rd.reqs.length > 0) {
-      rd.reqs.shift().chunk(bytes);
+    if (rd && !rd.byob) {
+      while (rd.reqs.length > 0 && c.queueSize > 0) bcFillReadRequest(c, rd.reqs.shift());
+      if (rd.reqs.length === 0) {
+        bcPush(c, bytes);
+      } else {
+        if (c.pending.length > 0) c.pending.shift();
+        rd.reqs.shift().chunk(bytes);
+      }
+    } else if (rd && rd.byob) {
+      bcPush(c, bytes);
+      bcCommitAll(c, bcProcessPending(c));
     } else {
-      c.queue.push({ value: bytes, size: bytes.length });
-      c.queueSize += bytes.length;
+      bcPush(c, bytes);
     }
     rcCallPull(c);
   }
   function bcClose(c) {
     if (!rcCanClose(c)) return;
-    if (c.queue.length > 0) {
+    if (c.queueSize > 0) {
       c.closeRequested = true;
       return;
     }
-    const rd = c.stream.reader;
-    if (rd && rd.byob && rd.reqs.length > 0 && rd.reqs[0].filled % rd.reqs[0].element !== 0) {
-      const e = new TypeErrorC('Insufficient bytes to fill elements in the given buffer');
-      rcError(c, e);
-      throw e;
+    if (c.pending.length > 0) {
+      const first = c.pending[0];
+      if (first.bytesFilled % first.elementSize !== 0) {
+        const e = new TypeErrorC('Insufficient bytes to fill elements in the given buffer');
+        rcError(c, e);
+        throw e;
+      }
     }
     c.closeRequested = true;
     rcClear(c);
     rsClose(c.stream);
   }
-  // Copies queued bytes into pending BYOB reads.
-  function bcFill(c) {
-    const rd = c.stream.reader;
-    const ready = [];
-    while (rd.reqs.length > 0 && c.queueSize > 0) {
-      const req = rd.reqs[0];
-      // FillPullIntoDescriptorFromQueue: use as many whole elements as
-      // possible once the minimum is reachable, preserving any trailing bytes.
-      const available = Math.min(req.filled + c.queueSize, req.length);
-      const aligned = available - available % req.element;
-      const end = aligned >= req.min ? aligned : available;
-      while (req.filled < end) {
-        const head = c.queue[0];
-        const n = Math.min(head.size, end - req.filled);
-        req.target.set(n === head.size ? head.value : head.value.subarray(0, n), req.filled);
-        req.filled += n;
-        c.queueSize -= n;
-        if (n === head.size) {
-          c.queue.shift();
-        } else {
-          head.value = head.value.subarray(n);
-          head.size -= n;
-        }
-      }
-      if (aligned < req.min) break;
-      ready.push(rd.reqs.shift());
+  // ReadableByteStreamControllerPullInto. `buffer` is the view's buffer,
+  // not yet transferred.
+  function bcPullInto(c, buffer, byteOffset, byteLength, ctor, elementSize, min, req) {
+    try {
+      buffer = transfer(buffer);
+    } catch (e) {
+      req.error(e);
+      return;
     }
-    if (c.closeRequested && c.queueSize === 0 && c.stream.state === 'readable') {
-      if (rd.reqs.length && rd.reqs[0].filled > 0) {
-        rcError(c, new TypeErrorC('Insufficient bytes to fill the requested view'));
-      } else {
-        rcClear(c);
-        rsClose(c.stream);
+    const d = {
+      buffer, bufferByteLength: apply(bufferLength, buffer, []), byteOffset, byteLength, bytesFilled: 0,
+      minimumFill: min * elementSize, elementSize, ctor, readerType: 'byob',
+    };
+    const st = c.stream;
+    if (c.pending.length > 0) {
+      c.pending.push(d);
+      st.reader.reqs.push(req);
+      return;
+    }
+    if (st.state === 'closed') {
+      req.close(new ctor(d.buffer, d.byteOffset, 0));
+      return;
+    }
+    if (c.queueSize > 0) {
+      if (bcFillFromQueue(c, d)) {
+        const view = bcConvert(d);
+        bcDrain(c);
+        req.chunk(view);
+        return;
+      }
+      if (c.closeRequested) {
+        const e = new TypeErrorC('Insufficient bytes to fill elements in the given buffer');
+        rcError(c, e);
+        req.error(e);
+        return;
       }
     }
-    // Resolving a read result can run script. Move every ready request out
-    // of the reader before notifying any reader of its completed view.
-    for (let i = 0; i < ready.length; i++) ready[i].chunk();
+    c.pending.push(d);
+    st.reader.reqs.push(req);
+    rcCallPull(c);
   }
+  // ReadableByteStreamControllerRespondInternal.
+  function bcRespondInternal(c, bytesWritten) {
+    const first = c.pending[0];
+    bcInvalidate(c);
+    const st = c.stream;
+    if (st.state === 'closed') {
+      // RespondInClosedState.
+      if (first.readerType === 'none') c.pending.shift();
+      const rd = st.reader;
+      if (rd && rd.byob) {
+        while (rd.reqs.length > 0 && c.pending.length > 0) bcCommit(c, c.pending.shift());
+      }
+    } else {
+      // RespondInReadableState.
+      first.bytesFilled += bytesWritten;
+      if (first.readerType === 'none') {
+        bcEnqueueDetached(c, first);
+        bcCommitAll(c, bcProcessPending(c));
+      } else if (first.bytesFilled >= first.minimumFill) {
+        c.pending.shift();
+        const remainder = first.bytesFilled % first.elementSize;
+        if (remainder > 0) bcPushClone(c, first.buffer, first.byteOffset + first.bytesFilled - remainder, remainder);
+        first.bytesFilled -= remainder;
+        const filled = bcProcessPending(c);
+        bcCommit(c, first);
+        bcCommitAll(c, filled);
+      }
+    }
+    rcCallPull(c);
+  }
+  // ReadableByteStreamControllerRespond(c, 0) on a closed stream.
+  function bcRespondClosed(c) {
+    const first = c.pending[0];
+    first.buffer = transfer(first.buffer);
+    bcRespondInternal(c, 0);
+  }
+  // ReadableByteStreamControllerGetBYOBRequest.
   function bcRequest(c) {
-    if (c.byobRequest) return c.byobRequest;
-    if (c.stream.state !== 'readable') return null;
-    const rd = c.stream.reader;
-    let length = 0;
-    if (rd && rd.byob && rd.reqs.length > 0) length = rd.reqs[0].length - rd.reqs[0].filled;
-    else if (rd && !rd.byob && rd.reqs.length > 0 && c.autoAllocate) length = c.autoAllocate;
-    if (!length) return null;
-    c.byobRequest = new ReadableStreamBYOBRequest(token, c, new Uint8ArrayC(length));
+    if (c.byobRequest === null && c.pending.length > 0) {
+      const d = c.pending[0];
+      const view = new Uint8ArrayC(d.buffer, d.byteOffset + d.bytesFilled, d.byteLength - d.bytesFilled);
+      c.byobRequest = new ReadableStreamBYOBRequest(token, c, view);
+    }
     return c.byobRequest;
   }
 
@@ -429,6 +619,14 @@
       rd.closed = settledDefer(rejected(e));
     }
     handled(rd.closed.promise);
+    // ReadableByteStreamController [[ReleaseSteps]]: keep only the first
+    // pull-into, now without a reader.
+    const c = st.controller;
+    if (c.byte && c.pending.length > 0) {
+      const first = c.pending[0];
+      first.readerType = 'none';
+      c.pending = [first];
+    }
     st.reader = undefined;
     rd.stream = undefined;
     const reqs = rd.reqs;
@@ -488,6 +686,12 @@
           reading = false;
           if (!canceled1) (byte ? bcClose(c1) : rcClose(c1));
           if (!canceled2) (byte ? bcClose(c2) : rcClose(c2));
+          // ReadableByteStreamTee: a branch's pending BYOB read completes
+          // with what it has, as respond(0) on the closed branch.
+          if (byte) {
+            if (!canceled1 && c1.pending.length > 0) bcRespondClosed(c1);
+            if (!canceled2 && c2.pending.length > 0) bcRespondClosed(c2);
+          }
           if (!canceled1 || !canceled2) cancelP.resolve();
         },
         error() {
@@ -832,7 +1036,24 @@
       rcError(ReadableStreamDefaultController$c.get(this), e);
     }
   }
-  const viewBytes = (view) => new Uint8ArrayC(view.buffer, view.byteOffset, view.byteLength);
+  // A view's [[ViewedArrayBuffer]], [[ByteOffset]] and [[ByteLength]], read
+  // with the intrinsic getters.
+  const viewParts = (view) => {
+    const getters = apply(typedArrayName, view, []) === undefined ? dataView : typedView;
+    return {
+      buffer: apply(getters.buffer, view, []),
+      offset: apply(getters.offset, view, []),
+      length: apply(getters.length, view, []),
+    };
+  };
+  // Web IDL [EnforceRange] unsigned long long.
+  const enforceRange = (v, method) => {
+    let n = NumberC(v);
+    if (n !== n || n === Infinity || n === -Infinity) throw new TypeErrorC(`Failed to execute '${method}' on 'ReadableStreamBYOBRequest': Value is not of type 'unsigned long long'.`);
+    n = Math.trunc(n);
+    if (n < 0 || n > NumberC.MAX_SAFE_INTEGER) throw new TypeErrorC(`Failed to execute '${method}' on 'ReadableStreamBYOBRequest': Value is outside the 'unsigned long long' value range.`);
+    return n === 0 ? 0 : n;
+  };
   const ReadableByteStreamController$c = slot('ReadableByteStreamController.c');
   class ReadableByteStreamController {
     constructor(t, c) {
@@ -853,8 +1074,11 @@
       if (!isView(chunk)) throw new TypeErrorC("Failed to execute 'enqueue' on 'ReadableByteStreamController': parameter 1 is not of type 'ArrayBufferView'.");
       if (chunk.byteLength === 0) throw new TypeErrorC('chunk must have a non-zero byteLength');
       if (chunk.buffer.byteLength === 0) throw new TypeErrorC('chunk has a detached buffer');
-      if (!rcCanClose(ReadableByteStreamController$c.get(this))) throw new TypeErrorC('Cannot enqueue a chunk into a readable stream that is closed, errored or closing');
-      bcEnqueue(ReadableByteStreamController$c.get(this), viewBytes(chunk).slice());
+      const c = ReadableByteStreamController$c.get(this);
+      if (!rcCanClose(c)) throw new TypeErrorC('Cannot enqueue a chunk into a readable stream that is closed, errored or closing');
+      // ReadableByteStreamControllerEnqueue transfers the chunk's buffer.
+      const { buffer, offset, length } = viewParts(chunk);
+      bcEnqueue(c, new Uint8ArrayC(transfer(buffer), offset, length));
     }
     error(e = undefined) {
       rcError(ReadableByteStreamController$c.get(this), e);
@@ -869,33 +1093,42 @@
       ReadableStreamBYOBRequest$view.set(this, view);
     }
     get view() {
-      return ReadableStreamBYOBRequest$c.get(this) && ReadableStreamBYOBRequest$c.get(this).byobRequest === this ? ReadableStreamBYOBRequest$view.get(this) : null;
+      return ReadableStreamBYOBRequest$view.get(this);
     }
     respond(bytesWritten) {
       const c = ReadableStreamBYOBRequest$c.get(this);
-      if (c.byobRequest !== this) throw new TypeErrorC('This BYOB request has been invalidated');
-      const n = NumberC(bytesWritten);
-      if (n > ReadableStreamBYOBRequest$view.get(this).length) throw new RangeErrorC('bytesWritten out of range');
+      const n = enforceRange(bytesWritten, 'respond');
+      if (c === undefined) throw new TypeErrorC('This BYOB request has been invalidated');
+      if (isDetached(viewParts(ReadableStreamBYOBRequest$view.get(this)).buffer)) throw new TypeErrorC('The BYOB request\'s buffer has been detached and so cannot be used as a response');
+      // ReadableByteStreamControllerRespond.
+      const first = c.pending[0];
       if (c.stream.state === 'closed') {
         if (n !== 0) throw new TypeErrorC('bytesWritten must be 0 when calling respond() on a closed stream');
-        c.byobRequest = null;
-        return;
+      } else {
+        if (n === 0) throw new TypeErrorC('bytesWritten must be greater than 0 when calling respond() on a readable stream');
+        if (first.bytesFilled + n > first.byteLength) throw new RangeErrorC('bytesWritten out of range');
       }
-      if (!(n > 0)) throw new TypeErrorC('bytesWritten must be greater than 0 when calling respond() on a readable stream');
-      bcEnqueue(c, ReadableStreamBYOBRequest$view.get(this).slice(0, n));
+      first.buffer = transfer(first.buffer);
+      bcRespondInternal(c, n);
     }
     respondWithNewView(view) {
       const c = ReadableStreamBYOBRequest$c.get(this);
-      if (c.byobRequest !== this) throw new TypeErrorC('This BYOB request has been invalidated');
       if (!isView(view)) throw new TypeErrorC("Failed to execute 'respondWithNewView' on 'ReadableStreamBYOBRequest': parameter 1 is not of type 'ArrayBufferView'.");
+      if (c === undefined) throw new TypeErrorC('This BYOB request has been invalidated');
+      const { buffer, offset, length } = viewParts(view);
+      if (isDetached(buffer)) throw new TypeErrorC('The given view\'s buffer has been detached and so cannot be used as a response');
+      // ReadableByteStreamControllerRespondWithNewView.
+      const first = c.pending[0];
       if (c.stream.state === 'closed') {
-        if (view.byteLength !== 0) throw new TypeErrorC('The view must be empty when calling respondWithNewView() on a closed stream');
-        c.byobRequest = null;
-        return;
+        if (length !== 0) throw new TypeErrorC('The view\'s length must be 0 when calling respondWithNewView() on a closed stream');
+      } else if (length === 0) {
+        throw new TypeErrorC('The view\'s length must be greater than 0 when calling respondWithNewView() on a readable stream');
       }
-      if (view.byteLength === 0) throw new TypeErrorC('The view must not be empty');
-      if (view.byteLength > ReadableStreamBYOBRequest$view.get(this).length) throw new RangeErrorC('The view is larger than the request');
-      bcEnqueue(c, viewBytes(view).slice());
+      if (first.byteOffset + first.bytesFilled !== offset) throw new RangeErrorC('The region specified by view does not match byobRequest');
+      if (first.bufferByteLength !== apply(bufferLength, buffer, [])) throw new RangeErrorC('The buffer of view has different capacity than byobRequest');
+      if (first.bytesFilled + length > first.byteLength) throw new RangeErrorC('The region specified by view is larger than byobRequest');
+      first.buffer = transfer(buffer);
+      bcRespondInternal(c, length);
     }
   }
   const ReadableStreamDefaultReader$r = slot('ReadableStreamDefaultReader.r');
@@ -975,6 +1208,7 @@
         length = apply(getters.length, view, []);
       } catch (e) { return rejected(e); }
       if (length === 0) return rejected(new TypeErrorC('view must have non-zero byteLength'));
+      if (isDetached(buffer)) return rejected(new TypeErrorC('view\'s buffer has been detached'));
       if (!(min > 0)) return rejected(new TypeErrorC('options.min must be greater than 0'));
       const element = kind === undefined ? 1 : Ctor.BYTES_PER_ELEMENT;
       const elements = length / element;
@@ -983,24 +1217,14 @@
       if (!rd.stream) return rejected(released('read from'));
       const st = rd.stream;
       st.disturbed = true;
-      if (st.state === 'errored') return rejected(st.storedError);
-      try {
-        if (transferBuffer) buffer = apply(transferBuffer, buffer, []);
-      } catch (e) { return rejected(e); }
-      const answer = (filled) => new Ctor(buffer, offset, Ctor === DataViewC ? filled : filled / element);
-      if (st.state === 'closed') return resolved(result(answer(0), true));
       const d = defer();
       const req = {
-        target: new Uint8ArrayC(buffer, offset, length), length, min: min * element, filled: 0, element,
-        chunk: () => d.resolve(result(answer(req.filled), false)),
-        close: (canceled) => d.resolve(result(canceled ? undefined : answer(req.filled), true)),
+        chunk: (v) => d.resolve(result(v, false)),
+        close: (v) => d.resolve(result(v, true)),
         error: (e) => d.reject(e),
       };
-      rd.reqs.push(req);
-      const c = st.controller;
-      c.byobRequest = null;
-      bcFill(c);
-      rcCallPull(c);
+      if (st.state === 'errored') req.error(st.storedError);
+      else bcPullInto(st.controller, buffer, offset, length, Ctor, element, min, req);
       return d.promise;
     }
     releaseLock() {
