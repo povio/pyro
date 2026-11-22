@@ -13,6 +13,7 @@ use parley::fontique::{FontStyle, FontWeight};
 use parley::{FontContext, FontData, FontFamily, Layout, LayoutContext, PositionedLayoutItem, StyleProperty};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
+use skrifa::raw::TableProvider as _;
 use skrifa::MetadataProvider;
 
 /// The font a text is drawn with.
@@ -51,6 +52,17 @@ pub struct TextLayout {
     pub descent: f64,
     /// Ink bounds relative to the origin (y down), `None` for no ink.
     pub ink: Option<Rect>,
+    /// The primary font's baselines from its `BASE` table.
+    pub baselines: Baselines,
+}
+
+/// Baselines a font's `BASE` table gives (its horizontal axis, the default
+/// script's values), in px above the alphabetic baseline; `None` where the
+/// table has none.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Baselines {
+    pub hanging: Option<f64>,
+    pub ideographic: Option<f64>,
 }
 
 struct Context {
@@ -155,7 +167,12 @@ fn line(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
     if text.is_empty() {
         // No glyphs: the metrics of the font a space would use.
         let space = shape(cx, " ", style);
-        return TextLayout { ascent: space.ascent, descent: space.descent, ..TextLayout::default() };
+        return TextLayout {
+            ascent: space.ascent,
+            descent: space.descent,
+            baselines: space.baselines,
+            ..TextLayout::default()
+        };
     }
     let mut out = shape(cx, text, style);
     if out.runs.is_empty() {
@@ -164,6 +181,7 @@ fn line(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
         let space = shape(cx, " ", style);
         out.ascent = space.ascent;
         out.descent = space.descent;
+        out.baselines = space.baselines;
     }
     out
 }
@@ -196,6 +214,7 @@ fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
         if first {
             out.ascent = f64::from(metrics.ascent);
             out.descent = f64::from(metrics.descent);
+            out.baselines = base_baselines(run.font(), run.font_size()).unwrap_or_default();
             first = false;
         }
         let glyphs: Vec<vello_cpu::Glyph> =
@@ -210,6 +229,36 @@ fn shape(cx: &mut Context, text: &str, style: &TextStyle<'_>) -> TextLayout {
         out.runs.push(TextRun { font, size: run.font_size(), coords, glyphs, skew: run.synthesis().skew() });
     }
     out
+}
+
+/// The hanging and ideographic baselines of `font`'s `BASE` table at `size`
+/// px (its default script: `DFLT`, else `latn`, else the first), as Chromium
+/// reads them for `measureText` and `textBaseline`.
+fn base_baselines(font: &FontData, size: f32) -> Option<Baselines> {
+    let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
+    let upem = font_ref.head().ok()?.units_per_em();
+    if upem == 0 {
+        return None;
+    }
+    let base = font_ref.base().ok()?;
+    let axis = base.horiz_axis()?.ok()?;
+    let tags = axis.base_tag_list()?.ok()?;
+    let tags = tags.baseline_tags();
+    let scripts = axis.base_script_list().ok()?;
+    let records = scripts.base_script_records();
+    let record = [skrifa::Tag::new(b"DFLT"), skrifa::Tag::new(b"latn")]
+        .iter()
+        .find_map(|tag| records.iter().find(|r| r.base_script_tag() == *tag))
+        .or_else(|| records.first())?;
+    let script = record.base_script(scripts.offset_data()).ok()?;
+    let values = script.base_values()?.ok()?;
+    let coords = values.base_coords();
+    let scale = f64::from(size) / f64::from(upem);
+    let coord = |tag: &[u8; 4]| {
+        let i = tags.iter().position(|t| t.get() == skrifa::Tag::new(tag))?;
+        coords.get(i).ok().map(|c| f64::from(c.coordinate()) * scale)
+    };
+    Some(Baselines { hanging: coord(b"hang"), ideographic: coord(b"ideo") })
 }
 
 /// Ink bounds of `glyphs` (y down), from the outlines' control boxes.

@@ -1332,7 +1332,7 @@ fn draw_text(s: &Scope<'_>, c: &ContextData, a: Args<'_>, fill: bool) -> JsResul
         Align::Right => -width,
         Align::Left => 0.0,
     };
-    let dy = baseline_shift(state.text_baseline, layout.ascent, layout.descent);
+    let dy = baseline_shift(state.text_baseline, &layout);
     let stroke = (!fill).then(|| state.stroke());
     drop(state);
     with_paint(s, c, fill, |surface, paint, state| {
@@ -1817,15 +1817,29 @@ fn is_point_in<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>, stroke: bool) ->
 }
 
 /// Baseline offsets from the alphabetic baseline (up is positive) for
-/// `textBaseline`, given the font's ascent and descent.
-fn baseline_shift(baseline: &str, ascent: f64, descent: f64) -> f64 {
+/// `textBaseline`, given the primary font's ascent, descent and `BASE` table.
+fn baseline_shift(baseline: &str, layout: &pyro_canvas::text::TextLayout) -> f64 {
+    let (ascent, descent) = (layout.ascent, layout.descent);
     match baseline {
         "top" => ascent,
-        "hanging" => ascent * 0.8,
+        "hanging" => hanging_baseline(layout),
         "middle" => (ascent - descent) / 2.0,
-        "ideographic" | "bottom" => -descent,
+        "ideographic" => ideographic_baseline(layout),
+        "bottom" => -descent,
         _ => 0.0,
     }
+}
+
+/// The hanging baseline above the alphabetic one: the font's `BASE` table's, else 80% of the
+/// ascent (Chromium).
+fn hanging_baseline(layout: &pyro_canvas::text::TextLayout) -> f64 {
+    layout.baselines.hanging.unwrap_or(layout.ascent * 0.8)
+}
+
+/// The ideographic baseline above the alphabetic one: the font's `BASE` table's, else the
+/// descent below it (Chromium).
+fn ideographic_baseline(layout: &pyro_canvas::text::TextLayout) -> f64 {
+    layout.baselines.ideographic.unwrap_or(-layout.descent)
 }
 
 use kurbo::Shape as _;
@@ -2013,7 +2027,7 @@ impl ContextData {
                 Align::Right => -width,
                 Align::Left => 0.0,
             };
-            let shift = baseline_shift(state.text_baseline, ascent, descent);
+            let shift = baseline_shift(state.text_baseline, &layout);
             let ink = layout.ink.unwrap_or_default();
             let values = [
                 width,
@@ -2025,9 +2039,9 @@ impl ContextData {
                 ink.y1 + shift,
                 ascent - shift,
                 descent + shift,
-                ascent * 0.8 - shift,
+                hanging_baseline(&layout) - shift,
                 -shift,
-                -descent - shift,
+                ideographic_baseline(&layout) - shift,
             ];
             drop(state);
             let values: Vec<Value<'_>> = values.iter().map(|v| s.number(*v)).collect();
