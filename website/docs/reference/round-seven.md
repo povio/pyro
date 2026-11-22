@@ -23,6 +23,12 @@ Two Apple silicon Macs ran the same standalone RC.5 workflow executable from `51
 
 Across matched named occurrences, **75,805 passed only in Chrome** and **12,623 passed only in Pyro**. The pinned inventory also contains 1,469 historical holds and 179 additional held variants. [Combined census, runtime identity and shard receipts](https://github.com/povio/pyro/blob/5892e136beb3c09446a3e12953c260ca08938cd9/evidence/rc5-census-516dc3159-combined/README.md)
 
+## Focused checks on the RC.6 npm package
+
+On the Mac Studio, the public npm macOS arm64 executable reported `fork: true`. Its SHA-256 digest (`5f875fb92056714f6ae31fd114f39898a9837f0d12e0cb22b8ac98c87b8658fb`) matched CI artifact `14749568485`. [RC.6 publication workflow](https://github.com/povio/pyro/actions/runs/45008736564)
+
+On `insertParagraph/nowrap`, **136 of 138 assertions passed**. All 138 assertion names, statuses and messages matched the RC.5 standalone results. The separate `window-open-defaults` harness completed and its assertion failed. These two checks are the extent of the npm package measurements reported here.
+
 ## Development checkpoint with pinned JavaScriptCore
 
 Pyro fully passed **15,737 of 30,179 eligible pages** at the round seven checkpoint (`c3372ad21`), up from 15,344 in the previous census. All 320 shards ran on macOS. Each engine’s assertion denominator counts the named outcomes observed for that engine.
