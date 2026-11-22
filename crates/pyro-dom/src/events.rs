@@ -516,7 +516,7 @@ impl Dom {
     }
     /// [`Dom::retarget`] for keys that may name a freed node (an event's
     /// relatedTarget is only as alive as the bindings keep it).
-    fn retarget_live(&self, a: TargetKey, b: TargetKey) -> TargetKey {
+    pub fn retarget_live(&self, a: TargetKey, b: TargetKey) -> TargetKey {
         let live = |key: TargetKey| !matches!(key, TargetKey::Node(i) if !self.slot_live(i));
         if live(a) && live(b) {
             self.retarget(a, b)

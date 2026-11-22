@@ -46,6 +46,7 @@ pub enum EventInterface {
     TransitionEvent,
     ToggleEvent,
     CommandEvent,
+    InterestEvent,
     TaskPriorityChangeEvent,
     /// Made in JS on first use (`crate::editing_globals`): natively an
     /// Event wrapper with ClipboardEvent.prototype.
@@ -442,6 +443,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::ToggleEvent => s.wrap::<ToggleEvent>(d, Some(key)),
         EventInterface::TaskPriorityChangeEvent => s.wrap::<crate::task_signal::TaskPriorityChangeEvent>(d, Some(key)),
         EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
+        EventInterface::InterestEvent => s.wrap::<InterestEvent>(d, Some(key)),
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
@@ -1825,6 +1827,26 @@ impl JsClass for CommandEvent {
     }
 }
 
+/// Event carrying the source element of an interest transition.
+pub struct InterestEvent;
+impl JsClass for InterestEvent {
+    const NAME: &'static str = "InterestEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<InterestEvent>(s, nt, a, EventInterface::InterestEvent, |s, fields, init| {
+                fill_source(s, fields, init, "InterestEvent")
+            })
+        });
+        def.getter("source", |s, e| {
+            let observer = e.state.borrow().current_target.unwrap_or(TargetKey::Node(e.page.document().index()));
+            let source = e.fields.borrow().submitter.map(|key| e.page.dom.borrow().retarget_live(key, observer));
+            target_value(s, &e.page, source)
+        });
+    }
+}
+
 pub struct PopStateEvent;
 impl JsClass for PopStateEvent {
     const NAME: &'static str = "PopStateEvent";
@@ -2063,6 +2085,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<TransitionEvent>();
     engine.register::<ToggleEvent>();
     engine.register::<CommandEvent>();
+    engine.register::<InterestEvent>();
 }
 
 /// A `Touch` wrapper's state.
