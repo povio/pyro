@@ -1,0 +1,70 @@
+{
+  "dedicatedworker": {
+    "chrome-names": 21718,
+    "chrome-only-names": 2789,
+    "chrome-only-pages": 173,
+    "chrome-pages": 832,
+    "lp-names": 20048,
+    "lp-only-names": 1119,
+    "lp-only-pages": 38,
+    "lp-pages": 697
+  },
+  "dedicatedworker-module": {
+    "chrome-names": 2,
+    "chrome-pages": 2,
+    "lp-names": 2,
+    "lp-pages": 2
+  },
+  "serviceworker": {
+    "chrome-names": 3715,
+    "chrome-only-names": 359,
+    "chrome-only-pages": 44,
+    "chrome-pages": 195,
+    "lp-names": 3506,
+    "lp-only-names": 150,
+    "lp-only-pages": 13,
+    "lp-pages": 164
+  },
+  "serviceworker-module": {
+    "chrome-names": 7,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 1,
+    "chrome-pages": 3,
+    "lp-names": 4,
+    "lp-pages": 2
+  },
+  "sharedworker": {
+    "chrome-names": 3216,
+    "chrome-only-names": 432,
+    "chrome-only-pages": 49,
+    "chrome-pages": 190,
+    "lp-names": 2921,
+    "lp-only-names": 137,
+    "lp-only-pages": 8,
+    "lp-pages": 149
+  },
+  "sharedworker-module": {
+    "chrome-names": 2,
+    "chrome-only-names": 2,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "window": {
+    "chrome-names": 625603,
+    "chrome-only-names": 25217,
+    "chrome-only-pages": 3333,
+    "chrome-pages": 7859,
+    "lp-names": 604781,
+    "lp-only-names": 4395,
+    "lp-only-pages": 184,
+    "lp-pages": 4710
+  },
+  "window-module": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  }
+}

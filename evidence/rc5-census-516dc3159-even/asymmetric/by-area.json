@@ -1,0 +1,1739 @@
+{
+  "FileAPI": {
+    "chrome-names": 596,
+    "chrome-only-names": 49,
+    "chrome-only-pages": 14,
+    "chrome-pages": 44,
+    "lp-names": 553,
+    "lp-only-names": 6,
+    "lp-only-pages": 2,
+    "lp-pages": 32
+  },
+  "IndexedDB": {
+    "chrome-names": 2440,
+    "chrome-only-names": 28,
+    "chrome-only-pages": 15,
+    "chrome-pages": 308,
+    "lp-names": 2413,
+    "lp-only-names": 1,
+    "lp-pages": 293
+  },
+  "WebCryptoAPI": {
+    "chrome-names": 21236,
+    "chrome-only-names": 2477,
+    "chrome-only-pages": 8,
+    "chrome-pages": 65,
+    "lp-names": 19756,
+    "lp-only-names": 997,
+    "lp-only-pages": 23,
+    "lp-pages": 80
+  },
+  "accelerometer": {
+    "chrome-names": 41,
+    "chrome-only-names": 36,
+    "chrome-only-pages": 1,
+    "chrome-pages": 2,
+    "lp-names": 5,
+    "lp-pages": 1
+  },
+  "accname": {
+    "chrome-names": 23,
+    "chrome-pages": 0,
+    "lp-names": 29,
+    "lp-only-names": 6,
+    "lp-only-pages": 1,
+    "lp-pages": 1
+  },
+  "ai": {
+    "chrome-names": 6,
+    "chrome-only-names": 6,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 1,
+    "lp-only-names": 1,
+    "lp-pages": 0
+  },
+  "ambient-light": {
+    "chrome-names": 2,
+    "chrome-pages": 0,
+    "lp-names": 2,
+    "lp-pages": 0
+  },
+  "animation-worklet": {
+    "chrome-names": 18,
+    "chrome-pages": 0,
+    "lp-names": 18,
+    "lp-pages": 0
+  },
+  "audio-output": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "audio-session": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "background-fetch": {
+    "chrome-names": 82,
+    "chrome-only-names": 75,
+    "chrome-only-pages": 5,
+    "chrome-pages": 5,
+    "lp-names": 7,
+    "lp-pages": 0
+  },
+  "background-sync": {
+    "chrome-names": 34,
+    "chrome-only-names": 18,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 16,
+    "lp-pages": 0
+  },
+  "badging": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "battery-status": {
+    "chrome-names": 5,
+    "chrome-only-names": 5,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "beacon": {
+    "chrome-names": 45,
+    "chrome-pages": 7,
+    "lp-names": 45,
+    "lp-pages": 7
+  },
+  "bluetooth": {
+    "chrome-names": 123,
+    "chrome-only-names": 101,
+    "chrome-pages": 0,
+    "lp-names": 22,
+    "lp-pages": 0
+  },
+  "captured-mouse-events": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "clear-site-data": {
+    "chrome-names": 10,
+    "chrome-only-names": 6,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 9,
+    "lp-only-names": 5,
+    "lp-pages": 0
+  },
+  "client-hints": {
+    "chrome-names": 65,
+    "chrome-only-names": 25,
+    "chrome-only-pages": 27,
+    "chrome-pages": 43,
+    "lp-names": 40,
+    "lp-pages": 16
+  },
+  "clipboard-apis": {
+    "chrome-names": 22,
+    "chrome-only-names": 5,
+    "chrome-only-pages": 1,
+    "chrome-pages": 9,
+    "lp-names": 28,
+    "lp-only-names": 11,
+    "lp-only-pages": 5,
+    "lp-pages": 13
+  },
+  "close-watcher": {
+    "chrome-names": 10,
+    "chrome-only-names": 9,
+    "chrome-only-pages": 9,
+    "chrome-pages": 10,
+    "lp-names": 1,
+    "lp-pages": 1
+  },
+  "compat": {
+    "chrome-names": 53,
+    "chrome-pages": 3,
+    "lp-names": 53,
+    "lp-pages": 3
+  },
+  "compression": {
+    "chrome-names": 555,
+    "chrome-only-names": 6,
+    "chrome-pages": 7,
+    "lp-names": 652,
+    "lp-only-names": 103,
+    "lp-only-pages": 20,
+    "lp-pages": 27
+  },
+  "compute-pressure": {
+    "chrome-names": 36,
+    "chrome-only-names": 35,
+    "chrome-only-pages": 4,
+    "chrome-pages": 4,
+    "lp-names": 1,
+    "lp-pages": 0
+  },
+  "connection-allowlist": {
+    "chrome-names": 124,
+    "chrome-only-names": 83,
+    "chrome-only-pages": 21,
+    "chrome-pages": 25,
+    "lp-names": 42,
+    "lp-only-names": 1,
+    "lp-pages": 4
+  },
+  "console": {
+    "chrome-names": 8,
+    "chrome-only-names": 2,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 6,
+    "lp-pages": 0
+  },
+  "container-timing": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "content-index": {
+    "chrome-names": 8,
+    "chrome-pages": 0,
+    "lp-names": 8,
+    "lp-pages": 0
+  },
+  "content-security-policy": {
+    "chrome-names": 1243,
+    "chrome-only-names": 558,
+    "chrome-only-pages": 147,
+    "chrome-pages": 217,
+    "lp-names": 726,
+    "lp-only-names": 41,
+    "lp-only-pages": 1,
+    "lp-pages": 71
+  },
+  "contenteditable": {
+    "chrome-names": 2,
+    "chrome-only-names": 2,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "cookies": {
+    "chrome-names": 337,
+    "chrome-only-names": 100,
+    "chrome-only-pages": 8,
+    "chrome-pages": 27,
+    "lp-names": 239,
+    "lp-only-names": 2,
+    "lp-pages": 19
+  },
+  "cookiestore": {
+    "chrome-names": 64,
+    "chrome-only-names": 3,
+    "chrome-pages": 21,
+    "lp-names": 61,
+    "lp-pages": 21
+  },
+  "cors": {
+    "chrome-names": 295,
+    "chrome-only-names": 32,
+    "chrome-only-pages": 6,
+    "chrome-pages": 13,
+    "lp-names": 263,
+    "lp-pages": 7
+  },
+  "cpu-performance": {
+    "chrome-names": 1,
+    "chrome-only-names": 1,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "credential-management": {
+    "chrome-names": 12,
+    "chrome-only-names": 11,
+    "chrome-only-pages": 1,
+    "chrome-pages": 2,
+    "lp-names": 1,
+    "lp-pages": 1
+  },
+  "custom-elements": {
+    "chrome-names": 587,
+    "chrome-only-names": 50,
+    "chrome-only-pages": 15,
+    "chrome-pages": 51,
+    "lp-names": 565,
+    "lp-only-names": 28,
+    "lp-only-pages": 4,
+    "lp-pages": 40
+  },
+  "device-bound-session-credentials": {
+    "chrome-names": 1,
+    "chrome-pages": 0,
+    "lp-names": 1,
+    "lp-pages": 0
+  },
+  "device-memory": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "device-posture": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "digital-credentials": {
+    "chrome-names": 30,
+    "chrome-only-names": 25,
+    "chrome-only-pages": 5,
+    "chrome-pages": 6,
+    "lp-names": 5,
+    "lp-pages": 1
+  },
+  "direct-sockets": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "document-picture-in-picture": {
+    "chrome-names": 7,
+    "chrome-only-names": 7,
+    "chrome-only-pages": 5,
+    "chrome-pages": 5,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "document-policy": {
+    "chrome-names": 2,
+    "chrome-pages": 0,
+    "lp-names": 2,
+    "lp-pages": 0
+  },
+  "dom": {
+    "chrome-names": 22651,
+    "chrome-only-names": 161,
+    "chrome-only-pages": 64,
+    "chrome-pages": 292,
+    "lp-names": 22525,
+    "lp-only-names": 35,
+    "lp-only-pages": 4,
+    "lp-pages": 232
+  },
+  "domparsing": {
+    "chrome-names": 945,
+    "chrome-only-names": 297,
+    "chrome-only-pages": 16,
+    "chrome-pages": 36,
+    "lp-names": 652,
+    "lp-only-names": 4,
+    "lp-pages": 20
+  },
+  "domxpath": {
+    "chrome-names": 36,
+    "chrome-pages": 10,
+    "lp-names": 36,
+    "lp-pages": 10
+  },
+  "dpub-aam": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "editing": {
+    "chrome-names": 42472,
+    "chrome-only-names": 770,
+    "chrome-only-pages": 29,
+    "chrome-pages": 196,
+    "lp-names": 42788,
+    "lp-only-names": 1086,
+    "lp-only-pages": 31,
+    "lp-pages": 198
+  },
+  "element-timing": {
+    "chrome-names": 17,
+    "chrome-only-names": 14,
+    "chrome-only-pages": 14,
+    "chrome-pages": 14,
+    "lp-names": 3,
+    "lp-pages": 0
+  },
+  "encoding": {
+    "chrome-names": 437361,
+    "chrome-only-names": 107,
+    "chrome-only-pages": 4,
+    "chrome-pages": 500,
+    "lp-names": 437492,
+    "lp-only-names": 238,
+    "lp-only-pages": 10,
+    "lp-pages": 506
+  },
+  "encoding-detection": {
+    "chrome-names": 26,
+    "chrome-only-names": 26,
+    "chrome-only-pages": 26,
+    "chrome-pages": 26,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "encrypted-media": {
+    "chrome-names": 48,
+    "chrome-only-names": 48,
+    "chrome-only-pages": 26,
+    "chrome-pages": 26,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "entries-api": {
+    "chrome-names": 1,
+    "chrome-only-names": 1,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "event-timing": {
+    "chrome-names": 39,
+    "chrome-only-names": 25,
+    "chrome-only-pages": 25,
+    "chrome-pages": 26,
+    "lp-names": 14,
+    "lp-pages": 1
+  },
+  "eventsource": {
+    "chrome-names": 67,
+    "chrome-only-names": 9,
+    "chrome-only-pages": 4,
+    "chrome-pages": 47,
+    "lp-names": 61,
+    "lp-only-names": 3,
+    "lp-only-pages": 3,
+    "lp-pages": 46
+  },
+  "fenced-frame": {
+    "chrome-names": 4,
+    "chrome-only-names": 2,
+    "chrome-only-pages": 1,
+    "chrome-pages": 2,
+    "lp-names": 2,
+    "lp-pages": 1
+  },
+  "fetch": {
+    "chrome-names": 3913,
+    "chrome-only-names": 796,
+    "chrome-only-pages": 93,
+    "chrome-pages": 250,
+    "lp-names": 3208,
+    "lp-only-names": 91,
+    "lp-only-pages": 8,
+    "lp-pages": 165
+  },
+  "file-system-access": {
+    "chrome-names": 60,
+    "chrome-only-names": 13,
+    "chrome-only-pages": 2,
+    "chrome-pages": 6,
+    "lp-names": 48,
+    "lp-only-names": 1,
+    "lp-pages": 4
+  },
+  "focus": {
+    "chrome-names": 19,
+    "chrome-only-names": 10,
+    "chrome-only-pages": 4,
+    "chrome-pages": 11,
+    "lp-names": 9,
+    "lp-pages": 7
+  },
+  "font-access": {
+    "chrome-names": 19,
+    "chrome-only-names": 18,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 1,
+    "lp-pages": 0
+  },
+  "forced-colors-mode": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "fs": {
+    "chrome-names": 319,
+    "chrome-only-names": 49,
+    "chrome-only-pages": 10,
+    "chrome-pages": 27,
+    "lp-names": 313,
+    "lp-only-names": 43,
+    "lp-only-pages": 3,
+    "lp-pages": 20
+  },
+  "fullscreen": {
+    "chrome-names": 31,
+    "chrome-only-names": 16,
+    "chrome-only-pages": 15,
+    "chrome-pages": 24,
+    "lp-names": 16,
+    "lp-only-names": 1,
+    "lp-only-pages": 1,
+    "lp-pages": 10
+  },
+  "gamepad": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "generic-sensor": {
+    "chrome-names": 36,
+    "chrome-only-names": 34,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 2,
+    "lp-pages": 0
+  },
+  "geolocation": {
+    "chrome-names": 17,
+    "chrome-only-names": 6,
+    "chrome-only-pages": 4,
+    "chrome-pages": 6,
+    "lp-names": 11,
+    "lp-pages": 2
+  },
+  "geolocation-sensor": {
+    "chrome-names": 1,
+    "chrome-pages": 1,
+    "lp-names": 1,
+    "lp-pages": 1
+  },
+  "gpc": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "gyroscope": {
+    "chrome-names": 8,
+    "chrome-only-names": 8,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "hr-time": {
+    "chrome-names": 45,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 2,
+    "chrome-pages": 7,
+    "lp-names": 42,
+    "lp-pages": 5
+  },
+  "html": {
+    "chrome-names": 45064,
+    "chrome-only-names": 4356,
+    "chrome-only-pages": 978,
+    "chrome-pages": 2854,
+    "lp-names": 41224,
+    "lp-only-names": 516,
+    "lp-only-pages": 58,
+    "lp-pages": 1934
+  },
+  "html-aam": {
+    "chrome-names": 94,
+    "chrome-pages": 2,
+    "lp-names": 108,
+    "lp-only-names": 14,
+    "lp-pages": 2
+  },
+  "https-upgrades": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "idle-detection": {
+    "chrome-names": 1,
+    "chrome-only-names": 1,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "imagebitmap-renderingcontext": {
+    "chrome-names": 9,
+    "chrome-only-names": 9,
+    "chrome-only-pages": 7,
+    "chrome-pages": 7,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "import-maps": {
+    "chrome-names": 154,
+    "chrome-only-names": 108,
+    "chrome-only-pages": 17,
+    "chrome-pages": 19,
+    "lp-names": 46,
+    "lp-pages": 2
+  },
+  "inert": {
+    "chrome-names": 49,
+    "chrome-only-names": 28,
+    "chrome-only-pages": 7,
+    "chrome-pages": 11,
+    "lp-names": 21,
+    "lp-pages": 4
+  },
+  "infrastructure": {
+    "chrome-names": 47,
+    "chrome-pages": 18,
+    "lp-names": 47,
+    "lp-pages": 18
+  },
+  "input-events": {
+    "chrome-names": 1447,
+    "chrome-only-names": 325,
+    "chrome-only-pages": 5,
+    "chrome-pages": 6,
+    "lp-names": 1317,
+    "lp-only-names": 195,
+    "lp-pages": 1
+  },
+  "installedapp": {
+    "chrome-names": 16,
+    "chrome-only-names": 2,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 14,
+    "lp-pages": 0
+  },
+  "intersection-observer": {
+    "chrome-names": 208,
+    "chrome-only-names": 105,
+    "chrome-only-pages": 40,
+    "chrome-pages": 53,
+    "lp-names": 103,
+    "lp-pages": 13
+  },
+  "is-input-pending": {
+    "chrome-names": 3,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "jpegxl": {
+    "chrome-names": 11,
+    "chrome-only-names": 9,
+    "chrome-only-pages": 4,
+    "chrome-pages": 6,
+    "lp-names": 2,
+    "lp-pages": 2
+  },
+  "js": {
+    "chrome-names": 80,
+    "chrome-only-names": 1,
+    "chrome-only-pages": 1,
+    "chrome-pages": 8,
+    "lp-names": 79,
+    "lp-pages": 7
+  },
+  "js-self-profiling": {
+    "chrome-names": 2,
+    "chrome-only-names": 2,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "keyboard-lock": {
+    "chrome-names": 1,
+    "chrome-only-names": 1,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "keyboard-map": {
+    "chrome-names": 3,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "largest-contentful-paint": {
+    "chrome-names": 27,
+    "chrome-only-names": 27,
+    "chrome-only-pages": 25,
+    "chrome-pages": 25,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "layout-instability": {
+    "chrome-names": 39,
+    "chrome-only-names": 39,
+    "chrome-only-pages": 38,
+    "chrome-pages": 38,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "loading": {
+    "chrome-names": 28,
+    "chrome-only-names": 19,
+    "chrome-only-pages": 19,
+    "chrome-pages": 27,
+    "lp-names": 9,
+    "lp-pages": 8
+  },
+  "long-animation-frame": {
+    "chrome-names": 18,
+    "chrome-only-names": 18,
+    "chrome-only-pages": 8,
+    "chrome-pages": 8,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "longtask-timing": {
+    "chrome-names": 8,
+    "chrome-only-names": 8,
+    "chrome-only-pages": 8,
+    "chrome-pages": 8,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "magnetometer": {
+    "chrome-names": 2,
+    "chrome-pages": 1,
+    "lp-names": 2,
+    "lp-pages": 1
+  },
+  "managed": {
+    "chrome-names": 3,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "mathml": {
+    "chrome-names": 1609,
+    "chrome-only-names": 1132,
+    "chrome-only-pages": 55,
+    "chrome-pages": 63,
+    "lp-names": 478,
+    "lp-only-names": 1,
+    "lp-only-pages": 1,
+    "lp-pages": 9
+  },
+  "measure-memory": {
+    "chrome-names": 4,
+    "chrome-only-names": 4,
+    "chrome-only-pages": 4,
+    "chrome-pages": 4,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "media-capabilities": {
+    "chrome-names": 168,
+    "chrome-only-names": 146,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 22,
+    "lp-pages": 0
+  },
+  "media-source": {
+    "chrome-names": 220,
+    "chrome-only-names": 156,
+    "chrome-only-pages": 27,
+    "chrome-pages": 27,
+    "lp-names": 65,
+    "lp-only-names": 1,
+    "lp-pages": 0
+  },
+  "mediacapture-extensions": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "mediacapture-fromelement": {
+    "chrome-names": 3,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "mediacapture-handle": {
+    "chrome-names": 5,
+    "chrome-only-names": 5,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "mediacapture-image": {
+    "chrome-names": 38,
+    "chrome-only-names": 27,
+    "chrome-only-pages": 4,
+    "chrome-pages": 4,
+    "lp-names": 11,
+    "lp-pages": 0
+  },
+  "mediacapture-insertable-streams": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "mediacapture-record": {
+    "chrome-names": 326,
+    "chrome-only-names": 324,
+    "chrome-only-pages": 15,
+    "chrome-pages": 15,
+    "lp-names": 2,
+    "lp-pages": 0
+  },
+  "mediacapture-streams": {
+    "chrome-names": 4,
+    "chrome-only-names": 4,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 1,
+    "lp-only-names": 1,
+    "lp-only-pages": 1,
+    "lp-pages": 1
+  },
+  "mediasession": {
+    "chrome-names": 21,
+    "chrome-only-names": 21,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "merchant-validation": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "mimesniff": {
+    "chrome-names": 1469,
+    "chrome-only-names": 1,
+    "chrome-pages": 1,
+    "lp-names": 2633,
+    "lp-only-names": 1165,
+    "lp-pages": 1
+  },
+  "mixed-content": {
+    "chrome-names": 856,
+    "chrome-only-names": 279,
+    "chrome-only-pages": 107,
+    "chrome-pages": 132,
+    "lp-names": 585,
+    "lp-only-names": 8,
+    "lp-pages": 25
+  },
+  "mst-content-hint": {
+    "chrome-names": 7,
+    "chrome-only-names": 7,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "nav-tracking-mitigations": {
+    "chrome-names": 2,
+    "chrome-pages": 2,
+    "lp-names": 2,
+    "lp-pages": 2
+  },
+  "navigation-api": {
+    "chrome-names": 210,
+    "chrome-only-names": 134,
+    "chrome-only-pages": 115,
+    "chrome-pages": 173,
+    "lp-names": 76,
+    "lp-pages": 58
+  },
+  "navigation-timing": {
+    "chrome-names": 264,
+    "chrome-only-names": 49,
+    "chrome-only-pages": 11,
+    "chrome-pages": 28,
+    "lp-names": 217,
+    "lp-only-names": 2,
+    "lp-pages": 17
+  },
+  "network-error-logging": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "notifications": {
+    "chrome-names": 79,
+    "chrome-only-names": 23,
+    "chrome-pages": 1,
+    "lp-names": 57,
+    "lp-only-names": 1,
+    "lp-pages": 1
+  },
+  "old-tests": {
+    "chrome-names": 9,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 3,
+    "chrome-pages": 9,
+    "lp-names": 6,
+    "lp-pages": 6
+  },
+  "orientation-event": {
+    "chrome-names": 3,
+    "chrome-only-names": 2,
+    "chrome-pages": 1,
+    "lp-names": 1,
+    "lp-pages": 1
+  },
+  "orientation-sensor": {
+    "chrome-names": 11,
+    "chrome-only-names": 11,
+    "chrome-only-pages": 4,
+    "chrome-pages": 4,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "page-lifecycle": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "page-visibility": {
+    "chrome-names": 6,
+    "chrome-pages": 3,
+    "lp-names": 6,
+    "lp-pages": 3
+  },
+  "paint-timing": {
+    "chrome-names": 34,
+    "chrome-only-names": 26,
+    "chrome-only-pages": 17,
+    "chrome-pages": 17,
+    "lp-names": 8,
+    "lp-pages": 0
+  },
+  "payment-method-basic-card": {
+    "chrome-pages": 0,
+    "lp-pages": 0
+  },
+  "payment-method-manifest": {
+    "chrome-names": 10,
+    "chrome-only-names": 10,
+    "chrome-only-pages": 4,
+    "chrome-pages": 4,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "payment-request": {
+    "chrome-names": 13,
+    "chrome-only-names": 13,
+    "chrome-only-pages": 5,
+    "chrome-pages": 5,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "performance-timeline": {
+    "chrome-names": 149,
+    "chrome-only-names": 25,
+    "chrome-only-pages": 5,
+    "chrome-pages": 19,
+    "lp-names": 124,
+    "lp-pages": 14
+  },
+  "permissions": {
+    "chrome-names": 61,
+    "chrome-only-names": 31,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 31,
+    "lp-only-names": 1,
+    "lp-only-pages": 1,
+    "lp-pages": 1
+  },
+  "permissions-policy": {
+    "chrome-names": 40,
+    "chrome-only-names": 36,
+    "chrome-only-pages": 20,
+    "chrome-pages": 20,
+    "lp-names": 7,
+    "lp-only-names": 3,
+    "lp-only-pages": 1,
+    "lp-pages": 1
+  },
+  "permissions-request": {
+    "chrome-names": 4,
+    "chrome-pages": 0,
+    "lp-names": 4,
+    "lp-pages": 0
+  },
+  "picture-in-picture": {
+    "chrome-names": 85,
+    "chrome-only-names": 59,
+    "chrome-only-pages": 7,
+    "chrome-pages": 7,
+    "lp-names": 26,
+    "lp-pages": 0
+  },
+  "png": {
+    "chrome-names": 2,
+    "chrome-pages": 2,
+    "lp-names": 2,
+    "lp-pages": 2
+  },
+  "pointerevents": {
+    "chrome-names": 378,
+    "chrome-only-names": 182,
+    "chrome-only-pages": 30,
+    "chrome-pages": 57,
+    "lp-names": 196,
+    "lp-pages": 27
+  },
+  "pointerlock": {
+    "chrome-names": 4,
+    "chrome-only-names": 4,
+    "chrome-only-pages": 4,
+    "chrome-pages": 4,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "preload": {
+    "chrome-names": 124,
+    "chrome-only-names": 80,
+    "chrome-only-pages": 16,
+    "chrome-pages": 24,
+    "lp-names": 46,
+    "lp-only-names": 2,
+    "lp-pages": 8
+  },
+  "presentation-api": {
+    "chrome-names": 106,
+    "chrome-only-names": 90,
+    "chrome-only-pages": 4,
+    "chrome-pages": 4,
+    "lp-names": 16,
+    "lp-pages": 0
+  },
+  "private-click-measurement": {
+    "chrome-names": 15,
+    "chrome-pages": 0,
+    "lp-names": 15,
+    "lp-pages": 0
+  },
+  "push-api": {
+    "chrome-names": 4,
+    "chrome-only-names": 4,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "quirks": {
+    "chrome-names": 3056,
+    "chrome-only-names": 82,
+    "chrome-only-pages": 5,
+    "chrome-pages": 8,
+    "lp-names": 2975,
+    "lp-only-names": 1,
+    "lp-pages": 3
+  },
+  "referrer-policy": {
+    "chrome-names": 3110,
+    "chrome-only-names": 131,
+    "chrome-only-pages": 54,
+    "chrome-pages": 539,
+    "lp-names": 2979,
+    "lp-pages": 485
+  },
+  "remote-playback": {
+    "chrome-names": 2,
+    "chrome-only-names": 2,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "reporting": {
+    "chrome-names": 19,
+    "chrome-only-names": 16,
+    "chrome-only-pages": 5,
+    "chrome-pages": 5,
+    "lp-names": 3,
+    "lp-pages": 0
+  },
+  "requestidlecallback": {
+    "chrome-names": 6,
+    "chrome-pages": 5,
+    "lp-names": 6,
+    "lp-pages": 5
+  },
+  "resize-observer": {
+    "chrome-names": 80,
+    "chrome-only-names": 17,
+    "chrome-only-pages": 6,
+    "chrome-pages": 15,
+    "lp-names": 63,
+    "lp-pages": 9
+  },
+  "resource-timing": {
+    "chrome-names": 439,
+    "chrome-only-names": 145,
+    "chrome-only-pages": 25,
+    "chrome-pages": 46,
+    "lp-names": 294,
+    "lp-pages": 21
+  },
+  "sanitizer-api": {
+    "chrome-names": 304,
+    "chrome-only-names": 245,
+    "chrome-only-pages": 7,
+    "chrome-pages": 7,
+    "lp-names": 61,
+    "lp-only-names": 2,
+    "lp-only-pages": 1,
+    "lp-pages": 1
+  },
+  "savedata": {
+    "chrome-names": 10,
+    "chrome-only-names": 4,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 6,
+    "lp-pages": 0
+  },
+  "scheduler": {
+    "chrome-names": 126,
+    "chrome-only-names": 12,
+    "chrome-only-pages": 5,
+    "chrome-pages": 34,
+    "lp-names": 114,
+    "lp-pages": 29
+  },
+  "screen-capture": {
+    "chrome-names": 24,
+    "chrome-only-names": 11,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 13,
+    "lp-pages": 0
+  },
+  "screen-orientation": {
+    "chrome-names": 2,
+    "chrome-only-names": 2,
+    "chrome-pages": 0,
+    "lp-names": 2,
+    "lp-only-names": 2,
+    "lp-pages": 0
+  },
+  "screen-wake-lock": {
+    "chrome-names": 7,
+    "chrome-only-names": 6,
+    "chrome-only-pages": 3,
+    "chrome-pages": 4,
+    "lp-names": 1,
+    "lp-pages": 1
+  },
+  "scroll-animations": {
+    "chrome-names": 689,
+    "chrome-only-names": 384,
+    "chrome-only-pages": 48,
+    "chrome-pages": 60,
+    "lp-names": 311,
+    "lp-only-names": 6,
+    "lp-pages": 12
+  },
+  "scroll-performance-timing": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "scroll-to-text-fragment": {
+    "chrome-names": 77,
+    "chrome-only-names": 48,
+    "chrome-only-pages": 11,
+    "chrome-pages": 11,
+    "lp-names": 29,
+    "lp-pages": 0
+  },
+  "secure-contexts": {
+    "chrome-names": 11,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 1,
+    "chrome-pages": 2,
+    "lp-names": 8,
+    "lp-pages": 1
+  },
+  "secure-payment-confirmation": {
+    "chrome-names": 3,
+    "chrome-pages": 0,
+    "lp-names": 3,
+    "lp-pages": 0
+  },
+  "selection": {
+    "chrome-names": 19288,
+    "chrome-only-names": 156,
+    "chrome-only-pages": 19,
+    "chrome-pages": 46,
+    "lp-names": 19146,
+    "lp-only-names": 14,
+    "lp-only-pages": 2,
+    "lp-pages": 29
+  },
+  "serial": {
+    "chrome-names": 14,
+    "chrome-only-names": 14,
+    "chrome-only-pages": 4,
+    "chrome-pages": 4,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "server-timing": {
+    "chrome-names": 99,
+    "chrome-only-names": 11,
+    "chrome-only-pages": 1,
+    "chrome-pages": 3,
+    "lp-names": 88,
+    "lp-pages": 2
+  },
+  "service-workers": {
+    "chrome-names": 1355,
+    "chrome-only-names": 444,
+    "chrome-only-pages": 53,
+    "chrome-pages": 95,
+    "lp-names": 948,
+    "lp-only-names": 37,
+    "lp-only-pages": 9,
+    "lp-pages": 51
+  },
+  "shadow-dom": {
+    "chrome-names": 4031,
+    "chrome-only-names": 256,
+    "chrome-only-pages": 28,
+    "chrome-pages": 85,
+    "lp-names": 4226,
+    "lp-only-names": 451,
+    "lp-pages": 57
+  },
+  "shape-detection": {
+    "chrome-names": 21,
+    "chrome-only-names": 19,
+    "chrome-pages": 0,
+    "lp-names": 2,
+    "lp-pages": 0
+  },
+  "signed-exchange": {
+    "chrome-names": 3,
+    "chrome-only-names": 1,
+    "chrome-only-pages": 1,
+    "chrome-pages": 3,
+    "lp-names": 2,
+    "lp-pages": 2
+  },
+  "soft-navigation-heuristics": {
+    "chrome-names": 41,
+    "chrome-only-names": 41,
+    "chrome-only-pages": 30,
+    "chrome-pages": 30,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "speculation-rules": {
+    "chrome-names": 152,
+    "chrome-only-names": 151,
+    "chrome-only-pages": 93,
+    "chrome-pages": 94,
+    "lp-names": 1,
+    "lp-pages": 1
+  },
+  "speech-api": {
+    "chrome-names": 4,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 1,
+    "lp-pages": 0
+  },
+  "storage": {
+    "chrome-names": 172,
+    "chrome-only-names": 86,
+    "chrome-only-pages": 17,
+    "chrome-pages": 19,
+    "lp-names": 86,
+    "lp-pages": 2
+  },
+  "storage-access-api": {
+    "chrome-names": 46,
+    "chrome-only-names": 43,
+    "chrome-only-pages": 7,
+    "chrome-pages": 9,
+    "lp-names": 3,
+    "lp-pages": 2
+  },
+  "streams": {
+    "chrome-names": 1875,
+    "chrome-only-names": 117,
+    "chrome-only-pages": 15,
+    "chrome-pages": 93,
+    "lp-names": 1812,
+    "lp-only-names": 54,
+    "lp-only-pages": 4,
+    "lp-pages": 82
+  },
+  "subapps": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "subresource-integrity": {
+    "chrome-names": 145,
+    "chrome-only-names": 70,
+    "chrome-only-pages": 8,
+    "chrome-pages": 11,
+    "lp-names": 75,
+    "lp-pages": 3
+  },
+  "svg": {
+    "chrome-names": 2474,
+    "chrome-only-names": 778,
+    "chrome-only-pages": 197,
+    "chrome-pages": 351,
+    "lp-names": 1754,
+    "lp-only-names": 58,
+    "lp-only-pages": 11,
+    "lp-pages": 165
+  },
+  "svg-aam": {
+    "chrome-names": 22,
+    "chrome-pages": 1,
+    "lp-names": 22,
+    "lp-pages": 1
+  },
+  "timing-entrytypes-registry": {
+    "chrome-names": 4,
+    "chrome-pages": 1,
+    "lp-names": 4,
+    "lp-pages": 1
+  },
+  "touch-events": {
+    "chrome-names": 115,
+    "chrome-only-names": 9,
+    "chrome-only-pages": 1,
+    "chrome-pages": 2,
+    "lp-names": 111,
+    "lp-only-names": 5,
+    "lp-pages": 1
+  },
+  "trust-tokens": {
+    "chrome-names": 7,
+    "chrome-only-names": 6,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 1,
+    "lp-pages": 0
+  },
+  "trusted-types": {
+    "chrome-names": 736,
+    "chrome-only-names": 226,
+    "chrome-only-pages": 32,
+    "chrome-pages": 49,
+    "lp-names": 510,
+    "lp-pages": 17
+  },
+  "ua-client-hints": {
+    "chrome-names": 8,
+    "chrome-only-names": 8,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "uievents": {
+    "chrome-names": 240,
+    "chrome-only-names": 25,
+    "chrome-only-pages": 4,
+    "chrome-pages": 26,
+    "lp-names": 222,
+    "lp-only-names": 7,
+    "lp-pages": 22
+  },
+  "upgrade-insecure-requests": {
+    "chrome-names": 234,
+    "chrome-only-names": 137,
+    "chrome-only-pages": 25,
+    "chrome-pages": 44,
+    "lp-names": 109,
+    "lp-only-names": 12,
+    "lp-only-pages": 2,
+    "lp-pages": 21
+  },
+  "url": {
+    "chrome-names": 4632,
+    "chrome-pages": 17,
+    "lp-names": 4897,
+    "lp-only-names": 265,
+    "lp-only-pages": 11,
+    "lp-pages": 28
+  },
+  "urlpattern": {
+    "chrome-names": 2257,
+    "chrome-pages": 12,
+    "lp-names": 2257,
+    "lp-pages": 12
+  },
+  "user-timing": {
+    "chrome-names": 254,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 3,
+    "chrome-pages": 18,
+    "lp-names": 251,
+    "lp-pages": 15
+  },
+  "vibration": {
+    "chrome-names": 17,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 14,
+    "lp-pages": 0
+  },
+  "video-rvfc": {
+    "chrome-names": 5,
+    "chrome-only-names": 2,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 3,
+    "lp-pages": 0
+  },
+  "viewport-segments": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "visual-viewport": {
+    "chrome-names": 17,
+    "chrome-only-names": 3,
+    "chrome-only-pages": 2,
+    "chrome-pages": 8,
+    "lp-names": 14,
+    "lp-pages": 6
+  },
+  "wai-aria": {
+    "chrome-names": 116,
+    "chrome-pages": 7,
+    "lp-names": 116,
+    "lp-pages": 7
+  },
+  "wasm": {
+    "chrome-names": 17,
+    "chrome-pages": 3,
+    "lp-names": 17,
+    "lp-pages": 3
+  },
+  "web-animations": {
+    "chrome-names": 2210,
+    "chrome-only-names": 148,
+    "chrome-only-pages": 12,
+    "chrome-pages": 43,
+    "lp-names": 2097,
+    "lp-only-names": 35,
+    "lp-only-pages": 4,
+    "lp-pages": 35
+  },
+  "web-based-payment-handler": {
+    "chrome-names": 65,
+    "chrome-only-names": 26,
+    "chrome-only-pages": 6,
+    "chrome-pages": 8,
+    "lp-names": 39,
+    "lp-pages": 2
+  },
+  "web-bundle": {
+    "chrome-names": 9,
+    "chrome-only-names": 9,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "web-install": {
+    "chrome-names": 4,
+    "chrome-only-names": 4,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "web-locks": {
+    "chrome-names": 206,
+    "chrome-only-names": 112,
+    "chrome-only-pages": 19,
+    "chrome-pages": 27,
+    "lp-names": 95,
+    "lp-only-names": 1,
+    "lp-only-pages": 1,
+    "lp-pages": 9
+  },
+  "web-nfc": {
+    "chrome-names": 2,
+    "chrome-pages": 0,
+    "lp-names": 2,
+    "lp-pages": 0
+  },
+  "web-share": {
+    "chrome-names": 19,
+    "chrome-only-names": 18,
+    "chrome-only-pages": 6,
+    "chrome-pages": 6,
+    "lp-names": 1,
+    "lp-pages": 0
+  },
+  "webaudio": {
+    "chrome-names": 3068,
+    "chrome-only-names": 881,
+    "chrome-only-pages": 76,
+    "chrome-pages": 150,
+    "lp-names": 2341,
+    "lp-only-names": 154,
+    "lp-only-pages": 3,
+    "lp-pages": 77
+  },
+  "webauthn": {
+    "chrome-names": 7,
+    "chrome-only-names": 6,
+    "chrome-only-pages": 1,
+    "chrome-pages": 2,
+    "lp-names": 1,
+    "lp-pages": 1
+  },
+  "webcodecs": {
+    "chrome-names": 1410,
+    "chrome-only-names": 956,
+    "chrome-only-pages": 89,
+    "chrome-pages": 94,
+    "lp-names": 513,
+    "lp-only-names": 59,
+    "lp-only-pages": 2,
+    "lp-pages": 7
+  },
+  "webgl": {
+    "chrome-names": 2118,
+    "chrome-only-names": 2114,
+    "chrome-only-pages": 7,
+    "chrome-pages": 7,
+    "lp-names": 4,
+    "lp-pages": 0
+  },
+  "webhid": {
+    "chrome-names": 78,
+    "chrome-only-names": 56,
+    "chrome-only-pages": 1,
+    "chrome-pages": 2,
+    "lp-names": 22,
+    "lp-pages": 1
+  },
+  "webidl": {
+    "chrome-names": 137,
+    "chrome-only-names": 19,
+    "chrome-only-pages": 6,
+    "chrome-pages": 16,
+    "lp-names": 122,
+    "lp-only-names": 4,
+    "lp-only-pages": 2,
+    "lp-pages": 12
+  },
+  "webmcp": {
+    "chrome-names": 2,
+    "chrome-pages": 1,
+    "lp-names": 2,
+    "lp-pages": 1
+  },
+  "webmessaging": {
+    "chrome-names": 82,
+    "chrome-only-names": 14,
+    "chrome-only-pages": 9,
+    "chrome-pages": 51,
+    "lp-names": 68,
+    "lp-pages": 42
+  },
+  "webnn": {
+    "chrome-names": 4728,
+    "chrome-only-names": 4480,
+    "chrome-only-pages": 196,
+    "chrome-pages": 197,
+    "lp-names": 248,
+    "lp-pages": 1
+  },
+  "webrtc": {
+    "chrome-names": 947,
+    "chrome-only-names": 927,
+    "chrome-only-pages": 58,
+    "chrome-pages": 59,
+    "lp-names": 20,
+    "lp-pages": 1
+  },
+  "webrtc-encoded-transform": {
+    "chrome-names": 18,
+    "chrome-only-names": 11,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 7,
+    "lp-pages": 0
+  },
+  "webrtc-extensions": {
+    "chrome-names": 19,
+    "chrome-only-names": 19,
+    "chrome-only-pages": 2,
+    "chrome-pages": 2,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "webrtc-identity": {
+    "chrome-names": 22,
+    "chrome-only-names": 1,
+    "chrome-pages": 0,
+    "lp-names": 21,
+    "lp-pages": 0
+  },
+  "webrtc-priority": {
+    "chrome-names": 0,
+    "chrome-pages": 0,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "webrtc-stats": {
+    "chrome-names": 9,
+    "chrome-only-names": 7,
+    "chrome-only-pages": 2,
+    "chrome-pages": 3,
+    "lp-names": 2,
+    "lp-pages": 1
+  },
+  "webrtc-svc": {
+    "chrome-names": 11,
+    "chrome-only-names": 11,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 0,
+    "lp-pages": 0
+  },
+  "websockets": {
+    "chrome-names": 749,
+    "chrome-only-names": 165,
+    "chrome-only-pages": 21,
+    "chrome-pages": 207,
+    "lp-names": 598,
+    "lp-only-names": 14,
+    "lp-only-pages": 8,
+    "lp-pages": 194
+  },
+  "webstorage": {
+    "chrome-names": 34,
+    "chrome-only-names": 2,
+    "chrome-only-pages": 2,
+    "chrome-pages": 18,
+    "lp-names": 32,
+    "lp-pages": 16
+  },
+  "webtransport": {
+    "chrome-names": 143,
+    "chrome-only-names": 141,
+    "chrome-only-pages": 1,
+    "chrome-pages": 1,
+    "lp-names": 2,
+    "lp-pages": 0
+  },
+  "webusb": {
+    "chrome-names": 404,
+    "chrome-only-names": 358,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 46,
+    "lp-pages": 0
+  },
+  "webvtt": {
+    "chrome-names": 98,
+    "chrome-only-names": 92,
+    "chrome-only-pages": 14,
+    "chrome-pages": 14,
+    "lp-names": 6,
+    "lp-pages": 0
+  },
+  "webxr": {
+    "chrome-names": 192,
+    "chrome-only-names": 156,
+    "chrome-only-pages": 3,
+    "chrome-pages": 3,
+    "lp-names": 36,
+    "lp-pages": 0
+  },
+  "workers": {
+    "chrome-names": 483,
+    "chrome-only-names": 123,
+    "chrome-only-pages": 32,
+    "chrome-pages": 100,
+    "lp-names": 365,
+    "lp-only-names": 5,
+    "lp-only-pages": 4,
+    "lp-pages": 72
+  },
+  "worklets": {
+    "chrome-names": 96,
+    "chrome-only-names": 69,
+    "chrome-only-pages": 5,
+    "chrome-pages": 5,
+    "lp-names": 27,
+    "lp-pages": 0
+  },
+  "x-frame-options": {
+    "chrome-names": 18,
+    "chrome-pages": 1,
+    "lp-names": 18,
+    "lp-pages": 1
+  },
+  "xhr": {
+    "chrome-names": 590,
+    "chrome-only-names": 31,
+    "chrome-only-pages": 10,
+    "chrome-pages": 127,
+    "lp-names": 560,
+    "lp-only-names": 1,
+    "lp-only-pages": 1,
+    "lp-pages": 118
+  },
+  "xml": {
+    "chrome-names": 4,
+    "chrome-pages": 1,
+    "lp-names": 4,
+    "lp-pages": 1
+  }
+}
