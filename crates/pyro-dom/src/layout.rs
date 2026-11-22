@@ -2638,7 +2638,26 @@ impl Layout {
     /// `document.elementFromPoint(x, y)` (Document.zig:953-1032), viewport
     /// coordinates.
     pub fn element_from_point(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        let hit = self.element_from_point_impl(dom, x, y, false)?;
+        Some(self.image_map_area(dom, hit, x, y).unwrap_or(hit))
+    }
+
+    /// pyro: [`Layout::element_from_point`] without image maps: the element whose box holds the
+    /// point (an image, never its map's boxless `area`), for caret positions.
+    pub fn box_from_point(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
         self.element_from_point_impl(dom, x, y, false)
+    }
+
+    /// pyro: the `area` of the image map of `img` (the hit) under viewport point (`x`, `y`) (HTML
+    /// § 4.8.14, Blink `LayoutImage` hit testing). Not yet through a transform of the image.
+    fn image_map_area(&self, dom: &Dom, img: NodeId, x: f64, y: f64) -> Option<NodeId> {
+        let map = crate::image_map::image_map(dom, img)?;
+        let rect = self.client_rect(dom, img)?;
+        let (ox, oy) = self.content_offset(dom, img)?;
+        let (w, h) = self.content_size(dom, img)?;
+        // Relative to the content box but not clipped to it (Blink `LayoutImage::NodeAtPoint`): an
+        // area reaching outside it holds points in the padding and border.
+        crate::image_map::area_at(dom, map, x - rect.x - ox, y - rect.y - oy, (w, h))
     }
 
     /// Hit test on the vertical axis only (Document.zig:960-962), for
@@ -2651,7 +2670,11 @@ impl Layout {
     /// and its hit-testable ancestors, always ending with the root.
     pub fn elements_from_point(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
         let mut out = Vec::new();
-        let mut cur = self.element_from_point(dom, x, y);
+        let mut cur = self.element_from_point_impl(dom, x, y, false);
+        // pyro: an image map's area comes first, then the image and its ancestors.
+        if let Some(area) = cur.and_then(|img| self.image_map_area(dom, img, x, y)) {
+            out.push(area);
+        }
         while let Some(el) = cur {
             // Flat-tree ancestors: a slottable's slot (boxless, so not
             // listed), a shadow root's host.

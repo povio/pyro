@@ -4322,6 +4322,37 @@ fn atomic_inline_in_an_inline_element_is_hit_over_it() {
     }
 }
 
+/// Image maps (HTML § 4.8.14, WPT image-maps/hash-name-reference.html and
+/// the-area-element/area-coords.html): a point over an `img` whose `usemap`
+/// names a `map` (text after the first `#`, by `name` or `id`, first in tree
+/// order, case-sensitive) hits the map's `area` holding it in the image's
+/// content box, coordinates parsed as Blink's list of floating-point numbers.
+#[test]
+fn image_map_areas_are_hit_over_their_image() {
+    let p = page(concat!(
+        "<!doctype html><body style=\"margin:0\">",
+        "<img id=i1 data-natural=\"300,50\" style=\"display:block;width:300px;height:50px\" usemap=\" #m1\">",
+        "<map id=m1><area id=a1 coords=\"='2;2 10cm,10%' \"></map><map name=m1><area id=b1 shape=default></map>",
+        "<img id=i2 data-natural=\"300,50\" style=\"display:block;width:300px;height:50px\" usemap=\"#M2\">",
+        "<map name=m2><area id=a2 shape=default></map>",
+        "<img id=i3 data-natural=\"300,50\" style=\"display:block;width:300px;height:50px;border:5px solid;padding:5px\" usemap=\"x#m3\">",
+        "<map name=m3><area id=a3 shape=CIRC coords=\"20,20,10\"></map>",
+        "</body>"
+    ));
+    let at = |id: &str, dx: f64, dy: f64| {
+        let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
+        p.layout.element_from_point(&p.dom, r.x + dx, r.y + dy)
+    };
+    assert_eq!(at("i1", 3.0, 3.0), Some(p.id("a1")), "rect area by id, first map in tree order");
+    assert_eq!(at("i1", 11.0, 3.0), Some(p.id("i1")), "outside the rect: the image");
+    assert_eq!(at("i2", 3.0, 3.0), Some(p.id("i2")), "usemap matches case-sensitively");
+    assert_eq!(at("i3", 30.0, 30.0), Some(p.id("a3")), "circle in content-box coordinates");
+    assert_eq!(at("i3", 3.0, 3.0), Some(p.id("i3")), "outside the circle, in the border: the image");
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("i1"));
+    let chain = p.layout.elements_from_point(&p.dom, r.x + 3.0, r.y + 3.0);
+    assert_eq!(&chain[..2], &[p.id("a1"), p.id("i1")]);
+}
+
 /// Chat-composer autosize variants: the textarea is a flex item of a column
 /// with `min-height: 0`, border-box with padding at `height: 0`, empty with
 /// only a placeholder, or inside a `display: none` parent that is shown

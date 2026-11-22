@@ -636,6 +636,12 @@ pub fn hit_test(page: &PageDom, x: f64, y: f64) -> Option<NodeId> {
     page.layout().element_from_point(&page.dom.borrow(), x, y)
 }
 
+/// [`hit_test`] without image maps: the element whose box holds the point
+/// (a usemap image, not its `area`).
+pub fn hit_test_box(page: &PageDom, x: f64, y: f64) -> Option<NodeId> {
+    page.layout().box_from_point(&page.dom.borrow(), x, y)
+}
+
 pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(2, "Document.elementFromPoint")?;
     let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);

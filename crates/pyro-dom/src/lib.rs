@@ -24,6 +24,7 @@ pub mod iframe;
 mod labels;
 mod window_names;
 pub mod image;
+mod image_map;
 pub mod cssom;
 pub mod custom;
 mod internals;
