@@ -9,7 +9,9 @@ text, and let a fetched module named like an inline identity collide with it.
 JSGlobalContextSetInlineModuleBase (JSModuleLoaderRefPrivate.h) associates an identity with its base
 URL. resolveModuleSpecifier resolves a registered referrer against that base (scopes match it as
 given) and keeps the identity itself when it is loaded as an entry point, so it need not be a URL;
-the text-marker fragment removal is gone.
+the text-marker fragment removal is gone. The identity's source carries the base URL (its stack
+frames and dynamic import() referrer), which the fetch resolution accepts for that identity instead
+of requiring the source URL to equal the key.
 
 diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
 --- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
@@ -48,7 +50,18 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScript
      URL resolved = importMap().resolve(specifier, base);
      if (resolved.isValid())
          return resolved.string();
-@@ -566,6 +573,23 @@ bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSS
+@@ -356,7 +363,9 @@ JSPromise* JSAPIGlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JS
+             return encodedJSUndefined();
+         }
+         const String& sourceURL = source->sourceCode().provider()->sourceURL();
+-        if (Identifier::fromString(vm, sourceURL) != moduleKey) [[unlikely]] {
++        // An inline module script's source carries its base URL, not its identity.
++        bool inlineSource = uncheckedDowncast<JSAPIGlobalObject>(globalObject)->isInlineModuleSource(moduleKey.string(), sourceURL);
++        if (!inlineSource && Identifier::fromString(vm, sourceURL) != moduleKey) [[unlikely]] {
+             promise->reject(vm, createTypeError(globalObject, makeString("The same module source was provided for two different identifiers, previously: "_s, sourceURL, " and now: "_s, moduleKey.string())));
+             return encodedJSUndefined();
+         }
+@@ -566,6 +575,23 @@ bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSS
      return !!parsed;
  }
  
@@ -85,17 +98,22 @@ diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCo
  
  OBJC_CLASS JSScript;
  
-@@ -70,6 +72,9 @@ public:
+@@ -70,6 +72,14 @@ public:
      // From the first import map on, specifiers resolve through importMap().
      void didAddImportMap() { m_hasImportMap = true; }
      std::expected<String, String> resolveModuleSpecifier(const String& specifier, const String& referrer);
 +    // Inline module scripts (JSGlobalContextSetInlineModuleBase).
 +    void setInlineModuleBase(const String& identifier, const String& baseURL) { m_inlineModuleBases.set(identifier, baseURL); }
 +    void removeInlineModuleBase(const String& identifier) { m_inlineModuleBases.remove(identifier); }
++    bool isInlineModuleSource(const String& identifier, const String& sourceURL) const
++    {
++        auto base = m_inlineModuleBases.find(identifier);
++        return base != m_inlineModuleBases.end() && base->value == sourceURL;
++    }
      // String compilation hooks (JSForkPrivate.h): a JSCodeForEvalCallback and a
      // JSCanCompileStringsCallback.
      void setCompileStringsCallbacks(void* codeForEval, void* canCompileStrings)
-@@ -110,6 +115,7 @@ private:
+@@ -110,6 +120,7 @@ private:
      void* m_moduleLoaderInfo { nullptr };
      void* m_moduleBaseURLCallback { nullptr };
      bool m_hasImportMap { false };

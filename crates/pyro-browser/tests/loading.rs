@@ -154,7 +154,8 @@ fn inline_module_scripts_resolve_against_their_base_url() {
         ("/x-top.js", "export const v = 'top';"),
         ("/x-frag.js", "export const v = 'frag';"),
         ("/x-ext.js", "export const v = 'ext';"),
-        ("/marked.js", "import { v } from 'x'; console.log('ext', import.meta.url, v)"),
+        // StaticLoader matches the request URL as given, fragment included.
+        ("/marked.js#inline-module-authored", "import { v } from 'x'; console.log('ext', import.meta.url, v)"),
     ] {
         let mime = if path == "/" { "text/html" } else { "text/javascript" };
         loader.insert(&format!("http://site.test{path}"), mime, body, Duration::ZERO);
