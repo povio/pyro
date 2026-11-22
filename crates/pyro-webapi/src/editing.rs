@@ -1638,7 +1638,39 @@ const DROPPED_ON_INSERT: &[&str] = &["script", "style", "meta", "link", "title",
 /// With `sanitize` (paste), event handler attributes and `javascript:` URLs
 /// are dropped too, as Chromium sanitizes pasted markup: the clipboard may
 /// hold markup another page wrote.
-fn insert_fragment(dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId, sanitize: bool) -> Point {
+fn html_fragment_boundary(
+    page: &PageDom, dom: &mut Dom, host: NodeId, parent: NodeId, before: Option<NodeId>,
+) -> Option<(NodeId, Option<NodeId>)> {
+    let mut outer = parent;
+    while outer != host && dom.element(outer).ok()?.is_html()
+        && page.layout().computed_style_value(dom, outer, "display") == "inline"
+    {
+        let formatting = match local(dom, outer).as_str() {
+            "b" | "strong" | "i" | "em" | "s" | "strike" | "sub" | "sup" | "u" | "font" => true,
+            "span" => dom.get_attribute(outer, "style").ok()?.is_some(),
+            _ => false,
+        };
+        if !formatting { break; }
+        outer = dom.parent_element(outer).ok()??;
+    }
+    let mut reference = before;
+    if outer != parent {
+        let edge = before.or_else(|| dom.last_child(parent).ok().flatten())?;
+        let sibling = crate::edit_commands::alignment::split_edge(dom, outer, edge, before.is_none(), &mut [])?;
+        reference = if before.is_some() { Some(sibling) } else { dom.next_sibling(sibling).ok()? };
+    }
+    // At either end of a link the inserted fragment belongs outside it.
+    if outer != host && local(dom, outer) == "a" {
+        let start = reference.is_some() && reference == dom.first_child(outer).ok()?;
+        if start || reference.is_none() {
+            reference = if start { Some(outer) } else { dom.next_sibling(outer).ok()? };
+            outer = dom.parent_element(outer).ok()??;
+        }
+    }
+    Some((outer, reference))
+}
+
+fn insert_fragment(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId, sanitize: bool) -> Point {
     let drop: Vec<NodeId> = dom
         .descendants(frag)
         .map(|d| d.filter(|&n| DROPPED_ON_INSERT.contains(&local(dom, n).as_str())).collect())
@@ -1694,6 +1726,9 @@ fn insert_fragment(dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId, sani
     } else {
         (caret.0, dom.child_at(caret.0, caret.1).ok().flatten())
     };
+    let (parent, before) = if !sanitize && kids.iter().all(|&n| is_text(dom, n) || !is_block(dom, n)) {
+        html_fragment_boundary(page, dom, host, parent, before).unwrap_or((parent, before))
+    } else { (parent, before) };
     // Content replaces an empty block's placeholder <br>.
     let placeholder =
         before.filter(|&b| local(dom, b) == "br" && dom.child_count(parent).unwrap_or(0) == 1 && parent != host);
@@ -1893,7 +1928,7 @@ pub(crate) fn insert_html(page: &Rc<PageDom>, host: NodeId, html: &str, input_ty
             let context = if is_text(&dom, caret.0) { dom.parent(caret.0).ok().flatten() } else { Some(caret.0) };
             let context = context.filter(|&c| dom.node_type(c).ok() == Some(NodeType::Element)).unwrap_or(host);
             match pyro_dom::parse::parse_fragment(&mut dom, context, html) {
-                Ok(frag) => insert_fragment(&mut dom, host, caret, frag, false),
+                Ok(frag) => insert_fragment(page, &mut dom, host, caret, frag, false),
                 Err(_) => caret,
             }
         };
@@ -1925,7 +1960,7 @@ pub(crate) fn insert_pasted(
                         if is_text(&dom, caret.0) { dom.parent(caret.0).ok().flatten() } else { Some(caret.0) };
                     let context = context.filter(|&c| dom.node_type(c).ok() == Some(NodeType::Element)).unwrap_or(host);
                     match pyro_dom::parse::parse_fragment(&mut dom, context, html) {
-                        Ok(frag) => insert_fragment(&mut dom, host, caret, frag, true),
+                        Ok(frag) => insert_fragment(page, &mut dom, host, caret, frag, true),
                         Err(_) => caret,
                     }
                 }

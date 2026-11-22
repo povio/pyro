@@ -14,7 +14,7 @@
 //! modifiers take the existing paths, and the undo history is touched only
 //! by edits the user (or execCommand) makes.
 
-mod alignment;
+pub(crate) mod alignment;
 mod decoration;
 mod indentation;
 pub(crate) mod inline_value;

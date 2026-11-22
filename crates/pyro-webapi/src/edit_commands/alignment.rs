@@ -235,7 +235,7 @@ fn remap(point: &mut Point, host: NodeId, wrapper: NodeId, start: u32, count: u3
 
 /// Split the inline containers at an edge of the line. The original keeps
 /// its ID and the cloned right-hand portion keeps the remaining attributes.
-pub(super) fn split_edge(dom: &mut Dom, block: NodeId, mut edge: NodeId, after: bool, points: &mut [Point; 2]) -> Option<NodeId> {
+pub(crate) fn split_edge(dom: &mut Dom, block: NodeId, mut edge: NodeId, after: bool, points: &mut [Point]) -> Option<NodeId> {
     while let Some(parent) = dom.parent(edge).ok()? {
         if parent == block {
             return Some(edge);
