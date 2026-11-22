@@ -2072,6 +2072,67 @@ impl Node {
                 }
             }
 
+            // pyro: `align` on embedded content and images (HTML § 15.4.3) maps "top",
+            // "absmiddle", "abscenter" and "absbottom", ASCII case-insensitively, to
+            // `vertical-align` (top, middle, bottom), pushed as its three longhands.
+            if *name == local_name!("align")
+                && elem.name.ns == ns!(html)
+                && (matches!(
+                    *tag,
+                    local_name!("img") | local_name!("iframe") | local_name!("embed") | local_name!("object")
+                ) || is_image_input)
+            {
+                use style::values::generics::box_::BaselineShiftKeyword;
+                use style::values::specified::{AlignmentBaseline, BaselineShift, BaselineSource};
+                let longhands = if value.eq_ignore_ascii_case("top") {
+                    Some((AlignmentBaseline::Baseline, BaselineShift::Keyword(BaselineShiftKeyword::Top)))
+                } else if value.eq_ignore_ascii_case("absmiddle") || value.eq_ignore_ascii_case("abscenter") {
+                    Some((AlignmentBaseline::VerticalAlignMiddle, BaselineShift::zero()))
+                } else if value.eq_ignore_ascii_case("absbottom") {
+                    Some((AlignmentBaseline::Baseline, BaselineShift::Keyword(BaselineShiftKeyword::Bottom)))
+                } else {
+                    None
+                };
+                if let Some((alignment_baseline, baseline_shift)) = longhands {
+                    push_style(PropertyDeclaration::BaselineSource(BaselineSource::Auto));
+                    push_style(PropertyDeclaration::AlignmentBaseline(alignment_baseline));
+                    push_style(PropertyDeclaration::BaselineShift(baseline_shift));
+                }
+            }
+
+            // pyro: `type` on `ol`, `ul` and `li` maps to `list-style-type` (HTML § 15.3.8):
+            // "1", "a", "A", "i" and "I" (`ol`, `li`) case-sensitively; "none", "disc",
+            // "circle" and "square" (`ul`, `li`) ASCII case-insensitively.
+            if *name == local_name!("type")
+                && elem.name.ns == ns!(html)
+                && matches!(*tag, local_name!("ol") | local_name!("ul") | local_name!("li"))
+            {
+                let numbered = *tag != local_name!("ul");
+                let bulleted = *tag != local_name!("ol");
+                let named = match value {
+                    "1" if numbered => Some("decimal"),
+                    "a" if numbered => Some("lower-alpha"),
+                    "A" if numbered => Some("upper-alpha"),
+                    "i" if numbered => Some("lower-roman"),
+                    "I" if numbered => Some("upper-roman"),
+                    v if bulleted && v.eq_ignore_ascii_case("none") => Some("none"),
+                    v if bulleted && v.eq_ignore_ascii_case("disc") => Some("disc"),
+                    v if bulleted && v.eq_ignore_ascii_case("circle") => Some("circle"),
+                    v if bulleted && v.eq_ignore_ascii_case("square") => Some("square"),
+                    _ => None,
+                };
+                if let Some(named) = named {
+                    use style::counter_style::CounterStyle;
+                    use style::values::specified::ListStyleType;
+                    let value = if named == "none" {
+                        ListStyleType::none()
+                    } else {
+                        ListStyleType(CounterStyle::Name(style::values::CustomIdent(style::Atom::from(named))))
+                    };
+                    push_style(PropertyDeclaration::ListStyleType(value));
+                }
+            }
+
             // `valign` on HTML table row groups, rows and cells maps to
             // `vertical-align`, matched ASCII case-insensitively. `vertical-align`
             // is a shorthand in Stylo, so push the three longhands each keyword

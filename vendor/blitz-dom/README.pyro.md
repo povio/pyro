@@ -159,6 +159,10 @@ attributes and the `<style>` sheets inside the SVG, but never saw the page's she
   shape written as the SVG element usvg builds the same geometry from (`<circle>`, `<ellipse>`, `<rect>` with
   radii, `<polygon>`); `url(#id)` and `none` are written as they are. `mask-image: url(#mask)` becomes the
   `mask`.
+- `stylo.rs` (`build_presentational_hints`): `type` on `ol`, `ul` and `li` maps to `list-style-type` ("1", "a",
+  "A", "i", "I" case-sensitively; "none", "disc", "circle", "square" ASCII case-insensitively), and `align` on
+  `img`, `iframe`, `embed`, `object` and image inputs maps "top", "absmiddle"/"abscenter" and "absbottom" to
+  `vertical-align` (HTML § 15.3.8, § 15.4.3; WPT html/rendering *-presentational-hints-ascii-case-insensitive).
 - `stylo.rs` (`build_presentational_hints`): an SVG element's `clip-path` and `transform-origin` attributes are
   presentational hints of the CSS properties (Chromium's presentation attributes), so a basic shape, CSS units
   and keywords in them reach usvg as above, and an invalid one (`transform-origin="top 100%"`) is ignored, as in

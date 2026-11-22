@@ -58007,7 +58007,75 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1164,7 +2097,7 @@
+@@ -1139,6 +2072,67 @@
+                 }
+             }
+ 
++            // pyro: `align` on embedded content and images (HTML § 15.4.3) maps "top",
++            // "absmiddle", "abscenter" and "absbottom", ASCII case-insensitively, to
++            // `vertical-align` (top, middle, bottom), pushed as its three longhands.
++            if *name == local_name!("align")
++                && elem.name.ns == ns!(html)
++                && (matches!(
++                    *tag,
++                    local_name!("img") | local_name!("iframe") | local_name!("embed") | local_name!("object")
++                ) || is_image_input)
++            {
++                use style::values::generics::box_::BaselineShiftKeyword;
++                use style::values::specified::{AlignmentBaseline, BaselineShift, BaselineSource};
++                let longhands = if value.eq_ignore_ascii_case("top") {
++                    Some((AlignmentBaseline::Baseline, BaselineShift::Keyword(BaselineShiftKeyword::Top)))
++                } else if value.eq_ignore_ascii_case("absmiddle") || value.eq_ignore_ascii_case("abscenter") {
++                    Some((AlignmentBaseline::VerticalAlignMiddle, BaselineShift::zero()))
++                } else if value.eq_ignore_ascii_case("absbottom") {
++                    Some((AlignmentBaseline::Baseline, BaselineShift::Keyword(BaselineShiftKeyword::Bottom)))
++                } else {
++                    None
++                };
++                if let Some((alignment_baseline, baseline_shift)) = longhands {
++                    push_style(PropertyDeclaration::BaselineSource(BaselineSource::Auto));
++                    push_style(PropertyDeclaration::AlignmentBaseline(alignment_baseline));
++                    push_style(PropertyDeclaration::BaselineShift(baseline_shift));
++                }
++            }
++
++            // pyro: `type` on `ol`, `ul` and `li` maps to `list-style-type` (HTML § 15.3.8):
++            // "1", "a", "A", "i" and "I" (`ol`, `li`) case-sensitively; "none", "disc",
++            // "circle" and "square" (`ul`, `li`) ASCII case-insensitively.
++            if *name == local_name!("type")
++                && elem.name.ns == ns!(html)
++                && matches!(*tag, local_name!("ol") | local_name!("ul") | local_name!("li"))
++            {
++                let numbered = *tag != local_name!("ul");
++                let bulleted = *tag != local_name!("ol");
++                let named = match value {
++                    "1" if numbered => Some("decimal"),
++                    "a" if numbered => Some("lower-alpha"),
++                    "A" if numbered => Some("upper-alpha"),
++                    "i" if numbered => Some("lower-roman"),
++                    "I" if numbered => Some("upper-roman"),
++                    v if bulleted && v.eq_ignore_ascii_case("none") => Some("none"),
++                    v if bulleted && v.eq_ignore_ascii_case("disc") => Some("disc"),
++                    v if bulleted && v.eq_ignore_ascii_case("circle") => Some("circle"),
++                    v if bulleted && v.eq_ignore_ascii_case("square") => Some("square"),
++                    _ => None,
++                };
++                if let Some(named) = named {
++                    use style::counter_style::CounterStyle;
++                    use style::values::specified::ListStyleType;
++                    let value = if named == "none" {
++                        ListStyleType::none()
++                    } else {
++                        ListStyleType(CounterStyle::Name(style::values::CustomIdent(style::Atom::from(named))))
++                    };
++                    push_style(PropertyDeclaration::ListStyleType(value));
++                }
++            }
++
+             // `valign` on HTML table row groups, rows and cells maps to
+             // `vertical-align`, matched ASCII case-insensitively. `vertical-align`
+             // is a shorthand in Stylo, so push the three longhands each keyword
+@@ -1164,7 +2158,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -58016,7 +58084,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2203,9 @@
+@@ -1270,7 +2264,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -58027,7 +58095,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2293,16 @@
+@@ -1358,6 +2354,16 @@
                  }
              }
  
@@ -58044,7 +58112,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2318,59 @@
+@@ -1373,148 +2379,59 @@
              }
          }
  
@@ -58232,7 +58300,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2383,47 @@
+@@ -1527,6 +2444,47 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -58280,7 +58348,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2431,208 @@
+@@ -1534,11 +2492,208 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -58489,7 +58557,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2640,269 @@
+@@ -1546,14 +2701,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -58759,7 +58827,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2946,12 @@
+@@ -1597,6 +3007,12 @@
      }
  }
  
@@ -58772,7 +58840,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3024,41 @@
+@@ -1669,12 +3085,41 @@
                      .push(pe_node_id);
              }
          }
@@ -58814,7 +58882,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3073,46 @@
+@@ -1689,24 +3134,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -58869,7 +58937,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3143,842 @@
+@@ -1737,3 +3204,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
