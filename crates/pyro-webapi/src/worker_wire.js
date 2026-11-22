@@ -60,6 +60,21 @@
     const boxed = {Boolean: Boolean.prototype.valueOf, Number: Number.prototype.valueOf,
         String: String.prototype.valueOf, BigInt: BigInt.prototype.valueOf};
     const call = (fn, self, args = []) => apply(fn, self, args);
+    // A view whose length tracks its resizable buffer's (built without a length) serializes so.
+    // ECMAScript has no getter for that: a view ending at its buffer's end is probed by growing
+    // the buffer by up to 8 bytes and back (at its maximum, it counts as tracking).
+    const abResize = AB.prototype.resize, typedByteLength = getter(typedProto, 'byteLength');
+    function tracksLength(view, buffer, offset, viewBytes) {
+        if (!call(abResizable, buffer)) return false;
+        const length = call(abLength, buffer), before = call(viewBytes, view);
+        const room = call(abMax, buffer) - length;
+        if (length - offset - before >= 8 || length - offset - before < 0) return false;
+        if (room <= 0) return true;
+        call(abResize, buffer, [length + (room < 8 ? room : 8)]);
+        const grew = call(viewBytes, view) !== before;
+        call(abResize, buffer, [length]);
+        return grew;
+    }
     const put = (object, key, value) => define(object, key,
         {value, enumerable: true, writable: true, configurable: true});
     const hide = (object, key, value) => define(object, key, {value, writable: true, configurable: true});
@@ -164,12 +179,16 @@
             if (isView(source)) {
                 const name = call(typedName, source);
                 if (name !== undefined) {
-                    const buffer = node(call(typedBuffer, source));
-                    return '["v",' + stringify(name) + ',' + buffer + ',' + call(typedOffset, source) + ','
-                        + call(typedLength, source) + ']';
+                    const original = call(typedBuffer, source), offset = call(typedOffset, source);
+                    // A length-tracking view's length is null (probed before the buffer is serialized).
+                    const length = tracksLength(source, original, offset, typedByteLength) ? null : call(typedLength, source);
+                    const buffer = node(original);
+                    return '["v",' + stringify(name) + ',' + buffer + ',' + offset + ',' + length + ']';
                 }
-                const buffer = node(call(dvBuffer, source));
-                return '["w",' + buffer + ',' + call(dvOffset, source) + ',' + call(dvLength, source) + ']';
+                const original = call(dvBuffer, source), offset = call(dvOffset, source);
+                const length = tracksLength(source, original, offset, dvLength) ? null : call(dvLength, source);
+                const buffer = node(original);
+                return '["w",' + buffer + ',' + offset + ',' + length + ']';
             }
             // Read native WebCodecs slots without consulting public getters.
             const resource = host(source, 11);
@@ -303,8 +322,10 @@
             switch (tree[0]) {
                 case 'a': return fill(remember(id, new A(tree[1])), tree, 2);
                 case 'o': return fill(remember(id, create(O.prototype)), tree, 1);
-                case 'v': return remember(id, new typed[tree[1]](node(tree[2]), tree[3], tree[4]));
-                case 'w': return remember(id, new DV(node(tree[1]), tree[2], tree[3]));
+                case 'v': return remember(id, tree[4] === null
+                    ? new typed[tree[1]](node(tree[2]), tree[3]) : new typed[tree[1]](node(tree[2]), tree[3], tree[4]));
+                case 'w': return remember(id, tree[3] === null
+                    ? new DV(node(tree[1]), tree[2]) : new DV(node(tree[1]), tree[2], tree[3]));
                 case 'd': return remember(id, new D(node(tree[1])));
                 case 'x': return remember(id, new R(tree[1], tree[2]));
                 case 'f': {

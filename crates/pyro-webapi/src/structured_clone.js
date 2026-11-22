@@ -48,6 +48,22 @@
     const boxed = {Boolean: Boolean.prototype.valueOf, Number: Number.prototype.valueOf,
         String: String.prototype.valueOf, BigInt: BigInt.prototype.valueOf};
     const call = (fn, self, args = []) => apply(fn, self, args);
+    // A view whose length tracks its resizable buffer's (built without a length) serializes so.
+    // ECMAScript has no getter for that: a view ending at its buffer's end is probed by growing
+    // the buffer by up to 8 bytes and back (at its maximum, it counts as tracking).
+    const abResize = AB.prototype.resize, typedByteLength = getter(typedProto, 'byteLength');
+    function tracksLength(view, buffer, offset, viewBytes) {
+        if (!call(abResizable, buffer)) return false;
+        const length = call(abLength, buffer), before = call(viewBytes, view);
+        const room = call(abMax, buffer) - length;
+        if (length - offset - before >= 8 || length - offset - before < 0) return false;
+        if (room <= 0) return true;
+        call(abResize, buffer, [length + (room < 8 ? room : 8)]);
+        const grew = call(viewBytes, view) !== before;
+        call(abResize, buffer, [length]);
+        return grew;
+    }
+
     const put = (object, key, value) => define(object, key,
         {value, enumerable:true, writable:true, configurable:true});
     const hide = (object, key, value) => define(object, key, {value, writable:true, configurable:true});
@@ -189,14 +205,19 @@
                 const name = call(typedName, source);
                 if (name !== undefined) {
                     try { call(typedValues, source); } catch (_) { fail('Invalid typed array'); }
-                    const buffer = copy(call(typedBuffer, source), depth + 1);
-                    result = new typed[name](buffer, call(typedOffset, source), call(typedLength, source));
+                    const original = call(typedBuffer, source), offset = call(typedOffset, source);
+                    const length = call(typedLength, source);
+                    // Before the buffer is copied (or transferred and detached).
+                    const tracking = tracksLength(source, original, offset, typedByteLength);
+                    const buffer = copy(original, depth + 1);
+                    result = tracking ? new typed[name](buffer, offset) : new typed[name](buffer, offset, length);
                 } else {
                     let buffer, offset, length;
                     try {
                         buffer = call(dvBuffer, source); offset = call(dvOffset, source); length = call(dvLength, source);
                     } catch (_) { fail('Invalid DataView'); }
-                    result = new DV(copy(buffer, depth + 1), offset, length);
+                    const tracking = tracksLength(source, buffer, offset, dvLength);
+                    result = tracking ? new DV(copy(buffer, depth + 1), offset) : new DV(copy(buffer, depth + 1), offset, length);
                 }
                 return remember(source, result);
             } else {
