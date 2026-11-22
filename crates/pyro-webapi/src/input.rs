@@ -862,8 +862,7 @@ fn run_activation_behavior(
                     !inside
                 };
                 if forwarded {
-                    let trusted = ev.state.borrow().is_trusted;
-                    click_with_trust(page, c, trusted);
+                    forward_click(page, c, ev);
                     // Chrome focuses the labeled control with the mouse focus type: no
                     // `:focus-visible` on a checkbox (WPT css/selectors `focus-visible-026`).
                     page.pointer_modality.set(true);
@@ -938,6 +937,17 @@ pub fn element_click(page: &Rc<PageDom>, el: NodeId) {
 /// A click whose `isTrusted` follows the event that caused it (a label
 /// forwarding a user's click to its control, as Chrome does).
 fn click_with_trust(page: &Rc<PageDom>, el: NodeId, trusted: bool) {
+    click_like(page, el, trusted, None);
+}
+
+/// A label's click forwarded to its control: trusted when the user's was,
+/// with its pointer type, id, primariness and click count (as Chrome).
+fn forward_click(page: &Rc<PageDom>, el: NodeId, from: &EventData) {
+    let trusted = from.state.borrow().is_trusted;
+    click_like(page, el, trusted, Some(from));
+}
+
+fn click_like(page: &Rc<PageDom>, el: NodeId, trusted: bool, from: Option<&EventData>) {
     if page.dom.borrow().is_disabled(el).unwrap_or(false) {
         return;
     }
@@ -945,7 +955,17 @@ fn click_with_trust(page: &Rc<PageDom>, el: NodeId, trusted: bool) {
         return; // click in progress flag
     }
     let ev = EventCore::new(page, EventInterface::PointerEvent, "click", true, true, true);
-    ev.fields.borrow_mut().pointer_id = -1;
+    {
+        let mut f = ev.fields.borrow_mut();
+        f.pointer_id = -1;
+        if let Some(from) = from {
+            let src = from.fields.borrow();
+            f.pointer_id = src.pointer_id;
+            f.pointer_type = src.pointer_type.clone();
+            f.is_primary = src.is_primary;
+            f.detail = src.detail;
+        }
+    }
     ev.state.borrow_mut().is_trusted = trusted;
     dispatch_with_activation(page, el, &ev);
     page.end_click(el);
