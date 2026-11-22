@@ -1,0 +1,8 @@
+{"kind":"readable","name":"Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)","status":"Pass"}
+{"kind":"readable","name":"Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)","status":"Pass"}
+{"kind":"readable","name":"Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)","status":"Fail","error":"desiredSize must be calculated using double-precision floating-point arithmetic (subtracting a third chunk)\n+ actual - expected\n\n+ 0\n- -2.2044604925031312e-17\n"}
+{"kind":"readable","name":"Floating point arithmetic must manifest near 0 (total ends up zero)","status":"Pass"}
+{"kind":"writable","name":"Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)","status":"Pass"}
+{"kind":"writable","name":"Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)","status":"Pass"}
+{"kind":"writable","name":"Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)","status":"Fail","error":"desiredSize must be calculated using floating-point arithmetic (after the three chunks have finished writing)\n+ actual - expected\n\n+ 0\n- -2.2044604925031312e-17\n"}
+{"kind":"writable","name":"Floating point arithmetic must manifest near 0 (total ends up zero)","status":"Pass"}
