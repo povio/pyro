@@ -3853,7 +3853,8 @@ fn define_focus_attributes<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, None, "focusgroupstart").js()?.is_some())),
         |_s, n, value| {
             if value.to_bool() {
-                set_attr(n, "focusgroupstart", "")
+                // In no namespace, as the getter reads it.
+                n.page().dom.borrow_mut().set_attribute_ns(n.id, None, "focusgroupstart", "").js()
             } else {
                 n.page().dom.borrow_mut().remove_attribute_ns(n.id, None, "focusgroupstart").js().map(|_| ())
             }

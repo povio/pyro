@@ -862,7 +862,7 @@ impl TokenListData {
                 e.classes().iter().for_each(|c| add(c));
             }
         } else {
-            dom.get_attribute(self.el.id, self.attr)
+            dom.get_attribute_ns(self.el.id, None, self.attr)
                 .ok()
                 .flatten()
                 .unwrap_or("")
@@ -887,24 +887,26 @@ impl TokenListData {
         if self.attr == "class" {
             return Ok(crate::util::class_name(s, dom.element(self.el.id).js()?));
         }
-        Ok(s.string(dom.get_attribute(self.el.id, self.attr).js()?.unwrap_or("")))
+        Ok(s.string(dom.get_attribute_ns(self.el.id, None, self.attr).js()?.unwrap_or("")))
     }
     fn contains(&self, token: &str) -> bool {
         let dom = self.el.page.dom.borrow();
         if self.attr == "class" {
             return dom.element(self.el.id).is_ok_and(|e| e.classes().iter().any(|c| &**c == token));
         }
-        let value = dom.get_attribute(self.el.id, self.attr).ok().flatten().unwrap_or("");
+        let value = dom.get_attribute_ns(self.el.id, None, self.attr).ok().flatten().unwrap_or("");
         value.split_ascii_whitespace().any(|t| t == token)
     }
     /// The "update steps" with `tokens` serialized: an absent attribute
-    /// stays absent for an empty set.
+    /// stays absent for an empty set. The token list's attribute is the one
+    /// in no namespace, read and written (DOM "set an attribute value"): an
+    /// attribute of that name in another namespace is left alone.
     fn write(&self, empty: bool, value: &str) -> JsResult<()> {
         let mut dom = self.el.page.dom.borrow_mut();
-        if empty && !dom.has_attribute(self.el.id, self.attr).js()? {
+        if empty && dom.get_attribute_ns(self.el.id, None, self.attr).js()?.is_none() {
             return Ok(());
         }
-        dom.set_attribute(self.el.id, self.attr, value).js()
+        dom.set_attribute_ns(self.el.id, None, self.attr, value).js()
     }
 }
 
@@ -954,7 +956,9 @@ impl JsClass for DomTokenList {
         def.accessor(
             "value",
             |s, t| t.value(s),
-            |_s, t, v| with_str(v, |value| t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, value).js()),
+            |_s, t, v| {
+                with_str(v, |value| t.el.page.dom.borrow_mut().set_attribute_ns(t.el.id, None, t.attr, value).js())
+            },
         );
         def.pure_method("toString", 0, |s, t, _a| t.value(s));
         def.pure_method("item", 1, |s, t, a| {
