@@ -1419,7 +1419,7 @@ fn focusgroup_key_action(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool 
             _ if forward => FocusgroupMove::Next { inline },
             _ => FocusgroupMove::Previous { inline },
         };
-        dom.focusgroup_move_target(target, mv, &|n| is_focusable_area(&layout, &dom, n))
+        dom.focusgroup_move_target(target, mv, &|n| is_focusable_area(&layout, &dom, n), Some(&layout))
     };
     match next {
         Some(n) => {

@@ -97,6 +97,29 @@ impl Dom {
     }
 }
 
+/// The reading-flow order of an element's children, as sequential
+/// navigation sees it (scoped focusgroups use it for their item order).
+/// Readbacks are cached for the life of the value.
+pub(crate) struct ReadingOrder<'a>(FocusNavigation<'a>);
+
+impl<'a> ReadingOrder<'a> {
+    pub(crate) fn new(dom: &'a Dom, layout: &'a crate::layout::Layout) -> Self {
+        Self(FocusNavigation::new(dom, Some(layout)))
+    }
+
+    /// Reorders `children` (flat-tree children of `parent`) into reading
+    /// order when `parent` is a reading-flow container; leaves them alone
+    /// otherwise. Non-element children are dropped from a reordered list.
+    pub(crate) fn sort(&self, parent: u32, children: &mut Vec<u32>) {
+        let flow = self.0.flow(parent);
+        if flow == ReadingFlow::Normal {
+            return;
+        }
+        children.retain(|&i| self.0.n(i).is_element());
+        self.0.order_roots(parent, children, flow);
+    }
+}
+
 use style::values::computed::ReadingFlow;
 use style::values::specified::box_::{DisplayInside, DisplayOutside};
 use rustc_hash::FxHashMap;

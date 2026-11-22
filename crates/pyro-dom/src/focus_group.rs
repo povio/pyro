@@ -11,7 +11,8 @@
 //! / `nowrap` override the behaviour's wrapping and `nomemory` turns off
 //! the last-focused memory used for the group's tab stop.
 //!
-//! An owner's items are the focusable elements of its flat-tree subtree,
+//! An owner's items are the focusable elements of its flat-tree subtree
+//! (children of reading-flow containers in reading order),
 //! not looking into opted-out subtrees nor into nested owners (a focusable
 //! nested owner is itself an item of the outer group). Directional input
 //! only moves between items that are sequentially focusable (tabindex not
@@ -184,9 +185,26 @@ impl Dom {
     /// in an opted-out subtree nor inside a nested owner (`area` decides
     /// focusability afterwards).
     pub fn focusgroup_items(&self, owner: NodeId, area: &dyn Fn(NodeId) -> bool) -> Vec<NodeId> {
+        self.focusgroup_items_in_order(owner, area, None)
+    }
+
+    /// [`Dom::focusgroup_items`] in reading order: children of a
+    /// reading-flow container (`reading-flow: flex-visual` and the like)
+    /// come in the order sequential navigation uses for them.
+    pub fn focusgroup_items_in_order(
+        &self, owner: NodeId, area: &dyn Fn(NodeId) -> bool, layout: Option<&crate::layout::Layout>,
+    ) -> Vec<NodeId> {
         let Ok(o) = self.check(owner) else { return Vec::new() };
+        let order = layout.map(|l| crate::focus_nav::ReadingOrder::new(self, l));
+        let children = |i: u32| {
+            let mut kids = self.focusgroup_flat_children(i);
+            if let Some(order) = &order {
+                order.sort(i, &mut kids);
+            }
+            kids
+        };
         let mut out = Vec::new();
-        let mut stack: Vec<u32> = self.focusgroup_flat_children(o).into_iter().rev().collect();
+        let mut stack: Vec<u32> = children(o).into_iter().rev().collect();
         while let Some(i) = stack.pop() {
             if !self.n(i).is_element() {
                 continue;
@@ -202,7 +220,7 @@ impl Dom {
                 continue;
             }
             let at = stack.len();
-            stack.extend(self.focusgroup_flat_children(i));
+            stack.extend(children(i));
             stack[at..].reverse();
         }
         out
@@ -214,9 +232,10 @@ impl Dom {
     /// further item and the group does not wrap.
     pub fn focusgroup_move_target(
         &self, current: NodeId, mv: FocusgroupMove, area: &dyn Fn(NodeId) -> bool,
+        layout: Option<&crate::layout::Layout>,
     ) -> Option<NodeId> {
         let (owner, flags) = self.focusgroup_owner_of(current)?;
-        let mut items = self.focusgroup_items(owner, area);
+        let mut items = self.focusgroup_items_in_order(owner, area, layout);
         if !items.contains(&current) {
             // `current` is focused, so it is an item even when `area` says
             // otherwise (a stale layout); keep its place in tree order.
