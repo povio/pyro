@@ -688,6 +688,44 @@ pub(crate) fn options_set_length(page: &Rc<PageDom>, select: NodeId, v: Value<'_
     Ok(())
 }
 
+/// `form.elements` / `fieldset.elements` (HTML §2.7.2): `namedItem` (and the named getter)
+/// gives the one listed element with that id or name, or a live `RadioNodeList` of several.
+pub struct HtmlFormControlsCollection;
+impl JsClass for HtmlFormControlsCollection {
+    const NAME: &'static str = "HTMLFormControlsCollection";
+    type Data = CollectionData;
+    type Parent = HtmlCollection;
+    fn define(def: &mut ClassDef<Self>) {
+        def.pure_method("namedItem", 1, |s, c, a| {
+            a.require(1, "HTMLFormControlsCollection.namedItem")?;
+            let name = dom_string(a.get(0))?;
+            Ok(controls_named(s, c, &name)?.unwrap_or_else(|| s.null()))
+        });
+        def.named(false, |s, c, name| controls_named(s, c, name));
+    }
+}
+
+fn controls_named<'s>(s: &Scope<'s>, c: &CollectionData, name: &str) -> JsResult<Option<Value<'s>>> {
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let items = c.items();
+    let matches: Vec<NodeId> = {
+        let dom = c.root.page.dom.borrow();
+        items
+            .iter()
+            .copied()
+            .filter(|&n| dom.element(n).is_ok_and(|e| e.id() == Some(name) || (e.is_html() && e.attr("name") == Some(name))))
+            .collect()
+    };
+    match matches[..] {
+        [] => Ok(None),
+        [one] => Ok(Some(wrap_node(s, &c.root.page, one)?.value())),
+        // The listed elements are non-empty: `form_named` gives their RadioNodeList.
+        _ => form_named(s, &c.root.page, c.root.id, name),
+    }
+}
+
 pub struct HtmlOptionsCollection;
 impl JsClass for HtmlOptionsCollection {
     const NAME: &'static str = "HTMLOptionsCollection";
@@ -821,6 +859,7 @@ pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: Collect
     }
     let page = page_rc(s)?;
     let options = kind == CollectionKind::Options;
+    let controls = kind == CollectionKind::FormElements;
     let kind = match kind {
         // DOM "list of elements with qualified name": whether HTML elements
         // are matched against the lowercased name is decided here, by the
@@ -845,6 +884,8 @@ pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: Collect
         CollectionData { root: NodeHold::new(&page, root)?, kind, cache: RefCell::new((u64::MAX, Rc::default())) };
     if options {
         s.wrap::<HtmlOptionsCollection>(data, key)
+    } else if controls {
+        s.wrap::<HtmlFormControlsCollection>(data, key)
     } else {
         s.wrap::<HtmlCollection>(data, key)
     }
@@ -2683,6 +2724,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();
     engine.register::<HtmlOptionsCollection>();
+    engine.register::<HtmlFormControlsCollection>();
     engine.register::<DomTokenList>();
     engine.register::<NamedNodeMap>();
     engine.register::<Attr>();
