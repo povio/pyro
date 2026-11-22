@@ -1294,7 +1294,8 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
                     return true;
                 }
             }
-            if start == end && matches!(tag, "b" | "i" | "sub" | "sup") {
+            if start == end && matches!(tag, "b" | "i" | "sub" | "sup")
+                || tag == "b" && empty_inline_caret(page, &page.dom.borrow(), start, end).is_some() {
                 let enabled = !format_state(page, &cmd).1;
                 inline_value::set_toggle(page, (start, end), tag, enabled);
                 return true;
@@ -3206,8 +3207,59 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
 
 /// (any, all) of the selected text (or the caret's position) has the
 /// inline style of `command`, by computed style as Chromium reads it.
+/// A child range can enclose markup without covering a rendered character.
+/// Use the neighboring text to determine which visible caret it represents.
+fn empty_inline_caret(page: &PageDom, dom: &Dom, start: Point, end: Point) -> Option<(Point, NodeId)> {
+    if start.0 != end.0 || start.1 >= end.1 { return None; }
+    let host = editing::editing_host(dom, start.0)?;
+    let empty = |n| {
+        dom.element(n).is_ok_and(|e| e.is_html() && matches!(&**e.local_name(), "b" | "strong" | "i" | "em" | "span"))
+            && editing::editing_host(dom, n) == Some(host) && !editing::plaintext_at(dom, n)
+            && page.layout().computed_style_value(dom, n, "display") == "inline"
+    };
+    for index in start.1..end.1 {
+        let child = dom.child_at(start.0, index).ok()??;
+        if !empty(child) || !dom.descendants(child).ok()?.all(|n| empty(n) || editing::is_text(dom, n) && editing::len(dom, n) == 0) {
+            return None;
+        }
+    }
+    let before = editing::deep_backward(dom, start);
+    let after = editing::deep_forward(dom, end);
+    [(start, before), (end, after)].into_iter().find_map(|(edge, (n, _))|
+        (editing::is_text(dom, n) && editing::len(dom, n) != 0 && editing::editing_host(dom, n) == Some(host)
+            && alignment::visible(page, dom, n)).then_some((edge, n)))
+}
+
+/// Insert at the visible edge rather than deleting the empty markup that
+/// the original DOM range encloses.
+pub(crate) fn empty_bold_typing_point(page: &PageDom, dom: &Dom, start: Point, end: Point) -> Option<Point> {
+    let enabled = inline_value::toggle_state(page, (start, end), "b")?;
+    let (edge, _) = empty_inline_caret(page, dom, start, end)?;
+    if enabled && !dom.document_data(page.document()).ok()?.style_with_css {
+        let before = edge.1.checked_sub(1).and_then(|i| dom.child_at(edge.0, i).ok().flatten());
+        let after = dom.child_at(edge.0, edge.1).ok()?;
+        for (node, at_end) in [(before, true), (after, false)] {
+            if let Some(b) = node.filter(|&n| local_html(dom, n, "b") && dom.attributes(n).is_ok_and(|a| a.is_empty())
+                && rich_node(dom, n) && numeric_bold_weight(&page.layout().computed_style_value(dom, n, "font-weight"))) {
+                return Some((b, if at_end { editing::len(dom, b) } else { 0 }));
+            }
+        }
+    }
+    Some(edge)
+}
+
 fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
     let Some((start, end)) = editing::selection_range(page) else { return (false, false) };
+    if command == "bold" && start != end {
+        if let Some((_, adjacent)) = empty_inline_caret(page, &page.dom.borrow(), start, end) {
+            let active = inline_value::toggle_state(page, (start, end), "b").unwrap_or_else(|| {
+                let dom = page.dom.borrow();
+                dom.parent_element(adjacent).ok().flatten().is_some_and(|el|
+                    numeric_bold_weight(&page.layout().computed_style_value(&dom, el, "font-weight")))
+            });
+            return (active, active);
+        }
+    }
     if let Some((tag @ ("u" | "strike"), _, _)) = format_of(command) {
         if let Some(active) = inline_value::decoration_state(page, (start, end), tag) {
             return (active, active);

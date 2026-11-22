@@ -1,0 +1,2034 @@
+[
+  {
+    "fixture": {
+      "shape": "b",
+      "css": false,
+      "reverse": false,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "i",
+      "css": false,
+      "reverse": false,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "italic"
+        ],
+        "typedHTML": "foo<i>Q</i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b><i></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b><i></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "bi",
+      "css": false,
+      "reverse": false,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<b><i>Q</i></b>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q<i></i></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q<i></i></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "ib",
+      "css": false,
+      "reverse": false,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<i><b>Q</b></i>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b><i><b></b></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b><i><b></b></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "b",
+      "css": false,
+      "reverse": false,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "i",
+      "css": false,
+      "reverse": false,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "italic"
+        ],
+        "typedHTML": "foo<i>Q</i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "bi",
+      "css": false,
+      "reverse": false,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<b><i>Q</i></b>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b><i></i></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b><i></i></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "ib",
+      "css": false,
+      "reverse": false,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<i><b>Q</b></i>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i><b></b></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i><b></b></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "b",
+      "css": false,
+      "reverse": true,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "i",
+      "css": false,
+      "reverse": true,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "italic"
+        ],
+        "typedHTML": "foo<i>Q</i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b><i></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b><i></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "bi",
+      "css": false,
+      "reverse": true,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<b><i>Q</i></b>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q<i></i></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q<i></i></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "ib",
+      "css": false,
+      "reverse": true,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<i><b>Q</b></i>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b><i><b></b></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b><i><b></b></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "b",
+      "css": false,
+      "reverse": true,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "i",
+      "css": false,
+      "reverse": true,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "italic"
+        ],
+        "typedHTML": "foo<i>Q</i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "bi",
+      "css": false,
+      "reverse": true,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<b><i>Q</i></b>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b><i></i></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b><i></i></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "ib",
+      "css": false,
+      "reverse": true,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<i><b>Q</b></i>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i><b></b></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i><b></b></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "b",
+      "css": true,
+      "reverse": false,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><b></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><b></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "i",
+      "css": true,
+      "reverse": false,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "italic"
+        ],
+        "typedHTML": "foo<i>Q</i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><i></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><i></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "bi",
+      "css": true,
+      "reverse": false,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<b><i>Q</i></b>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><b><i></i></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><b><i></i></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "ib",
+      "css": true,
+      "reverse": false,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<i><b>Q</b></i>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><i><b></b></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><i><b></b></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "b",
+      "css": true,
+      "reverse": false,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "i",
+      "css": true,
+      "reverse": false,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "italic"
+        ],
+        "typedHTML": "foo<i>Q</i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "bi",
+      "css": true,
+      "reverse": false,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<b><i>Q</i></b>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b><i></i></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b><i></i></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "ib",
+      "css": true,
+      "reverse": false,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<i><b>Q</b></i>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i><b></b></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i><b></b></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "b",
+      "css": true,
+      "reverse": true,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><b></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><b></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "i",
+      "css": true,
+      "reverse": true,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "italic"
+        ],
+        "typedHTML": "foo<i>Q</i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><i></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><i></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "bi",
+      "css": true,
+      "reverse": true,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<b><i>Q</i></b>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><b><i></i></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><b><i></i></b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "ib",
+      "css": true,
+      "reverse": true,
+      "repeat": false
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<i><b>Q</b></i>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><i><b></b></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": true,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<span style=\"font-weight: bold;\">Q</span><i><b></b></i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "b",
+      "css": true,
+      "reverse": true,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "normal"
+        ],
+        "typedHTML": "foo<b>Q</b>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "i",
+      "css": true,
+      "reverse": true,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "italic"
+        ],
+        "typedHTML": "foo<i>Q</i>baz",
+        "caret": [
+          [
+            1,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "bi",
+      "css": true,
+      "reverse": true,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<b><i>Q</i></b>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b><i></i></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<b><i></i></b>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  },
+  {
+    "fixture": {
+      "shape": "ib",
+      "css": true,
+      "reverse": true,
+      "repeat": true
+    },
+    "arms": {
+      "parent": {
+        "boldBefore": false,
+        "boldAfter": false,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "700",
+          "italic"
+        ],
+        "typedHTML": "foo<i><b>Q</b></i>baz",
+        "caret": [
+          [
+            1,
+            0,
+            0
+          ],
+          1
+        ]
+      },
+      "candidate": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i><b></b></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      },
+      "signed": {
+        "boldBefore": false,
+        "boldAfter": true,
+        "boldBeforeTyping": false,
+        "typedGlyph": [
+          "Q",
+          "400",
+          "normal"
+        ],
+        "typedHTML": "fooQ<i><b></b></i>baz",
+        "caret": [
+          [
+            1
+          ],
+          1
+        ]
+      }
+    }
+  }
+]
