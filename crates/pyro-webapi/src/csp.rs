@@ -24,7 +24,7 @@ use pyro_net::csp::{CspRequest, Disposition, PolicyList, PolicySource, RequestCs
 
 use crate::page::PageDom;
 
-pub use pyro_net::csp::{ScriptInitiator, BLOCKED_BY_CSP};
+pub use pyro_net::csp::{InlineKind, ScriptInitiator, BLOCKED_BY_CSP};
 
 /// An enforced policy blocked the request (its violations were reported).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +120,51 @@ pub fn check_request_with(
     Ok(Some(RequestCsp::new(list, request)))
 }
 
+/// [`check_request`] for an initiator that hands a blocked request to the client anyway, to
+/// fail through its own network-error path: the guard to set as `Request::csp` (one that blocks
+/// the request when an enforced policy did), `None` without a policy.
+pub fn guard_request(page: &Rc<PageDom>, request: CspRequest, target: Option<NodeId>) -> Option<Arc<RequestCsp>> {
+    let list = policy_list(page)?;
+    let outcome = list.pre_request(&request);
+    report(page, outcome.violations, target);
+    Some(if outcome.blocked { RequestCsp::blocked(list, request) } else { RequestCsp::new(list, request) })
+}
+
+/// CSP3 "Should element's inline type behavior be blocked?" for `page`: an inline `<script>`
+/// (its `nonce`), an event handler attribute, a `javascript:` URL (`source`: the text whose
+/// hash may be listed). Violations at `target`, else the document. Whether it may run.
+pub fn inline_allowed(page: &Rc<PageDom>, kind: InlineKind, nonce: &str, source: &str, target: Option<NodeId>) -> bool {
+    let Some(list) = policy_list(page) else { return true };
+    let outcome = list.inline_check(kind, nonce, source);
+    report(page, outcome.violations, target);
+    !outcome.blocked
+}
+
+/// CSP3 "EnsureCSPDoesNotBlockStringCompilation" for `page`: `eval`, `Function` (`source`: the
+/// compiled string). Violations at the document. Whether it may compile.
+pub fn eval_allowed(page: &Rc<PageDom>, source: &str) -> bool {
+    let Some(list) = policy_list(page) else { return true };
+    let outcome = list.eval_check(source);
+    report(page, outcome.violations, None);
+    !outcome.blocked
+}
+
+/// Whether `page`'s policies make string compilation need a check: 2 when an enforced policy
+/// lacks `'unsafe-eval'` for `script-src` (or `default-src`), 1 when only report-only ones do,
+/// else 0 (the Trusted Types compile hooks' levels).
+pub(crate) fn eval_level(page: &PageDom) -> u8 {
+    let Some(list) = policy_list(page) else { return 0 };
+    let mut level = 0;
+    for policy in &list.policies {
+        let Some(directive) = policy.directive_for("script-src") else { continue };
+        if directive.value.iter().any(|v| v.eq_ignore_ascii_case("'unsafe-eval'")) {
+            continue;
+        }
+        level = level.max(if policy.disposition == Disposition::Report { 1 } else { 2 });
+    }
+    level
+}
+
 /// After a request that carried `guard` ended (or failed): reports the violations its redirect
 /// checks found.
 pub fn report_guard(page: &Rc<PageDom>, guard: Option<&Arc<RequestCsp>>, target: Option<NodeId>) {
@@ -197,7 +242,8 @@ pub(crate) fn take_next_fetch_dest() -> Option<RequestDest> {
 /// The CSP destination of a script fetch made by the engine for a module of `ty`.
 pub fn module_dest(ty: pyro_js::ModuleType) -> RequestDest {
     match ty {
-        pyro_js::ModuleType::Json => RequestDest::Json,
+        // JSON and text modules: connect-src.
+        pyro_js::ModuleType::Json | pyro_js::ModuleType::Text => RequestDest::Json,
         pyro_js::ModuleType::Css => RequestDest::Style,
         _ => RequestDest::Script,
     }

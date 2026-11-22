@@ -211,6 +211,12 @@ pub(crate) fn content_attribute_changed(
     }
     let handler: Value<'_> = match body {
         Some(body) => {
+            // CSP `script-src-attr` (a listed hash of the body counts with 'unsafe-hashes'): a
+            // blocked handler is not installed; the violation is at the element.
+            let element = target.page.dom.borrow().key_node(target.key);
+            if !crate::csp::inline_allowed(&target.page, crate::csp::InlineKind::ScriptAttribute, "", body, element) {
+                return set_event_handler(s, target, ty, s.null());
+            }
             let ctor = s.global().get_atom("Function")?;
             // HTML "getting the current value of the event handler": the
             // document, form owner and element are on the scope chain.
