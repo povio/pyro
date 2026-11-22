@@ -1464,6 +1464,32 @@ fn prepare_numeric_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeI
     Some(use_css)
 }
 
+/// The UA styles B as bolder. Under a very light or already-heavy
+/// numeric weight that can produce 400 or 900 instead of the command's
+/// bold weight. Isolate the affected portion only when that happens.
+fn resolve_relative_bold(page: &PageDom, dom: &mut Dom, span: NodeId, bold: NodeId) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    if !dom.element(span).is_ok_and(|el| el.is_html() && &**el.local_name() == "span") { return None; }
+    let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()??);
+    style.value("font-weight").parse::<f64>().ok()?;
+    let layout = page.layout();
+    if layout.computed_style_value(dom, bold, "font-weight") == "700" { return Some(()); }
+    style.remove("font-weight");
+    if style.is_empty() && dom.attributes(span).ok()?.len() == 1 {
+        hoist(dom, bold, span);
+    } else {
+        let outer = dom.parent_element(span).ok()??;
+        let middle = alignment::split_edge(dom, outer, bold, false, &mut [])?;
+        alignment::split_edge(dom, outer, bold, true, &mut [])?;
+        if style.is_empty() { dom.remove_attribute(middle, "style").ok()?; }
+        else { dom.set_attribute(middle, "style", &style.css_text()).ok()?; }
+    }
+    if layout.computed_style_value(dom, bold, "font-weight") != "700" {
+        dom.set_attribute(bold, "style", "font-weight: bold;").ok()?;
+    }
+    Some(())
+}
+
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
@@ -1544,6 +1570,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 wrapped_svg |= dom.element(parent).is_ok_and(|el| el.namespace() == &markup5ever::ns!(svg));
                 let _ = dom.insert_before(parent, w, Some(t));
                 let _ = dom.append_child(w, t);
+                if tag == "b" && !use_css { resolve_relative_bold(page, &mut dom, parent, w); }
                 last_wrapper = Some(w);
             }
             texts
