@@ -731,8 +731,19 @@ impl PageNav {
     /// the script that navigates, e.g. a parent calling a child frame's `location.assign`);
     /// `None`: the navigated frame's own document.
     fn navigate_from(&self, url: String, history: HistoryHandling, source_referrer: Option<String>) {
-        if let Some(page) = self.page_dom.borrow().upgrade() {
+        let current = self.page_dom.borrow().upgrade();
+        if let Some(page) = &current {
+            // HTML "navigate": a navigable whose document's unload counter is above 0 (its
+            // `beforeunload`, `pagehide` or `unload` listeners run) does not navigate; the
+            // navigation unloading it goes on.
+            if page.in_unload() {
+                return;
+            }
             page.note_navigation_request();
+            // "Checking if unloading is canceled" runs synchronously, before `assign()` (or the
+            // `href` setter) returns; the navigation task does not fire it again.
+            pyro_webapi::lifecycle::before_unload(page);
+            page.mark_before_unload_fired(!page.is_disposed());
         }
         let sequence = self.script_navigation.get().wrapping_add(1);
         self.script_navigation.set(sequence);
@@ -752,6 +763,14 @@ impl PageNav {
                 let st = p.nav.state.borrow();
                 st.doc_seq == document && st.stops == stops && p.nav.script_navigation.get() == sequence
             }) {
+                // Dropped by `document.open()` (not superseded by a later script navigation, which
+                // owns the mark): the document's next navigation fires `beforeunload` itself.
+                let own = b
+                    .doc(page)
+                    .filter(|p| p.nav.state.borrow().doc_seq == document && p.nav.script_navigation.get() == sequence);
+                if let Some(dom) = own.and_then(|p| p.main_frame.page_dom.clone()) {
+                    dom.take_before_unload_fired();
+                }
                 return;
             }
             let opts = NavigateOpts {

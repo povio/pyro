@@ -305,6 +305,9 @@ pub struct PageDom {
     unloading: Cell<bool>,
     /// `beforeunload` listeners of this document running now (HTML "unload counter").
     before_unload_depth: Cell<u32>,
+    /// `beforeunload` already fired, synchronously, for the script navigation now queued (the
+    /// embedder's navigation then does not fire it again).
+    before_unload_fired: Cell<bool>,
     /// Navigation Timing of the document, recorded as the lifecycle steps
     /// run (`lifecycle`).
     timing: Cell<DocumentTiming>,
@@ -1076,6 +1079,7 @@ impl PageDom {
             transition_quota: RefCell::new(None),
             unloading: Cell::new(false),
             before_unload_depth: Cell::new(0),
+            before_unload_fired: Cell::new(false),
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
@@ -2852,6 +2856,16 @@ impl PageDom {
     /// ignored.
     pub fn in_unload(&self) -> bool {
         self.unloading.get() || self.before_unload_depth.get() > 0
+    }
+
+    /// Records that `beforeunload` fired for a navigation about to start ([`Self::take_before_unload_fired`]).
+    pub fn mark_before_unload_fired(&self, fired: bool) {
+        self.before_unload_fired.set(fired);
+    }
+
+    /// Whether `beforeunload` already fired for the navigation now starting; clears it.
+    pub fn take_before_unload_fired(&self) -> bool {
+        self.before_unload_fired.replace(false)
     }
 
     pub(crate) fn enter_before_unload(&self) {

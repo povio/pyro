@@ -2064,7 +2064,11 @@ impl Browser {
             descendants.into_iter().filter(|d| !own.as_ref().is_some_and(|own| Rc::ptr_eq(own, d))),
         );
         for document in leaving {
-            pyro_webapi::lifecycle::before_unload(&document);
+            // A script navigation fired the document's own `beforeunload` when it was asked for
+            // (`PageNav::navigate_from`).
+            if !document.take_before_unload_fired() {
+                pyro_webapi::lifecycle::before_unload(&document);
+            }
         }
         self.cancel_lazy_frame(page);
         // The container policy (`fullscreen`) is taken as the navigation begins: an `allowfullscreen`
