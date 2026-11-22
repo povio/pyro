@@ -366,6 +366,16 @@ pub fn transition_value(
     Some(TransitionValue::Style(style::servo_arc::Arc::new(style)))
 }
 
+/// `progress` (an effect's iteration progress) through easing `easing` (CSS text; `None`: `ease`),
+/// as a transition's timing function gives it (its "current portion").
+pub fn eased_progress(easing: Option<&str>, progress: f64) -> f64 {
+    use style::values::generics::easing::BeforeFlag;
+    match easing_function(easing.unwrap_or("ease")) {
+        Some(f) => f.calculate_output(progress, BeforeFlag::Unset, 1e-7),
+        None => progress,
+    }
+}
+
 /// A computed easing from CSS text; `None`: not one.
 pub(crate) fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction> {
     use style::properties::PropertyDeclaration;
