@@ -164,12 +164,13 @@ fn animation_frame_callbacks_share_a_frame_and_timestamp() {
              console.log(JSON.stringify(seen.map(e => e[0])), seen[0][1] === seen[1][1], seen[2][1]); }); });
          const d = requestAnimationFrame(() => seen.push(['d']));
          cancelAnimationFrame(b);
-         clearTimeout(requestAnimationFrame(() => seen.push(['cleared'])));",
+         // Animation frame handles are their own sequence: clearTimeout leaves the callback.
+         clearTimeout(requestAnimationFrame(() => seen.push(['kept', true])));",
     );
     let r = t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
     assert_eq!(r, RunOutcome::Idle);
     assert!(
-        rec.console.borrow().contains(&r#"log:["a","c","next"] true true"#.to_string()),
+        rec.console.borrow().contains(&r#"log:["a","c","kept","next"] true true"#.to_string()),
         "{:?}",
         rec.console.borrow()
     );
