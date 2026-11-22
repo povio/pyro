@@ -3814,7 +3814,7 @@ pub(crate) fn remembered_intrinsic_size(node: &crate::Node, styles: &style::prop
 
 /// pyro: the `natural=W,H` token of the element's
 /// `urn:x-pyro:state` attribute.
-fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
+pub(crate) fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
     let attr = element.attrs.state("state")?;
     let token = attr.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;

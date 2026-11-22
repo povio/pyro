@@ -117,6 +117,11 @@ pub(crate) fn object_shows_image(image: &crate::node::ImageData) -> bool {
 /// then means that ratio (css-sizing-4 §5.1); without one it means `<ratio>`.
 pub(crate) fn has_natural_ratio(element: &ElementData) -> bool {
     use crate::node::{ImageData, SpecialElementData};
+    // pyro: or the natural size pyro-dom reports (`natural=W,H`: a video with its metadata, an
+    // image pyro-dom has loaded), by which it is sized.
+    if pyro_size_ratio(element).is_some() {
+        return true;
+    }
     match &element.special_data {
         SpecialElementData::Image(image) => match &**image {
             ImageData::Raster(image) => image.width > 0 && image.height > 0,
@@ -137,6 +142,9 @@ pub(crate) fn has_natural_ratio(element: &ElementData) -> bool {
 pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
     use crate::node::{ImageData, SpecialElementData};
     let usable = |ratio: f32| (ratio.is_finite() && ratio > 0.0).then_some(ratio);
+    if let Some(ratio) = pyro_size_ratio(element) {
+        return Some(ratio);
+    }
     match &element.special_data {
         SpecialElementData::Image(image) => match &**image {
             ImageData::Raster(image) => usable(image.width as f32 / image.height as f32),
@@ -153,6 +161,14 @@ pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
         }
         _ => None,
     }
+}
+
+/// pyro: the ratio of the natural size pyro-dom reports for `element` (`natural=W,H`), when both
+/// sides are positive.
+fn pyro_size_ratio(element: &ElementData) -> Option<f32> {
+    let (w, h) = crate::layout::pyro_natural_size(element)?;
+    let ratio = w / h;
+    (w > 0.0 && h > 0.0 && ratio.is_finite()).then_some(ratio)
 }
 
 /// pyro: whether `element` is laid out as an atomic inline box when inline-level:

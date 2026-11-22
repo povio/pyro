@@ -24752,7 +24752,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +
 +/// pyro: the `natural=W,H` token of the element's
 +/// `urn:x-pyro:state` attribute.
-+fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
++pub(crate) fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
 +    let attr = element.attrs.state("state")?;
 +    let token = attr.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
 +    let (w, h) = token.split_once(',')?;
@@ -30897,7 +30897,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  use markup5ever::{LocalName, local_name};
  use taffy::{
      AvailableSpace, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, MaybeMath, MaybeResolve,
-@@ -16,6 +17,153 @@
+@@ -16,6 +17,169 @@
          || *tag_name == local_name!("iframe")
  }
  
@@ -31001,6 +31001,11 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +/// then means that ratio (css-sizing-4 §5.1); without one it means `<ratio>`.
 +pub(crate) fn has_natural_ratio(element: &ElementData) -> bool {
 +    use crate::node::{ImageData, SpecialElementData};
++    // pyro: or the natural size pyro-dom reports (`natural=W,H`: a video with its metadata, an
++    // image pyro-dom has loaded), by which it is sized.
++    if pyro_size_ratio(element).is_some() {
++        return true;
++    }
 +    match &element.special_data {
 +        SpecialElementData::Image(image) => match &**image {
 +            ImageData::Raster(image) => image.width > 0 && image.height > 0,
@@ -31021,6 +31026,9 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
 +    use crate::node::{ImageData, SpecialElementData};
 +    let usable = |ratio: f32| (ratio.is_finite() && ratio > 0.0).then_some(ratio);
++    if let Some(ratio) = pyro_size_ratio(element) {
++        return Some(ratio);
++    }
 +    match &element.special_data {
 +        SpecialElementData::Image(image) => match &**image {
 +            ImageData::Raster(image) => usable(image.width as f32 / image.height as f32),
@@ -31039,6 +31047,14 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +    }
 +}
 +
++/// pyro: the ratio of the natural size pyro-dom reports for `element` (`natural=W,H`), when both
++/// sides are positive.
++fn pyro_size_ratio(element: &ElementData) -> Option<f32> {
++    let (w, h) = crate::layout::pyro_natural_size(element)?;
++    let ratio = w / h;
++    (w > 0.0 && h > 0.0 && ratio.is_finite()).then_some(ratio)
++}
++
 +/// pyro: whether `element` is laid out as an atomic inline box when inline-level:
 +/// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image or a document.
 +pub(crate) fn is_inline_box(element: &ElementData) -> bool {
@@ -31051,7 +31067,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  /// The intrinsic dimensions of a replaced element per CSS Images 3
  /// (https://drafts.csswg.org/css-images/#intrinsic-dimensions): an intrinsic
  /// width, an intrinsic height, and an intrinsic aspect ratio, each of which
-@@ -35,6 +183,14 @@
+@@ -35,6 +199,14 @@
      /// used to fill in dimensions the intrinsic sizes leave unresolved. 300x150
      /// for most replaced elements; zero for an image with no loaded resource.
      pub default_object_size: taffy::Size<f32>,
@@ -31066,7 +31082,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  }
  
  /// Whether a height/width value is violating it's min- and max- constraints
-@@ -51,7 +207,7 @@
+@@ -51,7 +223,7 @@
  
  pub fn compute_replaced_layout(
      inputs: LayoutInput,
@@ -31075,7 +31091,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      resolve_calc_value: impl Fn(*const (), f32) -> f32,
      context: &ReplacedContext,
  ) -> LayoutOutput {
-@@ -154,6 +310,19 @@
+@@ -154,6 +326,19 @@
      let intrinsic = context.intrinsic_sizes;
      let style_aspect_ratio = style.aspect_ratio().filter(is_usable_ratio);
      let aspect_ratio: Option<f32> = style_aspect_ratio.or(intrinsic.ratio.filter(is_usable_ratio));
@@ -31095,7 +31111,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Concrete object size per the CSS default sizing algorithm with no
      // specified size (https://drafts.csswg.org/css-images/#default-sizing):
-@@ -187,10 +356,23 @@
+@@ -187,10 +372,23 @@
                  // A ratio-only replaced element stretches to fit the width it is laid out
                  // in: the available width if definite, else (under a max-content constraint)
                  // its containing block, per CSS2 §10.3.2.
@@ -31121,7 +31137,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
                  };
                  if let Some(width) = stretch_fit_width {
                      Size {
-@@ -220,6 +402,32 @@
+@@ -220,6 +418,32 @@
          },
          None => inherent_size,
      };
@@ -31154,7 +31170,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Percentages are only resolved against zero in the inline axis.
      // See https://www.w3.org/TR/css-sizing-3/#replaced-percentage-min-contribution
-@@ -276,6 +484,50 @@
+@@ -276,6 +500,50 @@
          .maybe_max(min_size)
          .maybe_sub(box_sizing_adjustment);
  
@@ -31205,7 +31221,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the
      // parent layout algorithm applies them itself, and content-based measurement should return
      // the content size (the intrinsic size for replaced elements). Constraints in the opposite
-@@ -286,6 +538,13 @@
+@@ -286,6 +554,13 @@
              RequestedAxis::Horizontal => {
                  style_size.width = None;
                  min_size.width = None;
@@ -31219,7 +31235,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
              }
              RequestedAxis::Vertical => {
                  style_size.height = None;
-@@ -295,22 +554,29 @@
+@@ -295,22 +570,29 @@
          }
      }
  
@@ -31257,7 +31273,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
          // Known axes are authoritative (already resolved by the parent); only the axis
          // derived via aspect-ratio transfer (or falling back to the intrinsic size) is
-@@ -322,16 +588,14 @@
+@@ -322,16 +604,14 @@
          return LayoutOutput::from_sizes(size + pb_sum, overflow_rect_for(size));
      }
  
@@ -45891,7 +45907,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {
          self.try_stylo_element_data()
              .and_then(|stylo| stylo.primary_styles())
-@@ -1161,37 +2311,169 @@
+@@ -1161,37 +2311,174 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -45921,6 +45937,11 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                    flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
 +                    natural_ratio = crate::layout::replaced::natural_ratio(el);
 +                }
++            } else if el.image_broken && styles.get_position().aspect_ratio.auto {
++                // pyro: a broken image showing its alt text is not sized by the `auto <ratio>` its
++                // width and height attributes map to, as in Chromium (WPT html/rendering
++                // img-aspect-ratio-alt-text): the flag makes it `auto`, with no natural ratio.
++                flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
              }
 -            if el.name.local == local_name!("button") {
 +            // pyro: not the box of a `::scroll-button()` (an anonymous `button` node), laid out as
@@ -46066,7 +46087,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,12 +2516,24 @@
+@@ -1234,12 +2521,24 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -46094,7 +46115,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  if self.element_data().is_some_and(|el| el.is_button_input())
                      && !matches!(
                          display.inside(),
-@@ -1290,7 +2584,7 @@
+@@ -1290,7 +2589,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -46103,7 +46124,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2621,47 @@
+@@ -1327,8 +2626,47 @@
              .unwrap_or(0)
      }
  
@@ -46152,7 +46173,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1336,7 +2669,7 @@
+@@ -1336,7 +2674,7 @@
          let position = style.clone_position();
          let has_z_index = !style.clone_z_index().is_auto();
  
@@ -46161,7 +46182,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return true;
          }
  
-@@ -1358,10 +2691,37 @@
+@@ -1358,10 +2696,37 @@
              return true;
          }
  
@@ -46199,7 +46220,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2729,48 @@
+@@ -1369,7 +2734,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -46249,7 +46270,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2798,14 @@
+@@ -1397,12 +2803,14 @@
              return true;
          }
  
@@ -46270,7 +46291,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1431,9 +2834,32 @@
+@@ -1431,9 +2839,32 @@
          y: f32,
          scale: f64,
          scrollbar: &mut Option<crate::node::ScrollbarRef>,
@@ -46303,7 +46324,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
-@@ -1500,11 +2926,15 @@
+@@ -1500,11 +2931,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -46319,7 +46340,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1519,7 +2949,25 @@
+@@ -1519,7 +2954,25 @@
              && y >= (overflow.y0 / scale) as f32
              && y <= (overflow.y1 / scale) as f32;
  
@@ -46346,7 +46367,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return None;
          }
  
-@@ -1533,6 +2981,8 @@
+@@ -1533,6 +2986,8 @@
          {
              *scrollbar = Some(sb);
          }
@@ -46355,7 +46376,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1541,10 +2991,7 @@
+@@ -1541,10 +2996,7 @@
          // padded inline root are hit one padding down and right of where
          // they are painted.
          let content_box_offset = if self.flags.is_inline_root() {
@@ -46367,7 +46388,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,30 +3003,46 @@
+@@ -1556,30 +3008,46 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -46426,7 +46447,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,26 +3053,94 @@
+@@ -1590,26 +3058,94 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -46536,7 +46557,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
  
          // Inline children
-@@ -1642,6 +3173,24 @@
+@@ -1642,6 +3178,24 @@
              }
          }
  
@@ -46561,7 +46582,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Self (this node)
          if matches_self && !pointer_events_none {
              return Some(HitResult {
-@@ -1716,7 +3265,7 @@
+@@ -1716,7 +3270,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -46570,7 +46591,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3290,13 @@
+@@ -1741,8 +3295,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -46585,7 +46606,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3372,28 @@
+@@ -1818,8 +3377,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -46616,7 +46637,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3451,36 @@
+@@ -1877,11 +3456,36 @@
                  }
              }
  
@@ -46658,7 +46679,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              })
          }))
      }
-@@ -1938,14 +3537,14 @@
+@@ -1938,14 +3542,14 @@
      /// borders and scrollbar)
      pub fn client_width(&self) -> f32 {
          let layout = self.final_layout();
@@ -56896,7 +56917,8 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        }
 +        Some(self.resolve_undisplayed_styles(node_id, Some(caches))?.primary().clone())
 +    }
-+
+ 
+-        style::thread_state::enter(ThreadState::LAYOUT);
 +    /// pyro: `false` while no style traversal has kept a
 +    /// `::before` / `::after` style for any element, so
 +    /// [`Self::pseudo_element_style`] with `generated_only` answers `None`
@@ -56926,8 +56948,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        let guards = style::shared_lock::StylesheetGuards::same(&read_guard);
 +        Some(self.stylist.compute_for_declarations::<&crate::Node>(&guards, &base, block))
 +    }
- 
--        style::thread_state::enter(ThreadState::LAYOUT);
++
 +    pub fn pseudo_element_style(
 +        &self,
 +        node_id: NodeId,
@@ -57755,7 +57776,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,85 +1573,283 @@
+@@ -917,55 +1573,253 @@
          root_element.children.contains(&self.id)
      }
  
@@ -57813,55 +57834,18 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -                let g = u8::from_str_radix(&value[1..2], 16).ok()?;
 -                let b = u8::from_str_radix(&value[2..3], 16).ok()?;
 -                return Some((r, g, b, 1.0));
--            }
 +    fn local_name(&self) -> &LocalName {
 +        &self.element_data().expect("Not an element").name.local
 +    }
- 
--            if value.len() == 6 {
--                let r = u8::from_str_radix(&value[0..2], 16).ok()?;
--                let g = u8::from_str_radix(&value[2..4], 16).ok()?;
--                let b = u8::from_str_radix(&value[4..6], 16).ok()?;
--                return Some((r, g, b, 1.0));
--            }
++
 +    fn namespace(&self) -> &Namespace {
 +        &self.element_data().expect("Not an element").name.ns
 +    }
- 
--            None
--        }
++
 +    fn query_anchored_fallback(&self) -> Option<style::values::specified::position::PositionTryFallbacksItem> {
 +        self.tree().anchor_query_choices.lock().unwrap().entry(self.id).or_default().clone()
 +    }
- 
--        /// The HTML "rules for parsing dimension values" -- Stylo's
--        /// implementation of them -- packaged as a specified
--        /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
--        /// "maps to the dimension property (ignoring zero)" mapping, where a
--        /// zero value is dropped rather than honoured.
--        ///
--        /// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values
--        fn parse_size_attr(
--            value: &str,
--            ignoring_zero: bool,
--        ) -> Option<style::values::specified::LengthPercentage> {
--            use style::servo::attr::{
--                LengthOrPercentageOrAuto, parse_length, parse_nonzero_length,
--            };
--            use style::values::specified::{LengthPercentage, NoCalcLength};
--            let parsed = if ignoring_zero {
--                parse_nonzero_length(value)
--            } else {
--                parse_length(value)
--            };
--            match parsed {
--                LengthOrPercentageOrAuto::Length(length) => Some(LengthPercentage::Length(
--                    NoCalcLength::from_px(length.to_f32_px()),
--                )),
--                LengthOrPercentageOrAuto::Percentage(fraction) => Some(
--                    LengthPercentage::Percentage(NoCalcPercentage::new(fraction)),
--                ),
--                LengthOrPercentageOrAuto::Auto => None,
++
 +    /// pyro: the containing block the last layout placed this out-of-flow box in. Queries are
 +    /// answered after that layout (`resolve::refresh_anchored_query_choices`), and the
 +    /// containing block is an ancestor, so its style is complete by now.
@@ -57926,13 +57910,17 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                    );
 +                }
              }
-         }
++        }
 +        let size = entry.size;
 +        sizes.insert(self.id, entry);
 +        size
 +    }
  
--        /// Parse the value of an SVG `width`/`height` presentation attribute.
+-            if value.len() == 6 {
+-                let r = u8::from_str_radix(&value[0..2], 16).ok()?;
+-                let g = u8::from_str_radix(&value[2..4], 16).ok()?;
+-                let b = u8::from_str_radix(&value[4..6], 16).ok()?;
+-                return Some((r, g, b, 1.0));
 +    fn each_custom_state<F>(&self, mut callback: F)
 +    where
 +        F: FnMut(&AtomIdent),
@@ -57942,10 +57930,11 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        if let Some(value) = value {
 +            for state in crate::has_invalidation::pyro_custom_states(Some(value)) {
 +                callback(AtomIdent::cast(&style::Atom::from(state)));
-+            }
+             }
 +        }
 +    }
-+
+ 
+-            None
 +    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
 +        self.selector_flags().get().contains(flags)
 +    }
@@ -57962,9 +57951,11 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
 +        } else {
 +            ElementSelectorFlags::empty()
-+        }
+         }
 +    }
-+
+ 
+-        /// The HTML "rules for parsing dimension values" -- Stylo's
+-        /// implementation of them -- packaged as a specified
 +    fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
 +        compute_layout_damage(old, new)
 +        // ALL_DAMAGE
@@ -58065,39 +58056,9 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +
 +        /// The HTML "rules for parsing dimension values" -- Stylo's
 +        /// implementation of them -- packaged as a specified
-+        /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
-+        /// "maps to the dimension property (ignoring zero)" mapping, where a
-+        /// zero value is dropped rather than honoured.
-+        ///
-+        /// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values
-+        fn parse_size_attr(
-+            value: &str,
-+            ignoring_zero: bool,
-+        ) -> Option<style::values::specified::LengthPercentage> {
-+            use style::servo::attr::{
-+                LengthOrPercentageOrAuto, parse_length, parse_nonzero_length,
-+            };
-+            use style::values::specified::{LengthPercentage, NoCalcLength};
-+            let parsed = if ignoring_zero {
-+                parse_nonzero_length(value)
-+            } else {
-+                parse_length(value)
-+            };
-+            match parsed {
-+                LengthOrPercentageOrAuto::Length(length) => Some(LengthPercentage::Length(
-+                    NoCalcLength::from_px(length.to_f32_px()),
-+                )),
-+                LengthOrPercentageOrAuto::Percentage(fraction) => Some(
-+                    LengthPercentage::Percentage(NoCalcPercentage::new(fraction)),
-+                ),
-+                LengthOrPercentageOrAuto::Auto => None,
-+            }
-+        }
-+
-+        /// Parse the value of an SVG `width`/`height` presentation attribute.
-         /// Unlike the legacy HTML dimension attributes, these accept any CSS
-         /// <length-percentage> (e.g. `1em`), and a unitless number means user
-         /// units, which map to CSS px.
+         /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
+         /// "maps to the dimension property (ignoring zero)" mapping, where a
+         /// zero value is dropped rather than honoured.
 @@ -1083,6 +1937,37 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
@@ -58136,13 +58097,44 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1092,6 +1977,22 @@
+@@ -1092,6 +1977,53 @@
                  attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
              });
  
 +        // pyro: an `<mspace>`'s width, height and depth attributes (`mathml_space`).
 +        for declaration in crate::mathml_space::hints(elem) {
 +            push_style(declaration);
++        }
++
++        // pyro: HTML § 15.4.1 "maps to the aspect-ratio property (using dimension rules)": an
++        // img, video or image input whose width and height both parse as dimension values that
++        // are not percentages has `aspect-ratio: auto w / h`, a ratio its natural one replaces
++        // once known. A canvas maps its own (integer) width and height the same way.
++        if elem.name.ns == ns!(html)
++            && (*tag == local_name!("img")
++                || *tag == local_name!("video")
++                || *tag == local_name!("canvas")
++                || is_image_input)
++        {
++            let dimension = |name: LocalName| -> Option<f32> {
++                let value = elem.attr(name)?;
++                if *tag == local_name!("canvas") {
++                    return style::servo::attr::parse_unsigned_integer(value.chars()).ok().map(|n| n as f32);
++                }
++                match style::servo::attr::parse_length(value) {
++                    style::servo::attr::LengthOrPercentageOrAuto::Length(length) => Some(length.to_f32_px()),
++                    _ => None,
++                }
++            };
++            if let (Some(w), Some(h)) = (dimension(local_name!("width")), dimension(local_name!("height"))) {
++                use style::values::generics::position::{GenericAspectRatio, PreferredRatio};
++                use style::values::generics::ratio::Ratio;
++                use style::values::specified::NonNegativeNumber;
++                push_style(PropertyDeclaration::AspectRatio(GenericAspectRatio {
++                    auto: true,
++                    ratio: PreferredRatio::Ratio(Ratio(NonNegativeNumber::new(w), NonNegativeNumber::new(h))),
++                }));
++            }
 +        }
 +
 +        // pyro: HTML § 15.3.2 (quirks mode): `form { margin-block-end: 1em; }`. Pyro's UA sheet
@@ -58159,7 +58151,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
          let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
          let mut lang = None;
-@@ -1100,6 +2001,28 @@
+@@ -1100,6 +2032,28 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -58188,7 +58180,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +2048,42 @@
+@@ -1125,12 +2079,42 @@
                  }
              }
  
@@ -58231,7 +58223,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1139,6 +2092,67 @@
+@@ -1139,6 +2123,67 @@
                  }
              }
  
@@ -58299,7 +58291,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `valign` on HTML table row groups, rows and cells maps to
              // `vertical-align`, matched ASCII case-insensitively. `vertical-align`
              // is a shorthand in Stylo, so push the three longhands each keyword
-@@ -1164,7 +2178,7 @@
+@@ -1164,7 +2209,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -58308,7 +58300,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2284,9 @@
+@@ -1270,7 +2315,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -58319,7 +58311,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1307,6 +2323,21 @@
+@@ -1307,6 +2354,21 @@
                  }
              }
  
@@ -58341,7 +58333,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `body` carries four legacy margin attributes, as pixel lengths:
              // marginwidth and marginheight set both sides of an axis, and
              // leftmargin and topmargin set one side each.
-@@ -1358,6 +2389,16 @@
+@@ -1358,6 +2420,16 @@
                  }
              }
  
@@ -58358,7 +58350,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1367,154 +2408,67 @@
+@@ -1367,154 +2439,67 @@
                  }
              }
  
@@ -58555,7 +58547,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2481,47 @@
+@@ -1527,6 +2512,47 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -58603,7 +58595,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2529,208 @@
+@@ -1534,11 +2560,208 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -58812,7 +58804,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2738,269 @@
+@@ -1546,14 +2769,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -59082,7 +59074,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3044,12 @@
+@@ -1597,6 +3075,12 @@
      }
  }
  
@@ -59095,7 +59087,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3122,41 @@
+@@ -1669,12 +3153,41 @@
                      .push(pe_node_id);
              }
          }
@@ -59137,7 +59129,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3171,46 @@
+@@ -1689,24 +3202,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -59192,7 +59184,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3241,842 @@
+@@ -1737,3 +3272,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

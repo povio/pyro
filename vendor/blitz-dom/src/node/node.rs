@@ -2335,6 +2335,11 @@ impl Node {
                     flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
                     natural_ratio = crate::layout::replaced::natural_ratio(el);
                 }
+            } else if el.image_broken && styles.get_position().aspect_ratio.auto {
+                // pyro: a broken image showing its alt text is not sized by the `auto <ratio>` its
+                // width and height attributes map to, as in Chromium (WPT html/rendering
+                // img-aspect-ratio-alt-text): the flag makes it `auto`, with no natural ratio.
+                flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
             }
             // pyro: not the box of a `::scroll-button()` (an anonymous `button` node), laid out as
             // any box is (WPT css-overflow `scroll-markers/scroll-buttons-disabled-snapping`).

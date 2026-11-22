@@ -1982,6 +1982,37 @@ impl Node {
             push_style(declaration);
         }
 
+        // pyro: HTML § 15.4.1 "maps to the aspect-ratio property (using dimension rules)": an
+        // img, video or image input whose width and height both parse as dimension values that
+        // are not percentages has `aspect-ratio: auto w / h`, a ratio its natural one replaces
+        // once known. A canvas maps its own (integer) width and height the same way.
+        if elem.name.ns == ns!(html)
+            && (*tag == local_name!("img")
+                || *tag == local_name!("video")
+                || *tag == local_name!("canvas")
+                || is_image_input)
+        {
+            let dimension = |name: LocalName| -> Option<f32> {
+                let value = elem.attr(name)?;
+                if *tag == local_name!("canvas") {
+                    return style::servo::attr::parse_unsigned_integer(value.chars()).ok().map(|n| n as f32);
+                }
+                match style::servo::attr::parse_length(value) {
+                    style::servo::attr::LengthOrPercentageOrAuto::Length(length) => Some(length.to_f32_px()),
+                    _ => None,
+                }
+            };
+            if let (Some(w), Some(h)) = (dimension(local_name!("width")), dimension(local_name!("height"))) {
+                use style::values::generics::position::{GenericAspectRatio, PreferredRatio};
+                use style::values::generics::ratio::Ratio;
+                use style::values::specified::NonNegativeNumber;
+                push_style(PropertyDeclaration::AspectRatio(GenericAspectRatio {
+                    auto: true,
+                    ratio: PreferredRatio::Ratio(Ratio(NonNegativeNumber::new(w), NonNegativeNumber::new(h))),
+                }));
+            }
+        }
+
         // pyro: HTML § 15.3.2 (quirks mode): `form { margin-block-end: 1em; }`. Pyro's UA sheet
         // is one sheet for every document, so the quirks-mode rule is a hint of the element's
         // (author-overridable, as the UA rule is).
