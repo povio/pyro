@@ -592,15 +592,30 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
         let dom = page.dom.borrow();
         nodes.iter().map(|&n| !equivalent(&fmt, &effective(page, &dom, kind, n))).collect()
     };
+    let italic_family = if kind == Kind::Family && nodes.len() == 1 {
+        let dom = page.dom.borrow();
+        let text = nodes[0];
+        dom.parent_element(text).ok().flatten().filter(|&el| el != host && editing::local(&dom, el) == "i"
+            && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
+            && dom.child_count(el).ok() == Some(1)
+            && (start == (el, 0) || start == (text, 0))
+            && (end == (el, 1) || end == (text, editing::len(&dom, text)))
+            && dom.attributes(el).is_ok_and(|attrs| attrs.is_empty() || attrs.len() == 1
+                && attrs[0].name.local == markup5ever::local_name!("style")
+                && DeclarationBlock::parse(&attrs[0].value).names() == ["font-family"]))
+    } else { None };
     let rewrite_runs = matches!(kind, Kind::Foreground | Kind::Size | Kind::Family) && {
         let dom = page.dom.borrow();
         nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| {
             value_carrier(&dom, n, host, &fmt).is_some_and(|carrier| {
                 kind == Kind::Foreground || needs.contains(&true) || editing::local(&dom, carrier) == "span"
+                    || kind == Kind::Family && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
+                        && !DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok().flatten().unwrap_or(""))
+                            .value("font-family").is_empty()
             })
         })
     };
-    if !rewrite_runs && !needs.contains(&true) {
+    if italic_family.is_none() && !rewrite_runs && !needs.contains(&true) {
         return true;
     }
     super::record_host_edit(page, host, fmt.input_type());
@@ -620,7 +635,13 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     let mut changed = false;
     let mut previous = None;
     for (&n, needs_format) in nodes.iter().zip(needs) {
-        if rewrite_runs {
+        if let Some(el) = italic_family {
+            // Reapply to the fully selected inline element in CSS mode.
+            // The only allowed declaration here is the family being replaced.
+            let _ = dom.remove_attribute(el, "style");
+            apply_to(&mut dom, el, &fmt, None);
+            changed = true;
+        } else if rewrite_runs {
             previous = format_run(page, &mut dom, host, n, &fmt, previous, nodes.len() == 1);
             changed = true;
         } else if needs_format {
