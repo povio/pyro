@@ -1,0 +1,242 @@
+{
+  "target": {
+    "urls": 88,
+    "unionOccurrences": 266,
+    "parent": {
+      "pass": 5,
+      "missing": 6,
+      "strict": 0,
+      "pages": {
+        "complete": 34,
+        "timeout": 51,
+        "error": 3
+      }
+    },
+    "candidate": {
+      "pass": 264,
+      "missing": 0,
+      "strict": 86,
+      "pages": {
+        "complete": 87,
+        "timeout": 1
+      }
+    },
+    "signed": {
+      "pass": 204,
+      "missing": 0,
+      "strict": 58,
+      "pages": {
+        "complete": 88
+      }
+    },
+    "recoveredObserved": 253,
+    "newlyReportedPass": 6,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 2
+  },
+  "guards": {
+    "urls": 6,
+    "unionOccurrences": 29,
+    "parent": {
+      "pass": 24,
+      "missing": 0,
+      "strict": 5,
+      "pages": {
+        "complete": 6
+      }
+    },
+    "candidate": {
+      "pass": 24,
+      "missing": 0,
+      "strict": 5,
+      "pages": {
+        "complete": 6
+      }
+    },
+    "signed": {
+      "pass": 28,
+      "missing": 0,
+      "strict": 5,
+      "pages": {
+        "complete": 6
+      }
+    },
+    "recoveredObserved": 0,
+    "newlyReportedPass": 0,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 5
+  },
+  "fileParser": {
+    "urls": 43,
+    "unionOccurrences": 53,
+    "parent": {
+      "pass": 0,
+      "missing": 0,
+      "strict": 0,
+      "pages": {
+        "timeout": 43
+      }
+    },
+    "candidate": {
+      "pass": 53,
+      "missing": 0,
+      "strict": 43,
+      "pages": {
+        "complete": 43
+      }
+    },
+    "signed": {
+      "pass": 41,
+      "missing": 0,
+      "strict": 31,
+      "pages": {
+        "complete": 43
+      }
+    },
+    "recoveredObserved": 53,
+    "newlyReportedPass": 0,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 0
+  },
+  "cueParser": {
+    "urls": 6,
+    "unionOccurrences": 79,
+    "parent": {
+      "pass": 0,
+      "missing": 0,
+      "strict": 0,
+      "pages": {
+        "timeout": 6
+      }
+    },
+    "candidate": {
+      "pass": 79,
+      "missing": 0,
+      "strict": 6,
+      "pages": {
+        "complete": 6
+      }
+    },
+    "signed": {
+      "pass": 79,
+      "missing": 0,
+      "strict": 6,
+      "pages": {
+        "complete": 6
+      }
+    },
+    "recoveredObserved": 79,
+    "newlyReportedPass": 0,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 0
+  },
+  "webvttAPI": {
+    "urls": 25,
+    "unionOccurrences": 111,
+    "parent": {
+      "pass": 3,
+      "missing": 6,
+      "strict": 0,
+      "pages": {
+        "complete": 22,
+        "error": 3
+      }
+    },
+    "candidate": {
+      "pass": 111,
+      "missing": 0,
+      "strict": 25,
+      "pages": {
+        "complete": 25
+      }
+    },
+    "signed": {
+      "pass": 65,
+      "missing": 0,
+      "strict": 9,
+      "pages": {
+        "complete": 25
+      }
+    },
+    "recoveredObserved": 102,
+    "newlyReportedPass": 6,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 0
+  },
+  "mediaTrackObjects": {
+    "urls": 14,
+    "unionOccurrences": 23,
+    "parent": {
+      "pass": 2,
+      "missing": 0,
+      "strict": 0,
+      "pages": {
+        "complete": 12,
+        "timeout": 2
+      }
+    },
+    "candidate": {
+      "pass": 21,
+      "missing": 0,
+      "strict": 12,
+      "pages": {
+        "complete": 13,
+        "timeout": 1
+      }
+    },
+    "signed": {
+      "pass": 19,
+      "missing": 0,
+      "strict": 12,
+      "pages": {
+        "complete": 14
+      }
+    },
+    "recoveredObserved": 19,
+    "newlyReportedPass": 0,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 2
+  },
+  "unique": {
+    "urls": 94,
+    "unionOccurrences": 295,
+    "parent": {
+      "pass": 29,
+      "missing": 6,
+      "strict": 5,
+      "pages": {
+        "complete": 40,
+        "timeout": 51,
+        "error": 3
+      }
+    },
+    "candidate": {
+      "pass": 288,
+      "missing": 0,
+      "strict": 91,
+      "pages": {
+        "complete": 93,
+        "timeout": 1
+      }
+    },
+    "signed": {
+      "pass": 232,
+      "missing": 0,
+      "strict": 63,
+      "pages": {
+        "complete": 94
+      }
+    },
+    "recoveredObserved": 253,
+    "newlyReportedPass": 6,
+    "newlyReportedOther": 0,
+    "losses": 0,
+    "signedOnly": 7
+  }
+}

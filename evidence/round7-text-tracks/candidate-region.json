@@ -1,0 +1,70 @@
+{
+  "values": {
+    "cue": "function",
+    "region": "function",
+    "fragment": [
+      11,
+      "#document-fragment",
+      null,
+      [
+        [
+          3,
+          "#text",
+          "A ",
+          []
+        ],
+        [
+          7,
+          "timestamp",
+          "00:00:02.500",
+          []
+        ],
+        [
+          1,
+          "RUBY",
+          null,
+          [
+            [
+              3,
+              "#text",
+              "字",
+              []
+            ],
+            [
+              1,
+              "RT",
+              null,
+              [
+                [
+                  3,
+                  "#text",
+                  "ji",
+                  []
+                ]
+              ]
+            ]
+          ]
+        ],
+        [
+          3,
+          "#text",
+          " & B",
+          []
+        ]
+      ]
+    ],
+    "fresh": true,
+    "regionFields": [
+      "lower",
+      4,
+      50,
+      20,
+      100,
+      30,
+      90,
+      "up",
+      true
+    ]
+  },
+  "requests": []
+}

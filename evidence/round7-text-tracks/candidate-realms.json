@@ -1,0 +1,22 @@
+{
+  "values": {
+    "available": "function",
+    "add": [
+      true,
+      true
+    ],
+    "removed": [
+      true,
+      0
+    ],
+    "reverse": [
+      true,
+      true
+    ],
+    "fake": "TypeError",
+    "region": "function",
+    "regionIdentity": true,
+    "fakeRegion": "TypeError"
+  },
+  "requests": []
+}

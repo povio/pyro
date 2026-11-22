@@ -1,0 +1,23 @@
+{
+  "values": {
+    "available": "function",
+    "metadata": "loadedmetadata",
+    "pause": "pause",
+    "events": [
+      "A enter",
+      "B enter",
+      "A change:1",
+      "B change:1",
+      "A exit",
+      "B exit",
+      "A change:0",
+      "B change:0"
+    ],
+    "paused": true,
+    "ended": false,
+    "at": 0.5517
+  },
+  "requests": [
+    "/normal.mp4"
+  ]
+}
