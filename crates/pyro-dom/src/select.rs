@@ -854,7 +854,7 @@ impl Dom {
             Visited => false,
             Active => {
                 let a = self.activated_idx(self.n(idx).owner_doc);
-                a != NIL && self.shadow_including_inclusive_ancestor(idx, a)
+                a != NIL && self.user_action_chain_holds(idx, a)
             }
             Target => self.is_url_target(idx),
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
@@ -889,11 +889,11 @@ impl Dom {
             }
             FocusWithin => {
                 let f = self.focused_idx(self.n(idx).owner_doc);
-                f != NIL && self.shadow_including_inclusive_ancestor(idx, f)
+                f != NIL && self.user_action_chain_holds(idx, f)
             }
             Hover => {
                 let h = self.hovered_idx(self.n(idx).owner_doc);
-                h != NIL && self.shadow_including_inclusive_ancestor(idx, h)
+                h != NIL && self.user_action_chain_holds(idx, h)
             }
             Defined => e.is_defined(),
             Default => {
@@ -948,6 +948,36 @@ impl Dom {
                     && self.is_modal_idx(idx)
             }
             PopoverOpen => self.is_popover_showing_idx(idx),
+        }
+    }
+
+    /// Whether `:hover`, `:active` or `:focus-within` reaches `anc` from the element `node` that
+    /// holds the state: `anc` is a shadow-including inclusive ancestor of `node` and no element in
+    /// the top layer (a modal dialog, a showing popover, or one kept there for its `overlay`
+    /// transition) lies strictly between them. Chrome stops the chain at the innermost top-layer
+    /// element, which matches but whose ancestors do not (WPT css/selectors `*-toplayer-001`,
+    /// `toplayer-transition-001`, `user-action-pseudo-top-layer`).
+    pub(crate) fn user_action_chain_holds(&self, anc: u32, node: u32) -> bool {
+        if self.top_layer().is_empty() || anc == node {
+            return self.shadow_including_inclusive_ancestor(anc, node);
+        }
+        let mut cur = node;
+        loop {
+            if cur == anc {
+                return true;
+            }
+            if self.n(cur).is_element() && self.top_layer_rank(self.id_of(cur)).is_some() {
+                return false;
+            }
+            let p = self.n(cur).parent;
+            cur = if p != NIL {
+                p
+            } else {
+                match &self.n(cur).kind {
+                    NodeKind::Fragment(f) if f.shadow.is_some() => f.host,
+                    _ => return false,
+                }
+            };
         }
     }
 
