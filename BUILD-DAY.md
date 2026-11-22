@@ -4,7 +4,7 @@ Documentation only. **Do not build until the user authorizes it** (standing ZERO
 
 - Batch branch: `origin/integration/round7-batch-1000` at `9317be985` (when this file was generated).
 - Ledger: `origin/ledger/round7-fix-queue` (`ledger.jsonl`, `estimates.json`).
-- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1215**; Studio **504**; MacBook worker variants (separate column) 220.
+- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1222**; Studio **504**; MacBook worker variants (separate column) 220.
 - Every figure is an estimate from source reading. Tentative pages are counted only where the owner gave a figure or the coordinator ruled.
 
 ## 1. JSC archive
@@ -51,6 +51,7 @@ Build the JSC archive through patch **0041**:
 - SVG leak smokes (b) cross-origin SVG <img> and (c) same-origin→cross-origin redirected SVG CSS background: CLOSED at source level at tip bf465986c (canvas reviewer …d0f2a87d): draw_svg returns early on opaque svg key (render.rs:7268); background Url layer skips Privacy::opaque (background.rs:706), opaque flag from response tainting / final-URL origin (net.rs bytes_from). Gate cleared pending build smokes: (b) SVG omitted, canvas readable; (c) background omitted, readable; privacy/svg/*-ignored WPTs should pass.
 - History (…ad4efc0e): 33413ebc8 history getters throw SecurityError on a removed iframe's document; 44b6364ba Location of a removed iframe ignores navigation; 856d4b777 about:blank?query/#frag loads blank; ab1639abf scrollRestoration per entry — check Playwright goBack/goForward/reload and iframe e2e.
 - R-HTML-9f privacy (14 tentative): if ANY privacy page fails at build, review the whole 9f credit (coordinator).
+- b061fffe0: form.reset() moves a text input cursor to the end when the value changes (was 0). ecf4666d2: DataTransfer store roots script-added Files (Persistent) — check memory/leaks in file-upload e2e.
 
 ## 4. Watchlist (behaviour changes and regression risks)
 
@@ -143,12 +144,15 @@ Build the JSC archive through patch **0041**:
 - d4fee3806: modal dialog with author position static/relative now computes absolute, display:contents → block (top-layer UA rule now effective) — check dialog-heavy e2e/screenshots. e275a4bb2: execCommand throws in XML documents (Chromium).
 - a6706c23b grid-to-CSS scale: fixed by d6178adf9 + 7bb67f14e (drawElementImage transform stored without bitmap/CSS scale; updateElementGeometry stays unscaled per WPT) — probe a width=300/CSS 600 canvas on build day.
 - 8f92c1072: window.stop() now aborts the document (no load/pageshow after a page's own stop) — CDP/Playwright clients waiting for load after window.stop() get none (Chrome); check e2e.
-- 12d84f4cf: byte parser may wait up to 64 KB for the meta-charset decision — check first-paint/DOMContentLoaded timing on slow pages; verify charset/with-inheritance + xhr.
+- 12d84f4cf: byte parser may wait up to 64 KB for the meta-charset decision — run crates/pyro-dom/tests/loader.rs; check streaming/slow-network pages and e2e time-to-first-parse; verify charset/with-inheritance + xhr.
 - 28b24967f: Location navigations run beforeunload listeners synchronously inside assign()/href setter (Chrome) — check Playwright goto/click-navigation with beforeunload dialogs.
 - 5526cff79: number inputs drop a typed +/- unless valid at that position — check Playwright type/fill/press on type=number (negatives, exponents).
 - f86a2669b: click on an editable (contenteditable) link no longer navigates, incl. element.click() — check e2e.
 - f27581dc4: textarea hard wrap inserts LF in the value; submitted bodies still CRLF — check form-submit e2e.
 - 1c9e5ceee: label.focus() forwards unless the label is itself focusable (refines f354df9fd).
+- 7aa109627: an iframe with a javascript: src now holds its parent's load until the script ran (and the string-result document loaded) — check load timing in e2e with javascript: iframes.
+- d6c79a73d: UTF-16 sniff from "<?x" without BOM — check XML/XHTML loading.
+- ca09913e3: an inserted <img> keeps its request (no re-resolve on base URL change) — check lazy/insert img e2e.
 
 Additional watchlist notes:
 - 2026-11-22 coordinator: history navigation rate limit risk removed (cc806a11f adds an off switch used by the Playwright drop-in); R-HTML-25 now 7 (recorded on the row).
@@ -748,7 +752,7 @@ Commit: 5ed810d48 (Q06: type-change-text-to-file-to-text, type-change-state-week
 - e9b1d47bc: form-fired submit event is now composed — scripts checking event.composed === false on submit now see true
 
 ### BUCKET-forms-landed: BUCKET-forms run 1 (html researcher-implementer)
-Commit: e78f7de78, d527b612e, 2e163c50a, 6e4010b84, 0f28fc202, 86d2744a8, dca25d3de, f09e4e33e, 3c82e094d, b5245bbbf (integration/round7-batch-1000)
+Commit: e78f7de78, d527b612e, 2e163c50a, 6e4010b84, 0f28fc202, 86d2744a8, dca25d3de, f09e4e33e, 3c82e094d, b5245bbbf, b061fffe0, ecf4666d2 (integration/round7-batch-1000)
 - 0f28fc202 (medium risk): :valid/:invalid/:required matching changes for disabled required checkboxes/radios/selects (HTML + Chrome); readonly helper
 - d527b612e: labels is a cached live NodeList, null on input[type=hidden]
 
@@ -802,9 +806,9 @@ Commit: a7e2f883e (from 6ee8f1815) + 457992246 (from 8ae418767, merged with 91f2
 - R-HTML-21: 4 pages (2ba8826df (integration/round7-batch-1000))
 - R-HTML-B-18: 0 pages (b9f5a8e4b (integration/round7-batch-1000; opener as event.source))
 - R-FETCH-MISC-landed: 7 pages (1ccc4238d, 1694192a5, 76e61d4e9, 87f0ec899 (…ae5abf41) + f399664be / 88224f9d8 (range/general, redirects/data), dbfde500e (integration/round7-batch-1000))
-- BUCKET-embedded-frames-covered: 3 pages (b230f1d34 (R-HTML-6), 7247854c9 (integration/round7-batch-1000))
+- BUCKET-embedded-frames-covered: 5 pages (b230f1d34 (R-HTML-6), 7247854c9 (integration/round7-batch-1000), dba597871)
 - BUCKET-embedded-media-canvas-covered: 7 pages (ee78275fd, acfc8b0e0 (R-HTML-10, integration/round7-batch-1000) + 841e4bfbf, 8a9618149, ffd49eb93)
-- BUCKET-forms-covered: 4 pages (5ed810d48 (Q06: type-change-text-to-file-to-text, type-change-state-weekmonth) + b230f1d34 (R-HTML-6: willValidate output/object) + e9b1d47bc (SubmitEvent submitter type check; author unreported) (integration/round7-batch-1000))
+- BUCKET-forms-covered: 5 pages (5ed810d48 (Q06: type-change-text-to-file-to-text, type-change-state-weekmonth) + b230f1d34 (R-HTML-6: willValidate output/object) + e9b1d47bc (SubmitEvent submitter type check; author unreported) (integration/round7-batch-1000))
 - BUCKET-markup-infra-c-covered: 2 pages (ab8a664c4 (…5b822e93), 99c9c0fb3 (author unreported))
 - BUCKET-markup-infra-b-covered: 2 pages (4c65e104f (R-HTML-28, form/link rel opener/noopener with named target) (integration/round7-batch-1000))
 - R-HTML-SC-RESIZABLE: 4 pages (07194d15f, 194d5c78a, 1812d34a3 (integration/round7-batch-1000; author unreported))
