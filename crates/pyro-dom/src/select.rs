@@ -895,7 +895,7 @@ impl Dom {
                 let h = self.hovered_idx(self.n(idx).owner_doc);
                 h != NIL && self.shadow_including_inclusive_ancestor(idx, h)
             }
-            Defined => !e.name.local.contains('-') || e.flags & crate::node::element_flags::CUSTOM_DEFINED != 0,
+            Defined => e.is_defined(),
             Default => {
                 // A checkbox or radio button checked by default (HTML :default); other input
                 // types ignore `checked`.

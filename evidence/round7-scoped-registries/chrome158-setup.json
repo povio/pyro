@@ -1,0 +1,30 @@
+[
+  [
+    "custom-elements/form-associated/ElementInternals-behavior-accessibility.tentative.html",
+    "error",
+    "Error",
+    "Uncaught ReferenceError: HTMLSubmitButtonBehavior is not defined",
+    0
+  ],
+  [
+    "custom-elements/form-associated/ElementInternals-submit-behavior-dialog.tentative.html",
+    "error",
+    "Error",
+    "Uncaught ReferenceError: HTMLSubmitButtonBehavior is not defined",
+    0
+  ],
+  [
+    "custom-elements/form-associated/ElementInternals-submit-behavior.tentative.html",
+    "error",
+    "Error",
+    "Uncaught ReferenceError: HTMLSubmitButtonBehavior is not defined",
+    0
+  ],
+  [
+    "custom-elements/registries/scoped-registry-append.html",
+    "error",
+    "Error",
+    "Uncaught TypeError: Failed to construct 'HTMLElement': Illegal constructor",
+    16
+  ]
+]

@@ -1,0 +1,38 @@
+{
+  "SVG defined inert": [
+    [
+      "custom-elements/pseudo-class-defined.html",
+      "Without browsing context: createElementNS(\"http://www.w3.org/2000/svg\", \"a-a\") should be :defined",
+      1,
+      "Pass",
+      "Pass",
+      "Pass"
+    ]
+  ],
+  "prefix timing": [
+    [
+      "custom-elements/Document-createElementNS-prefix-timing.html",
+      "Autonomous custom element prefix is set after constructor returns",
+      1,
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      "custom-elements/Document-createElementNS-prefix-timing.html",
+      "Nested createElementNS calls do not corrupt prefix state",
+      1,
+      "Pass",
+      "Pass",
+      "Pass"
+    ],
+    [
+      "custom-elements/Document-createElementNS-prefix-timing.html",
+      "Reentrant construction does not leak prefix between instances",
+      1,
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  ]
+}

@@ -121,3 +121,78 @@ fn form_associated_elements_track_owner_and_disabled_state() {
     dom.clear_custom_states(el).unwrap();
     assert_eq!(dom.query_selector(d, &parse_selectors(":state(open)").unwrap()).unwrap(), None);
 }
+
+#[test]
+fn defined_selector_respects_the_namespace_and_custom_element_state() {
+    let mut dom = Dom::new();
+    let inert = dom.create_document(DocumentKind::Html, "about:blank");
+    let svg = dom.create_element_ns(inert, Some("http://www.w3.org/2000/svg"), "a-a").unwrap();
+    let reserved = dom.create_element(inert, "font-face").unwrap();
+    let candidate = dom.create_element(inert, "a-a").unwrap();
+    let builtin = dom.create_element(inert, "button").unwrap();
+    dom.set_is_value(builtin, Some(LocalName::from("a-a"))).unwrap();
+    let defined = parse_selectors(":defined").unwrap();
+    for (element, expected) in [(svg, true), (reserved, true), (candidate, false), (builtin, false)] {
+        assert_eq!(dom.matches(element, &defined).unwrap(), expected);
+    }
+    dom.set_custom_defined(candidate).unwrap();
+    assert!(dom.matches(candidate, &defined).unwrap());
+}
+
+#[test]
+fn detached_fragment_creation_queues_only_its_registry_definition() {
+    use pyro_dom::upgrade::UpgradeCandidate;
+    let (dom, doc) = doc("<body></body>");
+    let mut dom = dom.borrow_mut();
+    dom.enable_custom_upgrades();
+    let name = LocalName::from("x-badge");
+    dom.note_registry_definition(doc, RegistryAssociation::Scoped(7), &name, &name, vec![]);
+    let host = dom.create_element(doc, "div").unwrap();
+    let root = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    for (registry, expected) in [(RegistryAssociation::Scoped(7), true), (RegistryAssociation::Default, false), (RegistryAssociation::Null, false)] {
+        dom.set_registry_association(root, registry).unwrap();
+        let frag = pyro_dom::parse::parse_setter_fragment_in(&mut dom, host, root, "<x-badge></x-badge>").unwrap();
+        let child = dom.first_child(frag).unwrap().unwrap();
+        assert_eq!(dom.registry_association(child).unwrap(), registry);
+        let queued = dom.take_upgrade_reactions();
+        if expected {
+            assert_eq!(queued, [UpgradeCandidate::Created { node: child, document: doc, registry, name: name.clone() }]);
+            dom.finish_created_upgrade(child, doc, registry);
+        } else {
+            assert!(queued.is_empty());
+        }
+    }
+}
+
+#[test]
+fn created_upgrade_keeps_its_definition_when_a_sibling_is_adopted() {
+    use pyro_dom::upgrade::UpgradeCandidate;
+    let (dom, source) = doc("<main></main>");
+    let target = parse_document(&dom, "http://other.test/", "<main></main>");
+    let mut dom = dom.borrow_mut();
+    dom.set_document_active(target, true).unwrap();
+    dom.enable_custom_upgrades();
+    let name = LocalName::from("x-movable");
+    for document in [source, target] {
+        dom.note_registry_definition(document, RegistryAssociation::Default, &name, &name, vec![]);
+    }
+    // Parse in a normal element context so the two custom elements are
+    // the fragment's immediate children, as in a detached div.innerHTML.
+    let parent = dom.create_element(source, "div").unwrap();
+    let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, parent, "<x-movable></x-movable><x-movable></x-movable>").unwrap();
+    let first = dom.first_child(frag).unwrap().unwrap();
+    let later = dom.next_sibling(first).unwrap().unwrap();
+    let queued = dom.take_upgrade_reactions();
+    assert_eq!(queued.len(), 2);
+    let new_parent = dom.document_element(target).unwrap().unwrap();
+    dom.append_child(new_parent, later).unwrap();
+    assert!(!dom.has_upgrade_candidates());
+    assert!(dom.has_pending_created_upgrade(later));
+    assert_eq!(dom.node_document(later).unwrap(), target);
+    for (reaction, expected) in queued.into_iter().zip([first, later]) {
+        let UpgradeCandidate::Created { node, document, registry, name: captured } = reaction else { panic!("expected creation reaction") };
+        assert_eq!((node, document, registry, captured), (expected, source, RegistryAssociation::Default, name.clone()));
+        dom.finish_created_upgrade(node, document, registry);
+    }
+    assert!(!dom.has_pending_created_upgrade(later));
+}

@@ -386,7 +386,8 @@ pub fn parse_bytes(
     }
     let nodes = prepare(&source).ok()?;
     let document = new_document(dom, url, content_type);
-    attach(dom, document, nodes);
+    let registry = dom.registry_idx(document.index());
+    attach(dom, document, nodes, registry);
     Some(document)
 }
 
@@ -634,11 +635,13 @@ pub(crate) fn parse_fragment(
     }
     let nodes = read_nodes(source, false, Some(namespaces)).map_err(syntax)?;
     let fragment = dom.create_fragment(dom.node_document(context)?)?;
-    attach(dom, fragment, nodes);
+    let registry = dom.registry_association(context)?;
+    attach(dom, fragment, nodes, registry);
+    dom.upgrades_after_fragment_parse(fragment.index());
     Ok(fragment)
 }
 
-fn attach(dom: &mut Dom, root: NodeId, nodes: Vec<Prepared>) {
+fn attach(dom: &mut Dom, root: NodeId, nodes: Vec<Prepared>, registry: crate::RegistryAssociation) {
     let root = root.index();
     let owner = dom.n(root).owner_doc;
     // Per prepared node: where its children are linked and which document
@@ -647,6 +650,10 @@ fn attach(dom: &mut Dom, root: NodeId, nodes: Vec<Prepared>) {
     for node in nodes {
         let (parent, child_owner) = node.parent.map_or((root, owner), |index| targets[index]);
         let (id, target) = create(dom, node.kind, child_owner);
+        if dom.n(id).element().is_some() {
+            let registry = if parent == root { registry } else { dom.registry_idx(parent) };
+            dom.set_registry_idx(id, registry);
+        }
         dom.link_raw(id, parent, NIL);
         targets.push((target, dom.n(target).owner_doc));
     }
@@ -667,7 +674,10 @@ pub fn parse_document(dom: &mut Dom, url: &str, source: &str, content_type: &str
     let prepared = prepare(source);
     let document = new_document(dom, url, content_type);
     match prepared {
-        Ok(nodes) => attach(dom, document, nodes),
+        Ok(nodes) => {
+            let registry = dom.registry_idx(document.index());
+            attach(dom, document, nodes, registry);
+        }
         Err(message) => parser_error(dom, document, message),
     }
     document

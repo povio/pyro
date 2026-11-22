@@ -302,7 +302,7 @@ pub(crate) fn attach<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRes
     };
     // The definition of the element's name in the realm that defined it
     // (`is` customized built-ins are not supported).
-    let Some(disabled) = crate::custom::internals_disabled(page, &custom_name) else {
+    let Some(disabled) = crate::custom::internals_disabled(page, el, &custom_name) else {
         return not_supported("Unable to attach ElementInternals to non-custom elements.");
     };
     if disabled {

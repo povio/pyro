@@ -1,0 +1,21 @@
+running 16 tests
+test custom_elements_js::clones_of_defined_elements_are_upgraded_by_the_cloning_call ... ok
+test custom_elements_js::attribute_changed_callback_runs_for_observed_attributes_only ... ok
+test custom_elements_js::adopted_callback_gets_the_old_and_new_documents ... ok
+test custom_elements_js::customized_built_in_elements ... ok
+test custom_elements_js::form_associated_callbacks_follow_owner_disabled_state_and_reset ... ok
+test custom_elements_js::attach_internals_rules ... ok
+test custom_elements_js::define_upgrades_the_elements_of_shadow_trees ... ok
+test custom_elements_js::a_constructor_that_throws_leaves_a_failed_element_never_upgraded_again ... ok
+test custom_elements_js::element_internals_validation ... ok
+test custom_elements_js::form_associated_custom_elements_submit_their_value ... ok
+test custom_elements_js::fragment_upgrade_keeps_definition_chosen_before_sibling_adoption ... ok
+test custom_elements_js::upgrade_reports_existing_observed_attributes_before_connected ... ok
+test custom_elements_js::registry_initialization_does_not_replace_other_definitions ... ok
+test custom_elements_js::synchronous_autonomous_construction_reports_and_returns_a_fresh_failed_element ... FAILED
+test custom_elements_js::scoped_registry_identity_and_definition_follow_a_retained_element ... ok
+test custom_elements_js::custom_states_match_state_pseudo_class ... ok
+assertion `left == right` failed
+  left: "|true|changed|true||true|false"
+ right: "NotSupportedError|true|changed|true||true|false"
+test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 663 filtered out; finished in 0.16s

@@ -1173,6 +1173,7 @@ impl JsClass for ShadowRoot {
     type Data = NodeData;
     type Parent = DocumentFragment;
     fn define(def: &mut ClassDef<Self>) {
+        def.getter("customElementRegistry", |s, n| crate::custom::node_registry(s, n.page(), n.id));
         crate::positional_html::define_parent_methods(def);
         // Fullscreen API: the document's fullscreen element, retargeted against this shadow root.
         def.accessor("fullscreenElement", |s, n| crate::fullscreen::element_for(s, n.page(), n.id), |_s, _n, _v| Ok(()));
@@ -1227,7 +1228,7 @@ impl JsClass for ShadowRoot {
                 let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "ShadowRoot innerHTML", true)?;
                 let mut dom = n.page().dom.borrow_mut();
                 let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
-                let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, host, &html).js()?;
+                let frag = pyro_dom::parse::parse_setter_fragment_in(&mut dom, host, n.id, &html).js()?;
                 dom.replace_all(n.id, Some(frag)).js()
             },
         );
@@ -1253,6 +1254,7 @@ impl JsClass for Element {
     type Data = NodeData;
     type Parent = Node;
     fn define(def: &mut ClassDef<Self>) {
+        def.getter("customElementRegistry", |s, n| crate::custom::node_registry(s, n.page(), n.id));
         crate::positional_html::define_parent_methods(def);
         define_parent_node(def);
         define_child_node(def);
@@ -1644,6 +1646,7 @@ impl JsClass for Element {
             if o.get_atom("clonable")?.to_bool() {
                 flags |= pyro_dom::shadow_flags::CLONABLE;
             }
+            let registry = registry_member(s, o, true)?;
             if o.get_atom("delegatesFocus")?.to_bool() {
                 flags |= pyro_dom::shadow_flags::DELEGATES_FOCUS;
             }
@@ -1677,7 +1680,18 @@ impl JsClass for Element {
             if crate::custom::is_being_constructed(n.page(), n.id) {
                 flags |= pyro_dom::shadow_flags::AVAILABLE_TO_INTERNALS;
             }
-            let sr = n.page().dom.borrow_mut().attach_shadow_with(n.id, mode, flags).js()?;
+            let doc = n.page().dom.borrow().node_document(n.id).js()?;
+            let registry = registry.map(|v| crate::custom::registry_argument(s, n.page(), doc, v)).transpose()?;
+            let mut dom = n.page().dom.borrow_mut();
+            let existing = dom.shadow_root(n.id).js()?;
+            let sr = dom.attach_shadow_with(n.id, mode, flags).js()?;
+            // Reattaching to a declarative root clears its children but keeps its registry.
+            if existing.is_none() {
+                if let Some(registry) = registry {
+                    dom.set_registry_association(sr, registry).js()?;
+                }
+            }
+            drop(dom);
             Ok(wrap_node(s, n.page(), sr)?.value())
         });
         def.pure_getter_typed("shadowRoot", pyro_js::GetterResult::ObjectOrNull, |s, n| {
@@ -1732,12 +1746,71 @@ fn insert_adjacent(dom: &mut pyro_dom::Dom, el: NodeId, pos: &str, node: NodeId)
 
 // ----- document -------------------------------------------------------------
 
+// Read and type-check this dictionary member before converting later
+// members. DOM checks whether a global registry belongs to the appropriate
+// document only after WebIDL has converted the complete dictionary.
+fn registry_member<'s>(s: &Scope<'_>, options: Object<'s>, nullable: bool) -> JsResult<Option<Value<'s>>> {
+    let value = options.get_atom("customElementRegistry")?;
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    if !(nullable && value.is_null()) && s.unwrap::<crate::custom::CustomElementRegistry>(value).is_none() {
+        return Err(JsError::Type("customElementRegistry must be a CustomElementRegistry.".into()));
+    }
+    Ok(Some(value))
+}
+
+#[derive(Default)]
+struct ElementCreationOptions<'s> {
+    registry: Option<Value<'s>>,
+    is: Option<String>,
+}
+
+fn element_creation_options<'s>(s: &Scope<'_>, options: Value<'s>) -> JsResult<ElementCreationOptions<'s>> {
+    let Some(o) = options.as_object() else {
+        // The legacy DOMString overload has no effect after conversion.
+        if !options.is_nullish() {
+            dom_string(options)?;
+        }
+        return Ok(ElementCreationOptions::default());
+    };
+    let registry = registry_member(s, o, true)?;
+    let value = o.get_atom("is")?;
+    let is = (!value.is_undefined()).then(|| dom_string(value)).transpose()?;
+    Ok(ElementCreationOptions { registry, is })
+}
+
+impl ElementCreationOptions<'_> {
+    fn registry(&self, s: &Scope<'_>, n: &NodeData) -> JsResult<Option<pyro_dom::RegistryAssociation>> {
+        let Some(value) = self.registry else { return Ok(None) };
+        if self.is.is_some() {
+            return Err(JsError::dom("NotSupportedError", "Cannot specify both is and customElementRegistry."));
+        }
+        Ok(Some(crate::custom::registry_argument(s, n.page(), n.id, value)?))
+    }
+}
+
+fn finish_element_creation<'s>(
+    s: &Scope<'s>, n: &NodeData, el: NodeId, is: Option<String>, registry: Option<pyro_dom::RegistryAssociation>,
+) -> JsResult<Value<'s>> {
+    if let Some(association) = registry {
+        n.page().dom.borrow_mut().set_registry_association(el, association).js()?;
+    } else if let Some(is) = is {
+        let mut dom = n.page().dom.borrow_mut();
+        if dom.element(el).js()?.is_html() {
+            dom.set_is_value(el, Some(pyro_dom::LocalName::from(is.as_str()))).js()?;
+        }
+    }
+    crate::html::upgrade_if_custom(s, n.page(), n.id, el)
+}
+
 pub struct Document;
 impl JsClass for Document {
     const NAME: &'static str = "Document";
     type Data = NodeData;
     type Parent = Node;
     fn define(def: &mut ClassDef<Self>) {
+        def.getter("customElementRegistry", |s, n| crate::custom::node_registry(s, n.page(), n.id));
         define_parent_node(def);
         crate::handlers::define_global(def);
         crate::handlers::define_document(def);
@@ -2037,43 +2110,28 @@ impl JsClass for Document {
         def.method("createElement", 1, |s, n, a| {
             a.require(1, "Document.createElement")?;
             let name = a.get(0);
-            let el = match n.page().names.arg(s, &name)? {
+            let name = n.page().names.arg(s, &name)?;
+            let options = element_creation_options(s, a.get(1))?;
+            if options.registry.is_some() {
+                // DOM validates the local name before flattening the options.
+                pyro_dom::dom::validate_element_name(name.text()).js()?;
+            }
+            let registry = options.registry(s, n)?;
+            let el = match name {
                 NameArg::Name(name) => n.page().dom.borrow_mut().create_element_named(n.id, &name),
                 NameArg::Text(name) => n.page().dom.borrow_mut().create_element(n.id, &name),
-            }
-            .js()?;
-            if let Some(is) = a
-                .opt(1)
-                .and_then(|o| o.as_object())
-                .map(|o| o.get_atom("is"))
-                .transpose()?
-                .filter(|v| !v.is_undefined())
-            {
-                // DOM "create an element" with the options' `is`: the element's is value (no
-                // `is` attribute), for an HTML element.
-                let is = dom_string(is)?;
-                let mut dom = n.page().dom.borrow_mut();
-                if dom.element(el).js()?.is_html() {
-                    dom.set_is_value(el, Some(pyro_dom::LocalName::from(is.as_str()))).js()?;
-                }
-            }
-            crate::html::upgrade_if_custom(s, n.page(), n.id, el)
+            }.js()?;
+            finish_element_creation(s, n, el, options.is, registry)
         });
         def.method("createElementNS", 2, |s, n, a| {
             a.require(2, "Document.createElementNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let q = dom_string(a.get(1))?;
-            let el = n.page().dom.borrow_mut().create_element_ns(n.id, ns.as_deref(), &q).js()?;
-            if let Some(is) =
-                a.opt(2).and_then(|o| o.as_object()).map(|o| o.get_atom("is")).transpose()?.filter(|v| !v.is_undefined())
-            {
-                let is = dom_string(is)?;
-                let mut dom = n.page().dom.borrow_mut();
-                if dom.element(el).js()?.is_html() {
-                    dom.set_is_value(el, Some(pyro_dom::LocalName::from(is.as_str()))).js()?;
-                }
-            }
-            crate::html::upgrade_if_custom(s, n.page(), n.id, el)
+            let options = element_creation_options(s, a.get(2))?;
+            let name = pyro_dom::dom::validate_and_extract(ns.as_deref(), &q, pyro_dom::dom::NameContext::Element).js()?;
+            let registry = options.registry(s, n)?;
+            let el = n.page().dom.borrow_mut().create_element_raw(n.id, name).js()?;
+            finish_element_creation(s, n, el, options.is, registry)
         });
         def.method("createTextNode", 1, |s, n, a| {
             let t = with_arg_str(&a, 0, "Document.createTextNode", |d| {
@@ -2132,11 +2190,24 @@ impl JsClass for Document {
         def.method("createNSResolver", 1, crate::xpath::document_create_ns_resolver);
         def.method("importNode", 1, |s, n, a| {
             let src = node_arg(s, a.get(0), "importNode")?;
-            let deep = match a.get(1).as_object() {
-                Some(o) => !o.get_atom("selfOnly")?.to_bool(),
-                None => a.get(1).to_bool(),
+            let (deep, registry) = match a.get(1).as_object() {
+                Some(o) => {
+                    let registry = registry_member(s, o, false)?;
+                    (!o.get_atom("selfOnly")?.to_bool(), registry)
+                }
+                None => (a.get(1).to_bool(), None),
             };
-            let c = n.page().dom.borrow_mut().clone_node(src, deep, Some(n.id)).js()?;
+            let c = if let Some(value) = registry {
+                let dom = n.page().dom.borrow();
+                if dom.node_type(src).js()? == NodeType::Document || dom.is_shadow_root(src).js()? {
+                    return Err(JsError::dom("NotSupportedError", "Cannot import a document or shadow root."));
+                }
+                drop(dom);
+                let fallback = crate::custom::registry_argument(s, n.page(), n.id, value)?;
+                n.page().dom.borrow_mut().clone_node_with_registry(src, deep, Some(n.id), fallback).js()?
+            } else {
+                n.page().dom.borrow_mut().clone_node(src, deep, Some(n.id)).js()?
+            };
             crate::custom::upgrade_clone(s, n.page(), c);
             Ok(wrap_node(s, n.page(), c)?.value())
         });

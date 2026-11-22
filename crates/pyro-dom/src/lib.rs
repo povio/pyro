@@ -66,7 +66,7 @@ pub use top_layer::{PopoverStack, PopoverType};
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{
-    shadow_flags, Atom, Attr, AttrNodeData, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
+    shadow_flags, Atom, Attr, AttrNodeData, ControlState, CustomDefinitionOwner, RegistryAssociation, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
 };
 
 pub use markup5ever::{LocalName, Namespace, Prefix, QualName};
