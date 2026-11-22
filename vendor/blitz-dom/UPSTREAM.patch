@@ -50944,7 +50944,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          // Re-resolve the hover node from the pointer position against the fresh
          // layout. This must run *after* the damage/dirty flags are cleared
-@@ -144,67 +349,942 @@
+@@ -144,67 +349,946 @@
          let mut subdoc_is_animating = false;
          for &node_id in &self.sub_document_nodes {
              let node = &mut self.nodes[node_id];
@@ -51681,6 +51681,10 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                && !display.is_none()
 +                && !display.is_contents()
 +                && !display.is_inline_flow()
++                // pyro: nor a table or an internal table box (no size containment, CSS Contain 2
++                // § 3.1; `query_container_size`): one that becomes one drops its size.
++                && display.inside() != style::values::specified::box_::DisplayInside::Table
++                && display.outside() != style::values::specified::box_::DisplayOutside::InternalTable
 +                // pyro: an element inside an `<svg>` (a `<foreignObject>`, which has a CSS box of
 +                // its own since it renders its content) is no size query container (CSS
 +                // Conditional 5; WPT css-conditional `svg-foreignobject-no-size-container`).
@@ -51913,7 +51917,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              for &child_id in children {
                  // Out-of-flow children are laid out relative to their containing
                  // block, not their DOM parent: they are visited (and their overflow
-@@ -212,18 +1292,83 @@
+@@ -212,18 +1296,83 @@
                  if self.nodes[child_id].is_out_of_flow() {
                      continue;
                  }
@@ -52003,7 +52007,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
          *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
          for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
-@@ -231,28 +1376,630 @@
+@@ -231,28 +1380,630 @@
              if self.nodes[pseudo].is_out_of_flow() {
                  continue;
              }
@@ -52642,7 +52646,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -261,9 +2008,46 @@
+@@ -261,9 +2012,46 @@
                  return;
              }
  
@@ -52692,7 +52696,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
-@@ -277,20 +2061,35 @@
+@@ -277,20 +2065,35 @@
                  }
  
                  let mut collected = LayoutChildren::default();
@@ -52735,7 +52739,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -300,16 +2099,33 @@
+@@ -300,16 +2103,33 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -52773,7 +52777,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          doc.nodes[child_id].layout_parent.set(Some(node_id));
                      }
  
-@@ -320,10 +2136,45 @@
+@@ -320,10 +2140,45 @@
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              }
  
@@ -52819,7 +52823,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +2209,32 @@
+@@ -358,6 +2213,32 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -52852,7 +52856,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +2244,9 @@
+@@ -367,9 +2248,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -52865,7 +52869,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +2263,14 @@
+@@ -386,7 +2267,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -52881,7 +52885,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +2279,13 @@
+@@ -395,18 +2283,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -52901,7 +52905,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +2298,7 @@
+@@ -419,10 +2302,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -52913,7 +52917,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,39 +2306,1205 @@
+@@ -430,39 +2310,1205 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -56750,7 +56754,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,88 +1557,260 @@
+@@ -917,87 +1557,270 @@
          root_element.children.contains(&self.id)
      }
  
@@ -56832,16 +56836,27 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        &self,
 +        display: &style::values::specified::Display,
 +    ) -> euclid::default::Size2D<Option<app_units::Au>> {
-+        if !self.flags.is_in_document() || display.is_none() || display.is_contents() || display.is_inline_flow() {
++        // pyro: nor a table or an internal table box, to which size containment does not apply
++        // (CSS Contain 2 § 3.1): the query finds the container but no size, and container units
++        // resolve against the next one out (WPT css-conditional container-queries
++        // `ineligible-containment`, `container-units-ineligible-container`).
++        use style::values::specified::box_::{DisplayInside, DisplayOutside};
++        if !self.flags.is_in_document()
++            || display.is_none()
++            || display.is_contents()
++            || display.is_inline_flow()
++            || display.inside() == DisplayInside::Table
++            || display.outside() == DisplayOutside::InternalTable
++        {
 +            return Default::default();
-+        }
+         }
 +        // Stylo can call while holding this element's mutable style data for
 +        // a pseudo. Eligibility comes from its fresh originating-element style;
 +        // axes and content-box dimensions are updated after traversal instead.
 +        let mut sizes = self.tree().container_query_sizes.lock().unwrap();
 +        if let Some(entry) = sizes.get(&self.id) {
 +            return entry.size;
-         }
++        }
 +        // pyro: a first query from a laid-out element outside the style traversal (a lazy pseudo
 +        // style such as `::highlight()`/`::selection` resolved at paint) samples the size now:
 +        // no later pass would fill it in (WPT container-queries/pseudo-elements-011,
@@ -56916,7 +56931,6 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -        /// Parse the value of an SVG `width`/`height` presentation attribute.
 -        /// Unlike the legacy HTML dimension attributes, these accept any CSS
 -        /// <length-percentage> (e.g. `1em`), and a unitless number means user
--        /// units, which map to CSS px.
 +    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
 +        self.selector_flags().get().contains(flags)
 +    }
@@ -57068,11 +57082,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        /// Parse the value of an SVG `width`/`height` presentation attribute.
 +        /// Unlike the legacy HTML dimension attributes, these accept any CSS
 +        /// <length-percentage> (e.g. `1em`), and a unitless number means user
-+        /// units, which map to CSS px.
+         /// units, which map to CSS px.
          fn parse_svg_size_attr(value: &str) -> Option<style::values::specified::LengthPercentage> {
              use style::values::specified::{LengthPercentage, NoCalcLength};
-             use style_traits::ParsingMode;
-@@ -1083,6 +1895,37 @@
+@@ -1083,6 +1906,37 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -57110,7 +57123,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1092,6 +1935,11 @@
+@@ -1092,6 +1946,11 @@
                  attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
              });
  
@@ -57122,7 +57135,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
          let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
          let mut lang = None;
-@@ -1100,6 +1948,28 @@
+@@ -1100,6 +1959,28 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -57151,7 +57164,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +1995,42 @@
+@@ -1125,12 +2006,42 @@
                  }
              }
  
@@ -57194,7 +57207,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1164,7 +2064,7 @@
+@@ -1164,7 +2075,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -57203,7 +57216,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2170,9 @@
+@@ -1270,7 +2181,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -57214,7 +57227,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2260,16 @@
+@@ -1358,6 +2271,16 @@
                  }
              }
  
@@ -57231,7 +57244,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1368,153 +2280,71 @@
+@@ -1368,153 +2291,71 @@
              }
  
              if *name == local_name!("hidden") {
@@ -57433,7 +57446,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2357,44 @@
+@@ -1527,6 +2368,44 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -57478,7 +57491,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2402,207 @@
+@@ -1534,11 +2413,207 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -57686,7 +57699,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2610,266 @@
+@@ -1546,14 +2621,266 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -57953,7 +57966,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2913,12 @@
+@@ -1597,6 +2924,12 @@
      }
  }
  
@@ -57966,7 +57979,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2991,41 @@
+@@ -1669,12 +3002,41 @@
                      .push(pe_node_id);
              }
          }
@@ -58008,7 +58021,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3040,46 @@
+@@ -1689,24 +3051,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -58063,7 +58076,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3110,842 @@
+@@ -1737,3 +3121,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

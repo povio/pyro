@@ -318,3 +318,29 @@ i {display:block;width:1px;height:1px}
     assert_eq!(size(&doc, "#or"), (1.0, 1.0));
     assert_eq!(size(&doc, "#fn"), (1.0, 1.0));
 }
+
+/// pyro: a table or a table cell with `container-type` is still selected as the query container
+/// but has no size (size containment does not apply to it): size queries fail and container
+/// units resolve against the next size container out, also after a change to `display: table`
+/// (WPT css-conditional container-queries ineligible-containment,
+/// container-units-ineligible-container).
+#[test]
+fn a_table_is_not_a_size_query_container() {
+    const TABLES: &str = r#"<!doctype html><style>
+#outer {container-type:size;width:300px;height:200px}
+.c {container-type:inline-size;width:200px}
+i {display:block;width:1px;height:1px}
+@container (min-width: 1px) {i {width:20px}}
+#u {width:10cqw;height:10cqh}
+</style><div id=outer><div class=c id=t style="display:table"><i id=a></i><div id=u></div></div><div class=c id=b><i id=bi></i></div></div>"#;
+    let mut doc = HtmlDocument::from_html(TABLES, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (1.0, 1.0));
+    assert_eq!(size(&doc, "#u"), (30.0, 20.0));
+    assert_eq!(size(&doc, "#bi"), (20.0, 1.0));
+    let b = doc.query_selector("#b").unwrap().unwrap();
+    doc.set_style_property(b, "display", "table-cell");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#bi"), (1.0, 1.0));
+}

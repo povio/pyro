@@ -1076,6 +1076,10 @@ impl BaseDocument {
                 && !display.is_none()
                 && !display.is_contents()
                 && !display.is_inline_flow()
+                // pyro: nor a table or an internal table box (no size containment, CSS Contain 2
+                // § 3.1; `query_container_size`): one that becomes one drops its size.
+                && display.inside() != style::values::specified::box_::DisplayInside::Table
+                && display.outside() != style::values::specified::box_::DisplayOutside::InternalTable
                 // pyro: an element inside an `<svg>` (a `<foreignObject>`, which has a CSS box of
                 // its own since it renders its content) is no size query container (CSS
                 // Conditional 5; WPT css-conditional `svg-foreignobject-no-size-container`).
