@@ -2011,17 +2011,18 @@ impl JsClass for Document {
                     }
                     let local = &*e.name.local;
                     let name = e.attr("name").filter(|v| !v.is_empty());
+                    // An element's id comes before its name (HTML "supported property names").
+                    if local == "object" || (local == "img" && name.is_some()) {
+                        if let Some(id) = e.id().filter(|v| !v.is_empty()) {
+                            if !names.iter().any(|x| x == id) {
+                                names.push(id.to_owned());
+                            }
+                        }
+                    }
                     if matches!(local, "embed" | "form" | "iframe" | "img" | "object") {
                         if let Some(v) = name {
                             if !names.iter().any(|x| x == v) {
                                 names.push(v.to_owned());
-                            }
-                        }
-                    }
-                    if local == "img" && name.is_some() {
-                        if let Some(id) = e.id().filter(|v| !v.is_empty()) {
-                            if !names.iter().any(|x| x == id) {
-                                names.push(id.to_owned());
                             }
                         }
                     }

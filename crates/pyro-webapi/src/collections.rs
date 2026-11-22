@@ -410,9 +410,8 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                 && matches!(local, "embed" | "form" | "iframe" | "img" | "object")
                 && e.attr("name") == Some(n.as_str()))
                 || (html
-                    && local == "img"
-                    && e.id() == Some(n.as_str())
-                    && e.attr("name").is_some_and(|v| !v.is_empty()))
+                    && (local == "object" || (local == "img" && e.attr("name").is_some_and(|v| !v.is_empty())))
+                    && e.id() == Some(n.as_str()))
         }
         CollectionKind::Links => html && matches!(local, "a" | "area") && e.attr("href").is_some(),
         CollectionKind::Anchors => html && local == "a" && e.attr("name").is_some(),
