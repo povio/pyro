@@ -1668,6 +1668,13 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
             return caret;
         }
     }
+    let mut leading_space_caret = None;
+    if !anonymous && !inline_box && matches!(tag.as_str(), "p" | "div") {
+        if let Some((point, after_split)) = whitespace::prepare_paragraph_split(page, dom, block, caret) {
+            caret = point;
+            leading_space_caret = after_split;
+        }
+    }
     let mut at_heading_end = false;
     if matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
         if terminal_break && dom.parent(void).ok().flatten() == Some(block) {
@@ -1792,7 +1799,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         let _ = dom.replace_all(new_block, Some(only_child));
     }
     placeholder_if_empty(dom, block);
-    if let Some(point) = empty_caret { return point; }
+    if let Some(point) = leading_space_caret.or(empty_caret) { return point; }
     if let Some(text) = following_text { return (text, 0); }
     placeholder_if_empty(dom, new_block).unwrap_or_else(|| paragraph_point(dom, new_block, (new_block, 0)).unwrap_or((new_block, 0)))
 }
