@@ -98,7 +98,7 @@ def main(ledger,out):
       if st in states and pg is not None and isinstance(r.get('est_pages_owner'),int) and r['est_pages_owner']<len(pg): adj+=len(pg)-r['est_pages_owner']
     for p in u: byd['/'.join(p.split('/')[:2]) if p.split('/')[0] in('html','fetch','svg','dom') else p.split('/')[0]]+=1
     MB=('html','fetch','IndexedDB','encoding'); SD=('css','referrer-policy','content-security-policy')
-    W=lambda x: bool(re.search(r'\.(worker|sharedworker|serviceworker)\.html',x))
+    W=lambda x: bool(re.search(r'\.(worker|sharedworker|serviceworker)(-module)?\.html',x))
     wk_mb=sum(1 for x in u if x.split('/')[0] in MB and W(x)); wk_sd=sum(1 for x in u if x.split('/')[0] in SD and W(x))
     u_all=u; u={x for x in u if not W(x)}
     mb_list=sum(1 for x in u if x.split('/')[0] in MB); oth=len(u)-mb_list-sum(1 for x in u if x.split('/')[0] in SD); sd_list=len(u)-mb_list-oth
