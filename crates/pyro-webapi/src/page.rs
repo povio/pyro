@@ -2275,6 +2275,7 @@ impl PageDom {
         self.trim_node_wrappers(dom.slot_count() as usize);
         let released = dom.take_released_listeners();
         drop(dom);
+        crate::custom::prune_registry_roots(self);
         crate::target::release_listener_slots(self, released);
     }
 

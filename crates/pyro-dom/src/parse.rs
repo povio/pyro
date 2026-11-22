@@ -16,6 +16,7 @@ use html5ever::{Attribute, QualName};
 use markup5ever::{local_name, ns, TokenizerResult};
 
 use crate::dom::Dom;
+use crate::RegistryAssociation;
 use crate::fragment_filter::FragmentFilter;
 use crate::error::{DomError, DomResult};
 use crate::node::{
@@ -69,6 +70,8 @@ struct Sink<A: DomAccess> {
     quirks: Cell<Option<QuirksMode>>,
     // html5ever keeps raw handles across script pauses, including detached elements.
     pins: RefCell<Vec<NodeId>>,
+    /// Real context document when the sink parses into a temporary arena document.
+    fragment_document_registry: Option<RegistryAssociation>,
     /// Open `<template shadowrootmode>` elements and the shadow roots their
     /// contents go to. Such a template stays out of the tree and keeps its
     /// own fragment, so collecting it never takes the host's root along.
@@ -89,6 +92,7 @@ impl<A: DomAccess> Sink<A> {
             sync_custom,
             filter: None,
             patches: None,
+            fragment_document_registry: None,
             pending_custom: RefCell::new(Vec::new()),
             has_pending_custom: Cell::new(false),
             quirks: Cell::new(None),
@@ -168,10 +172,19 @@ fn cannot_insert(d: &Dom, parent: u32, child: &NodeOrText<u32>) -> bool {
         if (d.n(*n).first_child != NIL || *n == parent) && d.is_host_including_inclusive_ancestor(*n, parent))
 }
 
+fn assign_parser_registry(dom: &mut Dom, node: u32, parent: u32) {
+    let Some(el) = dom.n_mut(node).element_mut() else { return };
+    if std::mem::take(&mut el.parser_needs_registry) {
+        let registry = dom.registry_idx(parent);
+        dom.set_registry_idx(node, registry);
+    }
+}
+
 fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) {
     match child {
         NodeOrText::AppendText(t) => append_text(dom, parent, before, &t),
         NodeOrText::AppendNode(n) => {
+            assign_parser_registry(dom, n, parent);
             if dom.n(n).parent != NIL {
                 dom.unlink_raw(n);
             }
@@ -467,6 +480,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             }
             match &*a.name.local {
                 "shadowrootmode" if a.value.eq_ignore_ascii_case("closed") => mode = ShadowRootMode::Closed,
+                "shadowrootcustomelementregistry" => flags |= shadow_flags::KEEP_REGISTRY_NULL,
                 "shadowrootclonable" => flags |= shadow_flags::CLONABLE,
                 "shadowrootserializable" => flags |= shadow_flags::SERIALIZABLE,
                 "shadowrootdelegatesfocus" => flags |= shadow_flags::DELEGATES_FOCUS,
@@ -476,7 +490,15 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 _ => {}
             }
         }
-        let Some(root) = self.dom.with(|d| d.attach_declarative_shadow(*host, mode, flags)) else { return false };
+        let Some(root) = self.dom.with(|d| {
+            let sr = d.attach_declarative_shadow(*host, mode, flags)?;
+            if flags & shadow_flags::KEEP_REGISTRY_NULL == 0 && d.n(*host).owner_doc == self.doc {
+                if let Some(registry) = self.fragment_document_registry {
+                    d.set_registry_idx(sr, registry);
+                }
+            }
+            Some(sr)
+        }) else { return false };
         self.declarative.borrow_mut().push((*template, root));
         true
     }
@@ -555,6 +577,7 @@ impl<A: DomAccess> Sink<A> {
                 .find(|a| a.name.ns == ns!() && &*a.name.local == "is")
                 .map(|a| html5ever::LocalName::from(&*a.value));
         }
+        el.parser_needs_registry = true;
         el.set_attrs(
             attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),
         );
@@ -631,6 +654,7 @@ impl<A: DomAccess> Sink<A> {
         let n = *n;
         let attrs: Vec<(QualName, String)> = attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect();
         let hooks = self.dom.with(|d| {
+            assign_parser_registry(d, n, parent);
             let (name, is) = d.n(n).element().map(|e| (e.name.clone(), e.is_value.clone()))?;
             let doc = self.doc_owner(d);
             (d.n(parent).owner_doc == doc).then(|| d.parser_custom_elements(doc, &name, is.as_ref())).flatten()
@@ -1317,19 +1341,25 @@ pub fn parse_document_bytes(dom: &DomRef, url: &str, bytes: &[u8], charset: Opti
 /// createContextualFragment). Returns a new DocumentFragment owned by the
 /// context element's node document.
 pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, html, FragmentMode::Element, None)
+    parse_fragment_with(dom, context, context, html, FragmentMode::Element, None)
 }
 
 /// The legacy innerHTML and outerHTML setters parse into detached output,
 /// without a subsequent sanitization step or script activation.
 pub fn parse_setter_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, html, FragmentMode::Setter, None)
+    parse_fragment_with(dom, context, context, html, FragmentMode::Setter, None)
+}
+
+/// A shadow root supplies the registry even though its host supplies the
+/// HTML tree builder's context element.
+pub fn parse_setter_fragment_in(dom: &mut Dom, context: NodeId, registry_source: NodeId, html: &str) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, registry_source, html, FragmentMode::Setter, None)
 }
 
 /// Fragment insertion APIs use an HTML body context when there is no context
 /// element or when the context is an HTML html element in an HTML document.
 pub fn parse_insertion_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, html, FragmentMode::Insertion, None)
+    parse_fragment_with(dom, context, context, html, FragmentMode::Insertion, None)
 }
 
 /// `Range.createContextualFragment` (DOM Parsing): [`parse_fragment`], then
@@ -1337,7 +1367,7 @@ pub fn parse_insertion_fragment(dom: &mut Dom, context: NodeId, html: &str) -> D
 /// fragment parser's), so it runs once the fragment is inserted into a
 /// document, unlike `innerHTML`'s.
 pub fn parse_contextual_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    let frag = parse_fragment_with(dom, context, html, FragmentMode::Range, None)?;
+    let frag = parse_fragment_with(dom, context, context, html, FragmentMode::Range, None)?;
     let scripts: Vec<u32> = dom
         .descendants(frag)?
         .filter_map(|id| {
@@ -1406,6 +1436,7 @@ fn fragment_form(dom: &Dom, mut ancestor: u32) -> Option<u32> {
 fn parse_fragment_with(
     dom: &mut Dom,
     context: NodeId,
+    registry_source: NodeId,
     html: &str,
     mode: FragmentMode,
     filter: Option<Rc<FragmentFilter>>,
@@ -1428,6 +1459,17 @@ fn parse_fragment_with(
     let tmp_id = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
     dom.set_allow_declarative_shadow_roots(tmp_id, matches!(mode, FragmentMode::Modern { .. }))?;
     let tmp = tmp_id.idx;
+    let registry = if dom.n(ctx).element().is_some_and(|e| e.template_contents != NIL) {
+        RegistryAssociation::Null
+    } else {
+        dom.registry_association(registry_source)?
+    };
+    // The parser's synthetic root receives this association. For the common
+    // global case this also avoids storing a registry on each temporary node.
+    if registry == RegistryAssociation::Default {
+        if let NodeKind::Document(d) = &mut dom.n_mut(tmp).kind { d.has_global_registry = true; }
+    }
+    dom.set_registry_idx(tmp, registry);
     dom.make_fragment_parse_host(tmp);
     let flags = element_flags::FRAGMENT_PARSED | element_flags::SCRIPT_ALREADY_STARTED;
 
@@ -1448,7 +1490,9 @@ fn parse_fragment_with(
             && filter.is_none()
             && html.contains("<?")
             && !dom.is_xml_document(owner_id);
+        let document_registry = dom.registry_idx(owner);
         let mut sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags, false);
+        sink.fragment_document_registry = Some(document_registry);
         sink.filter = filter;
         let scripting = opts.tree_builder.scripting_enabled;
         let mut parser = html5ever::driver::parse_fragment_for_element(sink, opts, context, scripting, form);
@@ -1576,7 +1620,7 @@ pub fn parse_modern_html_fragment(dom: &mut Dom, context: NodeId, html: &str, ru
 }
 
 pub fn parse_modern_html_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, html, FragmentMode::Modern { run_scripts }, filter)
+    parse_fragment_with(dom, context, context, html, FragmentMode::Modern { run_scripts }, filter)
 }
 
 /// `Element.setHTMLUnsafe` / `ShadowRoot.setHTMLUnsafe`: as `innerHTML`, with
@@ -1594,6 +1638,6 @@ pub fn set_html_unsafe_with(dom: &mut Dom, target: NodeId, html: &str, run_scrip
         NodeKind::Element(_) => (target, target),
         _ => return Err(DomError::Type("setHTMLUnsafe context must be an element")),
     };
-    let frag = parse_modern_html_fragment_with(dom, ctx, html, run_scripts, filter)?;
+    let frag = parse_fragment_with(dom, ctx, target, html, FragmentMode::Modern { run_scripts }, filter)?;
     dom.replace_all(into, Some(frag))
 }

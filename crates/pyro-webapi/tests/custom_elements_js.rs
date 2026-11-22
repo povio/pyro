@@ -404,3 +404,51 @@ fn customized_built_in_elements() {
         "true|true"
     );
 }
+
+#[test]
+fn scoped_registry_identity_and_definition_follow_a_retained_element() {
+    let e = env(PAGE);
+    let r = &e.main;
+    assert_eq!(eval(r, r#"
+        class GlobalBadge extends HTMLElement {}
+        customElements.define('app-badge', GlobalBadge);
+        const badge = (() => {
+            const local = new CustomElementRegistry();
+            local.label = 'design-system';
+            class LocalBadge extends HTMLElement {
+                static observedAttributes = ['title'];
+                attributeChangedCallback(name, before, after) { this.seen = after; }
+            }
+            local.define('app-badge', LocalBadge);
+            return document.createElement('app-badge', { customElementRegistry: local });
+        })();
+        badge instanceof GlobalBadge
+    "#), "false");
+    e.engine.collect_garbage();
+    assert_eq!(eval(r, r#"
+        badge.title = 'retained';
+        const local = badge.customElementRegistry;
+        [local.label, badge instanceof local.get('app-badge'), badge.seen,
+         document.createElement('app-badge') instanceof GlobalBadge].join('|')
+    "#), "design-system|true|retained|true");
+}
+
+#[test]
+fn registry_initialization_does_not_replace_other_definitions() {
+    let e = env(PAGE);
+    assert_eq!(eval(&e.main, r#"
+        const a = new CustomElementRegistry(), b = new CustomElementRegistry();
+        class A extends HTMLElement {}
+        class B extends HTMLElement {}
+        a.define('app-tag', A);
+        b.define('app-tag', B);
+        const host = document.createElement('div');
+        const root = host.attachShadow({mode:'open', customElementRegistry:null});
+        const first = document.createElement('app-tag', {customElementRegistry:null});
+        const second = document.createElement('app-tag', {customElementRegistry:b});
+        root.append(first, second);
+        a.initialize(root);
+        [root.customElementRegistry === a, first instanceof A,
+         second instanceof B, second.customElementRegistry === b].join(',')
+    "#), "true,true,true,true");
+}

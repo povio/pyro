@@ -52,8 +52,33 @@ pub enum DocumentKind {
     Xml,
 }
 
+/// Registry associated with an element, shadow root, or document. Default
+/// identifies the node document's global registry, including after adoption.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum RegistryAssociation {
+    Default,
+    Null,
+    Scoped(u64),
+}
+
+impl RegistryAssociation {
+    pub(crate) fn effective_global(self) -> Self {
+        if self == Self::Default { Self::Default } else { Self::Null }
+    }
+}
+
+/// Definition used to construct a custom element. Unlike the node's registry
+/// association this remains fixed when its owner document changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CustomDefinitionOwner {
+    pub page: u64,
+    pub realm: u64,
+    pub registry: RegistryAssociation,
+}
+
 #[derive(Debug)]
 pub struct DocumentData {
+    pub(crate) has_global_registry: bool,
     pub(crate) preferred_sheet_name: Option<Box<str>>,
     pub raster_budget: pyro_raster::PageRasters,
     pub kind: DocumentKind,
@@ -305,6 +330,7 @@ pub mod shadow_flags {
     /// A user-agent shadow root (an SVG `<use>` instance): not rendered (the
     /// renderer resolves `<use>` itself) and not reachable from script.
     pub const USER_AGENT: u8 = 64;
+    pub const KEEP_REGISTRY_NULL: u8 = 128;
 }
 
 /// Mutable form-control state that is not reflected in attributes.
@@ -350,6 +376,8 @@ pub(crate) struct InlineStyleBacking {
 
 #[derive(Debug)]
 pub struct ElementData {
+    /// HTML tree builder learns the intended parent after allocating a token.
+    pub(crate) parser_needs_registry: bool,
     pub(crate) link_explicitly_enabled: bool,
     pub name: QualName,
     /// Read freely; written only through the methods that keep `id` and
@@ -406,6 +434,7 @@ pub mod element_flags {
 impl ElementData {
     pub fn new(name: QualName) -> Self {
         ElementData {
+            parser_needs_registry: false,
             link_explicitly_enabled: false,
             name,
             attrs: Vec::new(),
