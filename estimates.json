@@ -29,9 +29,9 @@
     "fetch/fetch-later": 32,
     "html/dom": 28,
     "fetch/content-encoding": 21,
+    "html/syntax": 19,
     "scheduler": 19,
     "html/infrastructure": 19,
-    "html/syntax": 19,
     "html/rendering": 18,
     "imagebitmap-renderingcontext": 14,
     "fetch/cross-origin-resource-policy": 10,
@@ -45,29 +45,29 @@
     "html/obsolete": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "xhr": 2,
     "fetch/orb": 2,
-    "quirks": 1,
+    "xhr": 2,
     "fetch/security": 1,
-    "fetch/redirects": 1,
-    "IndexedDB": 1,
-    "fetch/content-type": 1,
     "svg/styling": 1,
-    "fetch/redirect-navigate": 1
+    "fetch/redirect-navigate": 1,
+    "fetch/content-type": 1,
+    "quirks": 1,
+    "IndexedDB": 1,
+    "fetch/redirects": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 17,
+    "macbook_in_scope": 19,
     "studio_in_scope": 22,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 10,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 15,
+   "distinct_census_pages": 17,
    "owner_reported_unlisted": 0,
-   "selector_union": 422,
-   "owner_estimate_reduction": 407,
+   "selector_union": 425,
+   "owner_estimate_reduction": 408,
    "of_which_tentative": 176,
    "studio_css_reported_pages_not_deduped": 22,
    "studio_css_listed_distinct": 0,
@@ -76,10 +76,10 @@
     "html/semantics": 124,
     "html/browsers": 71,
     "html/webappapis": 43,
-    "html/syntax": 30,
+    "html/syntax": 33,
     "fetch/compression-dictionary": 8,
-    "html/interaction": 5,
     "html/dom": 5,
+    "html/interaction": 5,
     "fetch/api": 5,
     "html/user-activation": 3,
     "html/scripting": 1
@@ -2876,9 +2876,16 @@
   },
   "BUCKET-markup-infra-b": {
    "state": "deferred",
-   "in_scope_pages": 17,
+   "in_scope_pages": 14,
    "out_of_scope_pages": 0,
-   "pages": 17,
+   "pages": 14,
+   "tentative": 0
+  },
+  "R-HTML-CHARSET-REPARSE": {
+   "state": "reserved",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
    "tentative": 0
   },
   "BUCKET-markup-infra-b-landed": {
