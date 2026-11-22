@@ -1807,6 +1807,19 @@ impl JsClass for HtmlElement {
                     .js()
             },
         );
+        // HTML "autocapitalization": the own autocapitalization hint (the attribute's state,
+        // else an inheriting form control's form owner's), "" for the default state.
+        def.accessor(
+            "autocapitalize",
+            |s, n| Ok(s.string(autocapitalize_hint(&n.page().dom.borrow(), n.id))),
+            |_s, n, v| set_attr(n, "autocapitalize", &dom_string(v)?),
+        );
+        // HTML "autocorrection": the used autocorrection state, as a boolean.
+        def.accessor(
+            "autocorrect",
+            |s, n| Ok(s.boolean(autocorrect_on(&n.page().dom.borrow(), n.id))),
+            |_s, n, v| set_attr(n, "autocorrect", if v.to_bool() { "on" } else { "off" }),
+        );
         def.accessor(
             "spellcheck",
             |s, n| {
@@ -2246,6 +2259,56 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
 });
 
 // ----- forms --------------------------------------------------------------------
+
+/// The elements that take an unset `autocapitalize`/`autocorrect` from their form owner (HTML
+/// "autocapitalize-and-autocorrect inheriting elements").
+const AUTOCAPITALIZE_INHERITING: &[&str] = &["button", "fieldset", "input", "output", "select", "textarea"];
+
+/// HTML "own autocapitalization hint" of `el` as its IDL keyword: the `autocapitalize`
+/// attribute's state ("off" and "none" are none, "on" and "sentences" sentences, "words",
+/// "characters", an invalid value sentences, a missing or empty one the default ""), else for an
+/// inheriting element with a form owner the form owner's.
+fn autocapitalize_hint(dom: &Dom, el: NodeId) -> &'static str {
+    let state = |value: Option<&str>| -> &'static str {
+        match value.map(str::to_ascii_lowercase).as_deref() {
+            None | Some("") => "",
+            Some("off" | "none") => "none",
+            Some("words") => "words",
+            Some("characters") => "characters",
+            Some(_) => "sentences",
+        }
+    };
+    let own = state(dom.get_attribute(el, "autocapitalize").ok().flatten());
+    if !own.is_empty() || !is_html(dom, el, AUTOCAPITALIZE_INHERITING) {
+        return own;
+    }
+    match dom.form_owner(el).ok().flatten() {
+        Some(form) => state(dom.get_attribute(form, "autocapitalize").ok().flatten()),
+        None => "",
+    }
+}
+
+/// HTML "used autocorrection state" of `el`: off for an input in the URL, E-mail or Password
+/// state; else the `autocorrect` attribute's state ("off" is off; "on", empty and invalid values
+/// are on), else for an inheriting element with a form owner the form owner's, else on.
+fn autocorrect_on(dom: &Dom, el: NodeId) -> bool {
+    if is_html(dom, el, &["input"])
+        && matches!(dom.input_type(el), Ok(InputType::Url | InputType::Email | InputType::Password))
+    {
+        return false;
+    }
+    let state = |value: Option<&str>| value.map(|v| !v.eq_ignore_ascii_case("off"));
+    if let Some(on) = state(dom.get_attribute(el, "autocorrect").ok().flatten()) {
+        return on;
+    }
+    if is_html(dom, el, AUTOCAPITALIZE_INHERITING) {
+        let form = dom.form_owner(el).ok().flatten();
+        if let Some(on) = form.and_then(|f| state(dom.get_attribute(f, "autocorrect").ok().flatten())) {
+            return on;
+        }
+    }
+    true
+}
 
 fn reflected_association(dom: &Dom, from: NodeId, target: Option<NodeId>) -> Option<NodeId> {
     dom.retarget_node(target?, dom.root_node(from, false).ok()?)
