@@ -1207,6 +1207,7 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
     if requires_rich_selection(&cmd) && !rich_selection(page, host) {
         return false;
     }
+    if inline_value::format_spaced_run(page, host, &cmd, value) { return true; }
     if let Some(kind) = inline_value::Kind::command(&cmd) {
         return inline_value::apply(page, host, kind, value);
     }

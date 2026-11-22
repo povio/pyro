@@ -841,3 +841,98 @@ pub(crate) fn format_typed(
     *slot = None;
     Some((typed, units))
 }
+
+/// Fully selected inline spans and the intervening rendered whitespace form
+/// one sibling run. Keep the existing elements and the separator in the DOM
+/// when adding the enclosing format.
+pub(super) fn format_spaced_run(page: &Rc<PageDom>, host: NodeId, command: &str, value: &str) -> bool {
+    let kind = Kind::command(command);
+    let toggle = super::format_of(command);
+    if kind.is_none() && toggle.is_none() && command != "createlink" { return false; }
+    let Some((start, end)) = editing::selection_range(page) else { return false };
+    let dom = page.dom.borrow();
+    if start.0 == end.0 || start.1 != 0 || end.1 != editing::len(&dom, end.0) { return false; }
+    let Some(parent) = dom.parent_element(start.0).ok().flatten().and_then(|s| dom.parent_element(s).ok().flatten()) else { return false };
+    let css = dom.document_data(page.document()).is_ok_and(|d| d.style_with_css);
+    let (tag, attr, attribute_value, property, input_type) = if let Some(kind) = kind {
+        let Some(fmt) = Format::parse(kind, value) else { return false };
+        if let Some((attr, v)) = fmt.legacy(css) {
+            ("font", attr, v.to_owned(), kind.property(), kind.input_type())
+        } else {
+            let mut declarations = DeclarationBlock::parse("");
+            if declarations.set(kind.property(), value, false).is_none() || kind == Kind::Size {
+                declarations.set(kind.property(), &fmt.css, false);
+            }
+            ("span", "style", declarations.css_text(), kind.property(), kind.input_type())
+        }
+    } else if let Some((tag, _, input)) = toggle {
+        let (property, v) = match tag {
+            "strike" => ("text-decoration-line", "line-through"),
+            "u" => ("text-decoration-line", "underline"),
+            "sub" | "sup" => ("vertical-align", if tag == "sub" { "sub" } else { "super" }),
+            _ => super::inline_css(tag).unwrap(),
+        };
+        if css { ("span", "style", format!("{property}: {v};"), property, input) }
+        else { (tag, "", String::new(), property, input) }
+    } else {
+        if value.is_empty() { return false; }
+        ("a", "href", value.to_owned(), "", "insertLink")
+    };
+    let repeated = parent != host;
+    if repeated && !(dom.parent_element(parent).ok().flatten() == Some(host)
+        && editing::local(&dom, parent) == tag
+        && dom.attributes(parent).is_ok_and(|attrs| attrs.len() == usize::from(!attr.is_empty()))
+        && (attr.is_empty() || dom.get_attribute(parent, attr).ok().flatten() == Some(&attribute_value))) {
+        return false;
+    }
+    let texts = super::inline_texts(page, &dom, host, start, end);
+    let mut units = Vec::new();
+    let mut separator = false;
+    for &text in &texts {
+        let Some(container) = dom.parent_element(text).ok().flatten() else { return false };
+        let unit = if container == parent {
+            if !dom.char_data(text).is_ok_and(|s| !s.is_empty() && s.chars().all(char::is_whitespace)) { return false; }
+            separator = true;
+            text
+        } else {
+            if editing::local(&dom, container) != "span" || dom.child_count(container).ok() != Some(1)
+                || dom.parent_element(container).ok().flatten() != Some(parent)
+                || !dom.element(container).is_ok_and(|e| e.is_html())
+                || !dom.attributes(container).is_ok_and(|attrs| attrs.iter().all(|a| a.name.local.as_ref() == "style"))
+            { return false; }
+            // A declaration on the child takes precedence over inherited
+            // formatting. Let the normal carrier-editing path handle it.
+            if !property.is_empty() && !DeclarationBlock::parse(dom.get_attribute(container, "style").ok().flatten()
+                .unwrap_or("")).value(property).is_empty() { return false; }
+            container
+        };
+        if units.last().is_some_and(|&prev| dom.next_sibling(prev).ok().flatten() != Some(unit)) { return false; }
+        units.push(unit);
+    }
+    if !separator || units.len() < 3 || texts.first() != Some(&start.0) || texts.last() != Some(&end.0) { return false; }
+    if repeated && dom.child_count(parent).ok() != Some(units.len() as u32) { return false; }
+    if !repeated && toggle.is_some() && super::format_state(page, command).1 { return false; }
+    if repeated && (command == "createlink" || tag == "font" && matches!(kind, Some(Kind::Size | Kind::Family))) { return true; }
+    let reversed = editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
+    drop(dom);
+    editing::apply_edit(page, host, input_type, (command == "createlink").then_some(value), None, |page| {
+        let mut dom = page.dom.borrow_mut();
+        if repeated {
+            let mut points = [start, end];
+            for unit in units {
+                if editing::local(&dom, unit) == "span" && dom.attributes(unit).is_ok_and(|attrs| attrs.is_empty()) {
+                    super::indentation::unwrap(&mut dom, unit, &mut points);
+                }
+            }
+            if toggle.is_some() { super::indentation::unwrap(&mut dom, parent, &mut points); }
+        } else {
+            let Ok(wrapper) = dom.create_element(page.document(), tag) else { return };
+            if !attr.is_empty() { let _ = dom.set_attribute(wrapper, attr, &attribute_value); }
+            let _ = dom.insert_before(parent, wrapper, Some(units[0]));
+            for unit in units { let _ = dom.append_child(wrapper, unit); }
+        }
+        drop(dom);
+        super::select_texts(page, &texts, reversed);
+    });
+    true
+}
