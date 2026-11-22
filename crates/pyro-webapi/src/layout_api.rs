@@ -428,6 +428,14 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
         };
         find(fragment).or_else(|| find(&decoded))
     };
+    // HTML "scroll to the fragment": the ancestor revealing algorithm runs on the target before
+    // it is scrolled to; `beforematch` handlers may move, remove or hide it, so layout is
+    // brought up to date again and a target no longer connected is not scrolled to.
+    let target = target.filter(|&el| {
+        reveal_ancestors(page, el);
+        crate::animation_events::layout_flush(page, doc);
+        page.dom.borrow().is_connected(el).unwrap_or(false)
+    });
     match target {
         Some(el) => {
             let moved = page.layout.borrow_mut().scroll_into_view_aligned_script_targets(
@@ -445,6 +453,74 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
             }
         }
         None => {}
+    }
+}
+
+/// HTML "ancestor revealing algorithm" on `node`: walking up the flat tree (a shadow root's
+/// host stands for the root), the `hidden=until-found` elements and the closed `<details>`
+/// whose content holds the walk are collected first, innermost first; then each closed
+/// `<details>` opens, and each `hidden=until-found` element gets a bubbling `beforematch` and
+/// loses its `hidden` attribute. The run stops at an element no longer connected, a `<details>`
+/// already open, or an element whose `hidden` left the until-found state before its turn
+/// (WPT html/editing/the-hidden-attribute).
+pub fn reveal_ancestors(page: &Rc<PageDom>, node: NodeId) {
+    use markup5ever::local_name;
+    enum Reveal {
+        Details(NodeId),
+        UntilFound(NodeId),
+    }
+    fn until_found(dom: &pyro_dom::Dom, id: NodeId) -> bool {
+        dom.element(id)
+            .is_ok_and(|e| e.is_html() && e.attr("hidden").is_some_and(|v| v.eq_ignore_ascii_case("until-found")))
+    }
+    // `child` is in the content slot of `parent`, a closed `<details>`: any child but its
+    // first `<summary>`.
+    fn in_closed_details(dom: &pyro_dom::Dom, child: NodeId, parent: NodeId) -> bool {
+        let Ok(p) = dom.element(parent) else { return false };
+        if !p.is_html() || p.name.local != local_name!("details") || p.attr_local(&local_name!("open")).is_some() {
+            return false;
+        }
+        let is_summary =
+            |id: &NodeId| dom.element(*id).is_ok_and(|c| c.is_html() && c.name.local == local_name!("summary"));
+        dom.children(parent).ok().and_then(|mut c| c.find(is_summary)) != Some(child)
+    }
+    let reveal = {
+        let dom = page.dom.borrow();
+        let mut reveal = Vec::new();
+        let mut current = node;
+        while let Some(parent) = dom.parent(current).ok().flatten() {
+            if until_found(&dom, current) {
+                reveal.push(Reveal::UntilFound(current));
+            }
+            if in_closed_details(&dom, current, parent) {
+                reveal.push(Reveal::Details(parent));
+            }
+            current = dom.fragment_host(parent).ok().flatten().unwrap_or(parent);
+        }
+        reveal
+    };
+    for step in reveal {
+        match step {
+            Reveal::Details(details) => {
+                let mut dom = page.dom.borrow_mut();
+                if !dom.is_connected(details).unwrap_or(false)
+                    || dom.get_attribute(details, "open").ok().flatten().is_some()
+                {
+                    return;
+                }
+                let _ = dom.set_attribute(details, "open", "");
+            }
+            Reveal::UntilFound(el) => {
+                {
+                    let dom = page.dom.borrow();
+                    if !dom.is_connected(el).unwrap_or(false) || !until_found(&dom, el) {
+                        return;
+                    }
+                }
+                crate::input::fire_simple(page, el, "beforematch", true, false);
+                let _ = page.dom.borrow_mut().remove_attribute(el, "hidden");
+            }
+        }
     }
 }
 
