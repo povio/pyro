@@ -769,6 +769,46 @@ fn dedicated_workers_share_the_owner_partition() {
 }
 
 #[test]
+fn open_request_releases_transaction_after_terminal_dispatch() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    for path in ["commit", "abort", "constraint"] {
+        doc.eval(&format!("globalThis.path = '{path}'"));
+        doc.eval(
+            r#"
+            globalThis.trace = [];
+            globalThis.openRequest = indexedDB.open(path, 1);
+            openRequest.onupgradeneeded = () => {
+              const tx = openRequest.transaction;
+              const store = openRequest.result.createObjectStore('rows');
+              const terminal = event => {
+                trace.push(event.type, openRequest.transaction === tx);
+                Promise.resolve().then(() => trace.push(openRequest.transaction === tx));
+              };
+              tx.oncomplete = tx.onabort = terminal;
+              if (path === 'abort') tx.abort();
+              if (path === 'constraint') { store.add('one', 1); store.add('duplicate', 1); }
+            };
+            openRequest.onsuccess = openRequest.onerror = event => {
+              trace.push(event.type, openRequest.transaction === null);
+              if (event.type === 'success') openRequest.result.close();
+            };
+            "#,
+        );
+        while doc.eval("trace.length") == "0" {
+            let task = env.tasks.0.borrow_mut().pop_front().expect("expected an upgrade task");
+            task();
+        }
+        let terminal = if path == "commit" { "complete" } else { "abort" };
+        assert_eq!(doc.eval("trace.join('|')"), format!("{terminal}|true|true"), "{path}");
+        assert_eq!(doc.eval("openRequest.transaction === null"), "true", "{path}: before open result task");
+        env.tasks.drain();
+        let outcome = if path == "commit" { "success" } else { "error" };
+        assert_eq!(doc.eval("trace.join('|')"), format!("{terminal}|true|true|{outcome}|true"), "{path}");
+    }
+}
+
+#[test]
 fn upgrade_lifecycle_and_exception_order() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");
