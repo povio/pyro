@@ -1,0 +1,55 @@
+{
+  "before": {
+    "html": 8,
+    "lockedHTML": 8,
+    "connected": 8,
+    "anchor": 8,
+    "focus": 8,
+    "ol": 8,
+    "ul": 8,
+    "events": 8,
+    "enabled": 4
+  },
+  "after": {
+    "lockedHTML": 8,
+    "anchor": 8,
+    "ul": 6,
+    "html": 4,
+    "connected": 4,
+    "focus": 4,
+    "ol": 6,
+    "enabled": 4,
+    "events": 4
+  },
+  "again": {
+    "again": 8
+  },
+  "twice": {
+    "lockedHTML": 8,
+    "anchor": 8,
+    "ul": 6,
+    "html": 4,
+    "connected": 4,
+    "focus": 4,
+    "ol": 6,
+    "enabled": 4,
+    "events": 4
+  },
+  "onceUndo": {
+    "lockedHTML": 8,
+    "anchor": 8,
+    "ul": 6,
+    "html": 4,
+    "connected": 4,
+    "focus": 4,
+    "ol": 6,
+    "enabled": 4,
+    "events": 4
+  },
+  "ok": {
+    "ok": 4
+  },
+  "undo": {
+    "undo": 4
+  }
+}

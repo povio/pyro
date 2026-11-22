@@ -1,0 +1,74 @@
+{
+  "before": {
+    "glyphs": 20,
+    "html": 20,
+    "state": 20,
+    "value": 20,
+    "ol": 20,
+    "ul": 20,
+    "anchor": 20,
+    "focus": 20,
+    "direction": 20,
+    "connected": 20
+  },
+  "ok": {
+    "ok": 18
+  },
+  "after": {
+    "glyphs": 20,
+    "html": 18,
+    "state": 18,
+    "value": 18,
+    "ol": 19,
+    "ul": 19,
+    "anchor": 20,
+    "focus": 18,
+    "direction": 18,
+    "connected": 2
+  },
+  "again": {
+    "again": 20
+  },
+  "twice": {
+    "glyphs": 20,
+    "html": 14,
+    "state": 18,
+    "value": 18,
+    "ol": 19,
+    "ul": 19,
+    "anchor": 20,
+    "focus": 18,
+    "direction": 18,
+    "connected": 2
+  },
+  "undo": {
+    "undo": 18
+  },
+  "onceUndo": {
+    "glyphs": 20,
+    "html": 18,
+    "state": 18,
+    "value": 18,
+    "ol": 19,
+    "ul": 19,
+    "anchor": 20,
+    "focus": 18,
+    "direction": 18,
+    "connected": 2
+  },
+  "undo2": {
+    "undo2": 18
+  },
+  "restored": {
+    "glyphs": 20,
+    "html": 20,
+    "state": 20,
+    "value": 20,
+    "ol": 20,
+    "ul": 20,
+    "anchor": 20,
+    "focus": 18,
+    "direction": 20,
+    "connected": 4
+  }
+}

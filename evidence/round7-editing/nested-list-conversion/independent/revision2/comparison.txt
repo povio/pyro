@@ -1,0 +1,57 @@
+editing/plaintext-only/nested-with-contenteditable-true.html 28 28 20 gain 0 loss 0 membership delta 0
+editing/plaintext-only/styling-commands.html?styleWithCSS=false 150 150 150 gain 0 loss 0 membership delta 0
+editing/plaintext-only/styling-commands.html?styleWithCSS=true 150 150 150 gain 0 loss 0 membership delta 0
+editing/run/backcolor.html 1012 1012 991 gain 0 loss 0 membership delta 0
+editing/run/bold.html?1-1000 848 848 838 gain 0 loss 0 membership delta 0
+editing/run/bold.html?1001-2000 858 858 843 gain 0 loss 0 membership delta 0
+editing/run/bold.html?2001-3000 837 837 820 gain 0 loss 0 membership delta 0
+editing/run/bold.html?3001-last 42 42 40 gain 0 loss 0 membership delta 0
+editing/run/createlink.html 428 428 426 gain 0 loss 0 membership delta 0
+editing/run/fontname.html?1-1000 993 993 977 gain 0 loss 0 membership delta 0
+editing/run/fontname.html?1001-2000 990 990 936 gain 0 loss 0 membership delta 0
+editing/run/fontname.html?2001-last 223 223 217 gain 0 loss 0 membership delta 0
+editing/run/fontsize.html?1-1000 993 993 980 gain 0 loss 0 membership delta 0
+editing/run/fontsize.html?1001-2000 985 985 958 gain 0 loss 0 membership delta 0
+editing/run/fontsize.html?2001-last 417 417 413 gain 0 loss 0 membership delta 0
+editing/run/forecolor.html?1-1000 994 994 985 gain 0 loss 0 membership delta 0
+editing/run/forecolor.html?1001-2000 995 995 978 gain 0 loss 0 membership delta 0
+editing/run/forecolor.html?2001-last 324 324 319 gain 0 loss 0 membership delta 0
+editing/run/formatblock.html?1-1000 984 984 980 gain 0 loss 0 membership delta 0
+editing/run/formatblock.html?1001-2000 980 980 976 gain 0 loss 0 membership delta 0
+editing/run/formatblock.html?2001-3000 983 983 983 gain 0 loss 0 membership delta 0
+editing/run/formatblock.html?3001-4000 915 915 913 gain 0 loss 0 membership delta 0
+editing/run/formatblock.html?4001-5000 931 931 935 gain 0 loss 0 membership delta 0
+editing/run/formatblock.html?5001-last 43 43 42 gain 0 loss 0 membership delta 0
+editing/run/hilitecolor.html 1203 1203 1022 gain 0 loss 0 membership delta 0
+editing/run/insertorderedlist.html?1-1000 765 763 767 gain 4 loss 6 membership delta 0
+editing/run/insertorderedlist.html?1001-last 598 607 598 gain 9 loss 0 membership delta 0
+editing/run/insertunorderedlist.html?1-1000 757 767 766 gain 12 loss 2 membership delta 0
+editing/run/insertunorderedlist.html?1001-2000 804 803 800 gain 3 loss 4 membership delta 0
+editing/run/insertunorderedlist.html?2001-last 53 53 53 gain 0 loss 0 membership delta 0
+editing/run/italic.html?1-1000 851 851 843 gain 0 loss 0 membership delta 0
+editing/run/italic.html?1001-2000 849 849 786 gain 0 loss 0 membership delta 0
+editing/run/italic.html?2001-last 59 59 59 gain 0 loss 0 membership delta 0
+editing/run/removeformat.html 1821 1821 1788 gain 0 loss 0 membership delta 0
+editing/run/strikethrough.html?1-1000 838 838 833 gain 0 loss 0 membership delta 0
+editing/run/strikethrough.html?1001-2000 826 826 829 gain 0 loss 0 membership delta 0
+editing/run/strikethrough.html?2001-last 124 124 123 gain 0 loss 0 membership delta 0
+editing/run/subscript.html 1007 1007 980 gain 0 loss 0 membership delta 0
+editing/run/superscript.html 1033 1033 1008 gain 0 loss 0 membership delta 0
+editing/run/underline.html?1-1000 851 851 831 gain 0 loss 0 membership delta 0
+editing/run/underline.html?1001-2000 835 835 820 gain 0 loss 0 membership delta 0
+editing/run/underline.html?2001-last 122 122 117 gain 0 loss 0 membership delta 0
+editing/run/unlink.html 373 373 372 gain 0 loss 0 membership delta 0
+input-events/input-events-exec-command.html 240 240 241 gain 0 loss 0 membership delta 0
+Total 33352 losses 12 gains 28
+Loss ('editing/run/insertorderedlist.html?1-1000', ('[["defaultparagraphseparator","div"],["insertorderedlist",""]] "<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>" queryCommandState("insertorderedlist") before', 1))
+Loss ('editing/run/insertorderedlist.html?1-1000', ('[["defaultparagraphseparator","p"],["insertorderedlist",""]] "<ol><li>[foo<ol><li>bar]</ol>baz</ol>" queryCommandState("insertorderedlist") before', 1))
+Loss ('editing/run/insertorderedlist.html?1-1000', ('[["defaultparagraphseparator","div"],["insertorderedlist",""]] "<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>" queryCommandState("insertorderedlist") before', 1))
+Loss ('editing/run/insertorderedlist.html?1-1000', ('[["defaultparagraphseparator","div"],["insertorderedlist",""]] "<ol><li>[foo<ol><li>bar]</ol>baz</ol>" queryCommandState("insertorderedlist") before', 1))
+Loss ('editing/run/insertorderedlist.html?1-1000', ('[["defaultparagraphseparator","p"],["insertorderedlist",""]] "<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>" queryCommandState("insertorderedlist") before', 1))
+Loss ('editing/run/insertorderedlist.html?1-1000', ('[["defaultparagraphseparator","p"],["insertorderedlist",""]] "<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>" queryCommandState("insertorderedlist") before', 1))
+Loss ('editing/run/insertunorderedlist.html?1-1000', ('[["defaultparagraphseparator","div"],["insertunorderedlist",""]] "<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>" queryCommandState("insertunorderedlist") before', 1))
+Loss ('editing/run/insertunorderedlist.html?1-1000', ('[["defaultparagraphseparator","p"],["insertunorderedlist",""]] "<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>" queryCommandState("insertunorderedlist") before', 1))
+Loss ('editing/run/insertunorderedlist.html?1001-2000', ('[["defaultparagraphseparator","p"],["insertunorderedlist",""]] "<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>" queryCommandState("insertunorderedlist") before', 1))
+Loss ('editing/run/insertunorderedlist.html?1001-2000', ('[["defaultparagraphseparator","div"],["insertunorderedlist",""]] "<ul><li>[foo<ul><li>bar]</ul>baz</ul>" queryCommandState("insertunorderedlist") before', 1))
+Loss ('editing/run/insertunorderedlist.html?1001-2000', ('[["defaultparagraphseparator","p"],["insertunorderedlist",""]] "<ul><li>[foo<ul><li>bar]</ul>baz</ul>" queryCommandState("insertunorderedlist") before', 1))
+Loss ('editing/run/insertunorderedlist.html?1001-2000', ('[["defaultparagraphseparator","div"],["insertunorderedlist",""]] "<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>" queryCommandState("insertunorderedlist") before', 1))

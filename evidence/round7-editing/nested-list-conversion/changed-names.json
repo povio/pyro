@@ -1,0 +1,338 @@
+[
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol><ul><li>baz]</ul>quz\" queryCommandState(\"insertorderedlist\") before",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol>baz]\" queryCommandState(\"insertorderedlist\") before",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar]<ul><li>baz</ul><li>quz</ul>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<ul><li>bar</ul>[baz]</ul>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar]<ol><li>baz</ol><li>quz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<ol><li>bar</ol>[baz]</ol>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul><ol><li>baz]</ol>quz\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul>baz]\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"]] \"foo<ol><li>bar</ol><ul><li>[baz</ul>quz]\" queryCommandState(\"insertunorderedlist\") before",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]
