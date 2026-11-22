@@ -517,6 +517,11 @@ impl Browser {
                 // A source that does not parse is a broken current request: `complete` (it stays
                 // false until these steps ran, as HTML's await a stable state).
                 bindings.set_image_state(node, invalid.then(|| raw_src.as_deref().unwrap_or("")), false);
+                // Pending decode() calls settle (reject) now: the error task's resource_loaded
+                // settles none.
+                if invalid {
+                    bindings.settle_image_decodes(node);
+                }
                 bindings.keep_loading_image(node, false);
                 { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
                 if invalid {
