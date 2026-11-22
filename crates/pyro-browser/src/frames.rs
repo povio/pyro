@@ -1962,6 +1962,12 @@ impl Browser {
     }
     pub(crate) fn process_iframe_attributes(&mut self, key: FrameKey, loader: &LoaderId) {
         let Some(host) = self.page(key.page).map(|p| p.frames.clone()) else { return };
+        // The cancel marker belongs to this queued processing: taken before any early return, so
+        // a stale one cannot swallow a later lazy navigation of the frame.
+        let lazy_cancelled = {
+            let mut cancelled = host.lazy_cancelled.borrow_mut();
+            cancelled.iter().position(|k| *k == key).map(|i| cancelled.remove(i)).is_some()
+        };
         let Some(frame) = host.frame(key).filter(|f| &f.loader_id == loader) else { return };
         let Some(owner) = frame.owner else { return };
         let Some(parent) = frame.parent.as_ref().and_then(|id| host.key(id)).and_then(|key| host.frame(key)) else {
@@ -1970,7 +1976,7 @@ impl Browser {
         if !host.dom.borrow().is_connected(owner).unwrap_or(false) {
             return;
         }
-        if self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref()) {
+        if self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref(), lazy_cancelled) {
             return;
         }
         host.attribute_navigation.borrow_mut().push(key);
@@ -2114,6 +2120,7 @@ impl Browser {
         key: FrameKey,
         owner: NodeId,
         parent_dom: Option<&pyro_webapi::PageDom>,
+        cancelled: bool,
     ) -> bool {
         // HTML "process the iframe attributes": only the navigation to a `src` URL (not srcdoc,
         // not about:blank) waits on the lazy loading steps.
@@ -2129,12 +2136,8 @@ impl Browser {
         }
         // Navigated otherwise first (before this queued processing ran): no lazy load, and this
         // processing navigates nowhere.
-        {
-            let mut cancelled = host.lazy_cancelled.borrow_mut();
-            if let Some(i) = cancelled.iter().position(|k| *k == key) {
-                cancelled.remove(i);
-                return true;
-            }
+        if cancelled {
+            return true;
         }
         {
             let mut approved = host.lazy_approved.borrow_mut();
