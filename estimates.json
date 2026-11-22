@@ -3,22 +3,22 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 511,
+    "macbook_in_scope": 512,
     "studio_in_scope": 111,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 183,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 799,
+   "distinct_census_pages": 800,
    "owner_reported_unlisted": 5,
-   "selector_union": 910,
+   "selector_union": 911,
    "owner_estimate_reduction": 116,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
    "by_dir": {
     "html/canvas": 342,
-    "html/semantics": 121,
+    "html/semantics": 122,
     "html/interaction": 100,
     "referrer-policy": 78,
     "fetch/api": 54,
@@ -33,65 +33,66 @@
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
     "xhr": 2,
-    "svg/styling": 1,
+    "quirks": 1,
     "html/rendering": 1,
     "IndexedDB": 1,
-    "quirks": 1
+    "svg/styling": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 279,
+    "macbook_in_scope": 308,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 39,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 302,
+   "distinct_census_pages": 331,
    "owner_reported_unlisted": 0,
-   "selector_union": 504,
-   "owner_estimate_reduction": 202,
-   "of_which_tentative": 198,
+   "selector_union": 546,
+   "owner_estimate_reduction": 215,
+   "of_which_tentative": 205,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 220,
-    "html/semantics": 127,
+    "html/semantics": 162,
     "html/browsers": 78,
     "html/syntax": 30,
-    "fetch/api": 23,
     "html/webappapis": 23,
+    "fetch/api": 23,
+    "html/dom": 7,
     "html/infrastructure": 3
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 196,
+    "macbook_in_scope": 166,
     "studio_in_scope": 178,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 8,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 279,
+   "distinct_census_pages": 249,
    "owner_reported_unlisted": 0,
-   "selector_union": 374,
-   "owner_estimate_reduction": 95,
-   "of_which_tentative": 96,
+   "selector_union": 332,
+   "owner_estimate_reduction": 83,
+   "of_which_tentative": 89,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 250,
+    "html/semantics": 215,
     "referrer-policy": 36,
-    "html/interaction": 20,
     "content-security-policy": 20,
+    "html/interaction": 20,
     "webidl": 19,
-    "html/dom": 16,
+    "html/dom": 9,
     "html/browsers": 5,
     "svg/path": 4,
     "workers": 3,
@@ -1536,7 +1537,7 @@
    "tentative": 2
   },
   "R-HTML-11": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 42,
    "out_of_scope_pages": 0,
    "pages": 42,
@@ -1639,15 +1640,29 @@
    "out_of_scope_pages": 0,
    "pages": 5,
    "tentative": 0
+  },
+  "TF1": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
+   "pages": 0,
+   "tentative": 0
+  },
+  "TF2": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 1,
+   "tentative": 0
   }
  },
- "implemented_total_estimate": 837,
+ "implemented_total_estimate": 838,
  "milestones_reached": [
   250,
   500,
   750
  ],
- "macbook_in_scope_implemented": 511,
+ "macbook_in_scope_implemented": 512,
  "macbook_in_scope_milestones": [
   100,
   200,
