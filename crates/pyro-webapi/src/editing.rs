@@ -1517,12 +1517,14 @@ fn heading_end(dom: &Dom, block: NodeId, caret: Point) -> Option<Point> {
 /// Split the containing list item when its direct paragraph is edited.
 fn list_item_for_paragraph(dom: &Dom, host: NodeId, block: NodeId) -> Option<(NodeId, NodeId)> {
     let item = dom.parent_element(block).ok()??;
-    if item == host || !dom.element(item).is_ok_and(|el| el.is_html() && &**el.local_name() == "li") {
-        return None;
-    }
+    if item == host { return None; }
     let list = dom.parent_element(item).ok()??;
-    (dom.element(list).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "ul" | "ol"))
-        && editing_host(dom, list) == Some(host)).then_some((item, list))
+    let item_element = dom.element(item).ok()?;
+    let list_element = dom.element(list).ok()?;
+    let valid_pair = matches!((&**item_element.local_name(), &**list_element.local_name()),
+        ("li", "ol" | "ul") | ("dt" | "dd", "dl"));
+    (item_element.is_html() && list_element.is_html() && valid_pair && editing_host(dom, list) == Some(host))
+        .then_some((item, list))
 }
 
 fn clone_split_shell(dom: &mut Dom, source: NodeId) -> Option<NodeId> {
