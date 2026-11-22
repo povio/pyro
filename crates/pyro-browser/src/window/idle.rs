@@ -160,7 +160,9 @@ fn run(realm: &WeakRealm, handle: u32, did_timeout: bool) {
         let make = make.as_object().ok_or(JsError::ContextDestroyed)?;
         let deadline = make.call(None, &[scope.number(deadline), scope.boolean(did_timeout)])?;
         let callback = entry.callback.get(&scope).as_object().ok_or(JsError::ContextDestroyed)?;
-        callback.call(None, &[deadline])
+        // scheduler.yield() from an idle callback continues at background
+        // priority (the callback's call ends with its microtask checkpoint).
+        pyro_webapi::with_idle_scheduling_state(&w.target.page, || callback.call(None, &[deadline]))
     })();
     w.idle_period_end.set(outer);
     if let Err(e) = result {

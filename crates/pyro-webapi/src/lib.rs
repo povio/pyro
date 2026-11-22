@@ -153,6 +153,7 @@ use pyro_js::{JsResult, Object, Scope, Value};
 pub use event::{EventCore, EventData, EventInterface};
 pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
+pub use scheduler::with_idle_scheduling_state;
 pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
