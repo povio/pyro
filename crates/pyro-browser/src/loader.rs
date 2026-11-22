@@ -171,6 +171,11 @@ pub struct Resource {
     pub content_language: Option<String>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// A document's response asked for an origin-keyed agent cluster
+    /// (`Origin-Agent-Cluster: ?1`, HTML § 7.1.4); honoured only in a secure
+    /// context, and only by the first document of its origin in the browsing
+    /// context group ([`crate::frames::FrameHost::record_origin_keying`]).
+    pub origin_agent_cluster: bool,
     /// A navigation's `Referer` as its last hop sent it (`document.referrer`
     /// of the document it commits; empty: none was sent). `None`: the
     /// loader does not say, and it is computed from the navigation.
@@ -496,6 +501,7 @@ impl ResourceLoader for NetLoader {
                 refresh: None,
                 content_language: None,
                 referrer_policy: None,
+                origin_agent_cluster: false,
                 sent_referrer: document.then(|| {
                     pyro_net::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy)
                         .header(&req.url)
@@ -577,6 +583,7 @@ impl ResourceLoader for NetLoader {
                     refresh: None,
                     content_language: None,
                     referrer_policy: None,
+                    origin_agent_cluster: false,
                     sent_referrer: None,
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
@@ -641,6 +648,7 @@ impl ResourceLoader for NetLoader {
                         referrer_policy: pyro_net::ReferrerPolicy::from_header(
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
+                        origin_agent_cluster: document && origin_agent_cluster_requested(&h.headers),
                         sent_referrer: chain.as_ref().map(|c| c.header(&h.url).unwrap_or_default()),
                         body: std::mem::take(&mut body).into(),
                         immutable_local: false,
@@ -670,6 +678,16 @@ impl ResourceLoader for NetLoader {
         let client = self.client.clone();
         Some(ResourceCancellation::new(move || client.cancel(native_id)))
     }
+}
+
+/// The `Origin-Agent-Cluster` response header is the structured-field boolean `?1` (HTML
+/// "obtain a similar-origin window agent": `requestsOAC`); parameters are ignored, and any other
+/// value (`?0`, a malformed one) requests a site-keyed cluster.
+fn origin_agent_cluster_requested(headers: &http::HeaderMap) -> bool {
+    headers
+        .get("origin-agent-cluster")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(';').next().is_some_and(|item| item.trim_matches(|c| c == ' ' || c == '\t') == "?1"))
 }
 
 /// The service worker route of a loader fetch: a navigation goes to the
@@ -873,6 +891,7 @@ impl ResourceLoader for StaticLoader {
                         refresh: None,
                         content_language: None,
                         referrer_policy,
+                        origin_agent_cluster: false,
                         sent_referrer: sent_referrer.clone(),
                         timing: None,
                         partial,
@@ -1537,6 +1556,7 @@ impl Browser {
             refresh: None,
             content_language: None,
             referrer_policy: None,
+            origin_agent_cluster: false,
             sent_referrer: None,
             timing: None,
             partial: None,
@@ -1630,6 +1650,16 @@ impl Browser {
         }
         committed?;
         let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
+        // HTML "obtain a similar-origin window agent": the first document of a (tuple) origin in the
+        // browsing context group decides whether its agent cluster is origin-keyed
+        // (`window.originAgentCluster`); a sandboxed document's origin is opaque, so it decides nothing.
+        if origin != "null" && !page_dom.has_opaque_origin() {
+            if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
+                let requested =
+                    resource.origin_agent_cluster && crate::window::frame_chain_secure(&host, page, &resource.url);
+                host.record_origin_keying(&origin, requested);
+            }
+        }
         match resource.sent_referrer.take() {
             // What the request's last hop was sent (a redirect chain may have cut it).
             Some(sent) => page_dom.set_sent_referrer(sent, resource.referrer_policy),
@@ -3422,6 +3452,7 @@ mod disposition_tests {
             refresh: None,
             content_language: None,
             referrer_policy: None,
+            origin_agent_cluster: false,
             sent_referrer: None,
             timing: None,
             partial: None,

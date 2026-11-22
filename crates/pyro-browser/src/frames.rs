@@ -212,6 +212,10 @@ pub(crate) struct FrameHost {
     root_nav: Rc<PageNav>,
     pub dom: pyro_dom::parse::DomRef,
     pub(crate) cluster_group: Cell<pyro_webapi::AgentClusterGroup>,
+    /// The browsing context group's historical agent cluster key map (HTML § 7.1.4 "obtain a
+    /// similar-origin window agent"): per origin, whether its agent cluster is origin-keyed. Shared
+    /// by the pages of the group (a popup takes its opener's), as `cluster_group` is.
+    origin_keying: RefCell<OriginKeying>,
     pub settings: RefCell<Settings>,
     pub page: PageId,
     pub context: ContextId,
@@ -257,6 +261,8 @@ pub(crate) struct FrameHost {
     /// The layout engine's sync stamp when the hidden objects were last checked.
     pub(crate) hidden_checked_at: Cell<Option<(u64, u64, u32, u32)>>,
 }
+type OriginKeying = Rc<RefCell<std::collections::HashMap<String, bool>>>;
+
 /// A popup page made when `window.open` ran, before the embedder creates the
 /// page: its frame tree with the initial about:blank document and realms
 /// (HTML creates that document synchronously, so the opener can script it at
@@ -269,6 +275,28 @@ pub(crate) struct PrebuiltPopup {
 }
 
 impl FrameHost {
+    /// HTML "obtain a similar-origin window agent": the first document of `origin` in the browsing
+    /// context group decides whether its agent cluster is origin-keyed (`requested`: it asked with
+    /// `Origin-Agent-Cluster: ?1` in a secure context); later documents of the origin keep it.
+    pub(crate) fn record_origin_keying(&self, origin: &str, requested: bool) {
+        let map = self.origin_keying.borrow().clone();
+        map.borrow_mut().entry(origin.to_owned()).or_insert(requested);
+    }
+
+    /// Whether `origin`'s agent cluster in this browsing context group is origin-keyed (an origin
+    /// no document recorded is site-keyed).
+    pub(crate) fn origin_keyed(&self, origin: &str) -> bool {
+        let map = self.origin_keying.borrow().clone();
+        let keyed = map.borrow().get(origin).copied().unwrap_or(false);
+        keyed
+    }
+
+    /// Joins `opener`'s browsing context group's key map (a popup adopted with its opener kept).
+    pub(crate) fn share_origin_keying(&self, opener: &FrameHost) {
+        let map = opener.origin_keying.borrow().clone();
+        *self.origin_keying.borrow_mut() = map;
+    }
+
     /// The popup page `window.open` asks for, made now in this page's
     /// context: a top-level frame whose initial about:blank document has the
     /// opener frame's origin and base URL and the session storage copied for
@@ -320,6 +348,7 @@ impl FrameHost {
             // own could not hold (HTML: one browsing context group, one event loop).
             dom: self.dom.clone(),
             cluster_group: Cell::new(self.cluster_group.get()),
+            origin_keying: RefCell::new(self.origin_keying.borrow().clone()),
             settings: RefCell::new(settings),
             page: id,
             context: self.context,
@@ -383,6 +412,7 @@ impl FrameHost {
             root_nav: nav,
             dom: Rc::new(RefCell::new(pyro_dom::Dom::new())),
             cluster_group: Cell::default(),
+            origin_keying: RefCell::default(),
             settings: RefCell::new(Settings {
                 local,
                 services,
@@ -1985,6 +2015,7 @@ impl Browser {
                 refresh: None,
                 content_language: None,
                 referrer_policy: crate::loader::parent_referrer_policy(self, key),
+                origin_agent_cluster: false,
                 sent_referrer: None,
                 timing: None,
                 partial: None,

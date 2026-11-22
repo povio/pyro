@@ -76,6 +76,7 @@ impl ManualLoader {
             refresh: None,
             content_language: None,
             referrer_policy: None,
+            origin_agent_cluster: false,
             sent_referrer: None,
             timing: None,
             partial: None,

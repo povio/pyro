@@ -1741,6 +1741,7 @@ impl Browser {
             };
             if let Some(opener_host) = frames.upgrade() {
                 p.frames.cluster_group.set(opener_host.cluster_group.get());
+                p.frames.share_origin_keying(&opener_host);
             }
             *p.frames.opener.borrow_mut() = Some(frames);
             *p.frames.popup.borrow_mut() = Some(ticket.clone());

@@ -448,6 +448,18 @@ impl JsClass for Window {
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "frames", v),
         );
         def.getter("isSecureContext", |s, w| Ok(s.boolean(is_secure_context(w))));
+        // HTML: whether the surrounding agent's cluster is origin-keyed. An opaque origin is its own
+        // site, so always; otherwise what the first document of the origin in the browsing context
+        // group decided (`FrameHost::record_origin_keying`). No COOP/COEP isolation here, which would
+        // also make it true.
+        def.getter("originAgentCluster", |s, w| {
+            // This window's document's origin (`opaque:...` for an opaque one), whichever realm asks.
+            let origin = w.target.page.origin_key();
+            let keyed = origin.starts_with("opaque")
+                || w.target.page.has_opaque_origin()
+                || w.frames.upgrade().is_some_and(|host| host.origin_keyed(&origin));
+            Ok(s.boolean(keyed))
+        });
         def.method("__lpNow", 0, |s, w, _a| Ok(s.number(w.now_ms())));
         // Window post message steps: from the window whose script is running.
         def.method("postMessage", 1, |s, w, a| {

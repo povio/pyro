@@ -270,6 +270,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             refresh: None,
             content_language: None,
             referrer_policy: None,
+            origin_agent_cluster: false,
             sent_referrer: None,
             timing: None,
             partial: None,
