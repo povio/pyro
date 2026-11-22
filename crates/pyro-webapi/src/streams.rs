@@ -186,25 +186,45 @@ pub(crate) fn helper<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str, args: &[
     module.get(name)?.as_object().ok_or_else(unavailable)?.call(None, args)
 }
 
-/// `fetch(input, init)` when `init.body` is a ReadableStream: the request goes
-/// out with the stream's bytes once it ends (no streaming upload). None for
-/// any other call; realms that never made their streams never read
-/// `init.body` here (a getter would run twice), so they do not take a
-/// stream of another window as a streaming body.
+/// `fetch(input, init)` when the body is a ReadableStream (`init.body`, or the
+/// body of a Request made with one): the request goes out with the stream's
+/// bytes once it ends (no streaming upload). None for any other call; realms
+/// that never made their streams never read `init.body` here (a getter would
+/// run twice), so they do not take a stream of another window as a streaming body.
 pub(crate) fn fetch_stream_body<'s>(s: &Scope<'s>, input: Value<'s>, init: Value<'s>) -> JsResult<Option<Value<'s>>> {
-    let Some(options) = init.as_object() else { return Ok(None) };
     let page = crate::target::page_of(s)?;
     if existing(s, &page, s.undefined())?.is_none() {
         return Ok(None);
     }
-    let body = options.get_atom("body")?;
-    if !is_stream(s, body)? {
+    let body = match init.as_object() {
+        Some(options) => options.get_atom("body")?,
+        None => s.undefined(),
+    };
+    let stream = if is_stream(s, body)? {
+        let options = init.as_object().expect("a body comes from an init object");
+        if options.get_atom("duplex")?.as_string().as_deref() != Some("half") {
+            return Err(JsError::Type(
+                "The `duplex` member must be specified for a request with a streaming body".into(),
+            ));
+        }
+        body
+    } else if body.is_undefined() {
+        match crate::request::script_body_stream(s, input)? {
+            Some(stream) => stream,
+            None => return Ok(None),
+        }
+    } else {
         return Ok(None);
-    }
-    if options.get_atom("duplex")?.as_string().as_deref() != Some("half") {
-        return Err(JsError::Type("The `duplex` member must be specified for a request with a streaming body".into()));
-    }
-    helper(s, &page, "fetchBuffered", &[input, init, body]).map(Some)
+    };
+    // Only an HTTP(S) fetch sends its body: a data:, blob: or about: one never reads the
+    // stream (which may never end). An unparsable URL fails in `fetch` itself.
+    let url = match s.unwrap::<crate::request::Request>(input) {
+        Some(r) => r.url.clone(),
+        None => crate::util::dom_string(input)?,
+    };
+    let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &url);
+    let network = pyro_net::Url::parse(&resolved).is_ok_and(|u| matches!(u.scheme(), "http" | "https"));
+    helper(s, &page, "fetchBuffered", &[input, init, stream, s.boolean(network)]).map(Some)
 }
 
 /// Structured clone's transfer-list check: `"R"`, `"W"` or `"T"` when

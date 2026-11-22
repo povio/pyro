@@ -2334,6 +2334,17 @@ impl Io {
                 (sent, credentialed)
             };
             let status = resp.status();
+            // Fetch "HTTP-network-or-cache fetch": a credentialed 401 to a request whose body
+            // came from a stream is a network error (that body cannot be sent with credentials).
+            if status == StatusCode::UNAUTHORIZED
+                && req.body_from_stream
+                && req.body.is_some()
+                && !cors_cross
+                && !tainted
+                && includes_credentials(req.credentials, basic_tainting)
+            {
+                return Err(NetError::Other("A request with a streamed body got a 401".into()));
+            }
             // The server's reason phrase when it is not the standard one (hyper keeps only those): XHR and fetch
             // report it as statusText, as Chromium does (`HTTP/1.1 204 UNICORNSWIN`).
             let reason = resp

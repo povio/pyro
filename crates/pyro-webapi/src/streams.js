@@ -2465,17 +2465,53 @@
       });
     },
     cloneBody: (stream, cloneChunk) => rsTee(rsOf(stream), cloneChunk),
-    // fetch() with a stream body: the bytes are sent once the stream ends.
-    fetchBuffered(input, init, stream) {
+    // fetch() with a stream body: the bytes are sent once the stream ends. `network`: the
+    // URL is HTTP(S); any other fetch never reads its body. The request's signal aborting
+    // while the stream is read cancels the stream with its reason.
+    fetchBuffered(input, init, stream, network) {
       const st = rsOf(stream);
       if (rsLocked(st) || st.disturbed) return rejected(new TypeErrorC('Failed to execute \'fetch\' on \'Window\': The body stream is locked or disturbed'));
-      return then(collect(st), ({ bytes }) => {
-        const copy = {};
+      const copy = {};
+      if (init !== undefined && init !== null) {
         for (const key of Reflect.ownKeys(init)) copy[key] = init[key];
+      }
+      if (!network) {
+        copy.body = undefined;
+        return fetchFn(input, copy);
+      }
+      let signal = copy.signal;
+      if (signal === undefined && typeof input === 'object' && input !== null) signal = input.signal;
+      const d = defer();
+      let settled = false;
+      let onAbort;
+      const stop = (reason) => {
+        if (settled) return;
+        settled = true;
+        d.reject(reason);
+        then(rsCancel(st, reason), undefined, noop);
+      };
+      if (signal instanceof AbortSignalC) {
+        if (signal.aborted) {
+          stop(signal.reason);
+          return d.promise;
+        }
+        onAbort = () => stop(signal.reason);
+        apply(addListener, signal, ['abort', onAbort]);
+      }
+      then(collect(st), ({ bytes }) => {
+        if (onAbort) apply(removeListener, signal, ['abort', onAbort]);
+        if (settled) return;
+        settled = true;
         copy.body = bytes;
         // The third argument marks the body as a stream's (Fetch: its source is null).
-        return fetchFn(input, copy, true);
+        d.resolve(fetchFn(input, copy, true));
+      }, (e) => {
+        if (onAbort) apply(removeListener, signal, ['abort', onAbort]);
+        if (settled) return;
+        settled = true;
+        d.reject(e);
       });
+      return d.promise;
     },
   };
 })
