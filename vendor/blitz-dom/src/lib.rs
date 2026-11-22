@@ -48,6 +48,7 @@ mod cssom;
 mod debug;
 mod events;
 mod font_metrics;
+mod mathml_operator;
 pub use font_metrics::font_metrics_provider;
 mod form;
 mod has_invalidation;

@@ -163,6 +163,12 @@ impl Attributes {
         idx.map(|idx| self.inner.remove(idx))
     }
 
+    /// pyro: drop the cached presentational hints, for hints that depend on more than the
+    /// attributes (an `<mo>`'s text and position, `mathml_operator`).
+    pub fn forget_presentational_hints(&mut self) {
+        self.presentational_hints.take();
+    }
+
     /// pyro: the cached presentational hints, built by `build`
     /// when no cascade asked since the last write.
     pub fn presentational_hints(&self, build: impl FnOnce() -> PresentationalHints) -> &PresentationalHints {

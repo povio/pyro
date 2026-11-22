@@ -6276,3 +6276,22 @@ fn inline_media_conditions_update_when_the_device_changes() {
         assert_eq!(&image.data[..3], &expected, "viewport {width}");
     }
 }
+
+/// An `<mo>`'s spacing follows its text and its position in its row (`mathml_operator`, a
+/// presentational hint that depends on more than the attributes): a changed operator, an operator
+/// moved to the row's start (a prefix form) or end (a postfix one), its `lspace` and `form`.
+#[test]
+fn mathml_operator_spacing_follows_text_and_position() {
+    steps_match_fresh_builds(
+        r#"<div style="font-size:36px"><math><mrow id=row><mi id=a>x</mi><mo id=o>+</mo><mi id=b>y</mi></mrow></math></div>"#,
+        vec![
+            text("#o", "="),
+            text("#o", ","),
+            move_before("the operator first", "#o", "#row", Some("#a")),
+            move_before("the operator last", "#o", "#row", None),
+            move_before("the operator between", "#o", "#row", Some("#b")),
+            attr("#o", "lspace", "12px"),
+            attr("#o", "form", "postfix"),
+        ],
+    );
+}

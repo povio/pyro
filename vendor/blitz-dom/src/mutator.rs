@@ -309,6 +309,7 @@ impl DocumentMutator<'_> {
             if let Some(parent_id) = parent_id {
                 let parent = &mut self.doc.nodes[parent_id];
                 parent.insert_damage(CHILDREN_CHANGED);
+                self.respace_operators(parent_id);
             }
 
             self.maybe_record_node(parent_id);
@@ -337,6 +338,7 @@ impl DocumentMutator<'_> {
                 }
                 if let Some(parent_id) = parent_id {
                     self.doc.nodes[parent_id].insert_damage(CHILDREN_CHANGED);
+                    self.respace_operators(parent_id);
                 }
                 Ok(())
             }
@@ -1169,12 +1171,38 @@ impl DocumentMutator<'_> {
     /// unchanged): they are restyled whenever the parent carries a sibling-dependent flag. The
     /// same conditions inside a `:has()` argument reach their anchors through
     /// `invalidate_relative_selectors_for_ts_state`.
+    /// pyro: an `<mo>`'s spacing follows its text and its position in its row
+    /// (`mathml_operator`): `node_id`'s children or text changed, so its operators, or it when it is
+    /// one, build their presentational hints again.
+    fn respace_operators(&mut self, node_id: NodeId) {
+        if !crate::mathml_operator::affects_spacing(&self.doc.nodes[node_id]) {
+            return;
+        }
+        let node = &self.doc.nodes[node_id];
+        let is_mo = |n: &crate::node::Node| {
+            n.element_data().is_some_and(|e| e.name.ns == markup5ever::ns!(mathml) && e.name.local == local_name!("mo"))
+        };
+        let operators: Vec<NodeId> = if is_mo(node) {
+            vec![node_id]
+        } else {
+            node.children.iter().copied().filter(|c| is_mo(&self.doc.nodes[*c])).collect()
+        };
+        for id in operators {
+            let node = &mut self.doc.nodes[id];
+            if let Some(element) = node.element_data_mut() {
+                element.attrs.forget_presentational_hints();
+            }
+            node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+        }
+    }
+
     fn restyle_for_child_list_change(
         &mut self,
         parent_id: NodeId,
         changed: Range<usize>,
         removed_element: bool,
     ) {
+        self.respace_operators(parent_id);
         // pyro: the scroll markers of the groups around a changed child (`layout::scroll_markers`).
         self.doc.scroll_markers_dirty = true;
         let parent = &self.doc.nodes[parent_id];
