@@ -570,19 +570,28 @@ fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> Js
         return Ok(s.number(0.0));
     }
     let handler = a.get(0);
-    // WebIDL `long timeout = 0`: conversion errors propagate.
-    let delay = a.get(1).to_number()?;
-    let delay = if delay.is_finite() && delay > 0.0 { delay.min(i32::MAX as f64) as u64 } else { 0 };
+    // A string handler (`TimerHandler` is `(Function or TrustedScript or DOMString)`): converted
+    // now, compiled when the timer runs (HTML "timer initialization steps"), so a SyntaxError is
+    // reported then and does not throw from setTimeout.
     let cb = if handler.is_function() {
         Persistent::new(s, handler)
     } else {
-        // String handler: compiled as a function body in the global scope.
-        let src = handler.to_string()?;
-        let f = s.eval(&format!("(function () {{\n{src}\n}})"), Some(&w.url()), 1)?;
-        Persistent::new(s, f)
+        Persistent::new(s, s.string(&handler.to_string()?))
     };
+    // WebIDL `long timeout = 0`: conversion errors propagate.
+    let delay = webidl_long(a.get(1).to_number()?);
+    let delay = u64::try_from(delay).unwrap_or(0);
     let args: Vec<Persistent> = a.iter().skip(2).map(|v| Persistent::new(s, v)).collect();
     schedule(s, w, cb, args, delay, repeat)
+}
+
+/// WebIDL ToInt32 for `long`: NaN and infinities are 0, the rest truncates and wraps modulo 2^32
+/// (`setTimeout(f, 2 ** 32)` waits 0 ms, `2 ** 31` is negative and so 0 too).
+fn webidl_long(n: f64) -> i32 {
+    if !n.is_finite() {
+        return 0;
+    }
+    n.trunc().rem_euclid(4_294_967_296.0) as u32 as i32
 }
 
 /// HTML timer nesting: a timer set from a timer task more than this many
@@ -637,15 +646,23 @@ fn arm_timer(realm_weak: pyro_js::WeakRealm, w: &WindowData, timer: JsTimer, lev
         if !repeat {
             w.timers.borrow_mut().remove(&handle);
         }
-        let Some(f) = timer.cb.get(&scope).as_object() else { return };
+        // A string handler compiles now, each time it runs, as a function body in the global
+        // scope; a SyntaxError is reported like the callback's own exception.
+        let cb = timer.cb.get(&scope);
+        let compiled = if cb.is_string() {
+            cb.to_string().and_then(|src| scope.eval(&format!("(function () {{\n{src}\n}})"), Some(&w.url()), 1))
+        } else {
+            Ok(cb)
+        };
         let run_level = level.get();
         let outer = w.timer_nesting.replace(run_level);
         // Arguments are rooted by `args` (Persistent) while this call runs.
         let vals: Vec<Value<'_>> = timer.args.iter().map(|p| p.get(&scope)).collect();
-        let result = if run_level > TIMER_NESTING_LIMIT {
-            call_nested_timer(&scope, w, f, &vals)
-        } else {
-            f.call(None, &vals).map(|_| ())
+        let result = match compiled.map(|f| f.as_object()) {
+            Err(e) => Err(e),
+            Ok(None) => Ok(()),
+            Ok(Some(f)) if run_level > TIMER_NESTING_LIMIT => call_nested_timer(&scope, w, f, &vals),
+            Ok(Some(f)) => f.call(None, &vals).map(|_| ()),
         };
         w.timer_nesting.set(outer);
         if let Err(e) = result {
