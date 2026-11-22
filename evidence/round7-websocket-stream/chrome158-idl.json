@@ -1,0 +1,33 @@
+{
+  "surface": [
+    "function",
+    "function"
+  ],
+  "errors": [
+    true,
+    0,
+    "WebSocketError",
+    "message",
+    3555,
+    "good",
+    null,
+    "",
+    1000
+  ],
+  "descriptors": [
+    1,
+    0,
+    0,
+    "get closeCode",
+    "get reason"
+  ],
+  "invalid": [
+    "TypeError",
+    "SyntaxError",
+    "TypeError",
+    "TypeError",
+    "InvalidAccessError",
+    "SyntaxError",
+    "TypeError"
+  ]
+}
