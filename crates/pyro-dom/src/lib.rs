@@ -36,6 +36,7 @@ pub mod picture;
 pub mod prescan;
 mod details;
 mod top_layer;
+pub mod html_in_canvas;
 pub mod inner_text;
 pub mod layout;
 pub mod live_iterator;

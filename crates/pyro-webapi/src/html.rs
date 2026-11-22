@@ -3401,6 +3401,16 @@ simple_class!(HtmlSlotElement, "HTMLSlotElement", HtmlElement, |def| {
     });
 });
 simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
+    // HTML-in-Canvas: a paint event in the next frame, and its handler.
+    def.method("requestPaint", 0, |s, n, _a| {
+        crate::html_in_canvas::request_paint(n.page(), n.id);
+        Ok(s.undefined())
+    });
+    def.accessor(
+        "onpaint",
+        |s, n| crate::target::event_handler(s, &n.target, "paint"),
+        |s, n, v| crate::target::set_event_handler(s, &n.target, "paint", v),
+    );
     // Setting either dimension clears the bitmap and resets the context.
     def.accessor(
         "width",

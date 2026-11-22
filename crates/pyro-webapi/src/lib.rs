@@ -73,6 +73,7 @@ pub mod headers;
 pub mod highlights;
 pub mod view_transition;
 pub mod html;
+pub mod html_in_canvas;
 pub mod identity;
 mod image_decode;
 pub mod indexeddb;

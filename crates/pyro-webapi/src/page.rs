@@ -285,6 +285,8 @@ pub struct PageDom {
     /// Scoped focusgroup memory: per owner, the item focused last (the
     /// group's tab stop on re-entry unless the owner says `nomemory`).
     pub(crate) focusgroup_memory: RefCell<FxHashMap<NodeId, NodeId>>,
+    /// HTML-in-Canvas: drawable canvases and the `paint` events they owe.
+    pub(crate) html_in_canvas: crate::html_in_canvas::Shared,
     /// ARIA element reflection (`ariaLabelledByElements`, ...): per element and attribute, the
     /// elements set explicitly and the frozen array last returned (html.rs `AriaRefs`).
     pub(crate) aria_refs: RefCell<FxHashMap<(NodeId, &'static str), crate::html::AriaRefs>>,
@@ -1004,6 +1006,7 @@ impl PageDom {
             resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
             focusgroup_memory: RefCell::new(FxHashMap::default()),
+            html_in_canvas: Default::default(),
             aria_refs: RefCell::new(FxHashMap::default()),
             focus_transition: RefCell::new(None),
             editing_target: Cell::new(None),

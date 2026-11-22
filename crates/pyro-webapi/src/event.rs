@@ -48,6 +48,8 @@ pub enum EventInterface {
     CommandEvent,
     InterestEvent,
     TaskPriorityChangeEvent,
+    /// HTML-in-Canvas `paint` (`crate::html_in_canvas`).
+    CanvasPaintEvent,
     /// Made in JS on first use (`crate::editing_globals`): natively an
     /// Event wrapper with ClipboardEvent.prototype.
     ClipboardEvent,
@@ -193,6 +195,10 @@ pub struct EventFields {
     pub new_state: String,
     /// `CommandEvent.command`.
     pub command: String,
+    /// `CanvasPaintEvent.changedElements`, and the frozen array made of
+    /// them on first read ([SameObject]).
+    pub changed_elements: Vec<NodeId>,
+    pub changed_elements_array: Option<Persistent>,
 }
 
 /// Resolves a `MessageEvent.source` window in the realm reading it.
@@ -444,6 +450,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::TaskPriorityChangeEvent => s.wrap::<crate::task_signal::TaskPriorityChangeEvent>(d, Some(key)),
         EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
         EventInterface::InterestEvent => s.wrap::<InterestEvent>(d, Some(key)),
+        EventInterface::CanvasPaintEvent => s.wrap::<CanvasPaintEvent>(d, Some(key)),
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
@@ -1858,6 +1865,66 @@ impl JsClass for InterestEvent {
     }
 }
 
+/// HTML-in-Canvas `CanvasPaintEvent`: the `paint` event of a
+/// `<canvas content=drawable>`, with the drawable elements that changed.
+pub struct CanvasPaintEvent;
+impl JsClass for CanvasPaintEvent {
+    const NAME: &'static str = "CanvasPaintEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<CanvasPaintEvent>(s, nt, a, EventInterface::CanvasPaintEvent, fill_canvas_paint)
+        });
+        // [SameObject] FrozenArray<Element>.
+        def.getter("changedElements", |s, e| {
+            if let Some(array) = e.fields.borrow().changed_elements_array.as_ref() {
+                return Ok(array.get(s));
+            }
+            let nodes = e.fields.borrow().changed_elements.clone();
+            let mut values = Vec::with_capacity(nodes.len());
+            for node in nodes {
+                // A changed element can be gone by the time the array is read.
+                if let Ok(o) = crate::node::wrap_node(s, &e.page, node) {
+                    values.push(o.value());
+                }
+            }
+            let array = s.frozen_array(&values)?;
+            e.fields.borrow_mut().changed_elements_array = Some(Persistent::new(s, array));
+            Ok(array)
+        });
+    }
+}
+
+/// `changedElements` of a CanvasPaintEventInit: a sequence of Elements.
+fn fill_canvas_paint<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(o) = init else { return Ok(()) };
+    let v = o.get_atom("changedElements")?;
+    if v.is_undefined() {
+        return Ok(());
+    }
+    let what = "Failed to construct 'CanvasPaintEvent': The provided value cannot be converted to a sequence.";
+    let seq = s.sequence(v, what)?;
+    let len = seq.get_atom("length")?.to_number()? as u32;
+    let page = page_of(s)?;
+    for i in 0..len {
+        let item = seq.get_index(i)?;
+        let element = s
+            .unwrap::<crate::node::Node>(item)
+            .filter(|n| Rc::ptr_eq(&n.page().dom, &page.dom) && n.page().dom.borrow().element(n.id).is_ok());
+        match element {
+            Some(n) => f.changed_elements.push(n.id),
+            None => {
+                return Err(JsError::Type(
+                    "Failed to construct 'CanvasPaintEvent': Failed to read the 'changedElements' property from 'CanvasPaintEventInit': Failed to convert value to 'Element'."
+                        .into(),
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
 pub struct PopStateEvent;
 impl JsClass for PopStateEvent {
     const NAME: &'static str = "PopStateEvent";
@@ -2095,6 +2162,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<AnimationEvent>();
     engine.register::<TransitionEvent>();
     engine.register::<ToggleEvent>();
+    engine.register::<CanvasPaintEvent>();
     engine.register::<CommandEvent>();
     engine.register::<InterestEvent>();
 }
