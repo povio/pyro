@@ -1,5 +1,5 @@
 // WebVTT cue text has its own tokenizer, restricted element vocabulary and tree rules.
-(function (decodeReferences, isForeignRegion) {
+(function (decodeReferences, foreignState) {
   'use strict';
   const cues = new WeakMap(), regions = new WeakMap(), construct = Symbol();
   const define = Object.defineProperty;
@@ -25,8 +25,12 @@
     if (string(value) === 'auto') return 'auto';
     throw new TypeError('Expected a number or auto.');
   }
+  function localState(kind, target) {
+    if (kind === 'cue') return cues.get(target);
+    if (kind === 'region') return regions.get(target);
+  }
   function state(map, target) {
-    const s = map.get(target);
+    const s = map.get(target) ?? foreignState(map === cues ? 'cue' : 'region', target);
     if (!s) throw new TypeError('Illegal invocation');
     return s;
   }
@@ -156,7 +160,7 @@
   attribute(cue, cues, 'snapToLines', Boolean);
   attribute(cue, cues, 'region', value => {
     if (value == null) return null;
-    if (!regions.has(value) && !isForeignRegion(value)) throw new TypeError('Expected a VTTRegion.');
+    state(regions, value);
     return value;
   });
   enumAttribute(cue, cues, 'vertical', ['', 'rl', 'lr']);
@@ -187,6 +191,6 @@
     return [s.startTime, s.endTime, s.id, s.pauseOnExit];
   }
   return {TextTrackCue, VTTCue, VTTRegion, parsedRegion, parsedCue, cueTiming,
-    hasCue: cue => cues.has(cue), hasRegion: region => regions.has(region),
+    localState,
     cueOwner: cue => state(cues, cue).track, setCueOwner(cue, track) { state(cues, cue).track = track; }};
 })

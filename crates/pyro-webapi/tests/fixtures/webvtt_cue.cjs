@@ -54,13 +54,19 @@ test('parsed cues retain region and track identity while script changes timing',
 test('cross-realm region assignment accepts a genuine foreign region and rejects forged instances', () => {
   const otherRealm = vm.createContext({document, EventTarget, DOMException});
   const otherFactory = vm.runInContext(readFileSync(resolve(__dirname, '../../src/webvtt_cue.js'), 'utf8'), otherRealm);
-  const other = otherFactory(s => s, api.hasRegion);
+  const other = otherFactory(s => s, api.localState);
   const childCue = new other.VTTCue(0, 2, 'foreign');
   const parentRegion = new api.VTTRegion();
   childCue.region = parentRegion;
   assert.equal(childCue.region, parentRegion);
-  assert.equal(other.hasCue(childCue), true);
-  assert.equal(api.hasCue(childCue), false);
+  const parentCue = new api.VTTCue(1, 3, 'parent');
+  const track = {};
+  other.setCueOwner(parentCue, track);
+  assert.equal(parentCue.track, track);
+  const id = Object.getOwnPropertyDescriptor(other.TextTrackCue.prototype, 'id');
+  id.set.call(parentCue, 'updated');
+  assert.equal(parentCue.id, 'updated');
+  assert.throws(() => id.get.call(Object.create(api.VTTCue.prototype)), {name: 'TypeError'});
   const forged = Object.create(api.VTTRegion.prototype);
   assert.throws(() => { childCue.region = forged; }, {name: 'TypeError'});
   assert.equal(childCue.region, parentRegion);
