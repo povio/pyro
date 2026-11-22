@@ -1297,11 +1297,11 @@ impl Browser {
         // it from there), clean only for a CORS response or a non-opaque one of the document's
         // origin, as an `<img>`'s.
         if image {
-            // pyro: whether the request gave an image, so a canvas tells a broken `<image>` from
-            // one still loading (`PageDom::set_svg_image_broken`).
-            let decoded = result.as_ref().ok().is_some_and(|r| {
-                (200..300).contains(&r.status) && pyro_dom::image::dimensions(&r.body).is_some()
-            });
+            // pyro: whether the request failed, so a canvas tells a broken `<image>` from one still
+            // loading (`PageDom::set_svg_image_broken`). Only a network error or a non-2xx status
+            // counts: `dimensions` knows no SVG (nor AVIF, ICO, ...), whose valid responses are
+            // images (WPT 2d.pattern.svgimage.zeroheight/zerowidth return null, not throw).
+            let decoded = result.as_ref().ok().is_some_and(|r| (200..300).contains(&r.status));
             bindings.set_svg_image_broken(node, (!decoded).then_some(url.as_str()));
             if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES) {
                 if let Some((w, h)) = pyro_dom::image::dimensions(&r.body) {
