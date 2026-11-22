@@ -381,7 +381,31 @@ pub(crate) fn point_in_fill(path: &BezPath, p: Point, evenodd: bool) -> bool {
     if !p.x.is_finite() || !p.y.is_finite() {
         return false;
     }
-    let path = closed(path);
+    // Points the transform carried past the range of f64 (a rect under
+    // `scale(Number.MAX_VALUE)`) are kept at a finite distance far past any
+    // canvas, so the winding still sees the shape around the point; the
+    // bound leaves products of two coordinates finite.
+    let far = |q: &mut Point| {
+        let bound = |v: f64| if v.is_infinite() { v.signum() * 1e150 } else { v };
+        *q = Point::new(bound(q.x), bound(q.y));
+    };
+    let mut path = path.clone();
+    for el in path.elements_mut() {
+        match el {
+            PathEl::MoveTo(a) | PathEl::LineTo(a) => far(a),
+            PathEl::QuadTo(a, b) => {
+                far(a);
+                far(b);
+            }
+            PathEl::CurveTo(a, b, c) => {
+                far(a);
+                far(b);
+                far(c);
+            }
+            PathEl::ClosePath => {}
+        }
+    }
+    let path = closed(&path);
     let winding = path.winding(p);
     (if evenodd { winding % 2 != 0 } else { winding != 0 }) || on_outline(&path, p)
 }

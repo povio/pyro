@@ -1827,6 +1827,13 @@ fn is_point_in<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>, stroke: bool) ->
             let q = Point::new(q.x * k, q.y * k);
             outline.winding(q) != 0 || on_outline(&outline, q)
         } else {
+            // HTML: nothing is inside under a transform that cannot be
+            // inverted (scale(0, 0)); an overflowing determinant
+            // (scale(Number.MAX_VALUE)) still inverts.
+            let t = state.transform;
+            if t.determinant() == 0.0 || !t.as_coeffs().iter().all(|v| v.is_finite()) {
+                return false;
+            }
             point_in_fill(path, p, evenodd)
         }
     };
