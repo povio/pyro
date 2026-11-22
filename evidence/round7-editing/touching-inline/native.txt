@@ -1,0 +1,3 @@
+test editing_js::collapsed_decoration_commands_share_the_typed_run ... ok
+test editing_js::collapsed_script_commands_format_only_new_text ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 713 filtered out; finished in 0.15s
