@@ -1,0 +1,20 @@
+{
+  "host": "Urbans-Mac-Studio.fritz.box",
+  "architecture": "arm64",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.2.1\nBuildVersion:\t\t26B131\n",
+  "runtimeVersion": "pyro 0.0.50-rc.5\nengine: JavaScriptCore; capabilities: Capabilities { weak_refs: true, modules: true, import_maps: false, typed_modules: false, unhandled_rejections: true, termination: true, hidden_properties: true, proxy_targets: true, object_global_context: true, fork: false, global_constants: false }\n",
+  "jscBundle": "22625.2.8.11.9",
+  "jscLoaded": [
+    "dyld[21793]: <C083204E-71DA-3BC5-AFF4-524B5EAFF741> /System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore"
+  ],
+  "workflowRun": 44998826328,
+  "artifactID": 14745758172,
+  "tagCommit": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
+  "archiveSHA256": "0da0b5ce58aa78ab4575efbdc7760e9df6dbb34e7dbf0116f0f9c470700926a7",
+  "executableSHA256": "9b2454c277a52452150d59b33c64c7d46f0206781c0068f5a6b0dd0631ffd87e",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "bun": "1.4.4",
+  "scope": "standalone odd only",
+  "shards": 160,
+  "urls": 15107
+}

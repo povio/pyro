@@ -1,0 +1,2562 @@
+[
+  {
+    "index": 1,
+    "key": "guard-history-000",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-history-000/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-1TwDN8/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-1TwDN8/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-history-000/attempt-1/config.json",
+      "sha256": "09195a87cff5bc240a7c4d79bbbd00e2d2c44707b631937210dbd2c322d8014e"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-history-000/attempt-1/serve.log",
+      "sha256": "1e297b8553378bd6cc401f7fc0f95f1d425b0ab5f7610966dcbb4f50653088f1"
+    }
+  },
+  {
+    "index": 3,
+    "key": "guard-history-002",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-history-002/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-YRXhHW/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-YRXhHW/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-history-002/attempt-1/config.json",
+      "sha256": "e73711bd64c181566b01fd81b15b0645558f36f635f9c165d05388b0d8b4f22c"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-history-002/attempt-1/serve.log",
+      "sha256": "89bc782b085e34b6c6b05b3481a5e8b5752b0171c7b2cf187c181133acc62859"
+    }
+  },
+  {
+    "index": 5,
+    "key": "guard-main-001",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-001/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-30g2XL/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-30g2XL/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-001/attempt-1/config.json",
+      "sha256": "eaf9b7a171ddf4c4e6f35bb39b31f8340638c7b92d4d4c42e8d7ff60f669549c"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-001/attempt-1/serve.log",
+      "sha256": "55a321b4f1792907109b23d53a7c08c18ac8cbdbdbded4aeb41da03e583acd37"
+    }
+  },
+  {
+    "index": 7,
+    "key": "guard-main-003",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-003/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-SEhMZ0/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-SEhMZ0/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-003/attempt-1/config.json",
+      "sha256": "c16fa4e7e2c773883ec293b6a85142e2d15fcaac2d9a5d25f6254f9abfaab5b0"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-003/attempt-1/serve.log",
+      "sha256": "92ae6f13d2a3ffd949b011f14f089fb82b29d227d8089695f233f012888a2608"
+    }
+  },
+  {
+    "index": 9,
+    "key": "guard-main-005",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-005/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-w2I9jg/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-w2I9jg/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-005/attempt-1/config.json",
+      "sha256": "53c65fe1ea444e31662dee9497ca518e2fc8daa0a6ba267bd33f79f5005a1a22"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-005/attempt-1/serve.log",
+      "sha256": "288a6e82484902bd8c547d4d246c1fcca49fb3308d0b3c853842f32ea4434ff0"
+    }
+  },
+  {
+    "index": 11,
+    "key": "guard-main-007",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-007/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-3DKGdb/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-3DKGdb/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-007/attempt-1/config.json",
+      "sha256": "a7d29515b9f2e4a3d7a78499b27cbf845909c62179528d167ed9789f9ce03527"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-007/attempt-1/serve.log",
+      "sha256": "6c2c87781cfcc1cc7fd68ed1eba24e7666e4e4156606bb4fab6a8f3f50a849fe"
+    }
+  },
+  {
+    "index": 13,
+    "key": "guard-main-009",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-009/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-lmyIbx/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-lmyIbx/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-009/attempt-1/config.json",
+      "sha256": "a07ab9cf5f4a211d64977e938cf0dec519b31f6cae473ce9eb381c6e7944e1d3"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-009/attempt-1/serve.log",
+      "sha256": "a32cec36f206d461ca49b7f114722ad9de9f42083d5b679427ed043c4cbc2ccf"
+    }
+  },
+  {
+    "index": 15,
+    "key": "guard-main-011",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-011/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-71j6rX/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-71j6rX/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-011/attempt-1/config.json",
+      "sha256": "6e796fd660af0eff20e1331ffb978dc8fd4d5c172142b0967996b3927c6c7767"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-011/attempt-1/serve.log",
+      "sha256": "7d0a974ce7ece5d463f36e705946571a8667f0d9423ad603ca099384f507805b"
+    }
+  },
+  {
+    "index": 17,
+    "key": "guard-main-013",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-013/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vJVdZR/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vJVdZR/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-013/attempt-1/config.json",
+      "sha256": "b149d4e238c82064277cedd25bbecdec095ae55274c8f7c2271f7e33e9eecc45"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-013/attempt-1/serve.log",
+      "sha256": "2ca9a8457f11820be7a7d61957d23784bbc41b428e8f94b15a15e4ce053fc1d9"
+    }
+  },
+  {
+    "index": 19,
+    "key": "guard-main-015",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-015/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-87DDzh/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-87DDzh/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-015/attempt-1/config.json",
+      "sha256": "68d20e418fc55a5774969c700971c28a5184a0db585824dc714ff9304e5f4c3f"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-015/attempt-1/serve.log",
+      "sha256": "7eb5523087217a5ebdb47dcab0fbe26068d621ab52aa3c281b479729c09597e8"
+    }
+  },
+  {
+    "index": 21,
+    "key": "guard-main-017",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-017/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-IHUrxw/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-IHUrxw/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-017/attempt-1/config.json",
+      "sha256": "aee337172f92b4324af76eeae814adfaaefb3b3ad94791e9b7881a20e95d08a4"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-017/attempt-1/serve.log",
+      "sha256": "f0b3e0516dcb81bf0a86c357481f8070400a35a2165e0b020d7b4f56b37ea2ac"
+    }
+  },
+  {
+    "index": 23,
+    "key": "guard-main-019",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-019/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-x6IBdF/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-x6IBdF/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-019/attempt-1/config.json",
+      "sha256": "bd1050aa8e0394c3f8bcd21e5de8f6ffa60b10520878b6a1c8250f6d68f5ae15"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-019/attempt-1/serve.log",
+      "sha256": "e2a9c810841987a3a69a0c841cf2fe73adf0184ef1f2bdfacd878a6ceef139d8"
+    }
+  },
+  {
+    "index": 25,
+    "key": "guard-main-021",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-021/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-FQnmlP/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-FQnmlP/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-021/attempt-1/config.json",
+      "sha256": "212ba5d9a871e4779e7927f9fb55945b02b8cae1484fe0dafc78808e5dea8d5b"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-021/attempt-1/serve.log",
+      "sha256": "6d9a05c91e7498c8584ef96cce02ac900a63b40b4fb283e149bf8a65ffe9961a"
+    }
+  },
+  {
+    "index": 27,
+    "key": "guard-main-023",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-023/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-MsfX9z/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-MsfX9z/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-023/attempt-1/config.json",
+      "sha256": "d6e9de74238d503897fd6ea29dd1d8d0f976a4b1be3ac53a847883e09c74a103"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-023/attempt-1/serve.log",
+      "sha256": "d9fce24f18ebaf3685a745e18e9342c24e5184951d3e02a9adbc487adee76e5d"
+    }
+  },
+  {
+    "index": 29,
+    "key": "guard-main-025",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-025/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-yCbFvk/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-yCbFvk/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-025/attempt-1/config.json",
+      "sha256": "5b0f317dcafba2887079c251074cc2afb0d1fd0ec526a5c486bfa133539917c6"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-025/attempt-1/serve.log",
+      "sha256": "6f41f55348b67a993b51016e794a0e05e561def502198a7212c4490bae491f5c"
+    }
+  },
+  {
+    "index": 31,
+    "key": "guard-main-027",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-027/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-i8oj4W/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-i8oj4W/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-027/attempt-1/config.json",
+      "sha256": "1f93e1ab93df2aaf226d16b760b9559c15fecfbc032bdb8e0228154bdd7b799f"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-027/attempt-1/serve.log",
+      "sha256": "9b332db2e8b6f9819bf7845d7b896ebd01fac8052aa02ff087b28586bd65f7bb"
+    }
+  },
+  {
+    "index": 33,
+    "key": "guard-main-029",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/guard-main-029/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-s80O21/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-s80O21/serve.log",
+    "config.json": {
+      "path": "role-port-proof/guard-main-029/attempt-1/config.json",
+      "sha256": "a3cdafd247e7236b79db73351bbcdadf6d154292a8ff3efa025f38094cba8667"
+    },
+    "serve.log": {
+      "path": "role-port-proof/guard-main-029/attempt-1/serve.log",
+      "sha256": "daf8ecae5f7b0a07a00f5c59a02e303ee2f984e4c2d89ecd4ced0247df317e57"
+    }
+  },
+  {
+    "index": 35,
+    "key": "ordinary-001",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-001/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-trb8WD/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-trb8WD/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-001/attempt-1/config.json",
+      "sha256": "010199d86acd8f729a1ebc40e42f914f9b360c63e02e497ccd3c084756a09dc9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-001/attempt-1/serve.log",
+      "sha256": "da525a7f97f101b6969bb23e6ec2daca0ac13a85014014554b22f2a791e1359b"
+    }
+  },
+  {
+    "index": 37,
+    "key": "ordinary-003",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-003/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-i1qYTx/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-i1qYTx/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-003/attempt-1/config.json",
+      "sha256": "134703b01579bb5a879269afadff6a4ae213f5af6bb149c026b820ab0b3e9ce7"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-003/attempt-1/serve.log",
+      "sha256": "83350fc3a73d78a342b197109fa432e7221350b6c74eda4f40ccf7fd901aac49"
+    }
+  },
+  {
+    "index": 39,
+    "key": "ordinary-005",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-005/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-FOMi65/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-FOMi65/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-005/attempt-1/config.json",
+      "sha256": "883aba83c025b7b35778185361f65cb6be60da75b0310d3cc7b9b1c1bcdff15b"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-005/attempt-1/serve.log",
+      "sha256": "ad5618b6e973303e4db4fb1a86ad60c1a5a2414ea990071246a42533a245d9ec"
+    }
+  },
+  {
+    "index": 41,
+    "key": "ordinary-007",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-007/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-IgFhuv/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-IgFhuv/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-007/attempt-1/config.json",
+      "sha256": "ed6b240df177fca5ccd8139f10f50d8de4588fd1c9d4bde8c1ae8912ae77a670"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-007/attempt-1/serve.log",
+      "sha256": "b7cf67984016c3f05c18df22d3bd14d02a7a731aecb361b79ec8a27b5a3bd480"
+    }
+  },
+  {
+    "index": 43,
+    "key": "ordinary-009",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-009/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Mr5XuQ/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Mr5XuQ/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-009/attempt-1/config.json",
+      "sha256": "41004dab0c088df7fab7bd7898c6a1c43213d0ebda3a6a4899014af40cb41dc2"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-009/attempt-1/serve.log",
+      "sha256": "148ebee8bf7c12ccd6e932a830b5a15e6d0d559921ee207255d21bd31db07cb8"
+    }
+  },
+  {
+    "index": 45,
+    "key": "ordinary-011",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-011/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-AcuhBC/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-AcuhBC/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-011/attempt-1/config.json",
+      "sha256": "8d1e7fd34a57101a672ee9d2d5da4cffd01815971ce4437b5ed051ff7411c1d4"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-011/attempt-1/serve.log",
+      "sha256": "789447ef7b39c7cf06c93598d821ca55c21306629b2e55d0f4ae95bdde987861"
+    }
+  },
+  {
+    "index": 47,
+    "key": "ordinary-013",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-013/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-TgyOcc/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-TgyOcc/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-013/attempt-1/config.json",
+      "sha256": "d37a1a5e357a4df4e1caf2b18511818713108a49b63f91d8c582bd272e5cd6ff"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-013/attempt-1/serve.log",
+      "sha256": "a3171c64a4e66e58b361f2ebc29ce45e42d2ced125ad774f974139da4340c7a2"
+    }
+  },
+  {
+    "index": 49,
+    "key": "ordinary-015",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-015/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-x3OMol/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-x3OMol/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-015/attempt-1/config.json",
+      "sha256": "f8f13030787c18e6f08a48cae7a9dc5c6ed417b589ee66c7e5c0b21e03f6c257"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-015/attempt-1/serve.log",
+      "sha256": "186d2acd34fd315c91a60991de8e914758ed405a2c804e37242c661e0fe653be"
+    }
+  },
+  {
+    "index": 51,
+    "key": "ordinary-017",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-017/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-o122SR/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-o122SR/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-017/attempt-1/config.json",
+      "sha256": "9ffe4803c2264cd10fa8abe60e1c9fcb3ce28bab81d87e2da56afe629deb9db1"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-017/attempt-1/serve.log",
+      "sha256": "d2b9049f1dc7a1bda1eda1235326a363d402b752111b29c2deaeb58ed33f60bc"
+    }
+  },
+  {
+    "index": 53,
+    "key": "ordinary-019",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-019/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CWd9f6/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CWd9f6/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-019/attempt-1/config.json",
+      "sha256": "d43fe9981a3f4d642f5be8fadbfa3636c181b6144c8955a9555378e997339af9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-019/attempt-1/serve.log",
+      "sha256": "c0aca9c7490e5e02874276ae6c7afab56157d1845c3322b64d9fd9c340d980ae"
+    }
+  },
+  {
+    "index": 55,
+    "key": "ordinary-021",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-021/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-TV5aEu/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-TV5aEu/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-021/attempt-1/config.json",
+      "sha256": "1cae1b39be24d0a77f1f10b04c4e0148a8781961b3f05001d225f86d6f3d908f"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-021/attempt-1/serve.log",
+      "sha256": "21bc4105ecab20b3258d13ad3abae47a6ccca3f4c1a42da5b96f5afbe69a374e"
+    }
+  },
+  {
+    "index": 57,
+    "key": "ordinary-023",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-023/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-MzU3Q0/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-MzU3Q0/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-023/attempt-1/config.json",
+      "sha256": "755b12198c01f7ce947f186c11c170101e3b74b38560284f0b2c5cf44efcf30b"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-023/attempt-1/serve.log",
+      "sha256": "755f3fe6dc11a322dd25547608e2857a07f1d4416eff5f59d856000960200b44"
+    }
+  },
+  {
+    "index": 59,
+    "key": "ordinary-025",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-025/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Sw7Yhx/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Sw7Yhx/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-025/attempt-1/config.json",
+      "sha256": "defd2f71bbf3ff2c0f55899948d74252264299fcdd581aa7312329a3309c4fcf"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-025/attempt-1/serve.log",
+      "sha256": "4c50127573b0d4faa9607d9d6b262b8b4d804136876d6949149f5ef109536b9c"
+    }
+  },
+  {
+    "index": 61,
+    "key": "ordinary-027",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-027/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-GOXTJi/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-GOXTJi/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-027/attempt-1/config.json",
+      "sha256": "731de2562ee5335de88a91dceb92cc79f1b4d696170258db912a917a79557009"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-027/attempt-1/serve.log",
+      "sha256": "3ab27c1c3564e684eb4d221a01c0c3a095dcc7a785b20253766db72abe31e274"
+    }
+  },
+  {
+    "index": 63,
+    "key": "ordinary-029",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-029/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-tda486/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-tda486/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-029/attempt-1/config.json",
+      "sha256": "63b3eb5fe878aa12bf46706592b1ff5f618959cd52775893a758b3655d831ab9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-029/attempt-1/serve.log",
+      "sha256": "e17e6f3c2f2821b082cc161b86d8608e9ba9a6664041481767ff41a0757be5a5"
+    }
+  },
+  {
+    "index": 65,
+    "key": "ordinary-031",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-031/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-UOVemj/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-UOVemj/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-031/attempt-1/config.json",
+      "sha256": "a2c617a5f08a48d03751651ef3d56ec08f823205f17442c191fe1b38dcab6ee4"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-031/attempt-1/serve.log",
+      "sha256": "6413e23ac07430b706f0e7e420f30888866decae6981b8b680c7f8e38ffc2c60"
+    }
+  },
+  {
+    "index": 67,
+    "key": "ordinary-033",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-033/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-8pmg6b/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-8pmg6b/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-033/attempt-1/config.json",
+      "sha256": "d60669142f7720886f46377b9792cb75b64c06eea903c31a6cfeaacb21c84018"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-033/attempt-1/serve.log",
+      "sha256": "4e4ea3d5d864af9f6c935a8aa74a8d213c30c3605859e932a72a126fd0173c0d"
+    }
+  },
+  {
+    "index": 69,
+    "key": "ordinary-035",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-035/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-dyA8eE/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-dyA8eE/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-035/attempt-1/config.json",
+      "sha256": "310fe5d8a25ec3bfc3f3dc9a7885e3934258b52408ae7768a26d85307f5f17a4"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-035/attempt-1/serve.log",
+      "sha256": "10408dcfcdf9f73e7808309622e164ce70340636877ff363b4d4880f2015d1a6"
+    }
+  },
+  {
+    "index": 71,
+    "key": "ordinary-037",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-037/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-9I58wj/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-9I58wj/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-037/attempt-1/config.json",
+      "sha256": "38705f5cb568c540d743e210fc4aed717074c8e568c4ed26cd3a2169de0afe17"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-037/attempt-1/serve.log",
+      "sha256": "0885a04d9c4a48b24fc3aec191b30615703e00800521e8fc82fec61adfc8ed27"
+    }
+  },
+  {
+    "index": 73,
+    "key": "ordinary-039",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-039/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ZbLaj2/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ZbLaj2/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-039/attempt-1/config.json",
+      "sha256": "1e35ed048d01df42c368df92eb8575d456e0342061675f7514ce9a82d9cdc8cf"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-039/attempt-1/serve.log",
+      "sha256": "ec5c8057a58b862567423629f70871a81e8759e31ac80f59b8b8e8df47c0e9d2"
+    }
+  },
+  {
+    "index": 75,
+    "key": "ordinary-041",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-041/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-33B2zZ/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-33B2zZ/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-041/attempt-1/config.json",
+      "sha256": "4e138f2aa011398db9d603b89c20795c12e1e27be7c4c44329e8f9569e8f4265"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-041/attempt-1/serve.log",
+      "sha256": "a395377a03f0777baa2722417571bc75b2e8344c14f4bbca678e3fbaa1515f70"
+    }
+  },
+  {
+    "index": 77,
+    "key": "ordinary-043",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-043/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-2qCFx4/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-2qCFx4/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-043/attempt-1/config.json",
+      "sha256": "937906b13ce91b7722dc1b385cb6c391c5ad4df9b405c70621d49fa05f54dbd8"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-043/attempt-1/serve.log",
+      "sha256": "859984a3b0e72c73ff32a7f16351f4e6be00f6591a2368a3afd07fd696d56170"
+    }
+  },
+  {
+    "index": 79,
+    "key": "ordinary-045",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-045/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ies7Qw/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ies7Qw/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-045/attempt-1/config.json",
+      "sha256": "0b0c7af93100ab0e6f9d3c09bc95b7a78723cbd5e1944bf03cf8b714429cce7a"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-045/attempt-1/serve.log",
+      "sha256": "9f2ea96cc0f9a501d4fd1982d6a094172d018760289ba45603e3c14209f7fff5"
+    }
+  },
+  {
+    "index": 81,
+    "key": "ordinary-047",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-047/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-XfqQxd/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-XfqQxd/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-047/attempt-1/config.json",
+      "sha256": "702293e7640b87418e183c35f09969c0584da3ef0ea85eba19716519f56bf722"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-047/attempt-1/serve.log",
+      "sha256": "75206a34a1604fd24824e6cfdbc9c53c357aabcb54caa4c88545a61f33d267aa"
+    }
+  },
+  {
+    "index": 83,
+    "key": "ordinary-049",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-049/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-c7N7eV/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-c7N7eV/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-049/attempt-1/config.json",
+      "sha256": "8c3a3c925a2a7756fe7f99bde5cb43ed235c4711af2d47747ee53fe2c16eaa1a"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-049/attempt-1/serve.log",
+      "sha256": "3c310a903f2cc0068e9ff04fdc2b679299041890fcfde1af5aa9dda23824d8ce"
+    }
+  },
+  {
+    "index": 85,
+    "key": "ordinary-051",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-051/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vrol6P/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vrol6P/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-051/attempt-1/config.json",
+      "sha256": "be26dca280ba8ae5fba9fcc5d4a2aeb9354cce5afec7da3c4ef910307e6a06a6"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-051/attempt-1/serve.log",
+      "sha256": "7a0a82cedb5cde52b2f4b383167ede597b675b724417f1d0db31cf5ca19ec234"
+    }
+  },
+  {
+    "index": 87,
+    "key": "ordinary-053",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-053/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-6lMawH/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-6lMawH/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-053/attempt-1/config.json",
+      "sha256": "25621b4c1f45627022a84b8a646a56af102b760bebcdd9108388d4471b1dd7d2"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-053/attempt-1/serve.log",
+      "sha256": "7d14248bd3ce596e1506632471110a7a79f192b80192566748e0ad08485947c4"
+    }
+  },
+  {
+    "index": 89,
+    "key": "ordinary-055",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-055/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-QaPytt/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-QaPytt/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-055/attempt-1/config.json",
+      "sha256": "2225998fcae28debaac554720358c7dc6c05f26975e689224b8cc95d92233dde"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-055/attempt-1/serve.log",
+      "sha256": "81a294ec6b8531c0f8d107437fcc1ff71476a19f71fc760d478f73296fc3cea8"
+    }
+  },
+  {
+    "index": 91,
+    "key": "ordinary-057",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-057/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-zie2KU/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-zie2KU/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-057/attempt-1/config.json",
+      "sha256": "ca97fb2159ae97ba00da7263e56e68218fdd038cb425f99b036692facfe394eb"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-057/attempt-1/serve.log",
+      "sha256": "41b34943731c13847325bc5b46801f6f6dea296cd804e2f270927888a4311849"
+    }
+  },
+  {
+    "index": 93,
+    "key": "ordinary-059",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-059/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-n9hYlA/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-n9hYlA/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-059/attempt-1/config.json",
+      "sha256": "2e95274ef3fbb301ef13586ea91893dc39c3a7ad19717408fa228f5e9abdbfc9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-059/attempt-1/serve.log",
+      "sha256": "05ef052b880d1a764c887821870a3b938848ddb29fe76baafd9eec902e083bae"
+    }
+  },
+  {
+    "index": 95,
+    "key": "ordinary-061",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-061/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-imfhjn/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-imfhjn/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-061/attempt-1/config.json",
+      "sha256": "69c3473b7e0c18d813018d555f9f8613323ee3c17a9339816248acc486417255"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-061/attempt-1/serve.log",
+      "sha256": "9a62bda5a7c61d32c310d3be06d57e83425333d36b0050e6a66e67e6699ac621"
+    }
+  },
+  {
+    "index": 97,
+    "key": "ordinary-063",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-063/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-dcsnBm/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-dcsnBm/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-063/attempt-1/config.json",
+      "sha256": "0cc45bcc6d87fa5417af396c7c7e778654ca840d2c7c519771a33b2eb5797adc"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-063/attempt-1/serve.log",
+      "sha256": "c1201c512b3cd49e5cd4c9d5c2266d58e6ab3b77113902493aa7c504690aeb11"
+    }
+  },
+  {
+    "index": 99,
+    "key": "ordinary-065",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-065/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-e9cmNF/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-e9cmNF/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-065/attempt-1/config.json",
+      "sha256": "9fc61017653e12ceea16d3fd2d3652172523235f5888064faf879bd580be66d4"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-065/attempt-1/serve.log",
+      "sha256": "088c87ddcc68744d658790eaff7ea32f61703c13ae7246021d3db3e321f3b60b"
+    }
+  },
+  {
+    "index": 101,
+    "key": "ordinary-067",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-067/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-VpaAFi/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-VpaAFi/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-067/attempt-1/config.json",
+      "sha256": "312279ed9d108ff24516d166b212a4dc58d50086d85a63ed34dd987b10b54eeb"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-067/attempt-1/serve.log",
+      "sha256": "d7476c280a12df141af71bc55cc43bbb34817baf685969f20419428307834cca"
+    }
+  },
+  {
+    "index": 103,
+    "key": "ordinary-069",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-069/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-69rPmR/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-69rPmR/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-069/attempt-1/config.json",
+      "sha256": "a0ce0b84480d2567d1c235f62deedf38b7ff6bb09cda3f444dd1aa5a1190ee30"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-069/attempt-1/serve.log",
+      "sha256": "2fd16ed2753d6789d9687e3fff5bbf71f7e032bb70d66faf648fbfe18cee9d09"
+    }
+  },
+  {
+    "index": 105,
+    "key": "ordinary-071",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-071/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-lFRnar/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-lFRnar/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-071/attempt-1/config.json",
+      "sha256": "50330d01a05cbcf134345130b986b829889417f423689bcf5eb363da478346a4"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-071/attempt-1/serve.log",
+      "sha256": "b772feb5d2a09772422c75ee08c4459f20418aea84b02ce712292f4d90c8e31f"
+    }
+  },
+  {
+    "index": 107,
+    "key": "ordinary-073",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-073/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-oG0uzP/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-oG0uzP/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-073/attempt-1/config.json",
+      "sha256": "1ffbb7259d7a5b9eb3c0bead009140255cb2c4f15ca142015c999e525797d54d"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-073/attempt-1/serve.log",
+      "sha256": "460ba42eb015a8266124607dc9890046ebd3b3caadadb96950b0b3f00c7cd1e6"
+    }
+  },
+  {
+    "index": 109,
+    "key": "ordinary-075",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-075/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-xw39Z9/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-xw39Z9/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-075/attempt-1/config.json",
+      "sha256": "263cfd36c27be3e535f8e40bfef4dc05f4a5f96f133c4f9cb544a7df6b703a07"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-075/attempt-1/serve.log",
+      "sha256": "9ea84fe20481c392d4875d3b45d6002b50e873f6f5c0bf7ab9c740dbdafb46bb"
+    }
+  },
+  {
+    "index": 111,
+    "key": "ordinary-077",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-077/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-wfD3hk/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-wfD3hk/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-077/attempt-1/config.json",
+      "sha256": "1a33620636ad625fea96616eb597fa5935a428a942a0b779ac3feffe40d9ff09"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-077/attempt-1/serve.log",
+      "sha256": "6c7fc3606fa37a9a59deba4ae465bfa7dcd4290d0800dba5e07fa61255970e98"
+    }
+  },
+  {
+    "index": 113,
+    "key": "ordinary-079",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-079/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-qdL1gn/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-qdL1gn/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-079/attempt-1/config.json",
+      "sha256": "89b949e037da23d80326050095e74bde4ee70f8a448bb8ed690258abf108a393"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-079/attempt-1/serve.log",
+      "sha256": "458752142a2f3cbbb4a3916ed10a44bbbb070c69f710be7adb84555f20e5ba78"
+    }
+  },
+  {
+    "index": 115,
+    "key": "ordinary-081",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-081/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-xzPZqu/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-xzPZqu/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-081/attempt-1/config.json",
+      "sha256": "4b714e8bca159394a4f49332b3fbb530732b1b6edd829e34d29477a397bb9a15"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-081/attempt-1/serve.log",
+      "sha256": "8adf10a7485852207e6133a8e8cbcd11528d7dff655a2376fe1dac063511dbab"
+    }
+  },
+  {
+    "index": 117,
+    "key": "ordinary-083",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-083/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-VEHtW9/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-VEHtW9/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-083/attempt-1/config.json",
+      "sha256": "f899756a83577d05f716545a41afe55536a7bdc94d86de7f0680bdfcbfb08ab6"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-083/attempt-1/serve.log",
+      "sha256": "08447afb304c2ac3ed916aa06dd2b007d930a237bb1b72af3ccc8ab22f38068c"
+    }
+  },
+  {
+    "index": 119,
+    "key": "ordinary-085",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-085/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-tdgQ39/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-tdgQ39/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-085/attempt-1/config.json",
+      "sha256": "997ecf1264d21db3e9e6a2e23c523975bc4819f52af3c93160535f65e210d691"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-085/attempt-1/serve.log",
+      "sha256": "1e2f8b300950f7d4cae5fd8a29576dba78cb905d02ed878cfe3a1aa603362bc9"
+    }
+  },
+  {
+    "index": 121,
+    "key": "ordinary-087",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-087/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-1oAZaD/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-1oAZaD/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-087/attempt-1/config.json",
+      "sha256": "92bee3f05732069eef858a74e1c15e31e009400b73aa4f8b0952d280f765f1b1"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-087/attempt-1/serve.log",
+      "sha256": "ea167b119cb8fa37e40837d74ae8c302419f46aa79300e97ee078e5be9f866b7"
+    }
+  },
+  {
+    "index": 123,
+    "key": "ordinary-089",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-089/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-7yCXOM/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-7yCXOM/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-089/attempt-1/config.json",
+      "sha256": "1422becc8df841c81a8e31c3348063388bd7b7546d5ef8f1c5e759dcfaa0f4e9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-089/attempt-1/serve.log",
+      "sha256": "c315caf9ccf94d6d43eb08eaec0315057d80498f73a8fd1f97bf40c21a3bbdb5"
+    }
+  },
+  {
+    "index": 125,
+    "key": "ordinary-091",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-091/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-TcYQ60/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-TcYQ60/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-091/attempt-1/config.json",
+      "sha256": "53e06c288da43571b487dd8eee711c39873ce8f8eaa0e1e982939c683cb61b42"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-091/attempt-1/serve.log",
+      "sha256": "63ea04b3b92afe544ae64a4dd9e756d0c23b9da7eaf47c83441cfa742fe30def"
+    }
+  },
+  {
+    "index": 127,
+    "key": "ordinary-093",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-093/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-BynNx4/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-BynNx4/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-093/attempt-1/config.json",
+      "sha256": "cfe3cf82936ac3dc09986bf85db9f5a7890974cf9376c7c9587baf929a017657"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-093/attempt-1/serve.log",
+      "sha256": "5f728cb46011eb1c25c6cab480c94b0809f32ea06e5f03c3f834a1e9bef1cfea"
+    }
+  },
+  {
+    "index": 129,
+    "key": "ordinary-095",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-095/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-43wNWh/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-43wNWh/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-095/attempt-1/config.json",
+      "sha256": "c48863516133763c015f84ff557ab59cac720e86bea0489026192fd68e043e7f"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-095/attempt-1/serve.log",
+      "sha256": "9cf48a428c2d95e9bf8e6c9e0ed6f88f2693954960dff6844d996d8e400af2ea"
+    }
+  },
+  {
+    "index": 131,
+    "key": "ordinary-097",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-097/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-mK0Uob/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-mK0Uob/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-097/attempt-1/config.json",
+      "sha256": "0e1a9c07a9274ac5c8d206a167815289e84ba18e97ed5d51b9c0da3492204d39"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-097/attempt-1/serve.log",
+      "sha256": "6156ee11a391c24fc6436064c8af38be0df65943326658ab8c7e85c2c9c4c559"
+    }
+  },
+  {
+    "index": 133,
+    "key": "ordinary-099",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-099/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-WinyDo/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-WinyDo/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-099/attempt-1/config.json",
+      "sha256": "842f97219c0f28e88526430d9c7a4c9c0a7dfe254d70881c8e7a0e77fd99bcce"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-099/attempt-1/serve.log",
+      "sha256": "1033c4eefd812630f99691d604cd29788e33cc2825c3a5ce4b3bdd017ac21bf9"
+    }
+  },
+  {
+    "index": 135,
+    "key": "ordinary-101",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-101/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-7CXSJY/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-7CXSJY/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-101/attempt-1/config.json",
+      "sha256": "9e3a6ce075b24e6e0a027df14e6794dfbd138ba2465846b65dfbb37ee70448c8"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-101/attempt-1/serve.log",
+      "sha256": "b766cedcbf65869c33a5adf2b37412fe132c73db75291659f7cab4dd4825fd62"
+    }
+  },
+  {
+    "index": 137,
+    "key": "ordinary-103",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-103/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Iw7uQ9/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Iw7uQ9/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-103/attempt-1/config.json",
+      "sha256": "ec8d27855936a79fc5fe01d2d1a7d648239494ccff8356ec6e9898dcb9b3c9f3"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-103/attempt-1/serve.log",
+      "sha256": "40a7ae2122ebc1ca197570dca4ea7a4f3f85ecb2801577d9494ad76e51bb978c"
+    }
+  },
+  {
+    "index": 139,
+    "key": "ordinary-105",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-105/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-A41fkM/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-A41fkM/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-105/attempt-1/config.json",
+      "sha256": "6e19178db6854c7d4dcf593e8b57b8c3d3ff7677a625d9b54cd996fe3e74e1c5"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-105/attempt-1/serve.log",
+      "sha256": "b1d53551c68dab570cecf3e09e6d4bdbf44f2d84e3cef7476b4e52d2b91be5b9"
+    }
+  },
+  {
+    "index": 141,
+    "key": "ordinary-107",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-107/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-NQ7K8g/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-NQ7K8g/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-107/attempt-1/config.json",
+      "sha256": "402d2970c12edbec87e274a20606b399c5efe3dc48d657e0ddc63466135ff97b"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-107/attempt-1/serve.log",
+      "sha256": "8b22cb561d240799dcf62e38ab9960700a8115ec77bfdd35632b82a6b211ceec"
+    }
+  },
+  {
+    "index": 143,
+    "key": "ordinary-109",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-109/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-OdB8Hz/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-OdB8Hz/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-109/attempt-1/config.json",
+      "sha256": "8b2805933a4cedf75c78fe6d6723e661dc33efee2c06fa7311ae58dee7433639"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-109/attempt-1/serve.log",
+      "sha256": "23e8b23065a976a226fdf5015b32640fe93391c9d681f61bdf46ef08a3e05bdf"
+    }
+  },
+  {
+    "index": 145,
+    "key": "ordinary-111",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-111/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-amESD2/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-amESD2/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-111/attempt-1/config.json",
+      "sha256": "7ec2371bf245198368c22232d54409513e94f2b321b531fc2d473682367f8acd"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-111/attempt-1/serve.log",
+      "sha256": "5201d014c2e81aa9f5de4ba0d83706c04316815a1c795b88e58383804d82c4d6"
+    }
+  },
+  {
+    "index": 147,
+    "key": "ordinary-113",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-113/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-WyXRLj/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-WyXRLj/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-113/attempt-1/config.json",
+      "sha256": "6d128f9453ee28de9825505d0c52c3396dd1b28712808f1fefb67eac2caeb6b7"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-113/attempt-1/serve.log",
+      "sha256": "05f738237d2fcef8871b35d65366e471ca60f7f37635c77c31b4564ed15c4170"
+    }
+  },
+  {
+    "index": 149,
+    "key": "ordinary-115",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-115/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CQgG4q/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CQgG4q/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-115/attempt-1/config.json",
+      "sha256": "ad5bec79d7cb3cddfc597ab28d87c3ca3f7277347fcc5584adbd91d85bf666f8"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-115/attempt-1/serve.log",
+      "sha256": "4926928e0b9330b1b4fae73a441e15eaba8ed8a212d16b8698dcd99b8b83b18e"
+    }
+  },
+  {
+    "index": 151,
+    "key": "ordinary-117",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-117/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-OHPj6V/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-OHPj6V/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-117/attempt-1/config.json",
+      "sha256": "072bf91f0dbf6b80afcf5d547520d449b1356648cda51fca9df34c4e075898a8"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-117/attempt-1/serve.log",
+      "sha256": "4c47276d9c9863d0aa0cd05cb5a3c2231862b88d4febf33dcbf61dd4cddb33ab"
+    }
+  },
+  {
+    "index": 153,
+    "key": "ordinary-119",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-119/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-K3W5fU/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-K3W5fU/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-119/attempt-1/config.json",
+      "sha256": "d4fa83db2cb4d7c4825d84c4026873404216ff0f50ae0ce2161414101f00ec00"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-119/attempt-1/serve.log",
+      "sha256": "b3ba8e75d8575f08cb8d83d6549e60fcb0230abf55e3e972de89ab55cdf2bd86"
+    }
+  },
+  {
+    "index": 155,
+    "key": "ordinary-121",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-121/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-nNjQXD/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-nNjQXD/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-121/attempt-1/config.json",
+      "sha256": "484356c8113f4672901dce8660a7cb009daf2ea5666f88cfc0ad55d679334c17"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-121/attempt-1/serve.log",
+      "sha256": "6d7d4159bfac5a2ff866c03cd0e5ff78c14b1a8753df38132716732d5e6c538b"
+    }
+  },
+  {
+    "index": 157,
+    "key": "ordinary-123",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-123/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-fvqt3T/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-fvqt3T/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-123/attempt-1/config.json",
+      "sha256": "54cdacf9323ab4e844591186590a9436dfaec202ced9e1192eecb52dbd662ae9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-123/attempt-1/serve.log",
+      "sha256": "9cb3e10944610d4b898ce67f35565021a00ba513adfffabf89f0e8f31e61fae0"
+    }
+  },
+  {
+    "index": 159,
+    "key": "ordinary-125",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-125/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-BFRWyw/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-BFRWyw/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-125/attempt-1/config.json",
+      "sha256": "a653ebd2759741decc0a3075f93762b4693f0deee7eec2a67b227a6d1914a505"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-125/attempt-1/serve.log",
+      "sha256": "8bdada2016456999f00629093301e7094498043724629121d6b49793d3f44b92"
+    }
+  },
+  {
+    "index": 161,
+    "key": "ordinary-127",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-127/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-8Nwpuj/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-8Nwpuj/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-127/attempt-1/config.json",
+      "sha256": "f5eebe46b7f73789fdd9739caa1346a596ca598de447c9557624bb6eaba15ed7"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-127/attempt-1/serve.log",
+      "sha256": "1dd5325650391ac2c282b6bec2fa922a8f0a44b668419890e6cbc5039e8d72b4"
+    }
+  },
+  {
+    "index": 163,
+    "key": "ordinary-129",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-129/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-VslGuy/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-VslGuy/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-129/attempt-1/config.json",
+      "sha256": "d2cb38a3f48e8722ced09e6208b76ef2dcc90b169bd4d0a2e9e777a057c26fec"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-129/attempt-1/serve.log",
+      "sha256": "c0226f05bcc607de3a6ed3ba2172e85b2879f45748decd536da2d53e52138c82"
+    }
+  },
+  {
+    "index": 165,
+    "key": "ordinary-131",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-131/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-i1Dn6b/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-i1Dn6b/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-131/attempt-1/config.json",
+      "sha256": "317fa3c902b0d3006cb188764afd32423f5fdcce6249957380b697bb31107a2d"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-131/attempt-1/serve.log",
+      "sha256": "bedda4303977ea82f313405fa25e7b8122fa0fe8a8eda1dc70bdcc96033fbf11"
+    }
+  },
+  {
+    "index": 167,
+    "key": "ordinary-133",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-133/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-2V2kPP/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-2V2kPP/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-133/attempt-1/config.json",
+      "sha256": "bd6589974507704ec9fc5f9d89012c609de5edafe0eaafcf4602d30a3772d245"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-133/attempt-1/serve.log",
+      "sha256": "aa0c0d276878df95613ae7d141a0bd6dd59b6153311b304f6c3f3a193bd7062f"
+    }
+  },
+  {
+    "index": 169,
+    "key": "ordinary-135",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-135/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-aXa9Y6/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-aXa9Y6/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-135/attempt-1/config.json",
+      "sha256": "cc56c0521730dff2f61f7a2299138b32fd10de10a864b945b459e865c4a51435"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-135/attempt-1/serve.log",
+      "sha256": "c8b2c071f053a8dd89370391300759847b068acf2d9f9adc795e16821b3d0b75"
+    }
+  },
+  {
+    "index": 171,
+    "key": "ordinary-137",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-137/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-pCJChf/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-pCJChf/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-137/attempt-1/config.json",
+      "sha256": "8f0fc73d5e210dea00a0330d9492880865af65622ec1c86e89b7b5cdcf5dedb3"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-137/attempt-1/serve.log",
+      "sha256": "bbfbc91373daa9cad074bc2cb1e98d7c35824958e84688562d137e671dba0ace"
+    }
+  },
+  {
+    "index": 173,
+    "key": "ordinary-139",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-139/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-MtarSC/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-MtarSC/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-139/attempt-1/config.json",
+      "sha256": "792769af9cb13a4868075656292cc0f8029c4053abc9a16bee49cc06b6208e1e"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-139/attempt-1/serve.log",
+      "sha256": "f82105bb230f85812a8ca468523ff7c4da48aab262aefc28660fa036097e64e5"
+    }
+  },
+  {
+    "index": 175,
+    "key": "ordinary-141",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-141/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CoWiov/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CoWiov/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-141/attempt-1/config.json",
+      "sha256": "2a5f20fc4ba3f5eecfab780e00c3c9190d149c5cba9786a29f5d2454ac41a36d"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-141/attempt-1/serve.log",
+      "sha256": "20d4473417750316f2385e8f1fe17dce848760ab1079ad9936e6dcca26e9c580"
+    }
+  },
+  {
+    "index": 177,
+    "key": "ordinary-143",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-143/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Axkwuh/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Axkwuh/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-143/attempt-1/config.json",
+      "sha256": "c5f4abd58fce37c071d809a497965a13291b0b52193a5cf5de4442f8b0e4b15e"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-143/attempt-1/serve.log",
+      "sha256": "4c17ec103fe34660ce92115320069504b9bf1046e762d1681bd8bc8bd488a0c8"
+    }
+  },
+  {
+    "index": 179,
+    "key": "ordinary-145",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-145/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5AQsGv/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5AQsGv/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-145/attempt-1/config.json",
+      "sha256": "24efe914f1d00ffbf9d30b974f5af7e8bc16e77f1ba20905ebd6d4a31c55a70e"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-145/attempt-1/serve.log",
+      "sha256": "4f68f293363a8aec6d2d111dcf9b33a9867104893ba661ae4a15b4b194330006"
+    }
+  },
+  {
+    "index": 181,
+    "key": "ordinary-147",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-147/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-fIpeoM/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-fIpeoM/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-147/attempt-1/config.json",
+      "sha256": "0c792a0e777159c559b0d504d8a796b757c64434a18636c3f5359fe526a57d51"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-147/attempt-1/serve.log",
+      "sha256": "668ba2411a3f0f3a3663ed888c06a935ae17ba5c5b181fa661d8788f381fe285"
+    }
+  },
+  {
+    "index": 183,
+    "key": "ordinary-149",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-149/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-rtQktB/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-rtQktB/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-149/attempt-1/config.json",
+      "sha256": "5f7f3afd5c38596d8a254a90e2e99791e667254fc67d34ef76d672657b79ff00"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-149/attempt-1/serve.log",
+      "sha256": "e3597dd5be6dd281789cae58cd5f1fd713971620dac77ee1fa7f4cbfcc57f07c"
+    }
+  },
+  {
+    "index": 185,
+    "key": "ordinary-151",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-151/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-19QhJh/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-19QhJh/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-151/attempt-1/config.json",
+      "sha256": "08ece1abfc4e12a8e91c9ea03da6277658a2d820464e63ebddbb26a639b155ff"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-151/attempt-1/serve.log",
+      "sha256": "83fb317ad4dd68e6542b89b780fa198188fb75a6ddb0992479dcca85377b9fad"
+    }
+  },
+  {
+    "index": 187,
+    "key": "ordinary-153",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-153/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5sJQ0P/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5sJQ0P/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-153/attempt-1/config.json",
+      "sha256": "a311c17aa316acea1ee12f9b3cf4fe0a8dad05ef9324bf9b645615b1f58eba35"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-153/attempt-1/serve.log",
+      "sha256": "e078d662a138d647d8b467952086bac0fe0a9aac466c23f5871a8ba23c60b204"
+    }
+  },
+  {
+    "index": 189,
+    "key": "ordinary-155",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-155/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-tHIhAb/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-tHIhAb/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-155/attempt-1/config.json",
+      "sha256": "ca07ffa4d43d24ec403f71b5be5ba770821752c805d11e33f73cbde79dfb1075"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-155/attempt-1/serve.log",
+      "sha256": "de808f88fbe69008dfcafd4c0aec204dffe652d8391b6b688a116bfb1827ba8d"
+    }
+  },
+  {
+    "index": 191,
+    "key": "ordinary-157",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-157/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-bTlLwm/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-bTlLwm/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-157/attempt-1/config.json",
+      "sha256": "18c77090348f3605ead547311c93d4459a1bd5911dee8fc583dbe59c1d6bca66"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-157/attempt-1/serve.log",
+      "sha256": "8cd4b373c45077059cbac606a59ea1c76ce7adf1a0d2271edcc7950665513c52"
+    }
+  },
+  {
+    "index": 193,
+    "key": "ordinary-159",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-159/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-jXL4L9/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-jXL4L9/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-159/attempt-1/config.json",
+      "sha256": "141ec193e8a488dc5bb71766eb7cc42df1b5f625c213aa46ab0244965b8980b2"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-159/attempt-1/serve.log",
+      "sha256": "e5298cc1458f05c39773516d31ccc431da6d30128bf15c0c632d624d63dd0d51"
+    }
+  },
+  {
+    "index": 195,
+    "key": "ordinary-161",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-161/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-gIetGr/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-gIetGr/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-161/attempt-1/config.json",
+      "sha256": "242be330d61f0226a874ce9c5096f139961af5f223af3287f2545e6aad671fea"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-161/attempt-1/serve.log",
+      "sha256": "db5a7c46a7f3332bd10c517dcf6bf5bef14fe3de8133682ff61cc08fe8460bfb"
+    }
+  },
+  {
+    "index": 197,
+    "key": "ordinary-163",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-163/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-e9ABay/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-e9ABay/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-163/attempt-1/config.json",
+      "sha256": "bd0617aef74e79ae04d3fabba97abef2472933f109bfdde03c4d7558530bc116"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-163/attempt-1/serve.log",
+      "sha256": "4bf962efc7da873d484d4379ef7fdd4f1df2650401283e6035fbaeed7a436e03"
+    }
+  },
+  {
+    "index": 199,
+    "key": "ordinary-165",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-165/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-PBNv3D/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-PBNv3D/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-165/attempt-1/config.json",
+      "sha256": "01f8070e55d4627768a6c310d380e6f600f039fea6ba6e9179a9daf7251ff77b"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-165/attempt-1/serve.log",
+      "sha256": "12e5ba87a8eef9babdea4a666aea75b433e020ca298bee7b13333bd592e3847c"
+    }
+  },
+  {
+    "index": 201,
+    "key": "ordinary-167",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-167/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-EscWwT/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-EscWwT/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-167/attempt-1/config.json",
+      "sha256": "350ab3d20aa9a9723c545b44ee642447da770785da5208a98db8e636dab9c3c8"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-167/attempt-1/serve.log",
+      "sha256": "a67fdb61241c8075de9bfc5a2dd8618be688fe3cf9f87f46b3bc7b077ef26a5f"
+    }
+  },
+  {
+    "index": 203,
+    "key": "ordinary-169",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-169/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Psz1Kl/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Psz1Kl/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-169/attempt-1/config.json",
+      "sha256": "f5edccffb1764c8caf301f7b3ef7e37b8d5cb3eadba993c61b023d4c06fe24a0"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-169/attempt-1/serve.log",
+      "sha256": "ecdcdfd774d8a20a02eb4cd6385936a3596a35cb66dc54d544fd2432ed4bd6af"
+    }
+  },
+  {
+    "index": 205,
+    "key": "ordinary-171",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-171/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-pzcVbT/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-pzcVbT/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-171/attempt-1/config.json",
+      "sha256": "495a4c1c4bea387ce3f1d7f72ef3b4e78426d0023a7680e284cc5411341bbbc7"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-171/attempt-1/serve.log",
+      "sha256": "0a9b352e30b9d3f94af450e5038a2514d164aa43b7b15632b7981d82c6759ee1"
+    }
+  },
+  {
+    "index": 207,
+    "key": "ordinary-173",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-173/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5vuLgv/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5vuLgv/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-173/attempt-1/config.json",
+      "sha256": "bc5bd75e266f5f216549389f3ace455cfbc342ed54a84742c7b67d299429156a"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-173/attempt-1/serve.log",
+      "sha256": "f158eb631f93f7e325e688d3568015716da7eea176c9482a2bdf7f0fbd920846"
+    }
+  },
+  {
+    "index": 209,
+    "key": "ordinary-175",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-175/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-rTfX2v/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-rTfX2v/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-175/attempt-1/config.json",
+      "sha256": "2166bd0bb4ab9a1267da14d905590f0c0045417e20a47292f04a845cb97f024e"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-175/attempt-1/serve.log",
+      "sha256": "2c0ca4bffa01a160492e19d05c99d93150f7429245d24979f71c25b4d2f110f6"
+    }
+  },
+  {
+    "index": 211,
+    "key": "ordinary-177",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-177/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ihjDFY/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ihjDFY/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-177/attempt-1/config.json",
+      "sha256": "697d43bcb58f32008e08231569245d2f7b88defc6e1c1cdc7907e0556b6c90e5"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-177/attempt-1/serve.log",
+      "sha256": "2386a098966c13c0959721e61de3ff1717eb573b04053f47f0b63ec912b9bf93"
+    }
+  },
+  {
+    "index": 213,
+    "key": "ordinary-179",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-179/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-q15YSB/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-q15YSB/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-179/attempt-1/config.json",
+      "sha256": "03a916830322a28669abe6af5150b340e11f1e15a764913c6259e339b6a761eb"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-179/attempt-1/serve.log",
+      "sha256": "467839fbcd3e251bc92c9f509ed5817b56901f602884087067c1e349dc217ba4"
+    }
+  },
+  {
+    "index": 215,
+    "key": "ordinary-181",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-181/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-JUdBdy/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-JUdBdy/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-181/attempt-1/config.json",
+      "sha256": "70c870e8d987ba5d2c6f9a8064184e6fc5bac4738b0c995546d04b2c8c3c95e8"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-181/attempt-1/serve.log",
+      "sha256": "5af40aa5f262153581f12a7e4ea103f06c20430f6ba2f14ffdd4e045e6d8a674"
+    }
+  },
+  {
+    "index": 217,
+    "key": "ordinary-183",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-183/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-pkNgNi/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-pkNgNi/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-183/attempt-1/config.json",
+      "sha256": "e2fb19369c81d546608259a5e22387685857e99ce42a609cd2f54d0d29b97a0c"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-183/attempt-1/serve.log",
+      "sha256": "7cc962d8c520f5cd2c787714d562c2f0408d642a157851b1352ccf0dbbe1b70e"
+    }
+  },
+  {
+    "index": 219,
+    "key": "ordinary-185",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-185/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-o5cs0L/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-o5cs0L/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-185/attempt-1/config.json",
+      "sha256": "8bfbc5d094ffb97b76a188c2f4d5956f83604f3fc692605bb38d7b2be8daf56a"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-185/attempt-1/serve.log",
+      "sha256": "c0a3ee8253f2477c9f8bfde830a2dc3ebb1639f05922399ff061868eaa6ee18e"
+    }
+  },
+  {
+    "index": 221,
+    "key": "ordinary-187",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-187/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-oDmXE6/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-oDmXE6/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-187/attempt-1/config.json",
+      "sha256": "1867b7924217fe2506dfa48b94817915633f67256b87569bc3397aaf9000c527"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-187/attempt-1/serve.log",
+      "sha256": "1e7c9b5432e95b62dc17636fba8e64be05b892c06d25e30c6bf2ce37d676d2ca"
+    }
+  },
+  {
+    "index": 223,
+    "key": "ordinary-189",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-189/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Hz5sMk/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Hz5sMk/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-189/attempt-1/config.json",
+      "sha256": "f6528bb37258d109c1873e29b6ec92e459565885385ce312537dbb0d60504bd3"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-189/attempt-1/serve.log",
+      "sha256": "45630313ccb804059491f08aa660bbaa30e18aa09bb0b6812ae5244495b08f22"
+    }
+  },
+  {
+    "index": 225,
+    "key": "ordinary-191",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-191/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-HuxCoy/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-HuxCoy/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-191/attempt-1/config.json",
+      "sha256": "547ff7a8c4c1adc6f868cac0cd7e2a01b776bb3fcff01cc5ebd7a0d23864ad2f"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-191/attempt-1/serve.log",
+      "sha256": "292b46d74cbe66a7f0d13df3e243228fc368d7b9771ce82d5f36a057996793b6"
+    }
+  },
+  {
+    "index": 227,
+    "key": "ordinary-193",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-193/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-WHTZi3/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-WHTZi3/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-193/attempt-1/config.json",
+      "sha256": "3545dcd6d8e2e4e0ba3b59ad5b5966eea251fcbd78a0c57fa3fe1c2d8c19d348"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-193/attempt-1/serve.log",
+      "sha256": "db37bd0e2449cd20ffa9e7ed2fcb18736b44ea627d061cc47f4e64aea1c2867c"
+    }
+  },
+  {
+    "index": 229,
+    "key": "ordinary-195",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-195/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CbSY5N/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CbSY5N/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-195/attempt-1/config.json",
+      "sha256": "60a157c86c95acb8bc5930206d6a1c0cfedc1b1abe3ce259829bd25c557598d4"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-195/attempt-1/serve.log",
+      "sha256": "a03b848ae1f7764dd21a77309e6d282e0f8792ee32d9ffb3cd47679df32afcf5"
+    }
+  },
+  {
+    "index": 231,
+    "key": "ordinary-197",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-197/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-r4V8UA/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-r4V8UA/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-197/attempt-1/config.json",
+      "sha256": "3311619b0f84eacc95eabc8ebdff1f44ba64807a6f2dabeff33edfea2adae09a"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-197/attempt-1/serve.log",
+      "sha256": "4d4450760c5afa3a1df9ece3da8df37380ce589d2b3a8257880661a13328a982"
+    }
+  },
+  {
+    "index": 233,
+    "key": "ordinary-199",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-199/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-sRNhsd/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-sRNhsd/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-199/attempt-1/config.json",
+      "sha256": "7890116de5c86cc28f851819aff0efc748f2ac223250d0358b664749f2f4f0df"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-199/attempt-1/serve.log",
+      "sha256": "df8ed72b72003ed506ede20579585d3504867556ef07232982330f48d4e89f65"
+    }
+  },
+  {
+    "index": 235,
+    "key": "ordinary-201",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-201/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-WA3FEb/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-WA3FEb/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-201/attempt-1/config.json",
+      "sha256": "6927306befcac8ab824334d4e39cb4444b637ba4131e237354171668655f82f7"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-201/attempt-1/serve.log",
+      "sha256": "e34a555dca96adea43bd5d9a71104f5250ff2aa88b9c7245289f3a659c601dea"
+    }
+  },
+  {
+    "index": 237,
+    "key": "ordinary-203",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-203/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-nPuLkj/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-nPuLkj/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-203/attempt-1/config.json",
+      "sha256": "5121f0a8fc1f32ba9d4fe14b99563a4efbad0adace57268e45fedf647b88e120"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-203/attempt-1/serve.log",
+      "sha256": "1340960cd8dc7a419ada985d3170073cb8e552b45c628a9169c00317ba1c6692"
+    }
+  },
+  {
+    "index": 239,
+    "key": "ordinary-205",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-205/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-uAJfiC/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-uAJfiC/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-205/attempt-1/config.json",
+      "sha256": "3ae0104c7d50b853899942d7899eeafc58df134a3fde6ffe55585df153606c65"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-205/attempt-1/serve.log",
+      "sha256": "335c1de35cfbd33289278e6ed6b67160103ad2530a9db59b2a4c29a6e3a72c14"
+    }
+  },
+  {
+    "index": 241,
+    "key": "ordinary-207",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-207/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-AEt36M/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-AEt36M/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-207/attempt-1/config.json",
+      "sha256": "cfe850503f6de2cd9edd29827abf0f2d4e0412dbd068445ff38dc6b0b326c7a5"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-207/attempt-1/serve.log",
+      "sha256": "a0179965d9a74ceafed11c014c1ee239837475c4613df9ce5127d9c659906780"
+    }
+  },
+  {
+    "index": 243,
+    "key": "ordinary-209",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-209/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-nGqrgQ/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-nGqrgQ/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-209/attempt-1/config.json",
+      "sha256": "9cefb596e2e955230edaa5199e7b57873d01f3acdb0fb3d0fca21109dd856c69"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-209/attempt-1/serve.log",
+      "sha256": "5f5e82aa06d0f3fd1813ae9878b5b5c33a3d6a9e86ea8e0deab90e88e8ff65f7"
+    }
+  },
+  {
+    "index": 245,
+    "key": "ordinary-211",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-211/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-0qPLkd/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-0qPLkd/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-211/attempt-1/config.json",
+      "sha256": "a8d309bb332c556aec0783ded1dec2cb8387e1895434d8a3fb66e88c69486e79"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-211/attempt-1/serve.log",
+      "sha256": "08d73878c486a11377e981ef413fcdeb433d7b986f3f28f1c0ccc1cbccc959ca"
+    }
+  },
+  {
+    "index": 247,
+    "key": "ordinary-213",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-213/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-b6OP42/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-b6OP42/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-213/attempt-1/config.json",
+      "sha256": "69294f8e9c24f1b6a8bbad258c306593b45d505b03fd12a50efa631419140e70"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-213/attempt-1/serve.log",
+      "sha256": "d25164853eea26791b1543812fa88cad35e0d194be764365775442bae79525a9"
+    }
+  },
+  {
+    "index": 249,
+    "key": "ordinary-215",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-215/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-gE9we4/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-gE9we4/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-215/attempt-1/config.json",
+      "sha256": "82a3a5d346806bc27040419428d734191b798ef600b40e28b678db43e8690299"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-215/attempt-1/serve.log",
+      "sha256": "a12514c8bc9e3550bb5e23573199cb8c51c83c1cfdcbb535f2e9735f553bce84"
+    }
+  },
+  {
+    "index": 251,
+    "key": "ordinary-217",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-217/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-FdrdT3/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-FdrdT3/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-217/attempt-1/config.json",
+      "sha256": "e63eefdcceb42ca72e8e07c1df62a8b50df52d1c50efd95a77879384f580ffe5"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-217/attempt-1/serve.log",
+      "sha256": "44423739c501d1e2322740a5f055ba2d3581c07c2a2679e18827ba1777e9eecf"
+    }
+  },
+  {
+    "index": 253,
+    "key": "ordinary-219",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-219/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Ru6hCm/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Ru6hCm/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-219/attempt-1/config.json",
+      "sha256": "032f1b4cfeebaaff3c85d4f98cd79a8c11751ff744f9d161f7486d67fa44ceac"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-219/attempt-1/serve.log",
+      "sha256": "cbf773653bcc343a7433d739bf9bc931622a843491c549739db2b0ef8424f8a1"
+    }
+  },
+  {
+    "index": 255,
+    "key": "ordinary-221",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-221/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-hnEKj6/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-hnEKj6/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-221/attempt-1/config.json",
+      "sha256": "468843ef49e3998d29b1d63bea708f4b922b421c7f03961c6ff964eadb33630f"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-221/attempt-1/serve.log",
+      "sha256": "d3c6eb41aa626ad861e969a381b0418cd5db1469e5ae1a066a0dc1467bbf4a5f"
+    }
+  },
+  {
+    "index": 257,
+    "key": "ordinary-223",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-223/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-z7Li2z/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-z7Li2z/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-223/attempt-1/config.json",
+      "sha256": "17f98fe5229ad4ec6ae2942050de67c2fbff5e2d812df6eb969e6986f0e7d386"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-223/attempt-1/serve.log",
+      "sha256": "acb4db713d14f4089c58be84bedfe2b23620446e0418b461833346d8b72796e4"
+    }
+  },
+  {
+    "index": 259,
+    "key": "ordinary-225",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-225/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5EqSgR/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5EqSgR/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-225/attempt-1/config.json",
+      "sha256": "a433d46320cf281a848895e85f579207ca3b2c9c710fab2cdf1f3cd5bc8b9d10"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-225/attempt-1/serve.log",
+      "sha256": "33b37fc4031ac4d428578f5cf863e1ac5d3e35db1a12a93ba74afe62583a812f"
+    }
+  },
+  {
+    "index": 261,
+    "key": "ordinary-227",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-227/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-e7BZLg/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-e7BZLg/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-227/attempt-1/config.json",
+      "sha256": "7ea0c985a28bfe170457198142083b387de4dd06792f48fb7c6b6aac8929ea79"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-227/attempt-1/serve.log",
+      "sha256": "f5f2d257d36d41c663a971259ad45cfd10664a8536534fa51740081444d619b9"
+    }
+  },
+  {
+    "index": 263,
+    "key": "ordinary-229",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-229/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-o9sP5B/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-o9sP5B/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-229/attempt-1/config.json",
+      "sha256": "d2d4e658701b1b2ed8f033b8d6b5d29322031f02177d694a51251e0325e0740f"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-229/attempt-1/serve.log",
+      "sha256": "bab821c885718c646b616a03c1938ff32358b639b64f379fad2966b3ba345360"
+    }
+  },
+  {
+    "index": 265,
+    "key": "ordinary-231",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-231/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-3msVjG/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-3msVjG/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-231/attempt-1/config.json",
+      "sha256": "ba79fc47f7d6c3f8bf5736b4cc0d7d16011ddfbbf07f7bd4e890acbbaff44959"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-231/attempt-1/serve.log",
+      "sha256": "b7df0b405c25a43a11df3aa74860de5df4965d22cad77a342ca5393970d90053"
+    }
+  },
+  {
+    "index": 267,
+    "key": "ordinary-233",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-233/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-dhtb1J/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-dhtb1J/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-233/attempt-1/config.json",
+      "sha256": "4c0dae46a82e1624e6b02cf1390a8b3c4d9f541200aa42b8c61b9770302a216a"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-233/attempt-1/serve.log",
+      "sha256": "ae03cd252c2734040ab19cd30d2604f40e11b9b023547aab553a29b45db52bb1"
+    }
+  },
+  {
+    "index": 269,
+    "key": "ordinary-235",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-235/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-euEDDW/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-euEDDW/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-235/attempt-1/config.json",
+      "sha256": "07a71d1ec897e0ba5b8c8d0c8d35dbb60a359bc38a722edd31b587ea77bfa558"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-235/attempt-1/serve.log",
+      "sha256": "c173421b593b2b8c1d7636327280f760e3801be2c5cee883f918aab9b14935df"
+    }
+  },
+  {
+    "index": 271,
+    "key": "ordinary-237",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-237/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-8Ff6iJ/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-8Ff6iJ/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-237/attempt-1/config.json",
+      "sha256": "bfe317c880a2a6f5bc07ee005afa996c912c15f3cefc814800530dc028d5df45"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-237/attempt-1/serve.log",
+      "sha256": "cbf4b781a82137d0639dbcd289250b34df114b3d5b765f2b8e9f7c72f5485d39"
+    }
+  },
+  {
+    "index": 273,
+    "key": "ordinary-239",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-239/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-BN6OJ7/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-BN6OJ7/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-239/attempt-1/config.json",
+      "sha256": "94be519b692635b14adda99699f4a65bde9e1adbff897cc5e34d5795f6ca1845"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-239/attempt-1/serve.log",
+      "sha256": "48fafa6763722e0709ba5f09528335c1671a183c47dc4d9cdb9fc80cd08d390c"
+    }
+  },
+  {
+    "index": 275,
+    "key": "ordinary-241",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-241/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vyAwf8/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vyAwf8/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-241/attempt-1/config.json",
+      "sha256": "4e7c4a0fbb6a0f138f5735ca9f7a3776eb7c140fd7e9ed62b3fc3386bf9d80c4"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-241/attempt-1/serve.log",
+      "sha256": "adec7375152911f13510df61173ce55dd483f75293f2b3374ff889e36819c95d"
+    }
+  },
+  {
+    "index": 277,
+    "key": "ordinary-243",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-243/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-k7dkoX/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-k7dkoX/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-243/attempt-1/config.json",
+      "sha256": "677a033eb3ed06853662873b89ad44685a9714a18b2e5f65c2bd926ed50390ec"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-243/attempt-1/serve.log",
+      "sha256": "05a7515b62b309fa6ce7fd721c428ee432fd539b114bd071b190a81ea942374d"
+    }
+  },
+  {
+    "index": 279,
+    "key": "ordinary-245",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-245/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-pApnQJ/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-pApnQJ/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-245/attempt-1/config.json",
+      "sha256": "5c0132f20815e6b3c016a6e723bd1a58bfc33c92fc100112e8c14f350a231187"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-245/attempt-1/serve.log",
+      "sha256": "eabd4ed0be5c1a19d87a95966c67685af562c4f609655bc82bd6b14d3aee9060"
+    }
+  },
+  {
+    "index": 281,
+    "key": "ordinary-247",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-247/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-QtWl21/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-QtWl21/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-247/attempt-1/config.json",
+      "sha256": "85efb992a44b01831cd67f6bb3a99796b1afdd99ca7c4ec333644a49d2b98aa8"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-247/attempt-1/serve.log",
+      "sha256": "4e35d4e3a682220cbb7f7130d46b6f7fd9f2b5fc16dd0998996df17417adb1bf"
+    }
+  },
+  {
+    "index": 283,
+    "key": "ordinary-249",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-249/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ikSEn9/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ikSEn9/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-249/attempt-1/config.json",
+      "sha256": "c9f589f506e8a7a441d0551a3276739a7948bb89e5c5ddc20453545331339453"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-249/attempt-1/serve.log",
+      "sha256": "5ac49b834096cf28278cf7af98f956913cc08d3198548dc4d3671985281ffb3b"
+    }
+  },
+  {
+    "index": 285,
+    "key": "ordinary-251",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-251/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ccET7w/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-ccET7w/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-251/attempt-1/config.json",
+      "sha256": "b068387d3a4eb1ab05c25e825227152a3cf12885d6f8ff9b10b1ad99c7f0b5b1"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-251/attempt-1/serve.log",
+      "sha256": "d95adb23e718d249033d75432c17fb32a7eae35595cdc449defa6b96e4d2d119"
+    }
+  },
+  {
+    "index": 287,
+    "key": "ordinary-253",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-253/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-lfCG78/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-lfCG78/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-253/attempt-1/config.json",
+      "sha256": "5a5b561fcd6a0c5889e9888f9f4e5d395c2581e705b0d0afd6b2604b98fdf369"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-253/attempt-1/serve.log",
+      "sha256": "6af90e9b63cb042870793ca442aa7f32308d8548f714a24fd8fd1cb04663d1a5"
+    }
+  },
+  {
+    "index": 289,
+    "key": "ordinary-255",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-255/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-9E3AKm/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-9E3AKm/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-255/attempt-1/config.json",
+      "sha256": "560c7a2255166159c633420eec8aeb947557b6b3da3bd4b120f21398135e57b7"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-255/attempt-1/serve.log",
+      "sha256": "c2b71b3b29c4bf08ba9e6a4ecc5538b67d606a79e265d5718efcf4b692ec753c"
+    }
+  },
+  {
+    "index": 291,
+    "key": "ordinary-257",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-257/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-3IBOUn/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-3IBOUn/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-257/attempt-1/config.json",
+      "sha256": "ea2a38db18d5d6ecaca442d33ab894f1e8092d3ec7a503679fa4728f8dfbe5f6"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-257/attempt-1/serve.log",
+      "sha256": "dc411d67153346e0899537786ac9ea5f69d667f11ca4916e0b34ce8edf36caec"
+    }
+  },
+  {
+    "index": 293,
+    "key": "ordinary-259",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-259/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vx41k2/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vx41k2/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-259/attempt-1/config.json",
+      "sha256": "bd4a73f654cb78f56770fcf9072c276a13b88b457965fb15ce7ea7a339c234b9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-259/attempt-1/serve.log",
+      "sha256": "a446da0076153a33499fde69a396e843d1fcc29b1e4d221855b90148c9f514ae"
+    }
+  },
+  {
+    "index": 295,
+    "key": "ordinary-261",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-261/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-HlP5Tx/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-HlP5Tx/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-261/attempt-1/config.json",
+      "sha256": "37f38eaea622fec7cc473e51daf7fb5fb41dedb0b12879c1c747fc736e2035e5"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-261/attempt-1/serve.log",
+      "sha256": "5606c8ede88f1e0e506a63dc357002278a40924750dd54f364b770485d600af9"
+    }
+  },
+  {
+    "index": 297,
+    "key": "ordinary-263",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-263/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-PHoBAa/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-PHoBAa/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-263/attempt-1/config.json",
+      "sha256": "7873221e28c4642f540beb32016d50d7a3bfb132bee96574982dc65673fa5fb9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-263/attempt-1/serve.log",
+      "sha256": "ce40c897e565ebd5471a7576ef738d8139a2d0c077abdbbc86fb79426c5ca63d"
+    }
+  },
+  {
+    "index": 299,
+    "key": "ordinary-265",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-265/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-YzYmeN/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-YzYmeN/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-265/attempt-1/config.json",
+      "sha256": "ef49911f9c1b4958258033352749e55e1d2b8719c4ba913cd1fde5d15d2c68db"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-265/attempt-1/serve.log",
+      "sha256": "175bb4cb5bbfb7f3da8364fd419caae197a63bcaddc2311e671a718688610524"
+    }
+  },
+  {
+    "index": 301,
+    "key": "ordinary-267",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-267/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-82HBgN/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-82HBgN/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-267/attempt-1/config.json",
+      "sha256": "fac2354b1e1d599802d5465e882f48450d3bc933b9b69f0a5d19c409657b6666"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-267/attempt-1/serve.log",
+      "sha256": "52c0e821faa51ad43db1769e2940628284d2575bea206aaffcb9272a557c1c8f"
+    }
+  },
+  {
+    "index": 303,
+    "key": "ordinary-269",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-269/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-hLp8db/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-hLp8db/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-269/attempt-1/config.json",
+      "sha256": "8226201f529b1cc93e4bcd7c9c730dfb5480699264f6b2ea863b36e1adbff51e"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-269/attempt-1/serve.log",
+      "sha256": "224be38b18bd44da46c5f72531838830485897f4450a2301c9051ada83e1fa6c"
+    }
+  },
+  {
+    "index": 305,
+    "key": "ordinary-271",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-271/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-HuhihO/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-HuhihO/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-271/attempt-1/config.json",
+      "sha256": "04c9d5fb25b3ff411066c73b6b853f2f3741df62f6f427b6b86791c77eb7eb90"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-271/attempt-1/serve.log",
+      "sha256": "2502ce794ee54a047d00a90d31a5e4eedd4578f52a95b865f56e01cbed579fda"
+    }
+  },
+  {
+    "index": 307,
+    "key": "ordinary-273",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-273/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-OaWehJ/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-OaWehJ/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-273/attempt-1/config.json",
+      "sha256": "660854e05cd2c94122d46b3ebaedc34fa403f72397bf4f7ecce2c0c04ee4d71d"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-273/attempt-1/serve.log",
+      "sha256": "5ac049713cbceaf9c0c47c2c7802f51b60008be7fd089298151c1833bfbaa283"
+    }
+  },
+  {
+    "index": 309,
+    "key": "ordinary-275",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-275/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-GYYzwQ/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-GYYzwQ/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-275/attempt-1/config.json",
+      "sha256": "720991eb8169940538144aaf6c466c453b1835307747ea89436ecd71e76aecc9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-275/attempt-1/serve.log",
+      "sha256": "95c3aa67d5e5b70581b3c0392a20d2a81dd3927bbaec0c6af1bb18536375b46c"
+    }
+  },
+  {
+    "index": 311,
+    "key": "ordinary-277",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-277/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-iptVnm/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-iptVnm/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-277/attempt-1/config.json",
+      "sha256": "b7e1f34630aed92126003b81530913e1aaddfee3cb247350c65a9afde1f59fd7"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-277/attempt-1/serve.log",
+      "sha256": "e0452e9d9ac128fd3441eb3345fbb6f969f8190b29e50093f468818d9176eb92"
+    }
+  },
+  {
+    "index": 313,
+    "key": "ordinary-279",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-279/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-mqSnLo/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-mqSnLo/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-279/attempt-1/config.json",
+      "sha256": "23b084cb33342252203d0076565826d2fa73665b914693bffe8add6f194a78be"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-279/attempt-1/serve.log",
+      "sha256": "8ef1cf37f4c6b071ad51d57e8a7096872c043d1f1979b85a2d457b613bb9b3af"
+    }
+  },
+  {
+    "index": 315,
+    "key": "ordinary-281",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-281/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CRENzk/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-CRENzk/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-281/attempt-1/config.json",
+      "sha256": "e12fff2c072feb8bbe65ecc0af49ac78a35ebbbaee7046401d770693df5116df"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-281/attempt-1/serve.log",
+      "sha256": "308c38de025b41acb3a38974ae20fa816da57deb4565bc18d0c7e8a99eb9461c"
+    }
+  },
+  {
+    "index": 317,
+    "key": "ordinary-283",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-283/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5SwDtO/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-5SwDtO/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-283/attempt-1/config.json",
+      "sha256": "c0745be7f56203413cd840c46af0d888a443ead3e50be57d26ba558169919ac5"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-283/attempt-1/serve.log",
+      "sha256": "782c45bf6ca476eb896d1e33336f3217856d283ea93efbe398fc4e8896f9696e"
+    }
+  },
+  {
+    "index": 319,
+    "key": "ordinary-285",
+    "attempt": 1,
+    "sourceRunLog": "/private/tmp/studio-rc5-odd.ySmxWp/ordinary-285/run.log",
+    "originalConfig": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Bz1bAQ/config.json",
+    "originalServerLog": "/var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Bz1bAQ/serve.log",
+    "config.json": {
+      "path": "role-port-proof/ordinary-285/attempt-1/config.json",
+      "sha256": "1ca913eb3a3cde07aab6fc43891f4e45da9e805cf3eecd3de3d848df5ddebed9"
+    },
+    "serve.log": {
+      "path": "role-port-proof/ordinary-285/attempt-1/serve.log",
+      "sha256": "cb370e990c4161269c1fcd10d9c6fee3ef73044fb276cab489b7d98b88cac5ae"
+    }
+  }
+]

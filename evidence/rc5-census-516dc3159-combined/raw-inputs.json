@@ -1,0 +1,11 @@
+{
+  "even": {
+    "commit": "9a39f6638cee1d721bb028607c9975f13ef8ebed",
+    "machineJSON": "106e088bb2ca4dcc903b3d32bddc2a8d94b3b41e3503fccd74c707d77ab3b990"
+  },
+  "odd": {
+    "reference": "https://github.com/xban1x/pyro-private-census-transfer-c3372ad21/releases/download/rc5-studio-setup-v1/rc5-studio-odd-516dc3159.tar.zst",
+    "archiveSHA256": "fa934498306f8c145f238fd909cb866539e99a619e8afb6858f55d40d42fcd13",
+    "machineJSON": "b59f8a608616f82be54882d52d26298f72b8995034546c04fea206d34e9ba67d"
+  }
+}

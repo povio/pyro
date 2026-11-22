@@ -1,0 +1,30 @@
+{
+  "rc5-studio-odd-516dc3159.tar.zst": {
+    "apiUrl": "https://api.github.com/repos/xban1x/pyro-private-census-transfer-c3372ad21/releases/assets/778607895",
+    "contentType": "application/octet-stream",
+    "createdAt": "2026-11-22T09:59:04Z",
+    "digest": "sha256:fa934498306f8c145f238fd909cb866539e99a619e8afb6858f55d40d42fcd13",
+    "downloadCount": 0,
+    "id": "RA_kwDOV3MWcs4uaJ0X",
+    "label": "",
+    "name": "rc5-studio-odd-516dc3159.tar.zst",
+    "size": 9213788,
+    "state": "uploaded",
+    "updatedAt": "2026-11-22T09:59:06Z",
+    "url": "https://github.com/xban1x/pyro-private-census-transfer-c3372ad21/releases/download/rc5-studio-setup-v1/rc5-studio-odd-516dc3159.tar.zst"
+  },
+  "rc5-studio-odd-516dc3159.tar.zst.sha256": {
+    "apiUrl": "https://api.github.com/repos/xban1x/pyro-private-census-transfer-c3372ad21/releases/assets/778607899",
+    "contentType": "application/octet-stream",
+    "createdAt": "2026-11-22T09:59:04Z",
+    "digest": "sha256:487077fb68844f92b494d2ee1535d1db637e5d54ec81fd20fb2aa863461a99f1",
+    "downloadCount": 0,
+    "id": "RA_kwDOV3MWcs4uaJ0b",
+    "label": "",
+    "name": "rc5-studio-odd-516dc3159.tar.zst.sha256",
+    "size": 99,
+    "state": "uploaded",
+    "updatedAt": "2026-11-22T09:59:04Z",
+    "url": "https://github.com/xban1x/pyro-private-census-transfer-c3372ad21/releases/download/rc5-studio-setup-v1/rc5-studio-odd-516dc3159.tar.zst.sha256"
+  }
+}

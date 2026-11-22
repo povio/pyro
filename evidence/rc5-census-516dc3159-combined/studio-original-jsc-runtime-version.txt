@@ -1,0 +1,2 @@
+pyro 0.0.50-rc.5
+engine: JavaScriptCore; capabilities: Capabilities { weak_refs: true, modules: true, import_maps: false, typed_modules: false, unhandled_rejections: true, termination: true, hidden_properties: true, proxy_targets: true, object_global_context: true, fork: false, global_constants: false }
