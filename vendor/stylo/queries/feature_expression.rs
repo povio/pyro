@@ -762,7 +762,7 @@ impl QueryExpressionValue {
                     if number.get().is_none() && number.resolve() == Some(0.0) {
                         Ok(Length::zero())
                     } else {
-                        Err(i.new_custom_error(StyleParseErrorKind::UnspecifiedError))
+                        Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
                     }
                 });
                 if let Ok(zero) = zero {
