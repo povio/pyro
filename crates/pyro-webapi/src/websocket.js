@@ -225,9 +225,11 @@
   // source requests one message at a time and its sink waits for the socket
   // to acknowledge each write. Neither queue is drained by polling.
   const { streamSlot, errorSlot, streamConstructors, pull, writeStream } = native;
-  const PromiseC = Promise;
+  let streamPromise;
 
   function deferred() {
+    // A classic socket never needs the stream promise implementation.
+    const PromiseC = streamPromise ??= Promise;
     let resolve, reject;
     const promise = new PromiseC((ok, fail) => { resolve = ok; reject = fail; });
     return { promise, resolve, reject };
