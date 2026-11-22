@@ -1,0 +1,1699 @@
+{
+  "counts": {
+    "SVG length-list name match": 56,
+    "scoped registries": 372,
+    "popup features": 338
+  },
+  "matchedNames": [
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"-1\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"0\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"00\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"0foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"1\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"1foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"99999\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"true\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=\"yes\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='-1', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='0', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='00', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='0foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='1', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='1foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='99999', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='true', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener='yes', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=-1, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=0, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=00, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=0foo, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=1, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=1foo, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=99999, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noopener=foo, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"-1\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"0\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"00\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"0foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"1\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"1foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"99999\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"true\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=\"yes\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='-1', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='0', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='00', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='0foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='1', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='1foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='99999', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='true', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer='yes', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=-1, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=0, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=00, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=0foo, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=1, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=1foo, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=99999, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test noreferrer=foo, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"-1\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"0\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"00\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"0foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"1\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"1foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"99999\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"foo\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"true\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=\"yes\", expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='-1', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='0', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='00', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='0foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='1', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='1foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='99999', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='foo', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='true', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup='yes', expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=-1, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=0, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=00, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=0foo, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=1, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=1foo, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=99999, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=foo, expected interpretation is false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=true, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-windowfeatures-values.html",
+      "Test popup=yes, expected interpretation is true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405  \" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405*3\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405.32\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405.5\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405/5\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405LLl\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405^4\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405e-1\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-width.html",
+      "features \"width=405e1\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-screenx-screeny.html",
+      "\" screenx = 141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-screenx-screeny.html",
+      "\",screenx=141,,\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-screenx-screeny.html",
+      "\"SCREENX=141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-screenx-screeny.html",
+      "\"\\nscreenx= 141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-screenx-screeny.html",
+      "\"screenX=141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-screenx-screeny.html",
+      "\"screenx=141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-screenx-screeny.html",
+      "\"screenx==141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"close\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"close=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"close=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"close=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"minimizable\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"minimizable=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"minimizable=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"minimizable=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"personalbar\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"personalbar=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"personalbar=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"personalbar=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"scrollbars\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"scrollbars=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"scrollbars=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"scrollbars=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"status=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"status=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"status=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"titlebar\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"titlebar=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"titlebar=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2",
+      "\"titlebar=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\" height = 402 , width = 401 ,\" should set height and width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\" height = 402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\" width = 401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\",height=402,,\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\",height=402,,width==401\" should set height and width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\",width=401,,\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"HEIGHT=402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"HEIGHT=402, WIDTH=401\" should set height and width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"WIDTH=401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"\\nheight= 402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"\\nheight= 402,,width=\\n401\" should set height and width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"\\nwidth= 401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"height=402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"height=402,width=401\" should set height and width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"height==402 width = 401\" should set height and width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"height==402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"width=401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html",
+      "\"width==401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"location\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"location=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"location=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"location=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"menubar\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"menubar=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"menubar=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"menubar=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"popup\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"popup=0\" should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"popup=1\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"popup=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"resizable\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"resizable=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"resizable=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"resizable=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"toolbar\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"toolbar=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"toolbar=true\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "\"toolbar=yes\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1",
+      "undefined should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?split-basic",
+      "\"popup=0,split\" should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?split-basic",
+      "\"split,popup=0\" should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-top-left.html",
+      "\"\nleft= 141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-top-left.html",
+      "\" left = 141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-top-left.html",
+      "\",left=141,,\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-top-left.html",
+      "\"LEFT=141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-top-left.html",
+      "\"left=141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-top-left.html",
+      "\"left==141\" should set left position of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105  \" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105*3\" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105.32\" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105.5\" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105/5\" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105LLl\" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105^4\" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105e-1\" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-top.html",
+      "features \"top=105e1\" should set \"top=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105  \" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105*3\" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105.32\" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105.5\" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105/5\" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105LLl\" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105^4\" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105e-1\" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html",
+      "features \"screenx=105e1\" should set \"screenx=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?misc",
+      "\"split\" window should be able to post messages to its opener",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"location,menubar,resizable,scrollbars,status\" should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"location,toolbar,menubar,resizable,scrollbars\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"location,toolbar,menubar,resizable,scrollbars,status\" should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"location,toolbar,menubar,resizable,status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"location,toolbar,menubar,resizable=no,scrollbars,status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"location,toolbar,menubar,scrollbars,status\" should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"location,toolbar,resizable,scrollbars,status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"location=no,menubar=no,resizable,scrollbars,status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"popup=0,location,toolbar,menubar,resizable,scrollbars\" should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"popup=1,location,toolbar,menubar,resizable,scrollbars,status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"popup=true,location,toolbar,menubar,resizable,scrollbars,status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"popup=yes,location,toolbar,menubar,resizable,scrollbars,status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"resizable,scrollbars,status\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination",
+      "\"toolbar,menubar,resizable,scrollbars,status\" should set BarProp visibility to true",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\" innerheight = 402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\" innerwidth = 401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\",innerheight=402,,\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\",innerwidth=401,,\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"INNERHEIGHT=402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"INNERWIDTH=401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"\\ninnerheight= 402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"\\ninnerwidth= 401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"innerHeight=402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"innerWidth=401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"innerheight=402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"innerheight==402\" should set height of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"innerwidth=401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html",
+      "\"innerwidth==401\" should set width of opened window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405  \" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405*3\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405.32\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405.5\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405/5\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405LLl\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405^4\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405e-1\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-height.html",
+      "features \"height=405e1\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405  \" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405*3\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405.32\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405.5\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405/5\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405LLl\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405^4\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405e-1\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html",
+      "features \"innerheight=405e1\" should set \"height=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback",
+      "\"popup,split\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback",
+      "\"split,popup\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback",
+      "\"split,popup=1\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback",
+      "\"split=0\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback",
+      "\"split=0,width=400\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback",
+      "\"split=no\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback",
+      "\"splitposition=left\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback",
+      "\"splitsize=30\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"height=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"innerHeight=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"innerWidth=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"left=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"outerHeight=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"outerWidth=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"screenX=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"screenY=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"top=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position",
+      "\"width=500\" should set BarProp visibility to false",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noopener.html",
+      "Feature \"noopener\" should be converted to ASCII lowercase",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noopener.html",
+      "Integer value of 0 should not activate \"noopener\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noopener.html",
+      "Invalid feature names should not tokenize as \"noopener\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noopener.html",
+      "Tokenization of \"noopener\" should skip window features separators before feature",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noopener.html",
+      "Tokenizing \"noopener\" should read characters until first window feature separator as `value`",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105  \" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105*3\" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105.32\" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105.5\" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105/5\" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105LLl\" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105^4\" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105e-1\" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-left.html",
+      "features \"left=105e1\" should set \"left=105\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      " (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      ",noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      ",noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      ",noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      ",popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,menubar=yes,scrollbars=yes (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,menubar=yes,scrollbars=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,menubar=yes,scrollbars=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,menubar=yes,scrollbars=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,menubar=yes,scrollbars=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,scrollbars=yes,status=yes (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,scrollbars=yes,status=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,scrollbars=yes,status=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,scrollbars=yes,status=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,scrollbars=yes,status=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,resizable=yes,scrollbars=yes,status=yes (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,resizable=yes,scrollbars=yes,status=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,resizable=yes,scrollbars=yes,status=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,resizable=yes,scrollbars=yes,status=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,menubar=yes,resizable=yes,scrollbars=yes,status=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,status=yes (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,status=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,status=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,status=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "location=yes,toolbar=yes,status=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "menubar=yes,resizable=yes,scrollbars=yes (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "menubar=yes,resizable=yes,scrollbars=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "menubar=yes,resizable=yes,scrollbars=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "menubar=yes,resizable=yes,scrollbars=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "menubar=yes,resizable=yes,scrollbars=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "resizable=yes,scrollbars=yes,status=yes (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "resizable=yes,scrollbars=yes,status=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "resizable=yes,scrollbars=yes,status=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "resizable=yes,scrollbars=yes,status=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "resizable=yes,scrollbars=yes,status=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,menubar=yes,resizable=yes (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,menubar=yes,resizable=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,menubar=yes,resizable=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,menubar=yes,resizable=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,menubar=yes,resizable=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,resizable=yes,status=yes (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,resizable=yes,status=yes,noopener (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,resizable=yes,status=yes,noopener,noreferrer,popup (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,resizable=yes,status=yes,noreferrer (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "toolbar=yes,resizable=yes,status=yes,popup (expect popup)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/window-open-popup-behavior.html",
+      "undefined (expect tab)",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/BarProp.window.html",
+      "BarBrop objects of a nested Window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/BarProp.window.html",
+      "BarProp objects of an auxiliary Window",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405  \" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405*3\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405.32\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405.5\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405/5\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405LLl\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405^4\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405e-1\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html",
+      "features \"innerwidth=405e1\" should set \"width=405\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noreferrer.html",
+      "Feature \"noreferrer\" should be converted to ASCII lowercase",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noreferrer.html",
+      "Integer value of 0 should not activate \"noreferrer\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noreferrer.html",
+      "Invalid feature names should not tokenize as \"noreferrer\"",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noreferrer.html",
+      "Tokenization of \"noreferrer\" should skip window features separators before feature",
+      1
+    ],
+    [
+      "html/browsers/the-window-object/open-close/open-features-tokenization-noreferrer.html",
+      "Tokenizing \"noreferrer\" should read characters until first window feature separator as `value`",
+      1
+    ]
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "before": [
+    310,
+    207
+  ],
+  "overridden": [
+    424,
+    256
+  ],
+  "restored": [
+    310,
+    207
+  ],
+  "events": [
+    {
+      "url": "http://127.0.0.1:59288/metrics",
+      "userGesture": false,
+      "windowFeatures": [
+        "width=310",
+        "height=207",
+        "resizable"
+      ],
+      "windowName": "explicit-size"
+    }
+  ]
+}
