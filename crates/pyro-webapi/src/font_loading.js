@@ -4,7 +4,7 @@
 // returns { FontFace, FontFaceSet, FontFaceSetLoadEvent, fonts }.
 (native => {
   'use strict';
-  const { descriptor, sources, isFont, fontQuery, cssFaces, urlState, enginePending, register, loading } = native;
+  const { descriptor, sources, isFont, fontQuery, cssFaces, urlState, enginePending, register, loading, canvasFaces } = native;
   const apply = Reflect.apply;
   const ET = EventTarget;
   const Ev = Event;
@@ -456,12 +456,15 @@
     }
 
     #sync() {
-      if (!this.#document || !register) return;
+      if (!register && !canvasFaces) return;
       const entries = [];
       for (const face of this.#faces) {
         const entry = FF_internal.render(face);
         if (entry) entries.push(entry);
       }
+      // pyro: canvas text draws with the set's loaded faces, a worker's too.
+      if (canvasFaces) { try { canvasFaces(entries); } catch (e) {} }
+      if (!this.#document || !register) return;
       try { register(entries); } catch (e) {}
     }
 

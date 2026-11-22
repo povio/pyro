@@ -406,6 +406,12 @@ pub struct PageDom {
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
     /// The CSS-connected font faces of the document as of an author sheets key (`css_font_faces`).
     css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
+    /// pyro: the loaded faces of this realm's `FontFaceSet` (a document's or a worker's) for
+    /// canvas text, with a generation that changes with them (font_loading.rs `canvasFaces`).
+    canvas_faces: RefCell<(u64, Rc<Vec<pyro_canvas::text::WebFace>>)>,
+    /// pyro: the web faces canvas text last drew with, by the key of what made them
+    /// (canvas.rs `canvas_web_faces`): their bytes are not copied or decompressed per draw.
+    canvas_face_cache: RefCell<Option<(u64, Rc<Vec<pyro_canvas::text::WebFace>>)>>,
     /// Tasks queued through [`PageDom::post_task`] so far.
     posted_tasks: Cell<u64>,
     pub(crate) web_tasks: crate::scheduler::PendingTasks,
@@ -1041,6 +1047,8 @@ impl PageDom {
             sheet_responses: RefCell::default(),
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
+            canvas_faces: RefCell::new((0, Rc::default())),
+            canvas_face_cache: RefCell::new(None),
             posted_tasks: Cell::new(0),
             web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
@@ -1640,6 +1648,35 @@ impl PageDom {
             pyro_dom::geometry::FontLoad::Loading => Some(false),
             pyro_dom::geometry::FontLoad::NotAsked | pyro_dom::geometry::FontLoad::Failed => None,
         }
+    }
+
+    /// pyro: the realm's `FontFaceSet` faces changed: canvas text draws with `faces`.
+    pub(crate) fn set_canvas_faces(&self, faces: Vec<pyro_canvas::text::WebFace>) {
+        let mut slot = self.canvas_faces.borrow_mut();
+        slot.0 += 1;
+        slot.1 = Rc::new(faces);
+    }
+
+    /// pyro: the realm's `FontFaceSet` faces for canvas text and their generation.
+    pub(crate) fn canvas_faces(&self) -> (u64, Rc<Vec<pyro_canvas::text::WebFace>>) {
+        let slot = self.canvas_faces.borrow();
+        (slot.0, slot.1.clone())
+    }
+
+    /// pyro: the web faces canvas text drew with for `key`, or the ones `make` gives (kept).
+    pub(crate) fn canvas_face_cache(
+        &self,
+        key: u64,
+        make: impl FnOnce() -> Vec<pyro_canvas::text::WebFace>,
+    ) -> Rc<Vec<pyro_canvas::text::WebFace>> {
+        if let Some((k, faces)) = &*self.canvas_face_cache.borrow() {
+            if *k == key {
+                return faces.clone();
+            }
+        }
+        let faces = Rc::new(make());
+        *self.canvas_face_cache.borrow_mut() = Some((key, faces.clone()));
+        faces
     }
 
     /// pyro: the bytes of the document's font at `url` once the layout engine loaded them (canvas

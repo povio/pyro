@@ -1318,7 +1318,7 @@ fn draw_text(s: &Scope<'_>, c: &ContextData, a: Args<'_>, fill: bool) -> JsResul
         return Ok(());
     }
     let state = c.state.borrow();
-    let layout = layout_text(&text, &state);
+    let layout = layout_text(&c.page, &text, &state);
     if layout.runs.is_empty() {
         return Ok(());
     }
@@ -1424,7 +1424,7 @@ fn spacing_px(value: &str, font_size: f64) -> f32 {
     }) as f32
 }
 
-fn layout_text(text: &str, state: &State) -> pyro_canvas::text::TextLayout {
+fn layout_text(page: &PageDom, text: &str, state: &State) -> pyro_canvas::text::TextLayout {
     let font = &state.font;
     let style = pyro_canvas::text::TextStyle {
         family: &font.family,
@@ -1434,7 +1434,73 @@ fn layout_text(text: &str, state: &State) -> pyro_canvas::text::TextLayout {
         letter_spacing: spacing_px(&state.letter_spacing, font.size),
         word_spacing: spacing_px(&state.word_spacing, font.size),
     };
-    pyro_canvas::text::layout(text, &style)
+    let (key, faces) = canvas_web_faces(page, &font.family);
+    pyro_canvas::text::layout_with_faces(text, &style, key, &faces)
+}
+
+/// pyro: the web faces canvas text in `page`'s realm draws `family` (a CSS family list) with: the
+/// loaded faces of the realm's `FontFaceSet` (a document's or a worker's) and, in a document, the
+/// `@font-face` rules whose `url()` source its layout loaded, each only when the list names its
+/// family. The key names the set (no faces: plain layout); the faces are made once per key.
+fn canvas_web_faces(page: &PageDom, family: &str) -> (u64, Rc<Vec<pyro_canvas::text::WebFace>>) {
+    use std::hash::{Hash, Hasher};
+    let wanted: Vec<String> = family
+        .split(',')
+        .map(|f| f.trim().trim_matches(|c| c == '"' || c == '\'').trim().to_ascii_lowercase())
+        .filter(|f| !f.is_empty())
+        .collect();
+    // Generic families only (the common case): no face can be named by them.
+    const GENERIC: [&str; 10] =
+        ["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "math", "emoji", "fangsong", "ui-monospace"];
+    if wanted.iter().all(|w| GENERIC.contains(&w.as_str())) {
+        return (0, Rc::default());
+    }
+    let named = |name: &str| {
+        let name = name.trim().trim_matches(|c| c == '"' || c == '\'').trim().to_ascii_lowercase();
+        wanted.iter().any(|w| *w == name)
+    };
+    let (generation, script) = page.canvas_faces();
+    let script: Vec<&pyro_canvas::text::WebFace> = script.iter().filter(|f| named(&f.family)).collect();
+    let mut css = Vec::new();
+    for face in page.css_font_faces().iter().filter(|f| named(&f.family)) {
+        let loaded = face.sources.iter().find_map(|source| match source {
+            pyro_dom::font_face::FontSource::Url(url, _) => page.font_url_bytes(url).map(|bytes| (url.clone(), bytes)),
+            pyro_dom::font_face::FontSource::Local(_) => None,
+        });
+        if let Some((url, bytes)) = loaded {
+            css.push((face.family.clone(), url, bytes));
+        }
+    }
+    if script.is_empty() && css.is_empty() {
+        return (0, Rc::default());
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (page as *const PageDom as usize).hash(&mut hasher);
+    generation.hash(&mut hasher);
+    for face in &script {
+        face.family.hash(&mut hasher);
+        face.data.id().hash(&mut hasher);
+    }
+    for (family, url, bytes) in &css {
+        family.hash(&mut hasher);
+        url.hash(&mut hasher);
+        (Arc::as_ptr(bytes) as usize, bytes.len()).hash(&mut hasher);
+    }
+    let key = hasher.finish().max(1);
+    let faces = page.canvas_face_cache(key, || {
+        let mut faces: Vec<pyro_canvas::text::WebFace> = script.iter().map(|f| (*f).clone()).collect();
+        for (family, _, bytes) in css {
+            let compressed = matches!(bytes.get(..4), Some(b"wOFF" | b"wOF2"));
+            let face = if compressed {
+                crate::font_loading::sfnt_bytes(bytes.to_vec()).map(|sfnt| pyro_canvas::text::WebFace::new(family, sfnt))
+            } else {
+                Some(pyro_canvas::text::WebFace::shared(family, bytes))
+            };
+            faces.extend(face);
+        }
+        faces
+    });
+    (key, faces)
 }
 
 /// `drawImage` with 3, 5 or 9 arguments.
@@ -1939,7 +2005,7 @@ impl ContextData {
         def.method("measureText", 1, |s, c, a| {
             let text = arg_string(&a, 0, "CanvasRenderingContext2D.measureText")?;
             let state = c.state.borrow();
-            let layout = layout_text(&text, &state);
+            let layout = layout_text(&c.page, &text, &state);
             let (width, ascent, descent) = (layout.width, layout.ascent, layout.descent);
             // Where the text starts relative to the alignment point.
             let start = match align_of(&state) {

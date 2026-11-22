@@ -77,6 +77,18 @@ pub struct WebFace {
     pub data: parley::fontique::Blob<u8>,
 }
 
+impl WebFace {
+    /// `bytes`: an OpenType/TrueType font or collection (not WOFF-compressed).
+    pub fn new(family: String, bytes: Vec<u8>) -> WebFace {
+        WebFace::shared(family, std::sync::Arc::new(bytes))
+    }
+
+    /// [`WebFace::new`] over bytes held elsewhere too (not copied).
+    pub fn shared(family: String, bytes: std::sync::Arc<Vec<u8>>) -> WebFace {
+        WebFace { family, data: parley::fontique::Blob::new(bytes as _) }
+    }
+}
+
 /// Drops this thread's text shaping state, the font collection included
 /// (the web fonts pages registered are in it): the next [`layout`] makes it
 /// again.
