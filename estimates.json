@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 1035,
-    "studio_in_scope": 396,
+    "studio_in_scope": 408,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -14,7 +14,7 @@
    "selector_union": 1614,
    "owner_estimate_reduction": 231,
    "of_which_tentative": 208,
-   "studio_css_reported_pages_not_deduped": 247,
+   "studio_css_reported_pages_not_deduped": 259,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 460,
@@ -37,28 +37,28 @@
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/corb": 6,
     "fetch/range": 6,
+    "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
+    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
     "html/rendering": 3,
-    "fetch/nosniff": 3,
     "fetch/orb": 2,
     "xhr": 2,
-    "fetch/security": 1,
-    "svg/styling": 1,
-    "fetch/redirects": 1,
     "fetch/redirect-navigate": 1,
     "fetch/images": 1,
-    "IndexedDB": 1,
-    "quirks": 1
+    "fetch/redirects": 1,
+    "fetch/security": 1,
+    "quirks": 1,
+    "svg/styling": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
     "macbook_in_scope": 116,
-    "studio_in_scope": 36,
+    "studio_in_scope": 22,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 10,
     "studio_worker_variants_if_enabled": 0
@@ -68,7 +68,7 @@
    "selector_union": 617,
    "owner_estimate_reduction": 503,
    "of_which_tentative": 187,
-   "studio_css_reported_pages_not_deduped": 36,
+   "studio_css_reported_pages_not_deduped": 22,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/semantics": 177,
@@ -82,16 +82,16 @@
     "fetch/compression-dictionary": 8,
     "html/editing": 7,
     "html/interaction": 5,
-    "html/obsolete": 5,
     "fetch/api": 5,
+    "html/obsolete": 5,
     "fetch/security": 4,
     "html/user-activation": 3,
     "fetch/fetch-later": 3,
     "fetch/content-type": 1,
-    "html/scripting": 1,
     "fetch/http-cache": 1,
-    "html/the-xhtml-syntax": 1,
-    "html/select": 1
+    "html/select": 1,
+    "html/scripting": 1,
+    "html/the-xhtml-syntax": 1
    }
   },
   "queued": {
@@ -2430,7 +2430,7 @@
    "tentative": null
   },
   "SC-CSP-audioworklet": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": null,
    "out_of_scope_pages": null,
    "pages": null,
@@ -2745,7 +2745,7 @@
    "tentative": null
   }
  },
- "implemented_total_estimate": 1684,
+ "implemented_total_estimate": 1696,
  "milestones_reached": [
   250,
   500,
