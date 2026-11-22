@@ -1976,7 +1976,7 @@
           if (abs(f) < nyquist) {
             out[i] = n.type === 'custom' ? customSample(n.periodicWave, phase, f, rate) : wave(n.type, phase);
           }
-          phase += (f / rate) % 1;
+          phase += max(-nyquist, min(nyquist, f)) / rate;
           phase -= floor(phase);
         }
         n.phase = phase;
