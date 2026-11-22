@@ -4784,7 +4784,7 @@ index 037a2d1c..aab051a4 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..87d1612c 100644
+index f0109c6e..e9b80f50 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -5118,39 +5118,7 @@ index f0109c6e..87d1612c 100644
 +        if let Some(context) = &own_subgrid {
 +            subgrid::clamp_placements(&mut placements, context);
 +        }
- 
--    // 5. Grid Item Placement
--    // Match items (children) to a definite grid position (row start/end and column start/end position)
--    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
--    // `items` is in document order from here on (placement only fills in each item's grid area). The track
--    // sizing and baseline passes sort references to the items rather than the items themselves.
--    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
--
--    // Extract track counts from previous step (auto-placement can expand the number of tracks)
--    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
--    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
--
--    // 5. Initialize Tracks
--    // Initialize (explicit and implicit) grid tracks (and gutters)
--    // This resolves the min and max track sizing functions for all tracks and gutters
--    let mut columns = GridTrackVec::new();
--    let mut rows = GridTrackVec::new();
--    initialize_grid_tracks(
--        &mut columns,
--        final_col_counts,
--        &style,
--        AbsoluteAxis::Horizontal,
--        col_auto_repetition_count,
--        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
--    );
--    initialize_grid_tracks(
--        &mut rows,
--        final_row_counts,
--        &style,
--        AbsoluteAxis::Vertical,
--        row_auto_repetition_count,
--        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
--    );
++
 +        // 4. Implicit Grid: Estimate Track Counts
 +        // 5. Grid Item Placement
 +        // Match items (children) to a definite grid position (row start/end and column start/end position).
@@ -5246,7 +5214,39 @@ index f0109c6e..87d1612c 100644
 +            }
 +        }
  
-+
+-    // 5. Grid Item Placement
+-    // Match items (children) to a definite grid position (row start/end and column start/end position)
+-    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
+-    // `items` is in document order from here on (placement only fills in each item's grid area). The track
+-    // sizing and baseline passes sort references to the items rather than the items themselves.
+-    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
+-
+-    // Extract track counts from previous step (auto-placement can expand the number of tracks)
+-    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
+-    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
+-
+-    // 5. Initialize Tracks
+-    // Initialize (explicit and implicit) grid tracks (and gutters)
+-    // This resolves the min and max track sizing functions for all tracks and gutters
+-    let mut columns = GridTrackVec::new();
+-    let mut rows = GridTrackVec::new();
+-    initialize_grid_tracks(
+-        &mut columns,
+-        final_col_counts,
+-        &style,
+-        AbsoluteAxis::Horizontal,
+-        col_auto_repetition_count,
+-        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
+-    );
+-    initialize_grid_tracks(
+-        &mut rows,
+-        final_row_counts,
+-        &style,
+-        AbsoluteAxis::Vertical,
+-        row_auto_repetition_count,
+-        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
+-    );
+ 
 +        // 6. Track Sizing
 +
 +        // Convert grid placements in origin-zero coordinates to indexes into the GridTrack (rows and columns) vectors
@@ -6146,7 +6146,7 @@ index f0109c6e..87d1612c 100644
              row_start: to_one_indexed_grid_line(grid_item.row_indexes.start),
              row_end: to_one_indexed_grid_line(grid_item.row_indexes.end),
              column_start: to_one_indexed_grid_line(grid_item.column_indexes.start),
-@@ -1454,3 +2121,161 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2121,187 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -6276,6 +6276,32 @@ index f0109c6e..87d1612c 100644
 +        let (beside, _) = layout(vec![auto(), fr(1.0)], &[item, (Leaf::Text, min_width_zero())]);
 +        assert_eq!(alone, vec![50.0]);
 +        assert_eq!(beside, vec![50.0, 150.0]);
++    }
++
++    #[test]
++    fn flexible_rows_fill_a_min_height_larger_than_the_max_height() {
++        // WPT css-grid flex-sizing-rows-min-max-height-002 `minHeightWinsOverMaxHeight`: the min-height wins
++        // over the smaller max-height, so the rows grow to 200px (120px + 80px) rather than shrink toward 100px.
++        let mut taffy: TaffyTree<()> = TaffyTree::new();
++        let tall = taffy.new_leaf(Style { size: Size { width: auto(), height: length(120.0) }, ..Default::default() }).unwrap();
++        let other = taffy.new_leaf(Style::default()).unwrap();
++        let grid = taffy
++            .new_with_children(
++                Style {
++                    display: Display::Grid,
++                    size: Size { width: length(50.0), height: auto() },
++                    min_size: Size { width: auto(), height: length(200.0) },
++                    max_size: Size { width: auto(), height: length(100.0) },
++                    grid_template_rows: vec![fr(1.0), fr(1.0)],
++                    ..Default::default()
++                },
++                &[tall, other],
++            )
++            .unwrap();
++        taffy.compute_layout(grid, Size::MAX_CONTENT).unwrap();
++        assert_eq!(taffy.layout(tall).unwrap().size.height, 120.0);
++        assert_eq!(taffy.layout(other).unwrap().size.height, 80.0);
++        assert_eq!(taffy.layout(grid).unwrap().size.height, 200.0);
 +    }
 +}
 +
@@ -8065,7 +8091,7 @@ index 00000000..9f036648
 +        })
 +}
 diff --git a/src/compute/grid/track_sizing.rs b/src/compute/grid/track_sizing.rs
-index 18063621..9f37228f 100644
+index 18063621..de56d28c 100644
 --- a/src/compute/grid/track_sizing.rs
 +++ b/src/compute/grid/track_sizing.rs
 @@ -1,12 +1,12 @@
@@ -8491,7 +8517,19 @@ index 18063621..9f37228f 100644
                      .map(|item| {
                          let max_content_contribution = item_sizer.max_content_contribution(item, axis_tracks);
                          let tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
-@@ -1334,9 +1382,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1321,7 +1369,10 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+                 })
+                 .sum();
+             let axis_min_size = axis_min_size.unwrap_or(0.0);
+-            let axis_max_size = axis_max_size.unwrap_or(f32::INFINITY);
++            // pyro: a min-width/height larger than the max-width/height wins (CSS 2 §10.4, as Chromium's
++            // `ConstrainedSize` does), so the max is never below the min here: otherwise a grid too tall for
++            // its max would shrink the flexible tracks to the max instead of filling the min.
++            let axis_max_size = f32_max(axis_max_size.unwrap_or(f32::INFINITY), axis_min_size);
+             if hypothetical_grid_size < axis_min_size {
+                 find_size_of_fr(axis_tracks, axis_min_size)
+             } else if hypothetical_grid_size > axis_max_size {
+@@ -1334,9 +1385,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
  
      // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
      // than the track’s base size, set its base size to that product.
