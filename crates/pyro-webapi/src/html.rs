@@ -2237,7 +2237,9 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
         let stored = if lazy || auto(n.id) || in_picture_auto { dom.image_source(n.id).map(str::to_owned) } else { None };
         let picture = stored.or_else(|| dom.picture_source(n.id, &viewport));
         let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
-        Ok(s.string(&selected.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
+        // An empty selected source is no request: the current URL stays the empty string
+        // (not the document's URL it would resolve to).
+        Ok(s.string(&selected.filter(|v| !v.is_empty()).map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
     });
     def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
 });
