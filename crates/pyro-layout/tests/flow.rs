@@ -3851,6 +3851,18 @@ fn text_range_and_hit_test_share_fractional_cluster_edges() {
     assert_eq!(page.layout.caret_from_point(&page.dom, element, cluster.left() + 0.1, cluster.top() + 5.0, &|_| true).unwrap().1, 3);
 }
 
+/// A fixed box's offset parent is the ancestor that holds it when one establishes its containing block
+/// (a transform here), and none otherwise (CSSOM View, as Chromium does).
+#[test]
+fn a_fixed_boxs_offset_parent_is_its_transformed_containing_block() {
+    let page = page("<body><div id=cb style='margin-left:30px;transform:translate(10px,20px)'><div id=in style='position:fixed;left:7px;top:5px'>in</div></div><div id=out style='position:fixed;left:7px'>out</div>");
+    let inside = page.id("in");
+    assert_eq!(page.layout.offset_parent(&page.dom, inside), Some(page.id("cb")));
+    assert_eq!(page.layout.offset_left(&page.dom, inside), 7.0);
+    assert_eq!(page.layout.offset_top(&page.dom, inside), 5.0);
+    assert_eq!(page.layout.offset_parent(&page.dom, page.id("out")), None);
+}
+
 #[test]
 fn offset_parent_origin_excludes_borders_before_transforms() {
     let page = page("<body><div id=parent style='position:relative;border:solid;border-width:9px 3px 12px 6px;padding:20px;transform:scale(2)'><div id=flow>flow</div><div id=abs style='position:absolute;left:25px;top:-4px'>abs</div></div>");

@@ -1294,8 +1294,24 @@ impl Layout {
             return None;
         }
         let self_position = self.position_of(dom, el);
-        if self_position == Position::Fixed {
-            return None;
+        // A fixed box has no offset parent unless an ancestor establishes its containing block (a transform,
+        // filter, containment ...; CSSOM View §offsetParent, as Chromium does); then it is the nearest ancestor
+        // that can hold an absolutely positioned box (WPT css-grid abspos/positioned-grid-items-should-not-take-up-space-001).
+        let fixed = self_position == Position::Fixed;
+        if fixed {
+            // The flat tree, so a fixed box in a shadow tree under a transformed host finds the host.
+            let mut ancestor = crate::style::flat_tree_parent_element(dom, idx);
+            loop {
+                let Some(i) = ancestor else { return None };
+                let a = dom.id_of(i);
+                if self.is_root_container(dom, a) {
+                    return None;
+                }
+                if self.computed(dom, a).contains_fixed {
+                    break;
+                }
+                ancestor = crate::style::flat_tree_parent_element(dom, i);
+            }
         }
         let self_static = !self_position.is_positioned();
         let mut node = dom.n(idx).parent;
@@ -1314,6 +1330,9 @@ impl Layout {
                 return Some(dom.id_of(node));
             }
             if self.position_of(dom, dom.id_of(node)).is_positioned() {
+                return Some(dom.id_of(node));
+            }
+            if fixed && self.computed(dom, dom.id_of(node)).contains_absolute {
                 return Some(dom.id_of(node));
             }
             if self_static && matches!(tag, Some("td" | "th" | "table")) {
