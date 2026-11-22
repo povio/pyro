@@ -63,7 +63,6 @@ pub fn editing_color(raw: &str) -> Option<(String, Option<String>)> {
 /// Hashless editing colors use ordinary three- and six-digit hex first.
 /// Otherwise Stylo handles CSS number/dimension tokenization and padding.
 pub fn hashless_foreground(raw: &str) -> Option<(String, Option<String>)> {
-    let raw = raw.trim_matches(|c: char| c.is_ascii_whitespace());
     if matches!(raw.len(), 3 | 6) && raw.bytes().all(|b| b.is_ascii_hexdigit()) {
         return editing_color(&format!("#{raw}"));
     }

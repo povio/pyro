@@ -75,10 +75,12 @@ struct Format {
     kind: Kind,
     css: String,
     legacy: Option<String>,
+    hashless: bool,
 }
 
 impl Format {
     fn parse(kind: Kind, value: &str) -> Option<Self> {
+        let mut hashless = false;
         let (css, legacy) = match kind {
             Kind::Size => {
                 let n = font_size(value)?;
@@ -92,6 +94,7 @@ impl Format {
             Kind::Foreground | Kind::Background => {
                 let (color, html) = pyro_dom::color_well::editing_color(value)
                     .or_else(|| if kind == Kind::Foreground {
+                        hashless = true;
                         pyro_dom::color_well::hashless_foreground(value)
                     } else {
                         pyro_dom::color_well::editing_color(&format!("#{value}"))
@@ -99,7 +102,10 @@ impl Format {
                 (color, if kind == Kind::Foreground { html } else { None })
             }
         };
-        Some(Self { kind, css, legacy })
+        Some(Self { kind, css, legacy, hashless })
+    }
+    fn input_type(&self) -> &'static str {
+        if self.hashless { "" } else { self.kind.input_type() }
     }
     fn query(&self) -> String {
         if self.kind == Kind::Size {
@@ -575,7 +581,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     if !rewrite_runs && !needs.contains(&true) {
         return true;
     }
-    super::record_host_edit(page, host, kind.input_type());
+    super::record_host_edit(page, host, fmt.input_type());
     let mut dom = page.dom.borrow_mut();
     if let Some(&last) = nodes.last() {
         if last == end.0 && editing::is_text(&dom, last) && end.1 < editing::len(&dom, last) {
@@ -635,7 +641,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     super::note_host_edited(page, host);
     if changed {
         let data = if kind == Kind::Family { value } else { &fmt.css };
-        editing::input_event(page, host, "input", kind.input_type(), Some(data), false);
+        editing::input_event(page, host, "input", fmt.input_type(), (!fmt.hashless).then_some(data), false);
     }
     true
 }
@@ -871,13 +877,13 @@ pub(super) fn format_spaced_run(page: &Rc<PageDom>, host: NodeId, command: &str,
     let (tag, attr, attribute_value, property, input_type) = if let Some(kind) = kind {
         let Some(fmt) = Format::parse(kind, value) else { return false };
         if let Some((attr, v)) = fmt.legacy(css) {
-            ("font", attr, v.to_owned(), kind.property(), kind.input_type())
+            ("font", attr, v.to_owned(), kind.property(), fmt.input_type())
         } else {
             let mut declarations = DeclarationBlock::parse("");
             if declarations.set(kind.property(), value, false).is_none() || kind == Kind::Size {
                 declarations.set(kind.property(), &fmt.css, false);
             }
-            ("span", "style", declarations.css_text(), kind.property(), kind.input_type())
+            ("span", "style", declarations.css_text(), kind.property(), fmt.input_type())
         }
     } else if let Some((tag, _, input)) = toggle {
         let (property, v) = match tag {
