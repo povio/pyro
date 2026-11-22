@@ -58359,11 +58359,33 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1367,154 +2439,67 @@
+@@ -1367,154 +2439,89 @@
                  }
              }
  
 -            if *name == local_name!("hidden") {
++            // pyro: HTML rendering ("tables", "the page"): the `background` attribute of body,
++            // table, thead, tbody, tfoot, tr, td and th maps to `background-image`, its value a URL
++            // parsed relative to the document (an absolute URL in the declaration, so its base is moot).
++            if &**name == "background"
++                && attr.name.ns == ns!()
++                && elem.name.ns == ns!(html)
++                && matches!(&**tag, "body" | "table" | "thead" | "tbody" | "tfoot" | "tr" | "td" | "th")
++            {
++                let trimmed = value.trim_matches(|c: char| c.is_ascii_whitespace());
++                let resolved = (!trimmed.is_empty())
++                    .then(|| url::Url::parse(&self.tree().base_url).ok()?.join(trimmed).ok())
++                    .flatten();
++                if let Some(url) = resolved {
++                    let mut css = String::from("url(");
++                    let _ = cssparser::serialize_string(url.as_str(), &mut css);
++                    css.push(')');
++                    for decl in parse_svg_presentation_attr("background-image", &css) {
++                        push_style(decl);
++                    }
++                }
++            }
++
 +            // pyro: not an `embed`, which HTML keeps inline at 0x0 when hidden (the UA sheet's
 +            // `embed[hidden]`; WPT html/rendering hidden-elements).
 +            if *name == local_name!("hidden") && *tag != local_name!("embed") {
@@ -58556,7 +58578,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2512,47 @@
+@@ -1527,6 +2534,47 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -58604,7 +58626,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2560,208 @@
+@@ -1534,11 +2582,208 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -58813,7 +58835,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2769,269 @@
+@@ -1546,14 +2791,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -59083,7 +59105,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3075,12 @@
+@@ -1597,6 +3097,12 @@
      }
  }
  
@@ -59096,7 +59118,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3153,41 @@
+@@ -1669,12 +3175,41 @@
                      .push(pe_node_id);
              }
          }
@@ -59138,7 +59160,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3202,46 @@
+@@ -1689,24 +3224,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -59193,7 +59215,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3272,842 @@
+@@ -1737,3 +3294,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

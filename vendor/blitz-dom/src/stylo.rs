@@ -2439,6 +2439,28 @@ impl Node {
                 }
             }
 
+            // pyro: HTML rendering ("tables", "the page"): the `background` attribute of body,
+            // table, thead, tbody, tfoot, tr, td and th maps to `background-image`, its value a URL
+            // parsed relative to the document (an absolute URL in the declaration, so its base is moot).
+            if &**name == "background"
+                && attr.name.ns == ns!()
+                && elem.name.ns == ns!(html)
+                && matches!(&**tag, "body" | "table" | "thead" | "tbody" | "tfoot" | "tr" | "td" | "th")
+            {
+                let trimmed = value.trim_matches(|c: char| c.is_ascii_whitespace());
+                let resolved = (!trimmed.is_empty())
+                    .then(|| url::Url::parse(&self.tree().base_url).ok()?.join(trimmed).ok())
+                    .flatten();
+                if let Some(url) = resolved {
+                    let mut css = String::from("url(");
+                    let _ = cssparser::serialize_string(url.as_str(), &mut css);
+                    css.push(')');
+                    for decl in parse_svg_presentation_attr("background-image", &css) {
+                        push_style(decl);
+                    }
+                }
+            }
+
             // pyro: not an `embed`, which HTML keeps inline at 0x0 when hidden (the UA sheet's
             // `embed[hidden]`; WPT html/rendering hidden-elements).
             if *name == local_name!("hidden") && *tag != local_name!("embed") {
