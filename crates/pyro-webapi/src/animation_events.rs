@@ -102,6 +102,9 @@ pub(crate) struct Timeline {
     /// A transition: the before-change and after-change styles it runs between
     /// (`getComputedStyle` interpolates them, `animation_frame::Source::transition_value`).
     pub(crate) styles: Option<(StyleSnapshot, StyleSnapshot)>,
+    /// A transition: its reversing-adjusted start style (css-transitions-1 §3; `None`: its
+    /// before-change style) and its reversing shortening factor (1 unless it reversed another).
+    reversing: Option<(StyleSnapshot, f64)>,
     /// pyro: a CSS animation's `animation-timeline` and range as last handed to script (`None`:
     /// time-based), to tell its object of a change.
     timeline_text: Option<(String, String, String)>,
@@ -719,6 +722,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 easing: None,
                 keyframes: None,
                 styles: None,
+                reversing: None,
             };
             // Held at 0 when paused: it starts only where a negative delay
             // put it in its active phase already, and goes no further. (A scroll-driven one has
@@ -1589,12 +1593,23 @@ fn start_transitions_of(
                 }
                 None => keys.push((longhand.to_owned(), index)),
             }
+            // Reversing a running transition of the property (the after-change value is its
+            // reversing-adjusted start value): shortened by how far it got (css-transitions-1 §3;
+            // WPT `CSSTransition-currentTime`, `CSSTransition-effect`).
+            let (mut delay_ms, mut duration_ms, mut reversing) = (transition.delay_ms, transition.duration_ms, None);
+            if let Some((factor, start)) = reversed_portion(state, el, pseudo, longhand, now, now_ms) {
+                duration_ms *= factor;
+                if delay_ms < 0.0 {
+                    delay_ms *= factor;
+                }
+                reversing = Some((start, factor));
+            }
             let timeline = Timeline {
                 timeline_text: None,
                 id: state.next_id(),
                 start_ms: now_ms,
-                delay_ms: transition.delay_ms,
-                duration_ms: transition.duration_ms,
+                delay_ms,
+                duration_ms,
                 iterations: 1.0,
                 el,
                 pseudo,
@@ -1609,8 +1624,9 @@ fn start_transitions_of(
                 easing: transition.easing.clone(),
                 keyframes: pyro_dom::timing::transition_keyframes(before, now, longhand).map(std::sync::Arc::new),
                 styles: Some((before.clone(), now.clone())),
+                reversing,
             };
-            let (delay, duration) = (transition.delay_ms, transition.duration_ms);
+            let (delay, duration) = (delay_ms, duration_ms);
             // (`transitionstart` and `transitionend` belong to the transition's plan, which script
             // replaces through its `CSSTransition`: `scripted_state`.)
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, step: Option<u32>| Planned {
@@ -1650,6 +1666,47 @@ fn start_transitions_of(
             }
         }
     }
+}
+
+/// When the after-change style `now` of `el`'s `pseudo` reverses its running transition of
+/// `longhand` (gives it back that transition's reversing-adjusted start value), the new
+/// transition's reversing shortening factor and its reversing-adjusted start style (the running
+/// one's end): `|portion × old factor + 1 − old factor|`, at most 1, where `portion` is the running
+/// transition's eased progress at its current time (script's, once it set one).
+fn reversed_portion(
+    state: &State,
+    el: NodeId,
+    pseudo: Option<PseudoElement>,
+    longhand: &str,
+    now: &StyleSnapshot,
+    now_ms: f64,
+) -> Option<(f64, StyleSnapshot)> {
+    let running = state.transitions.try_borrow().ok()?;
+    let known = running.iter().find(|t| {
+        t.el == el && t.pseudo == pseudo && t.name == longhand && t.live.get() && !t.ended.get()
+    })?;
+    let (before, end) = known.styles.as_ref()?;
+    let (start, old_factor) = match &known.reversing {
+        Some((start, factor)) => (start, *factor),
+        None => (before, 1.0),
+    };
+    if pyro_dom::timing::end_value_differs(start, now, longhand) {
+        return None;
+    }
+    let local = state
+        .scripted
+        .try_borrow()
+        .ok()
+        .and_then(|s| s.values().find(|e| e.css_id() == Some(known.id)).and_then(|e| e.current(now_ms)))
+        .unwrap_or(now_ms - known.start_ms);
+    let progress = if known.duration_ms > 0.0 {
+        ((local - known.delay_ms) / known.duration_ms).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let portion = pyro_dom::animation::eased_progress(known.easing.as_deref(), progress);
+    let factor = (portion * old_factor + 1.0 - old_factor).abs().min(1.0);
+    Some((factor, end.clone()))
 }
 
 /// Fires the events due now (as a task of their own when `defer`) and sets a

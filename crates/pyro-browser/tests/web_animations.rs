@@ -751,6 +751,26 @@ fn a_color_change_transitions_color_only_and_vertical_align_keeps_its_name() {
 }
 
 #[test]
+fn a_reversed_transition_is_shortened_by_how_far_it_got() {
+    // WPT css-transitions CSSTransition-currentTime: reversing a transition seeked to 50s of 100s
+    // (`ease-in`) runs for 100s times its eased progress there.
+    let (_t, root) = transition_page("#r { height: 10px }");
+    assert_eq!(
+        eval(
+            &root,
+            "globalThis.r = el('r'); r.style.left = '0px'; getComputedStyle(r).transitionProperty;
+             r.style.transition = 'left 100s ease-in'; r.style.left = '100px';
+             const first = r.getAnimations()[0]; first.currentTime = 50000;
+             const portion = first.effect.getComputedTiming().progress;
+             r.style.left = '0px';
+             const reversed = r.getAnimations()[0];
+             String(Math.abs(reversed.effect.getComputedTiming().activeDuration - 100000 * portion) < 1)"
+        ),
+        "true"
+    );
+}
+
+#[test]
 fn review_a_reversed_transition_cancels_and_runs_again() {
     let (mut t, root) = transition_page(".t { transition: width 300ms; width: 100px; height: 10px } .w { width: 200px }");
     eval(&root, "globalThis.a = el('a', 't'); a.offsetHeight; 0");

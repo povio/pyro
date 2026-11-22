@@ -367,6 +367,16 @@ pub fn transition_value(
 }
 
 /// A computed easing from CSS text; `None`: not one.
+/// `progress` (an effect's iteration progress) through easing `easing` (CSS text; `None`: `ease`),
+/// as a transition's timing function gives it (its "current portion").
+pub fn eased_progress(easing: Option<&str>, progress: f64) -> f64 {
+    use style::values::generics::easing::BeforeFlag;
+    match easing_function(easing.unwrap_or("ease")) {
+        Some(f) => f.calculate_output(progress, BeforeFlag::Unset, 1e-7),
+        None => progress,
+    }
+}
+
 pub(crate) fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction> {
     use style::properties::PropertyDeclaration;
     use style::values::computed::ToComputedValue as _;
