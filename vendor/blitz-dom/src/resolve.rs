@@ -122,6 +122,11 @@ impl BaseDocument {
     pub fn resolve(&mut self, current_time_for_animations: f64) {
         self.anchor_flush_choices.clear();
         self.resolve_in_flush(current_time_for_animations);
+        // pyro: a rendering update's ResizeObserver step that found the layout stale
+        // (`request_remembered_sizes`) remembers the sizes on this one.
+        if self.remembered_pending {
+            self.record_remembered_sizes();
+        }
     }
 
     fn resolve_in_flush(&mut self, current_time_for_animations: f64) {
@@ -501,9 +506,9 @@ impl BaseDocument {
     /// visual bounds, as an IntersectionObserver sees them), is near the viewport (within half
     /// the viewport's size of it, as Chromium's margin), it holds the focus or a top-layer
     /// element, or a query needs it (`force_content_visibility`); an irrelevant one skips its
-    /// contents, sized by `contain-intrinsic-size` (its last remembered size for `auto`).
-    /// Remembers the content box size of each one shown. Returns whether one changed, which the
-    /// caller lays out again. Each node's placement and whether it is in skipped contents are
+    /// contents, sized by `contain-intrinsic-size` (its last remembered size for `auto`, which
+    /// `record_remembered_sizes` keeps at each rendering update, not at each layout). Returns
+    /// whether one changed, which the caller lays out again. Each node's placement and whether it is in skipped contents are
     /// computed once (memoized up the chains), the focus's and top layer's ancestors once.
     pub(crate) fn update_content_visibility(&mut self) -> bool {
         use crate::node::NodeFlags;
@@ -705,6 +710,14 @@ impl BaseDocument {
             // (A query forced it: rendered until the next frame, `clear_content_visibility_forcing`.)
             let forced = self.nodes[id].flags.contains(NodeFlags::CV_FORCED);
             let relevant = forced || holders.contains(&id) || near;
+            // It starts skipping its contents: it was laid out with them at this layout, its size
+            // then is remembered first, as a rendering update would have (each frame records it
+            // while it shows), so a page that scrolls it away without a frame (no animation frame
+            // or ResizeObserver callbacks) still sizes it as it was, not as its fallback.
+            if !relevant && !self.nodes[id].flags.contains(NodeFlags::CV_SKIPPED) {
+                let work = self.record_remembered_size(id);
+                self.remembered_size_work.set(self.remembered_size_work.get() + work);
+            }
             let node = &mut self.nodes[id];
             if node.flags.contains(NodeFlags::CV_SKIPPED) == relevant {
                 node.flags.set(NodeFlags::CV_SKIPPED, !relevant);
@@ -714,13 +727,6 @@ impl BaseDocument {
                 }
                 // (The memos stand: no box moves until the next layout.)
                 changed = true;
-            } else if relevant {
-                // Shown and laid out with its contents: its last remembered size.
-                let content = (
-                    (l.size.width - l.border.left - l.border.right - l.padding.left - l.padding.right).max(0.0),
-                    (l.size.height - l.border.top - l.border.bottom - l.padding.top - l.padding.bottom).max(0.0),
-                );
-                node.layout_data_mut().remembered_size = Some(content);
             }
         }
         self.cv_work.set(self.cv_work.get() + steps.get());
@@ -738,24 +744,47 @@ impl BaseDocument {
     }
 
     /// pyro: the `content-visibility: auto` elements whose relevance was determined: whether
-    /// they skip their contents, and their last remembered size.
-    pub fn content_visibility_state(&self) -> Vec<(NodeId, bool, Option<(f32, f32)>)> {
+    /// they skip their contents, and their last remembered size; then the other elements a size
+    /// is remembered for (`contain-intrinsic-size: auto`), as not skipping.
+    pub fn content_visibility_state(&self) -> Vec<(NodeId, bool, [Option<f32>; 2])> {
         use crate::node::NodeFlags;
-        self.cv_auto
+        let cv = self
+            .cv_auto
             .iter()
             .filter_map(|&id| self.nodes.get(id).map(|n| (id, n)))
-            .map(|(id, n)| (id, n.flags.contains(NodeFlags::CV_SKIPPED), n.layout_data().remembered_size))
-            .collect()
+            .map(|(id, n)| (id, n.flags.contains(NodeFlags::CV_SKIPPED), n.layout_data().remembered_size));
+        let remembered = self
+            .cis_auto
+            .iter()
+            .filter(|id| !self.cv_auto.contains(id))
+            .filter_map(|&id| self.nodes.get(id).map(|n| (id, n)))
+            .filter(|(_, n)| n.layout_data().remembered_size != [None; 2])
+            .map(|(id, n)| (id, false, n.layout_data().remembered_size));
+        cv.chain(remembered).collect()
     }
 
     /// pyro: takes the `content-visibility: auto` state another document of the page determined
     /// (`content_visibility_state`): its elements skip or show their contents as there, with its
     /// remembered sizes, until relevance is determined here again.
-    pub fn set_content_visibility_state(&mut self, state: Vec<(NodeId, bool, Option<(f32, f32)>)>) {
+    pub fn set_content_visibility_state(&mut self, state: Vec<(NodeId, bool, [Option<f32>; 2])>) {
         use crate::node::NodeFlags;
         for (id, skipped, size) in state {
             let Some(node) = self.nodes.get_mut(id) else { continue };
-            node.layout_data_mut().remembered_size = size;
+            if node.layout_data().remembered_size != size {
+                node.layout_data_mut().remembered_size = size;
+                // (Its size, while it skips its contents, may be that one.)
+                node.insert_damage(ALL_DAMAGE);
+            }
+            if size != [None; 2] {
+                self.cis_auto.insert(id);
+            }
+            // (An element only a size is remembered for: no relevance to take. One not styled yet
+            // is taken as there, as `update_content_visibility` drops it if it is no `auto` one.)
+            let node = &self.nodes[id];
+            if node.primary_styles().is_some() && !Self::is_cv_auto(node) {
+                continue;
+            }
+            let node = &self.nodes[id];
             let determined = node.flags.contains(NodeFlags::CV_DETERMINED);
             self.cv_auto.insert(id);
             let node = &mut self.nodes[id];
@@ -769,6 +798,133 @@ impl BaseDocument {
                 self.unskip_contents(id);
             }
         }
+    }
+
+    /// pyro: whether some element may remember a size (`contain-intrinsic-size: auto` in an axis,
+    /// or `content-visibility: auto`), as of the last style traversal.
+    pub fn has_remembered_size_candidates(&self) -> bool {
+        !self.cis_auto.is_empty()
+    }
+
+    /// pyro: after a style traversal (`stylo.rs`), each element that may remember a size forgets
+    /// it in each logical axis whose `contain-intrinsic-size` lost `auto`, at once (WPT css-sizing
+    /// `contain-intrinsic-size/auto-006`, "Losing cis:auto removes last remembered size
+    /// immediately"); one with `auto` in neither axis, or removed, leaves the set. One not styled
+    /// (in a `display: none` subtree) keeps its sizes: they survive its box (`auto-006`).
+    pub(crate) fn retain_contain_intrinsic_auto(&mut self) {
+        if self.cis_auto.is_empty() {
+            return;
+        }
+        // (As `sticky_nodes`: one lookup per element of the set.)
+        let nodes = &mut self.nodes;
+        self.cis_auto.retain(|&id| {
+            let Some(node) = nodes.get_mut(id) else { return false };
+            if !node.flags.is_in_document() {
+                node.layout_data_mut().remembered_size = [None; 2];
+                return false;
+            }
+            let Some(styles) = node.primary_styles() else { return true };
+            let (width, height) = contain_intrinsic_auto(&styles);
+            let vertical = styles.writing_mode.is_vertical();
+            drop(styles);
+            let (inline, block) = if vertical { (height, width) } else { (width, height) };
+            let remembered = &mut node.layout_data_mut().remembered_size;
+            if !inline {
+                remembered[0] = None;
+            }
+            if !block {
+                remembered[1] = None;
+            }
+            inline || block
+        });
+    }
+
+    /// pyro: the last remembered sizes (CSS Sizing 4 § 5.1), at a rendering update, after its
+    /// animation frame callbacks and immediately before its ResizeObserver callbacks (WPT
+    /// css-sizing `contain-intrinsic-size/auto-008`), never at a layout alone (`auto-006`: sized
+    /// normally, then skipping again in the same task, it keeps the earlier size). Each element
+    /// with `contain-intrinsic-size: auto` in an axis remembers its size there
+    /// (`record_remembered_size`). Nothing is laid out again: a size is used only while its
+    /// element skips its contents. On the current layout: a caller whose layout is stale asks
+    /// for it at the next one instead (`request_remembered_sizes`).
+    pub fn record_remembered_sizes(&mut self) {
+        self.remembered_pending = false;
+        let ids: Vec<NodeId> = self.cis_auto.iter().copied().collect();
+        let mut work = 0u64;
+        for id in ids {
+            work += self.record_remembered_size(id);
+        }
+        self.remembered_size_work.set(self.remembered_size_work.get() + work);
+    }
+
+    /// pyro: the rendering update's ResizeObserver step found this document's layout stale: the
+    /// sizes are remembered at the end of its next layout (`resolve`), not by laying it out now
+    /// (an idle page lays nothing out for them).
+    pub fn request_remembered_sizes(&mut self) {
+        if !self.cis_auto.is_empty() {
+            self.remembered_pending = true;
+        }
+    }
+
+    /// pyro: element `id` (of `cis_auto`), when laid out with its contents on the current layout
+    /// (it has a box of this layout, it and its ancestors render, none of them skips its
+    /// contents), remembers its content box size in the logical axes whose
+    /// `contain-intrinsic-size` has `auto` and forgets the others (`auto-009`; size containment
+    /// does not stop it: `auto-011`, `auto-012`). One that skips its contents, has no box (it is
+    /// in a `display: none` subtree, or was never laid out) keeps its sizes: no box is remembered
+    /// as 0x0 (`auto-006`, "Last remembered size survives box destruction"); a disconnected one
+    /// forgets them (`forget-on-disconnect-in-iframe`). Returns the steps taken.
+    fn record_remembered_size(&mut self, id: NodeId) -> u64 {
+        let mut work = 1u64;
+        let Some(node) = self.nodes.get(id) else {
+            self.cis_auto.remove(&id);
+            return work;
+        };
+        if !node.flags.is_in_document() {
+            self.nodes[id].layout_data_mut().remembered_size = [None; 2];
+            self.cis_auto.remove(&id);
+            return work;
+        }
+        // A box of the current layout: the layout hierarchy holds it (the root element heads it).
+        let root = self.try_root_element().map(|r| r.id);
+        if node.layout_parent.get().is_none() && Some(id) != root {
+            return work;
+        }
+        let mut at = Some(id);
+        while let Some(n) = at {
+            work += 1;
+            let node = &self.nodes[n];
+            if node.is_element() {
+                let Some(styles) = node.primary_styles() else { return work };
+                let display = styles.get_box().display;
+                if display.is_none() || (n == id && display.is_contents()) || skips_contents(node, &styles) {
+                    return work;
+                }
+            }
+            at = node.parent;
+        }
+        let node = &self.nodes[id];
+        let Some(styles) = node.primary_styles() else { return work };
+        let (auto_width, auto_height) = contain_intrinsic_auto(&styles);
+        let vertical = styles.writing_mode.is_vertical();
+        drop(styles);
+        let l = *node.final_layout();
+        let width = (l.size.width - l.border.left - l.border.right - l.padding.left - l.padding.right).max(0.0);
+        let height = (l.size.height - l.border.top - l.border.bottom - l.padding.top - l.padding.bottom).max(0.0);
+        let (inline, block, auto_inline, auto_block) =
+            if vertical { (height, width, auto_height, auto_width) } else { (width, height, auto_width, auto_height) };
+        self.nodes[id].layout_data_mut().remembered_size = [auto_inline.then_some(inline), auto_block.then_some(block)];
+        if !auto_inline && !auto_block {
+            self.cis_auto.remove(&id);
+        }
+        work
+    }
+
+    /// pyro: the steps remembering sizes took so far (`record_remembered_size`: elements looked
+    /// up, ancestors walked), at rendering updates and as `content-visibility: auto` elements
+    /// start skipping their contents.
+    pub fn remembered_size_work(&self) -> u64 {
+        self.remembered_size_work.get()
     }
 
     /// pyro: whether a query forced some `content-visibility: auto` element to render
@@ -3329,4 +3485,26 @@ impl BaseDocument {
 /// flowing right to left in `vertical-rl`).
 pub fn scrolls_leftward(wm: style::logical_geometry::WritingMode) -> bool {
     if wm.is_vertical() { !wm.is_vertical_lr() } else { !wm.is_bidi_ltr() }
+}
+
+/// pyro: whether `node` skips its contents (CSS Contain 2 § 4): `content-visibility: hidden`, or
+/// `auto` while not relevant to the user (`BaseDocument::update_content_visibility`).
+pub(crate) fn skips_contents(node: &crate::Node, styles: &style::properties::ComputedValues) -> bool {
+    use crate::node::NodeFlags;
+    use style::values::specified::box_::ContentVisibility;
+    node.flags.contains(NodeFlags::CV_SKIPPED)
+        || (node.is_element() && styles.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden)
+}
+
+/// pyro: whether `contain-intrinsic-width` and `-height` have `auto` (physical: width, height);
+/// `content-visibility: auto` adds it to both (CSS Contain 2 § 4.1, csswg-drafts#8407).
+pub(crate) fn contain_intrinsic_auto(styles: &style::properties::ComputedValues) -> (bool, bool) {
+    use style::values::generics::box_::ContainIntrinsicSize;
+    use style::values::specified::box_::ContentVisibility;
+    let cv_auto = styles.get_box().slow_clone_content_visibility() == ContentVisibility::Auto;
+    let position = styles.get_position();
+    let auto = |size: &style::values::computed::ContainIntrinsicSize| {
+        cv_auto || matches!(size, ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_))
+    };
+    (auto(&position.contain_intrinsic_width), auto(&position.contain_intrinsic_height))
 }

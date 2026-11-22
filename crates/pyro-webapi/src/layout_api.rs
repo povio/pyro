@@ -208,6 +208,19 @@ pub fn content_visibility_frame(page: &Rc<PageDom>) {
     }
 }
 
+/// pyro: the ResizeObserver step of a rendering update of `page` (after its animation frame
+/// callbacks, immediately before its ResizeObserver callbacks): elements with
+/// `contain-intrinsic-size: auto` remember their sizes (CSS Sizing 4 § 5.1).
+pub fn record_remembered_sizes(page: &PageDom) {
+    if page.is_disposed() {
+        return;
+    }
+    if let Some(layout) = page.try_layout() {
+        let Ok(dom) = page.dom.try_borrow() else { return };
+        layout.record_remembered_sizes(&dom);
+    }
+}
+
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
     for ((doc, target), end, _) in pending {

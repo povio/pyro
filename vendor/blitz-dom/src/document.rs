@@ -550,6 +550,13 @@ pub struct BaseDocument {
     /// (`NodeFlags::CV_DETERMINED`), those a query forced to render (`CV_FORCED`), and the scroll
     /// position relevance was last determined at (`update_content_visibility`).
     pub(crate) cv_auto: HashSet<NodeId>,
+    /// pyro: the elements that may remember a size (CSS Sizing 4 § 5.1): styled with
+    /// `contain-intrinsic-size: auto` in an axis (or `content-visibility: auto`), or holding a
+    /// remembered size (`BaseDocument::record_remembered_sizes`).
+    pub(crate) cis_auto: HashSet<NodeId>,
+    pub(crate) remembered_size_work: std::cell::Cell<u64>,
+    /// pyro: sizes are to be remembered at the end of the next layout (`request_remembered_sizes`).
+    pub(crate) remembered_pending: bool,
     pub(crate) cv_forced: HashSet<NodeId>,
     pub(crate) cv_scroll: Option<(f64, f64)>,
     /// pyro: a resolve again for relevance a fresh transform changed is running.
@@ -973,6 +980,9 @@ impl BaseDocument {
             has_canvas: false,
             sub_document_nodes: HashSet::new(),
             cv_auto: HashSet::new(),
+            cis_auto: HashSet::new(),
+            remembered_size_work: std::cell::Cell::new(0),
+            remembered_pending: false,
             cv_forced: HashSet::new(),
             cv_scroll: None,
             cv_resolving: false,

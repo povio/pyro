@@ -454,6 +454,9 @@ fn notify(page: &Rc<PageDom>) {
         return;
     }
     page.resizes.deliveries.set(page.resizes.deliveries.get() + 1);
+    // Last remembered sizes are recorded immediately before ResizeObserver callbacks run (CSS
+    // Sizing 4 § 5.1; WPT css-sizing `contain-intrinsic-size/auto-008`, `auto-001`).
+    crate::layout_api::record_remembered_sizes(page);
     let observers: Vec<_> = page.resizes.observers.borrow().iter().filter_map(Weak::upgrade).collect();
     for observer in observers {
         if !observer.live.get() {
