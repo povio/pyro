@@ -20,8 +20,8 @@
     "scheduler": 19,
     "html/syntax": 12,
     "html/semantics": 6,
-    "fetch/api": 4,
     "FileAPI": 4,
+    "fetch/api": 4,
     "fetch/data-urls": 3,
     "encoding": 2,
     "xhr": 2,
@@ -32,15 +32,15 @@
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 426,
+    "macbook_in_scope": 443,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 1
    },
-   "distinct_census_pages": 427,
+   "distinct_census_pages": 444,
    "owner_reported_unlisted": 75,
-   "selector_union": 433,
+   "selector_union": 450,
    "owner_estimate_reduction": 81,
-   "of_which_tentative": 50,
+   "of_which_tentative": 53,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
@@ -48,41 +48,41 @@
     "html/canvas": 106,
     "fetch/fetch-later": 39,
     "html/syntax": 30,
+    "fetch/api": 22,
     "html/interaction": 14,
     "fetch/content-encoding": 9,
-    "fetch/api": 5,
     "custom-elements": 1
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 76,
+    "macbook_in_scope": 64,
     "studio_in_scope": 308,
     "other_dirs_out_of_scope": 301
    },
-   "distinct_census_pages": 563,
+   "distinct_census_pages": 551,
    "owner_reported_unlisted": 0,
-   "selector_union": 564,
+   "selector_union": 552,
    "owner_estimate_reduction": 1,
-   "of_which_tentative": 24,
+   "of_which_tentative": 21,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "svg/animations": 229,
     "referrer-policy": 114,
     "content-security-policy": 72,
-    "fetch/api": 40,
     "intersection-observer": 36,
+    "fetch/api": 28,
     "webidl": 19,
     "workers": 12,
     "encoding": 7,
     "fetch/content-encoding": 6,
-    "fetch/stale-while-revalidate": 5,
     "html/browsers": 5,
+    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
     "svg/path": 4,
-    "fetch/http-cache": 3,
     "fetch/data-urls": 3,
+    "fetch/http-cache": 3,
     "fetch/nosniff": 2,
     "dom/nodes": 1,
     "fetch/corb": 1
@@ -952,7 +952,7 @@
    "tentative": 0
   },
   "R-FETCH-2": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 9,
    "out_of_scope_pages": 0,
    "pages": 9,
@@ -966,7 +966,7 @@
    "tentative": 0
   },
   "R-FETCH-4": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
@@ -987,7 +987,7 @@
    "tentative": 0
   },
   "R-FETCH-6": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
@@ -1096,6 +1096,27 @@
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
+   "tentative": 0
+  },
+  "R-FETCH-13": {
+   "state": "decision-pending (coordinator)",
+   "in_scope_pages": 10,
+   "out_of_scope_pages": 0,
+   "pages": 10,
+   "tentative": 0
+  },
+  "R-FETCH-14": {
+   "state": "proposed",
+   "in_scope_pages": 3,
+   "out_of_scope_pages": 0,
+   "pages": 3,
+   "tentative": 0
+  },
+  "R-FETCH-15": {
+   "state": "proposed",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
+   "pages": 2,
    "tentative": 0
   }
  },
