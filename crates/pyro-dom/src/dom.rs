@@ -309,6 +309,12 @@ pub struct Dom {
     /// A `<selectedcontent>` was created: the select steps of
     /// `crate::selectedcontent` run (none before, at no cost).
     pub(crate) selectedcontent_seen: bool,
+    /// A `<select>` was created: the selectedness steps of insertions and
+    /// removals (`Dom::options_after_insert`) run (none before).
+    pub(crate) select_seen: bool,
+    /// `replace_all` is removing children whose options it already handled
+    /// (`Dom::options_before_remove_children`).
+    pub(crate) options_batch_removal: bool,
     /// `crate::selectedcontent` is cloning into a selectedcontent: its own
     /// mutations start no update.
     pub(crate) selectedcontent_updating: bool,
@@ -422,6 +428,8 @@ impl Dom {
             value_ranges: Default::default(),
             pending_input_value_attr: None,
             selectedcontent_seen: false,
+            select_seen: false,
+            options_batch_removal: false,
             selectedcontent_updating: false,
             selectedcontent_pending: Vec::new(),
             live_iterators: Vec::new(),
@@ -1659,6 +1667,7 @@ impl Dom {
         match name.local {
             local_name!("audio") | local_name!("video") | local_name!("track") => self.media_seen = true,
             local_name!("canvas") => self.canvas_seen = true,
+            local_name!("select") => self.select_seen = true,
             local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
             _ => {}
         }
@@ -2966,8 +2975,16 @@ impl Dom {
             n if matches!(self.n(n).kind, NodeKind::Fragment(_)) => self.child_idx_iter(n).collect(),
             n => vec![n],
         };
+        // Replace all removes the children at once: their options keep the
+        // selectedness they had before it, not one a removal of an earlier
+        // child gave them.
+        let batch = self.select_seen && !removed.is_empty() && self.options_before_remove_children(p);
+        self.options_batch_removal |= batch;
         for &c in &removed {
             self.remove(c, true);
+        }
+        if batch {
+            self.options_batch_removal = false;
         }
         if n != NIL {
             self.insert(n, p, NIL, true);
@@ -3038,6 +3055,9 @@ impl Dom {
             for &k in nodes {
                 self.hide_nonces(k);
             }
+        }
+        if self.select_seen {
+            self.options_after_insert(nodes, parent);
         }
         if self.selectedcontent_seen {
             self.selectedcontent_after_insert(nodes, parent, connected);

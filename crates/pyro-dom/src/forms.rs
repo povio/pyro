@@ -888,6 +888,9 @@ impl Dom {
     /// is state of the option. Covers an option and every option of the
     /// select's list of options inside `node` (an optgroup, a wrapper div).
     pub(crate) fn options_before_remove(&mut self, node: u32) {
+        if self.options_batch_removal {
+            return;
+        }
         // 0: nothing, 1: an option, 2: an element that can hold options.
         let kind = match self.html_local(node).map(|l| &**l) {
             Some("option") => 1,
@@ -920,6 +923,73 @@ impl Dom {
         if !options.is_empty() {
             self.keep_default_selectedness(select, &options);
             self.queue_selectedcontent_update(select, false);
+        }
+    }
+    /// [`Self::options_before_remove`] for every child of `parent` at once
+    /// (`replace_all`), with the selectedness from before any removal.
+    /// Returns whether the children's removals can skip it.
+    pub(crate) fn options_before_remove_children(&mut self, parent: u32) -> bool {
+        let select = if self.html_local(parent) == Some(&local_name!("select")) {
+            parent
+        } else {
+            match self.html_local(parent).map(|l| &**l) {
+                Some("datalist" | "hr" | "option") => return true,
+                _ => self.subtree_ancestor_select(parent),
+            }
+        };
+        if select == NIL {
+            return true;
+        }
+        let options: Vec<u32> = self
+            .select_options_idx(select)
+            .into_iter()
+            .filter(|&o| o != parent && self.is_inclusive_ancestor_idx(parent, o))
+            .collect();
+        if !options.is_empty() {
+            self.keep_default_selectedness(select, &options);
+            self.queue_selectedcontent_update(select, false);
+        }
+        true
+    }
+    /// After `nodes` were inserted into `parent`: when the last of their
+    /// options that is selected joins a single select, it stays its selected
+    /// option (as in browsers, an inserted selected option wins), so a selected
+    /// option after it in tree order is deselected.
+    pub(crate) fn options_after_insert(&mut self, nodes: &[u32], parent: u32) {
+        let select = if self.html_local(parent) == Some(&local_name!("select")) {
+            parent
+        } else {
+            match self.html_local(parent).map(|l| &**l) {
+                Some("datalist" | "hr" | "option") => return,
+                _ => self.subtree_ancestor_select(parent),
+            }
+        };
+        if select == NIL || self.is_multiple(select) {
+            return;
+        }
+        let options = self.select_options_idx(select);
+        let inserted = |o: u32| nodes.iter().any(|&k| self.is_inclusive_ancestor_idx(k, o));
+        let Some(winner) = options.iter().rposition(|&o| inserted(o) && self.option_explicit(o)) else { return };
+        let later: Vec<u32> =
+            options[winner + 1..].iter().copied().filter(|&o| !inserted(o) && self.option_explicit(o)).collect();
+        for o in later {
+            if let Some(e) = self.n_mut(o).element_mut() {
+                e.control.get_or_insert_with(Default::default).selected = Some(false);
+            }
+        }
+    }
+    /// After a select's `multiple` attribute was added or removed: once it is
+    /// single, only its first selected option in tree order stays selected.
+    pub(crate) fn select_multiple_changed(&mut self, select: u32, multiple: bool) {
+        if multiple || self.html_local(select) != Some(&local_name!("select")) {
+            return;
+        }
+        let selected: Vec<u32> =
+            self.select_options_idx(select).into_iter().filter(|&o| self.option_explicit(o)).skip(1).collect();
+        for o in selected {
+            if let Some(e) = self.n_mut(o).element_mut() {
+                e.control.get_or_insert_with(Default::default).selected = Some(false);
+            }
         }
     }
     fn keep_default_selectedness(&mut self, select: u32, options: &[u32]) {
