@@ -2839,6 +2839,7 @@ impl Dom {
         let old_prev = self.n(node).prev;
         let old_next = self.n(node).next;
         self.resources_before_move(node);
+        self.media_before_move(node);
         self.options_before_remove(node);
         let moved_selectedcontents =
             if self.selectedcontent_seen { self.selectedcontents_before_move(node) } else { Vec::new() };
@@ -2858,6 +2859,7 @@ impl Dom {
         self.link(node, parent, child);
         self.slots_after_move(old_parent, parent, node);
         self.resources_after_move(node, old_parent);
+        self.media_after_move(node);
         self.bump_tree();
         self.note(Change::Inserted(parent, node));
         self.announce_named_items(node);

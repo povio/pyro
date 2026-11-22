@@ -1014,7 +1014,13 @@ fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
             (get("src"), get("type"))
         };
         let supported = ty.as_deref().is_none_or(|t| media_format::can_play_type(t) != media_format::CanPlay::No);
-        let url = src.filter(|s| !s.is_empty() && supported).and_then(|s| resolve(page, source, &s));
+        // HTML: a `media` attribute that does not match the environment
+        // fails the candidate (evaluated now; later changes do not react).
+        let media = page.dom.borrow().get_attribute(source, "media").ok().flatten().map(str::to_owned);
+        let media_ok = media.as_deref().is_none_or(|m| {
+            m.trim().is_empty() || page.layout().style().matches_media_list(&pyro_dom::cssom::MediaQueryList::parse(m))
+        });
+        let url = src.filter(|s| !s.is_empty() && supported && media_ok).and_then(|s| resolve(page, source, &s));
         let Some(url) = url else {
             queue(page, node, generation, move |page| {
                 crate::input::fire_simple(page, source, "error", false, false);
@@ -1025,12 +1031,16 @@ fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
         fetch_resource(page, node, generation, Resource::Url(url), Some(source));
         return;
     }
+    // HTML "waiting": the network state changes now (an `error` queued above
+    // already sees it); the load event stops waiting in a task.
+    with(page, node, |st| {
+        st.network = NETWORK_NO_SOURCE;
+        st.awaiting_source = true;
+    });
     queue(page, node, generation, move |page| {
-        with(page, node, |st| {
-            st.network = NETWORK_NO_SOURCE;
-            st.awaiting_source = true;
-        });
-        set_delaying(page, node, false);
+        if peek(page, node, |st| st.awaiting_source) {
+            set_delaying(page, node, false);
+        }
     });
 }
 
@@ -1185,7 +1195,10 @@ fn fetched(
         Err(message) => match source {
             // Children mode: this candidate failed; try the next one.
             Some(source) => {
-                crate::input::fire_simple(page, source, "error", false, false);
+                // A candidate removed or moved away meanwhile gets no `error`.
+                if page.dom.borrow().parent(source).ok().flatten() == Some(node) {
+                    crate::input::fire_simple(page, source, "error", false, false);
+                }
                 if peek(page, node, |st| st.generation) == generation {
                     next_source(page, node, generation);
                 }

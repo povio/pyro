@@ -203,6 +203,35 @@ impl Dom {
         }
     }
 
+    /// Before `node` moves (`moveBefore`): a `<source>` leaving a media
+    /// element. A move keeps media elements playing (no `Removed`).
+    pub(crate) fn media_before_move(&mut self, node: u32) {
+        if !self.media_seen || !self.is_source_idx(node) {
+            return;
+        }
+        let parent = self.n(node).parent;
+        if parent != NIL && self.is_media_idx(parent) {
+            let prev = self.n(node).prev;
+            let change = MediaChange::SourceRemoved {
+                source: self.id_of(node),
+                previous: (prev != NIL).then(|| self.id_of(prev)),
+            };
+            self.media_event(parent, change);
+        }
+    }
+
+    /// After `node` moved: a `<source>` that is now a media element's child
+    /// (HTML: the source element's moving steps run its insertion steps).
+    pub(crate) fn media_after_move(&mut self, node: u32) {
+        if !self.media_seen || !self.is_source_idx(node) {
+            return;
+        }
+        let parent = self.n(node).parent;
+        if parent != NIL && self.is_media_idx(parent) {
+            self.media_event(parent, MediaChange::SourceInserted(self.id_of(node)));
+        }
+    }
+
     /// Whether any watched document has queued media events.
     pub fn has_media_events(&self) -> bool {
         !self.media.events.is_empty()
