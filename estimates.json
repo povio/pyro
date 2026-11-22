@@ -39,9 +39,9 @@
     "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/http-cache": 3,
     "html/rendering": 3,
     "fetch/nosniff": 3,
+    "fetch/http-cache": 3,
     "xhr": 2,
     "svg/styling": 1,
     "IndexedDB": 1,
@@ -50,22 +50,22 @@
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 153,
+    "macbook_in_scope": 190,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 37,
+    "macbook_worker_variants_if_enabled": 45,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 174,
+   "distinct_census_pages": 211,
    "owner_reported_unlisted": 0,
-   "selector_union": 417,
+   "selector_union": 454,
    "owner_estimate_reduction": 243,
-   "of_which_tentative": 200,
+   "of_which_tentative": 201,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 232,
-    "html/semantics": 109,
+    "html/semantics": 146,
     "html/syntax": 30,
     "html/browsers": 26,
     "fetch/api": 15,
@@ -74,26 +74,26 @@
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 52,
+    "macbook_in_scope": 39,
     "studio_in_scope": 178,
     "other_dirs_out_of_scope": 23,
-    "macbook_worker_variants_if_enabled": 8,
+    "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 135,
+   "distinct_census_pages": 122,
    "owner_reported_unlisted": 0,
-   "selector_union": 167,
-   "owner_estimate_reduction": 32,
-   "of_which_tentative": 34,
+   "selector_union": 127,
+   "owner_estimate_reduction": 5,
+   "of_which_tentative": 33,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 74,
     "referrer-policy": 36,
+    "html/semantics": 34,
     "content-security-policy": 20,
     "webidl": 19,
-    "html/interaction": 5,
     "html/browsers": 5,
+    "html/interaction": 5,
     "svg/path": 4,
     "workers": 3,
     "dom/nodes": 1
@@ -921,7 +921,7 @@
    "tentative": 0
   },
   "F07": {
-   "state": "proposed",
+   "state": "claimed",
    "in_scope_pages": 40,
    "out_of_scope_pages": 0,
    "pages": 40,
@@ -949,10 +949,10 @@
    "tentative": 0
   },
   "F09": {
-   "state": "claimed",
-   "in_scope_pages": 30,
+   "state": "deferred",
+   "in_scope_pages": 2,
    "out_of_scope_pages": 0,
-   "pages": 30,
+   "pages": 2,
    "tentative": 0
   },
   "F09a": {
