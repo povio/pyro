@@ -485,7 +485,8 @@ fn declarative_shadow_roots_are_parser_only_and_outlive_their_template() {
 
 #[test]
 fn shadow_reference_target_survives_cloning_and_serializes_as_an_attribute() {
-    let (dom, doc) = doc("<body><div id=host><template shadowrootmode=open shadowrootclonable shadowrootreferencetarget='a&amp;&quot;b'></template></div>");
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = pyro_dom::parse::parse_html_unsafe(&dom, "<body><div id=host><template shadowrootmode=open shadowrootclonable shadowrootreferencetarget='a&amp;&quot;b'></template></div>");
     let mut dom = dom.borrow_mut();
     let host = dom.get_element_by_id(doc, "host").unwrap().unwrap();
     let root = dom.shadow_root(host).unwrap().unwrap();
