@@ -16,6 +16,7 @@ const GLOBALS: &[&str] = &[
     "ImageTrackList",
     "ImageTrack",
     "AudioDecoder",
+    "AudioEncoder",
     "VideoDecoder",
     "cookieStore",
     "StorageBucketManager",

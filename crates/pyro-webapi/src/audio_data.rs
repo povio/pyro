@@ -76,6 +76,25 @@ impl AudioResource {
         self.cluster == page.agent_cluster()
     }
 
+    pub(crate) fn encode_packets(
+        &self, encoder: &mut pyro_media::audio::encode::PacketEncoder,
+    ) -> Result<Vec<pyro_media::audio::encode::EncodedPacket>, String> {
+        if self.rate.fract() != 0.0 || f64::from(self.rate) > f64::from(u32::MAX) {
+            return Err("Unsupported input sample rate".into());
+        }
+        let mut samples = Vec::new();
+        let count = self.bytes.len() / self.format.width();
+        samples.try_reserve_exact(count).map_err(|_| "Audio sample conversion is too large")?;
+        for frame in 0..self.frames as usize {
+            for channel in 0..self.channels as usize {
+                let offset = self.sample_offset(frame, channel);
+                let sample = &self.bytes[offset..offset + self.format.width()];
+                samples.push(read_sample(sample, self.format.encoding) as f32);
+            }
+        }
+        encoder.encode(self.timestamp, self.rate as u32, self.channels, &samples)
+    }
+
     fn layout(&self, options: CopyOptions) -> JsResult<Layout> {
         let format = options.format.unwrap_or(self.format);
         let planes = if format.planar { self.channels } else { 1 };
@@ -317,6 +336,16 @@ impl JsClass for AudioData {
 
 pub(crate) fn register(engine: &Engine) {
     engine.register::<AudioData>();
+}
+
+pub(crate) fn is_audio_data(s: &Scope<'_>, value: Value<'_>) -> bool {
+    s.unwrap::<AudioData>(value).is_some()
+}
+
+pub(crate) fn encoder_input(s: &Scope<'_>, value: Value<'_>) -> JsResult<AudioResource> {
+    let data = s.unwrap::<AudioData>(value).ok_or_else(|| JsError::Type("Expected AudioData".into()))?;
+    let input = data.resource.borrow().clone();
+    input.ok_or_else(|| JsError::Type("AudioData is detached.".into()))
 }
 
 pub(crate) fn parts(s: &Scope<'_>, value: Value<'_>) -> JsResult<Option<AudioResource>> {

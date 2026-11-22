@@ -1,0 +1,91 @@
+{
+  "available": "function",
+  "variants": {
+    "omitted": {
+      "supported": true,
+      "opus": null
+    },
+    "empty": {
+      "supported": true,
+      "opus": {
+        "application": "audio",
+        "complexity": 9,
+        "format": "opus",
+        "frameDuration": 20000,
+        "packetlossperc": 0,
+        "signal": "auto",
+        "usedtx": false,
+        "useinbandfec": false
+      }
+    },
+    "explicit": {
+      "supported": true,
+      "opus": {
+        "application": "audio",
+        "complexity": 4,
+        "format": "opus",
+        "frameDuration": 20000,
+        "packetlossperc": 0,
+        "signal": "auto",
+        "usedtx": false,
+        "useinbandfec": false
+      }
+    }
+  },
+  "normal": {
+    "supported": true,
+    "bitrate": 32000,
+    "packets": [
+      [
+        470,
+        120000
+      ],
+      [
+        470,
+        120000
+      ],
+      [
+        470,
+        120000
+      ],
+      [
+        470,
+        120000
+      ],
+      [
+        470,
+        120000
+      ]
+    ],
+    "errors": [],
+    "deliveredBitrate": 31333.333333333332
+  },
+  "high": {
+    "supported": true,
+    "bitrate": 256000,
+    "packets": [
+      [
+        2540,
+        120000
+      ],
+      [
+        2540,
+        120000
+      ],
+      [
+        2540,
+        120000
+      ],
+      [
+        2540,
+        120000
+      ],
+      [
+        2540,
+        120000
+      ]
+    ],
+    "errors": [],
+    "deliveredBitrate": 169333.33333333334
+  }
+}

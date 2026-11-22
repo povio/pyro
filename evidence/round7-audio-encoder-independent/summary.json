@@ -1,0 +1,50 @@
+{
+  "scores": {
+    "baseFull": 6,
+    "candidateFull": 6,
+    "chrome158Full": 14,
+    "baseNamed": 602,
+    "candidateNamed": 770,
+    "chrome158Named": 851,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 81,
+    "lpOnly": 0,
+    "gained": 168
+  },
+  "gainsByPage": {
+    "webcodecs/audio-encoder-codec-specific.https.any.html": 3,
+    "webcodecs/audio-encoder-config.https.any.html": 42,
+    "webcodecs/audio-encoder-config.https.any.worker.html": 42,
+    "webcodecs/audio-encoder.https.any.html": 23,
+    "webcodecs/idlharness.https.any.html": 29,
+    "webcodecs/idlharness.https.any.worker.html": 29
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 16
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "96739a18ce0485c1c59652f1fbcd7fa809cea0f2b484f8bcaf5f84e66e7a89a2"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 16
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "d76ba2b4b8c46997c5dcd9b2c3453ba9f45d3b74892c0c1f8ab15e18326e4147"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 16
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "a67953d5f704bd95a28540738f76b6ebe468dc9fd189500d3bae2bfa2daa7e55"
+    }
+  }
+}
