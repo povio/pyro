@@ -1921,6 +1921,34 @@ impl Node {
             }
         }
 
+        /// pyro: `value` parsed as the CSS `property`'s value, as an author would write it (no
+        /// unitless lengths): its declarations, or none when it does not parse.
+        fn parse_css_declaration(property: &str, value: &str) -> Vec<PropertyDeclaration> {
+            use style::properties::{PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
+            use style::stylesheets::{CssRuleType, Origin};
+            use style_traits::ParsingMode;
+
+            let Ok(property) = PropertyId::parse_enabled_for_all_content(property) else {
+                return Vec::new();
+            };
+            let mut declarations = SourcePropertyDeclaration::default();
+            let parsed = parse_one_declaration_into(
+                &mut declarations,
+                property,
+                value,
+                Origin::Author,
+                &crate::url::DocumentUrl::default().url_extra_data(),
+                None,
+                ParsingMode::DEFAULT,
+                style::context::QuirksMode::NoQuirks,
+                CssRuleType::Style,
+            );
+            match parsed {
+                Ok(()) => declarations.drain().declarations.collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+
         // `<input type=image>` is the only input type that is replaced
         // content, and it is the only one that takes the embedded-content
         // presentational attributes. The type attribute is matched ASCII
@@ -2277,6 +2305,24 @@ impl Node {
 
         if let Some(lang) = lang {
             push_style(PropertyDeclaration::XLang(XLang(Atom::from(lang))));
+        }
+
+        // pyro: an `<mo>` in a row is spaced by its inline-start and inline-end margins
+        // (`mathml_operator`).
+        if let Some(spacing) = crate::mathml_operator::spacing(self, elem) {
+            use crate::mathml_operator::Side;
+            let em = |n: u8| format!("{}em", n as f64 / 18.0);
+            for (property, side) in [("margin-inline-start", spacing.start), ("margin-inline-end", spacing.end)] {
+                let declarations = match side {
+                    Side::Eighteenths(n) => parse_css_declaration(property, &em(n)),
+                    Side::Explicit(value, n) => Some(parse_css_declaration(property, &value))
+                        .filter(|d| !d.is_empty())
+                        .unwrap_or_else(|| parse_css_declaration(property, &em(n))),
+                };
+                for declaration in declarations {
+                    push_style(declaration);
+                }
+            }
         }
 
         // A table's `cellpadding` attribute maps to the padding of its cells (not
