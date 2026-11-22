@@ -89,7 +89,6 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    crate::audio_decoder::define(def);
     define_video_globals(def);
     lazy_globals!(
         def,
