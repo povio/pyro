@@ -1195,6 +1195,35 @@ pub enum ScrollSnapStop {
     Always,
 }
 
+/// pyro: the `scroll-initial-target` property (CSS Scroll Snap 2): `none | nearest`. With
+/// `nearest`, the element's nearest scroll container starts scrolled to it.
+/// https://drafts.csswg.org/css-scroll-snap-2/#scroll-initial-target
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum ScrollInitialTarget {
+    None,
+    Nearest,
+}
+
 #[allow(missing_docs)]
 #[derive(
     Clone,

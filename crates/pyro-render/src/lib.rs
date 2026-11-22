@@ -1106,6 +1106,13 @@ impl Renderer {
         m.doc.mandatory_snap_containers().into_iter().filter_map(|id| m.key_of(id)).collect()
     }
 
+    /// pyro: the keys of the page's elements styled `scroll-initial-target: nearest`, in tree order
+    /// (blitz-dom `BaseDocument::initial_scroll_targets`).
+    pub fn initial_scroll_targets(&self, page: u64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        m.doc.initial_scroll_targets().into_iter().filter_map(|id| m.key_of(id)).collect()
+    }
+
     /// pyro: the target of the scroll marker at the document point (`x`, `y`) of `page`: its
     /// element's key, or its multi-column container's and the column's index.
     pub fn scroll_marker_at(&self, page: u64, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
@@ -1127,6 +1134,12 @@ impl Renderer {
     /// pyro: whether an element of the page's document was ever styled with a `scroll-snap-type`.
     pub fn uses_scroll_snap(&self, page: u64) -> bool {
         self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_snap())
+    }
+
+    /// pyro: whether an element of the page's document was ever styled
+    /// `scroll-initial-target: nearest`.
+    pub fn uses_scroll_initial_target(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_initial_target())
     }
 
     /// pyro: whether the page's document has scroll markers or buttons (their states follow the
