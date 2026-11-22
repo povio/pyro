@@ -216,10 +216,33 @@ pub(crate) fn fetch_stream_body<'s>(s: &Scope<'s>, input: Value<'s>, init: Value
     } else {
         return Ok(None);
     };
+    // As new Request() (6334dbc3e): keepalive or no-cors with a stream body is a TypeError.
+    let request = s.unwrap::<crate::request::Request>(input).map(|r| (r.keepalive, r.mode.clone(), r.url.clone()));
+    let (mut keepalive, mut mode) = request.as_ref().map_or((false, "cors".to_owned()), |r| (r.0, r.1.clone()));
+    if let Some(options) = init.as_object() {
+        let value = options.get_atom("keepalive")?;
+        if !value.is_undefined() {
+            keepalive = value.to_bool();
+        }
+        let value = options.get_atom("mode")?;
+        if !value.is_undefined() {
+            mode = value.to_string()?;
+        }
+    }
+    if keepalive {
+        return Err(JsError::Type(
+            "Failed to execute 'fetch' on 'Window': keepalive cannot be set for a request with a streaming body".into(),
+        ));
+    }
+    if mode == "no-cors" {
+        return Err(JsError::Type(
+            "Failed to execute 'fetch' on 'Window': A no-cors request cannot have a streaming body".into(),
+        ));
+    }
     // Only an HTTP(S) fetch sends its body: a data:, blob: or about: one never reads the
     // stream (which may never end). An unparsable URL fails in `fetch` itself.
-    let url = match s.unwrap::<crate::request::Request>(input) {
-        Some(r) => r.url.clone(),
+    let url = match request {
+        Some((_, _, url)) => url,
         None => crate::util::dom_string(input)?,
     };
     let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &url);
