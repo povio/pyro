@@ -1095,7 +1095,8 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
     }
     // HTML "the rules for choosing a navigable": a document with the sandboxed auxiliary
     // navigation browsing context flag (a sandbox without `allow-popups`) gets no new window,
-    // and window.open returns null. An existing frame the name chooses was handled above; without
+    // and window.open returns null. An existing frame the name chooses was handled above (with
+    // noopener, by the embedder's navigate lookup, which window.open answers with null); without
     // the embedder's hook the navigation is still asked for (the embedder looks the name up first
     // and blocks only a new window), without a popup ticket.
     let sandboxed = !same_context && page.popups_sandboxed();

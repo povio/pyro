@@ -209,13 +209,25 @@ fn stand_in_storage_before_the_page_exists_is_the_popups_area() {
 }
 
 #[test]
-fn named_noopener_creates_a_fresh_context_with_the_requested_name() {
+fn named_noopener_chooses_an_existing_frame_and_names_a_fresh_context() {
     let (mut t, events) = setup();
     let a = open_page(&mut t, "http://app.test/a");
     eval(&t, a, "let frame = document.createElement('iframe'); frame.name = 'Report'; document.body.append(frame)");
     settle(&mut t);
+    // HTML "the rules for choosing a navigable" look the name up whatever noopener says: the
+    // existing frame navigates, gets no opener, and window.open returns null.
+    for (feature, path) in [("noopener", "b"), ("noreferrer", "c")] {
+        assert_eq!(eval(&t, a, &format!("String(window.open('{path}', 'Report', '{feature}'))")), "null");
+        settle(&mut t);
+        assert_eq!(
+            eval(&t, a, "[frame.contentWindow.location.href, String(frame.contentWindow.opener)].join()"),
+            format!("http://app.test/{path},null")
+        );
+    }
+    assert!(events.popups().is_empty(), "no new browsing context for an existing name");
+    // A name no navigable has: a fresh top-level traversable with the requested name, no opener.
     for (i, feature) in ["noopener", "noreferrer"].into_iter().enumerate() {
-        assert_eq!(eval(&t, a, &format!("String(window.open('b', 'Report', '{feature}'))")), "null");
+        assert_eq!(eval(&t, a, &format!("String(window.open('b', 'Fresh', '{feature}'))")), "null");
         settle(&mut t);
         let requests: Vec<_> = events.0.borrow().iter().filter_map(|(_, event)| match event {
             PageEvent::PopupRequested { window_name, window_features, opener, ticket, .. } => {
@@ -226,11 +238,11 @@ fn named_noopener_creates_a_fresh_context_with_the_requested_name() {
         }).collect();
         assert_eq!(requests.len(), i + 1);
         let (name, features) = &requests[i];
-        assert_eq!(name, "Report");
+        assert_eq!(name, "Fresh");
         let child = t.browser.create_page_in(DEFAULT_CONTEXT).unwrap();
         t.browser.configure_popup(child, a, name, *features);
         t.browser.adopt_popup(child, a, None);
-        assert_eq!(eval(&t, child, "[name,opener].join()"), "Report,");
+        assert_eq!(eval(&t, child, "[name,opener].join()"), "Fresh,");
     }
 }
 

@@ -323,7 +323,6 @@ impl PageHooks for Hooks {
         if let (Some(name), Some(host)) = (request.target.as_deref(), self.frames.upgrade()) {
             let named = !matches!(name.to_ascii_lowercase().as_str(), "" | "_blank" | "_self" | "_top" | "_parent");
             if named
-                && !request.window_features.noopener
                 && request.method == "GET"
                 && request.body.is_none()
                 && !request.url.starts_with("javascript:")
@@ -378,9 +377,10 @@ impl PageHooks for Hooks {
         // the target names (`<a target>`, `<form target>`). Its `navigate`
         // event fires and its fragment navigations stay in its document, as
         // HTML "navigate" runs on the target navigable.
-        // With noopener, HTML skips named navigable lookup but still gives the
-        // newly created top-level traversable the requested target name.
-        let lookup_target = request.target.as_deref().filter(|_| !request.window_features.noopener);
+        // HTML "the rules for choosing a navigable" look the name up whatever noopener says
+        // (noopener only keeps the opener unset and window.open's result null); a newly
+        // created top-level traversable still gets the requested target name.
+        let lookup_target = request.target.as_deref();
         let mut cross_origin_target = false;
         let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| {
             let key = if own_frame {
@@ -440,11 +440,7 @@ impl PageHooks for Hooks {
             }
             let named = match ancestor {
                 Some(target) => target,
-                None => request
-                    .target
-                    .as_deref()
-                    .filter(|_| !request.window_features.noopener)
-                    .and_then(|t| b.page(page.page)?.frames.named_frame(page, t)),
+                None => request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t)),
             };
             let opens_context = named.is_none()
                 && request
