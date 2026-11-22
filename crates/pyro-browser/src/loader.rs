@@ -2876,8 +2876,15 @@ impl Browser {
         let frame = state.main_frame.clone();
         drop(state);
         self.sync_root(page.page);
-        if let Some(dom) = frame.page_dom {
-            pyro_webapi::lifecycle::load(&dom, dom.document());
+        if let Some(dom) = &frame.page_dom {
+            pyro_webapi::lifecycle::load(dom, dom.document());
+            // HTML "update the rendering" reveals a document at its first rendering opportunity;
+            // one that requested no animation frame gets a frame now, so `pagereveal` fires.
+            if pyro_webapi::lifecycle::reveal_pending(dom) {
+                if let Some(realm) = frame.main_realm() {
+                    crate::window::request_frame(realm);
+                }
+            }
         }
         if let Some(nav) = self.doc(page).map(|d| d.nav.clone()) {
             nav.notify_timeline("navigation");

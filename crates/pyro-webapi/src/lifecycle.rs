@@ -376,8 +376,9 @@ pub fn report_diagnostic(s: &Scope<'_>, error: &JsError) {
 
 /// HTML "reveal" (update the rendering, before the animation frame callbacks): the first
 /// rendering update of a document fires `pagereveal` at its Window, once: a PageRevealEvent whose
-/// `viewTransition` is null (there are no view transitions here). Gap: a document that never
-/// requests an animation frame never gets it.
+/// `viewTransition` is null (there are no view transitions here). A document that requests no
+/// animation frame gets one after its load when it listens ([`reveal_pending`]). Pyro has no
+/// back/forward cache, so no restored document is revealed again.
 pub fn reveal(page: &Rc<PageDom>) {
     if page.revealed.replace(true) {
         return;
@@ -385,6 +386,15 @@ pub fn reveal(page: &Rc<PageDom>) {
     let Some(w) = page.window_target() else { return };
     let ev = EventCore::trusted(page, EventInterface::PageRevealEvent, "pagereveal", false, false);
     fire(page, w, &ev);
+}
+
+/// Whether the document is still to be revealed and its Window listens for `pagereveal`: the
+/// embedder then asks for a rendering opportunity once the document has loaded, so a document that
+/// never requests an animation frame is revealed too.
+pub fn reveal_pending(page: &PageDom) -> bool {
+    !page.revealed.get()
+        && !page.is_disposed()
+        && page.window_target().is_some_and(|w| page.dom.try_borrow().is_ok_and(|dom| dom.has_listeners(w)))
 }
 
 /// HTML `pageswap` at the Window of a document that a cross-document navigation is about to
