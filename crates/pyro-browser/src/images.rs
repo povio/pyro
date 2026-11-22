@@ -280,6 +280,23 @@ fn svg_size(body: &[u8]) -> Option<(f64, f64)> {
     Some((attr("width")?, attr("height")?))
 }
 
+/// CSP `object-src` for the rendered `<object>`/`<embed>` `node` that has a `type` and no URL
+/// (`dest`: its element), which fetches nothing: Chrome checks its plugin request anyway, the
+/// empty URL completed against the element's base URL (`'none'` and an empty source list block
+/// it, `'self'` allows it), violations at the element. Blocked or not, nothing loads: it shows
+/// its fallback content as before.
+fn object_without_url_csp(bindings: &Rc<PageDom>, node: NodeId, base: &str, dest: pyro_net::csp::RequestDest) {
+    let base = {
+        let dom = bindings.dom.borrow();
+        if !dom.get_attribute(node, "type").ok().flatten().is_some_and(|t| !t.trim().is_empty()) {
+            return;
+        }
+        crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.to_owned())
+    };
+    let Ok(url) = url::Url::parse(&base) else { return };
+    let _ = pyro_webapi::csp::check_request(bindings, pyro_net::csp::CspRequest::new(url, dest), Some(node));
+}
+
 /// Whether `node` is being rendered as of the last completed layout, never running layout: the
 /// full answer when that layout is current (a query then syncs nothing), else the engine's last
 /// answer; `None` when that layout has not seen `node` (inserted since) or cannot tell.
@@ -848,6 +865,9 @@ impl Browser {
             }
         };
         drop(state);
+        if rendered && matches!(source, Source::None) {
+            object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Object);
+        }
         self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
     }
 
@@ -1069,6 +1089,9 @@ impl Browser {
             }
         };
         drop(state);
+        if rendered && matches!(source, Source::None) {
+            object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Embed);
+        }
         self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
     }
 
