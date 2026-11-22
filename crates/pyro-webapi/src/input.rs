@@ -3318,18 +3318,29 @@ fn effect_allowed_of(mask: i64) -> &'static str {
     }
 }
 
-/// The operation a target accepting the drag gets: its dropEffect when the
-/// source allows it, else Chrome's default (copy, then move, then link).
-fn accepted_operation(drop_effect: &str, mask: i64) -> Option<&'static str> {
+/// Chrome's default operation for what the source allows: copy, then move,
+/// then link; None when it allows nothing.
+fn default_operation(mask: i64) -> Option<&'static str> {
     let ops = allowed_ops(mask);
-    let named = [("copy", OP_COPY), ("link", OP_LINK), ("move", OP_MOVE)];
-    if let Some(&(name, bit)) = named.iter().find(|(name, _)| *name == drop_effect) {
-        return (ops & bit != 0).then_some(name);
-    }
     [("copy", OP_COPY), ("move", OP_MOVE), ("link", OP_LINK)]
         .into_iter()
         .find(|(_, bit)| ops & bit != 0)
         .map(|(n, _)| n)
+}
+
+/// The operation a target accepting the drag gets. A listener that assigned
+/// dropEffect gets that operation when the source allows it; an assigned
+/// "none" means no operation (no drop event, dragend reports "none"). A
+/// listener that only canceled the event leaves dropEffect unset (it still
+/// reads "none", as in Chrome) and gets Chrome's default.
+fn accepted_operation(transfer: &NativeTransfer, mask: i64) -> Option<&'static str> {
+    if !transfer.drop_effect_assigned() {
+        return default_operation(mask);
+    }
+    let ops = allowed_ops(mask);
+    let drop_effect = transfer.drop_effect();
+    let named = [("copy", OP_COPY), ("link", OP_LINK), ("move", OP_MOVE)];
+    named.iter().find(|(name, _)| *name == drop_effect).and_then(|&(name, bit)| (ops & bit != 0).then_some(name))
 }
 
 fn drag_event(page: &Rc<PageDom>, ty: &str, m: &MouseInput, cancelable: bool, transfer: &NativeTransfer) -> EventData {
@@ -3484,7 +3495,7 @@ fn update_drag(
         only_dragover = false;
     }
     let operation =
-        if accepted { accepted_operation(&transfer.drop_effect(), data.drag_operations_mask) } else { None };
+        if accepted { accepted_operation(&transfer, data.drag_operations_mask) } else { None };
     if let Some(s) = page.drag.borrow_mut().as_mut() {
         s.target = target;
         s.only_dragover = only_dragover;

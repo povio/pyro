@@ -47,6 +47,9 @@ struct Store {
     entries: RefCell<Vec<Entry>>,
     next_id: Cell<u64>,
     drop_effect: RefCell<String>,
+    /// Script assigned a valid dropEffect (Blink tracks an "uninitialized"
+    /// drop effect that still reads as "none").
+    drop_effect_assigned: Cell<bool>,
     effect_allowed: RefCell<String>,
     mode: Cell<Mode>,
 }
@@ -133,6 +136,7 @@ impl JsClass for DataTransfer {
                 let v = dom_string(v)?;
                 if matches!(v.as_str(), "none" | "copy" | "link" | "move") {
                     *d.store.drop_effect.borrow_mut() = v;
+                    d.store.drop_effect_assigned.set(true);
                 }
                 Ok(())
             },
@@ -457,6 +461,11 @@ impl NativeTransfer {
 
     pub(crate) fn drop_effect(&self) -> String {
         self.store.drop_effect.borrow().clone()
+    }
+
+    /// Whether a listener assigned a valid dropEffect to this transfer.
+    pub(crate) fn drop_effect_assigned(&self) -> bool {
+        self.store.drop_effect_assigned.get()
     }
 
     pub(crate) fn set_drop_effect(&self, effect: &str) {
