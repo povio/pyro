@@ -579,7 +579,7 @@ impl JsClass for BodySource {
         });
         def.method("cancel", 0, |s, d, _a| {
             if d.open() {
-                d.body.cancel_stream();
+                d.body.cancel_consumer_stream();
             }
             let deferred = s.deferred()?;
             deferred.resolve(s, s.undefined())?;

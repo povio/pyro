@@ -1588,6 +1588,19 @@ impl Body {
             }
         }
     }
+    /// One body stream was canceled: the transfer stops unless another
+    /// consumer (a clone of the Response) still reads the whole body, which
+    /// keeps the bytes; this stream just closes, its pending reads dropped
+    /// (the canceled stream ignores them) and its cursor reset.
+    pub(crate) fn cancel_consumer_stream(&self) {
+        if self.consumers.get() > 1 {
+            drop(self.stream_reads.take());
+            self.stream_cursor.set(0);
+            self.close_stream();
+            return;
+        }
+        self.cancel_stream();
+    }
     /// `ReadableStream.cancel()` / reader `cancel()`: stops the request,
     /// drops buffered bytes and finishes pending reads as done.
     pub(crate) fn cancel_stream(&self) {
