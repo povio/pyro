@@ -982,10 +982,11 @@ thread_local! {
     static CANCELING: std::cell::RefCell<Vec<(u64, NodeId)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Whether `el` is in the page's own document, the one its browsing context shows (a document
-/// made by `createHTMLDocument` is not fully active).
+/// Whether `el` is in the page's own document, the one its browsing context shows, and that
+/// document is fully active (a document made by `createHTMLDocument`, a removed iframe's or one
+/// navigated away from is not).
 fn in_active_document(page: &PageDom, dom: &Dom, el: NodeId) -> bool {
-    dom.node_document(el).is_ok_and(|d| d == page.document())
+    page.is_fully_active() && dom.node_document(el).is_ok_and(|d| d == page.document())
 }
 
 /// `<form method=dialog>` submission: closes the form's nearest `dialog`

@@ -67,6 +67,10 @@ struct Entry {
     step: u64,
 }
 
+/// The ids [`PageNav::history_entries`] gives the steps only a child frame
+/// made: above any entry id, below 2^53 (a JSON number stays exact).
+const STEP_ENTRY_ID: u64 = 1 << 52;
+
 /// HTML session history of a traversable (a page and its frames): each frame
 /// keeps its own entry list ([`NavState`]), and an entry's `step` places it
 /// on the page's timeline. `history.length` counts the steps of all the
@@ -216,9 +220,10 @@ pub struct PageNav {
     /// Script navigations queued ([`PageNav::navigate`]) whose task has not
     /// run yet.
     queued_navigations: Rc<Cell<u32>>,
-    /// A traversal to another document's entry under way: the index it left
-    /// and the document it left, restored if no document commits.
-    traversal_from: Cell<Option<(usize, u64)>>,
+    /// A traversal to another document's entry under way: the index it left,
+    /// the document it left and the page's step before it, restored if no
+    /// document commits.
+    traversal_from: Cell<Option<(usize, u64, u64)>>,
 }
 
 /// What the listeners of a Navigation API `navigate` event decided.
@@ -328,25 +333,45 @@ impl PageNav {
         JointHistory::steps(&members).len().max(1)
     }
 
-    /// The session history and the index of the current entry.
+    /// The session history as Chrome's top-level navigation entries list
+    /// it (CDP `Page.getNavigationHistory`), and the index of the current
+    /// one: one entry per step of the page's joint session history, with
+    /// this frame's URL at that step. A step of this frame's own entry has
+    /// that entry's id; a step only a child frame made has an id of its own
+    /// ([`STEP_ENTRY_ID`] plus the step).
     pub fn history_entries(&self) -> (usize, Vec<HistoryEntry>) {
         let st = self.state.borrow();
-        let entries = st.entries.iter().map(|e| HistoryEntry { id: e.id, url: e.url.clone() }).collect();
-        (st.index, entries)
+        let members = self.joint.members();
+        let steps = JointHistory::steps(&members);
+        if steps.is_empty() || st.entries.is_empty() {
+            let entries = st.entries.iter().map(|e| HistoryEntry { id: e.id, url: e.url.clone() }).collect();
+            return (st.index, entries);
+        }
+        let current = self.joint.current.get();
+        let index = steps.iter().rposition(|s| *s <= current).unwrap_or(0);
+        let entries = steps
+            .iter()
+            .map(|&step| {
+                let entry = st.entries.iter().rev().find(|e| e.step <= step).unwrap_or(&st.entries[0]);
+                let id = if entry.step == step { entry.id } else { STEP_ENTRY_ID + step };
+                HistoryEntry { id, url: entry.url.clone() }
+            })
+            .collect();
+        (index, entries)
     }
 
-    /// Queues a traversal to the entry with `id`, like `history.go()` with the
-    /// matching delta (the current entry reloads). Returns false when no entry
-    /// has that id.
+    /// Queues a traversal to the entry of [`PageNav::history_entries`] with
+    /// `id`, like `history.go()` with the matching delta (the current entry
+    /// reloads). Returns false when no entry has that id.
     pub fn traverse_to_entry(&self, id: u64) -> bool {
-        let delta = {
-            let st = self.state.borrow();
-            match st.entries.iter().position(|e| e.id == id) {
-                Some(i) => i as i64 - st.index as i64,
-                None => return false,
-            }
-        };
-        self.traverse(delta);
+        let (index, entries) = self.history_entries();
+        let Some(target) = entries.iter().position(|e| e.id == id) else { return false };
+        let delta = target as i64 - index as i64;
+        if delta == 0 {
+            self.traverse(0);
+        } else {
+            self.traverse_joint(delta);
+        }
         true
     }
 
@@ -701,14 +726,13 @@ impl PageNav {
     /// current entry is again the one it left, and the page's current step
     /// that entry's.
     pub(crate) fn abandon_traversal(&self) {
-        let Some((index, doc)) = self.traversal_from.take() else { return };
+        let Some((index, doc, step)) = self.traversal_from.take() else { return };
         let mut st = self.state.borrow_mut();
         if st.doc_seq != doc || index >= st.entries.len() {
             return;
         }
         st.index = index;
         st.state_version += 1;
-        let step = st.entries[index].step;
         drop(st);
         self.joint.current.set(step);
     }
@@ -782,7 +806,7 @@ impl PageNav {
         let joint = self.joint.clone();
         self.sched.post(TaskSource::Navigation, move |b| {
             let step = entry.step;
-            if apply_traversal(b, page, &frame_id, index, entry, current_doc) {
+            if apply_traversal(b, page, &frame_id, index, entry, current_doc, joint.current.get()) {
                 joint.current.set(step);
             }
         });
@@ -832,7 +856,7 @@ impl PageNav {
                         .map(|i| (i, st.entries[i].clone(), st.doc_seq))
                 };
                 if let Some((index, entry, current_doc)) = change {
-                    apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc);
+                    apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc, from);
                 }
             }
         });
@@ -1296,6 +1320,7 @@ fn apply_traversal(
     index: usize,
     entry: Entry,
     current_doc: u64,
+    prev_step: u64,
 ) -> bool {
     let Some(page) = b.page(page).and_then(|p| p.frames.key(frame_id)) else { return false };
     let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return false };
@@ -1328,7 +1353,7 @@ fn apply_traversal(
             return false;
         }
         if entry.doc != current_doc {
-            nav.traversal_from.set(Some((state.index, current_doc)));
+            nav.traversal_from.set(Some((state.index, current_doc, prev_step)));
         }
         state.index = index;
         state.state_version += 1;
