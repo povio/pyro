@@ -177,7 +177,6 @@ fn command_and_toggle_source_follow_the_observing_listener() {
             "(() => {
                 const root = host.attachShadow({mode:'closed'});
                 const button = root.appendChild(document.createElement('button'));
-                const target = root.appendChild(document.createElement('span'));
                 const seen = [];
                 for (const Interface of [CommandEvent, ToggleEvent]) {
                     const type = Interface.name;
@@ -188,13 +187,39 @@ fn command_and_toggle_source_follow_the_observing_listener() {
                         root.addEventListener(type, e => seen.push(e.source === button), capture);
                         host.addEventListener(type, e => seen.push(e.source === host), capture);
                     }
-                    target.dispatchEvent(ev);
+                    button.dispatchEvent(ev);
                     seen.push(ev.source === host);
                 }
                 return seen.length === 14 && seen.every(Boolean);
             })()"
         ),
         "true"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn command_path_ends_below_the_host_that_hides_both_source_and_target() {
+    let e = env("<body><div id=outer></div></body>");
+    assert_eq!(
+        e.eval(
+            "(() => {
+                const root = outer.attachShadow({mode:'open'});
+                const inner = root.appendChild(document.createElement('div'));
+                const button = inner.attachShadow({mode:'open'}).appendChild(document.createElement('button'));
+                const log = [];
+                root.addEventListener('custom', e => log.push(e.source === inner), true);
+                inner.addEventListener('custom', e => {
+                    const path = e.composedPath();
+                    log.push(path.length === 2 && path[0] === inner && path[1] === root);
+                });
+                outer.addEventListener('custom', () => log.push(false), true);
+                document.addEventListener('custom', () => log.push(false), true);
+                inner.dispatchEvent(new CommandEvent('custom', {source:button, composed:true}));
+                return log.join();
+            })()"
+        ),
+        "true,true"
     );
     e.page.dispose();
 }

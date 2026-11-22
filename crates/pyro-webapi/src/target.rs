@@ -829,12 +829,26 @@ fn dispatch_at(
     event.refresh_wrappers();
     // A callback can detach ancestors and run GC during dispatch. The path
     // is built once, here, and dispatched on below.
-    let path = match target_override {
+    let mut path = match target_override {
         Some(target_override) => {
             page.dom.borrow().event_path_with_target_override(target, target_override, &event.state.borrow())
         }
         None => page.dom.borrow().event_path(target, &event.state.borrow()),
     };
+    // Command source retargeting stops a composed command at the shadow
+    // boundary where distinct source and target would both become the host.
+    // The original target still receives the command, even if it is itself
+    // the source's host. Keep the source separate from Event.relatedTarget.
+    if event.iface == crate::event::EventInterface::CommandEvent {
+        if let Some(source) = event.fields.borrow().submitter.filter(|&source| source != target) {
+            let dom = page.dom.borrow();
+            if let Some(end) = path.iter().enumerate().skip(1).find_map(|(i, &(observer, adjusted))| {
+                (observer == adjusted && dom.retarget_live(source, observer) == observer).then_some(i)
+            }) {
+                path.truncate(end);
+            }
+        }
+    }
     // No listener for the type on any target: no callback runs, so the path
     // needs no holding and no invocation target is asked about its tree.
     let heard = page.dom.borrow().listens_for(&event.state.borrow().ty);
