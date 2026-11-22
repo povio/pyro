@@ -1937,6 +1937,17 @@ impl JsClass for Document {
             |s, n, v| {
                 let new = node_arg(s, v, "body")?;
                 let mut dom = n.page().dom.borrow_mut();
+                // HTML: only a body or frameset element can be the body; setting the current one
+                // does nothing.
+                if !dom.element(new).is_ok_and(|e| e.is_html() && matches!(&*e.name.local, "body" | "frameset")) {
+                    return Err(JsError::dom(
+                        "HierarchyRequestError",
+                        "The new body element is of type '%s'. It must be either a 'BODY' or 'FRAMESET' element.",
+                    ));
+                }
+                if dom.body(n.id).js()? == Some(new) {
+                    return Ok(());
+                }
                 let html = dom
                     .document_element(n.id)
                     .js()?
