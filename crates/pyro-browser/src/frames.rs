@@ -2530,6 +2530,9 @@ impl Browser {
     pub(crate) fn begin_javascript_result(&mut self, key: FrameKey, html: String) -> Result<LoaderId, JsError> {
         let host = self.page(key.page).map(|p| p.frames.clone()).ok_or(JsError::ContextDestroyed)?;
         let frame = host.frame(key).ok_or(JsError::ContextDestroyed)?;
+        // HTML "navigate to a javascript: URL" with a string result navigates the frame: the
+        // navigation it had under way (a slower document still fetching) is aborted.
+        self.cancel_pending_document(key);
         // CSP: the result has the policies of the document it replaces (HTML "evaluate a
         // javascript: URL": that document's policy container), taken as its commit begins.
         self.csp_inherit_next = frame.page_dom.as_ref().map(|dom| (key, pyro_webapi::csp::InheritedCsp::of(dom)));
