@@ -392,7 +392,7 @@
       if (t <= t0) return v0;
       if (t1 <= t0) return v1;
       const f = (t - t0) / (t1 - t0);
-      if (next.type === LINEAR) return v0 + (v1 - v0) * f;
+      if (next.type === LINEAR) return v0 + fround((v1 - v0) * f);
       if (v0 === 0 || v0 * v1 < 0) return v0;
       return v0 * pow(v1 / v0, f);
     }
@@ -720,6 +720,88 @@
     get gain() { return nodeOf(this).gain; }
   }
   webidl(GainNode, 'GainNode');
+
+  const compressorParams = {attack: [0.003, 0, 1], knee: [30, 0, 40], ratio: [12, 1, 20], release: [0.25, 0, 1], threshold: [-24, -100, 0]};
+  const compressors = new WeakMap();
+  function compressorOf(self) {
+    const state = compressors.get(self);
+    if (!state) throw invocation();
+    return state;
+  }
+  function renderCompressor(node, state, frame, quantum) {
+    const rate = ctxOf(node.ctx).rate;
+    const bus = input(node, quantum, frame);
+    const setting = name => paramValues(params.get(state[name]), frame, rate, quantum)[0];
+    const threshold = setting('threshold'), knee = setting('knee'), ratio = setting('ratio');
+    const attackSeconds = setting('attack'), releaseSeconds = setting('release');
+    const attackStep = attackSeconds ? 10 / (rate * attackSeconds) : Infinity;
+    const releaseStep = releaseSeconds ? 10 / (rate * releaseSeconds) : Infinity;
+    const entry = pow(10, threshold / 20), exit = pow(10, (threshold + knee) / 20);
+    const span = exit - entry;
+    const bend = (distance, stiffness) => entry - Math.expm1(-stiffness * distance) / stiffness;
+    let low = 0, high = 64 / (span || 1);
+    if (span && ratio !== 1) for (let iteration = 0; iteration < 24; iteration++) {
+      const stiffness = (low + high) / 2;
+      if (exit * exp(-stiffness * span) / bend(span, stiffness) > 1 / ratio) low = stiffness;
+      else high = stiffness;
+    }
+    const upper = span ? bend(span, high) : entry;
+    const curve = level => {
+      if (level <= entry || ratio === 1) return 0;
+      const shaped = level < exit ? bend(level - entry, high) : upper * pow(level / exit, 1 / ratio);
+      return 20 * Math.log10(shaped / level);
+    };
+    const makeup = pow(10, -0.6 * curve(1) / 20), meterRelease = exp(-1 / (rate * 0.325));
+    const width = bus?.length ?? (node.mode === 'explicit' ? node.channelCount : 1);
+    const output = Array.from({length: max(width, state.stereoTail ? 2 : 1)}, () => new F32(node.blockSize));
+    for (let index = 0; index < node.blockSize; index++) {
+      const left = bus?.[0][index] ?? 0, right = bus?.[1]?.[index] ?? 0;
+      const peak = max(abs(left), abs(right));
+      const target = curve(peak);
+      state.envelope = max(state.envelope - attackStep, min(target, state.envelope + releaseStep));
+      state.meter = min(state.envelope, state.envelope + meterRelease * (state.meter - state.envelope));
+      const gain = makeup * pow(10, state.envelope / 20), pos = state.position;
+      output[0][index] = state.left[pos] * gain;
+      if (output[1]) output[1][index] = state.right[pos] * gain;
+      state.left[pos] = left;
+      state.right[pos] = width === 1 && node.interp === 'speakers' ? left : right;
+      state.position = (pos + 1) % state.left.length;
+    }
+    state.stereoTail = width === 2 ? state.left.length : max(0, state.stereoTail - node.blockSize);
+    return output;
+  }
+  class DynamicsCompressorNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'DynamicsCompressorNode');
+      const settings = readNodeOptions(options, 'DynamicsCompressorNode');
+      const values = {};
+      for (const name of Object.keys(compressorParams)) {
+        const value = options?.[name];
+        if (value !== undefined) values[name] = finite(fround(value), 'construct', 'DynamicsCompressorNode');
+      }
+      super(secret, context, {mode: 'clamped-max', disallowMaxMode: true, checkCount(count) {
+        if (count !== 1 && count !== 2) throw new DE('Compressor input requires one or two channels.', 'NotSupportedError');
+        this.channelCount = count;
+      }});
+      applyNodeOptions(this, settings);
+      const node = nodeOf(this), delay = max(1, floor(0.006 * ctxOf(context).rate));
+      const state = {left: new F32(delay), right: new F32(delay), envelope: 0, meter: 0, position: 0, stereoTail: 0};
+      compressors.set(this, state);
+      for (const [name, bounds] of Object.entries(compressorParams)) {
+        const param = nodeParam(node, ...bounds, 'k-rate', true);
+        state[name] = param;
+        if (values[name] !== undefined) setParamValue(params.get(param), values[name], 0);
+      }
+      node.process = (frame, quantum) => renderCompressor(node, state, frame, quantum);
+    }
+    get attack() { return compressorOf(this).attack; }
+    get knee() { return compressorOf(this).knee; }
+    get ratio() { return compressorOf(this).ratio; }
+    get release() { return compressorOf(this).release; }
+    get threshold() { return compressorOf(this).threshold; }
+    get reduction() { return fround(compressorOf(this).meter); }
+  }
+  webidl(DynamicsCompressorNode, 'DynamicsCompressorNode');
 
   function shapeSample(curve, sample) {
     const last = curve.length - 1;
@@ -1995,6 +2077,7 @@
     }
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createConvolver() { return new ConvolverNode(this); }
+    createDynamicsCompressor() { return new DynamicsCompressorNode(this); }
     createGain() { return new GainNode(this); }
     createWaveShaper() { return new WaveShaperNode(this); }
     createAnalyser() { return new AnalyserNode(this); }
@@ -2375,6 +2458,6 @@
   return {
     localImpulseInfo, BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, PeriodicWave,
-    ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, DynamicsCompressorNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })

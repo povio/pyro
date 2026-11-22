@@ -13,8 +13,9 @@ const directory = '/webaudio/the-audio-api/' + (realtime ? 'the-audiocontext-int
 const pages = retro ? ['setValueAtTime', 'setTargetAtTime', 'linearRampToValueAtTime', 'exponentialRampToValueAtTime', 'setValueCurveAtTime'].map(method => `retrospective-${method}.html`) : realtime ? ['audiocontext-rendersizehint.html'] : hold ? ['audioparam-cancel-and-hold.html', 'cancel-scheduled-values.html'] : periodic ? ['the-periodicwave-interface/periodicWave.html', 'the-oscillatornode-interface/ctor-oscillator.html'] : ['sub-sample-scheduling.html', 'audiobuffersource-duration-loop.html', 'audiobuffersource-duration-loop-playbackrate.html'];
 const offlineClose = batch === 'offline-close';
 const offlineQuantum = batch === 'offline-quantum';
-const batchDirectory = offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
-const batchPages = offlineQuantum ? ['offlineaudiocontext-rendersizehint.html', 'offlineaudiocontext-suspend-rendersizehint.https.html', 'offlineaudiocontext-close.html'] : offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
+const compressor = batch === 'compressor';
+const batchDirectory = compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
+const batchPages = compressor ? ['the-dynamicscompressornode-interface/dynamicscompressor-basic.html', 'the-dynamicscompressornode-interface/ctor-dynamicscompressor.html', 'the-audioparam-interface/k-rate-dynamics-compressor-connections.html'] : offlineQuantum ? ['offlineaudiocontext-rendersizehint.html', 'offlineaudiocontext-suspend-rendersizehint.https.html', 'offlineaudiocontext-close.html'] : offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
 const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
 if (hold) allowed.add('/webaudio/resources/audio-param.js');
@@ -24,7 +25,7 @@ try {
   const page = await browser.newPage();
   if (modulePath) {
     const source = await readFile(modulePath, 'utf8');
-    await page.addInitScript(`{ const audio = (${source})({activated: () => ${realtime}, timer: (delay, fn) => setTimeout(fn, delay), clearTimer: clearTimeout}); ${periodic ? 'delete globalThis.PeriodicWave;' : ''} Object.assign(globalThis, audio); globalThis.installedAudio = audio; }`);
+    await page.addInitScript(`{ const audio = (${source})({activated: () => ${realtime}, timer: (delay, fn) => setTimeout(fn, delay), clearTimer: clearTimeout}); ${periodic ? 'delete globalThis.PeriodicWave;' : ''} ${compressor ? 'delete globalThis.DynamicsCompressorNode;' : ''} Object.assign(globalThis, audio); globalThis.installedAudio = audio; }`);
   }
   await page.route('**/*', async route => {
     const path = new URL(route.request().url()).pathname;
@@ -39,6 +40,7 @@ try {
     if (modulePath) assert.ok(await page.evaluate(() => globalThis.installedAudio?.OfflineAudioContext === OfflineAudioContext && globalThis.installedAudio?.AudioBufferSourceNode === AudioBufferSourceNode), 'Web Audio module installation failed');
     if (modulePath && periodic) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.OscillatorNode === OscillatorNode && installedAudio.PeriodicWave === globalThis.PeriodicWave));
     if (modulePath && realtime) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext));
+    if (modulePath && compressor) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.DynamicsCompressorNode === globalThis.DynamicsCompressorNode));
     if (modulePath && retro) assert.ok(await page.evaluate(() => installedAudio.AudioParam === AudioParam && new OfflineAudioContext(1, 128, 44100).createGain().gain instanceof AudioParam));
     await page.waitForFunction(() => globalThis.results);
     outcomes[name] = await page.evaluate(() => globalThis.results);

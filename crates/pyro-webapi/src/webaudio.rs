@@ -55,6 +55,7 @@ where
         "AnalyserNode",
         "DelayNode",
         "ConvolverNode",
+        "DynamicsCompressorNode",
         "StereoPannerNode",
         "PannerNode",
         "AudioListener",
