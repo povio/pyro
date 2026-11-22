@@ -79,12 +79,19 @@ pub(super) fn sync_parent(page: &Rc<PageDom>, media: NodeId) {
     helper(page, media, "syncMedia", None, |_| Ok(()));
 }
 
-fn source(page: &PageDom, track: NodeId, parent: NodeId) -> Source {
+/// The track URL used by both cue-list invalidation and resource selection.
+pub(crate) fn track_url(page: &PageDom, track: NodeId) -> String {
     let dom = page.dom.borrow();
-    let url = dom.get_attribute(track, "src").ok().flatten()
+    dom.get_attribute(track, "src").ok().flatten()
         .filter(|s| !s.is_empty())
-        .map(|s| crate::html::resolve_url(&dom, track, s))
-        .unwrap_or_default();
+        .and_then(|s| url::Url::parse(&crate::html::resolve_url(&dom, track, s)).ok())
+        .map(String::from)
+        .unwrap_or_default()
+}
+
+fn source(page: &PageDom, track: NodeId, parent: NodeId) -> Source {
+    let url = track_url(page, track);
+    let dom = page.dom.borrow();
     let crossorigin = dom.get_attribute(parent, "crossorigin").ok().flatten().map(|v| {
         if v.eq_ignore_ascii_case("use-credentials") { "use-credentials".to_owned() } else { "anonymous".to_owned() }
     });
@@ -105,8 +112,11 @@ pub(crate) fn check_track_resource(page: &Rc<PageDom>, node: NodeId) {
     let Some(parent) = media_parent(page, node) else {
         // A completed resource belongs to the TextTrack. Keep it across
         // removal/reinsertion. Discard unfinished work and its network handle.
+        let url = track_url(page, node);
         let mut tracks = loads.tracks.borrow_mut();
-        if tracks.get(&node).is_some_and(|l| l.ready < LOADED) { tracks.remove(&node); }
+        if tracks.get(&node).is_some_and(|load| load.ready < LOADED || load.source.url != url) {
+            tracks.remove(&node);
+        }
         return;
     };
     let key = source(page, node, parent);

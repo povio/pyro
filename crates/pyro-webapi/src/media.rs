@@ -31,7 +31,7 @@
 //! realm's first use.
 #[path = "track_load.rs"]
 mod track_load;
-pub(crate) use track_load::{check_track_resource, track_ready_state};
+pub(crate) use track_load::{check_track_resource, track_ready_state, track_url};
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
