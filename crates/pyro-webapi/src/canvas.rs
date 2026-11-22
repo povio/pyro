@@ -1733,6 +1733,16 @@ impl ContextData {
             |s, c| Ok(s.string(&c.state.borrow().filter)),
             |_s, c, v| {
                 let value = dom_string(v)?;
+                // pyro: HTML ignores a value that does not parse as a <filter-value-list> or
+                // `none`; CSS-wide keywords are not values here (WPT 2d.filter.value).
+                let keyword = value.trim();
+                if ["inherit", "initial", "unset", "revert", "revert-layer"]
+                    .iter()
+                    .any(|k| keyword.eq_ignore_ascii_case(k))
+                    || !pyro_dom::stylo::supports_declaration("filter", &value)
+                {
+                    return Ok(());
+                }
                 let spec = canvas_filter(&c.page, &value);
                 let mut state = c.state.borrow_mut();
                 state.filter = value;
