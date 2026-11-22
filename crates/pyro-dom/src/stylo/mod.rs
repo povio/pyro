@@ -81,6 +81,9 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.text-wrap-style.pretty.enabled", true);
         style_config::set_pref!("layout.css.overscroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scroll-driven-animations.enabled", true);
+        // pyro: as blitz-dom's `init_stylo_prefs`: `display` in `@keyframes`, and Stylo's
+        // `Animate for Display` (css-display-4 §2.1).
+        style_config::set_pref!("layout.css.display-animations.enabled", true);
         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);

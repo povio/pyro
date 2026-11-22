@@ -141,6 +141,29 @@ fn a_css_animation_is_sampled_at_its_progress_and_dropped_with_it() {
     assert_near(pixel(&img, 50, 50), [0, 200, 0], "no animation: the base value");
 }
 
+/// `display` to or from `none` keeps the other value except at the `none` end (css-display-4
+/// §2.1), in a CSS animation whose `@keyframes` animate `display` alone (Stylo dropped such a rule's
+/// steps, leaving the underlying value) and in text keyframes (which flipped halfway). WPT css-display
+/// `animations/display-interpolation-none`.
+#[test]
+fn display_keyframes_to_or_from_none_keep_the_other_value_until_the_none_end() {
+    let (snap, key) = page(
+        "<!doctype html><style>body{margin:0;background:#fff} #target{display:block;width:100px;height:100px;background-color:rgb(0,200,0)}\
+        @keyframes show{from{display:none}to{display:flex}}</style><div id=target></div>",
+    );
+    let (white, green) = ([255, 255, 255], [0, 200, 0]);
+    let mut r = Renderer::new();
+    let at = |r: &mut Renderer, effect: Effect| pixel(&render(r, &snap, frame(key, vec![], vec![effect])), 50, 50);
+    assert_near(at(&mut r, css("show", Some("linear"), 0.0)), white, "@keyframes at its none end");
+    assert_near(at(&mut r, css("show", Some("linear"), 0.3)), green, "@keyframes before halfway");
+    let show = [(0.0, "display:none"), (1.0, "display:flex")];
+    assert_near(at(&mut r, text(&show, 0.0, None)), white, "text keyframes at the none end");
+    assert_near(at(&mut r, text(&show, 0.3, None)), green, "text keyframes before halfway");
+    let hide = [(0.0, "display:flex"), (1.0, "display:none")];
+    assert_near(at(&mut r, text(&hide, 0.7, None)), green, "to none, after halfway");
+    assert_near(at(&mut r, text(&hide, 1.0, None)), white, "to none, at its end");
+}
+
 #[test]
 fn color_animation_selects_the_space_from_the_resolved_endpoints() {
     for (foreground, expected) in [("white", 128), ("color(srgb 1 1 1)", 99)] {
