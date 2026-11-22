@@ -1107,8 +1107,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         // pyro: HTML-in-Canvas: a child of a canvas with content=drawable is laid out but not
-        // painted in place (only `drawElementImage` paints it). Other elements are unaffected.
-        if node
+        // painted in place (only `drawElementImage` paints it, as the root of the paint:
+        // `paint_element_subtree`). Other elements are unaffected.
+        if self.top_layer_root.get() != Some(node_id)
+            && node
             .layout_parent
             .get()
             .and_then(|parent| self.dom.as_ref().tree().get(parent))

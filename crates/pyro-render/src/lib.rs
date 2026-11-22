@@ -2818,6 +2818,23 @@ impl Renderer {
         write_pdf(paint, &mut self.pdf_cache)
     }
 
+    /// pyro: HTML-in-Canvas `drawElementImage`: the element with render key `key` in page `page`'s
+    /// live document, painted alone (blitz-paint `paint_element_subtree`: its subtree only, its own
+    /// transform cancelled, its border box's top left at the origin) and rasterised on the CPU, as
+    /// straight-alpha RGBA at `scale` device pixels per CSS px. `None` for an unknown page or
+    /// element, or one without an area to paint.
+    pub fn paint_element(&mut self, page: u64, key: u64, scale: f64) -> Option<RgbaImage> {
+        let m = self.mirrors.get_mut(&page)?;
+        let id = m.node(key)?;
+        let (scene, size) = blitz_paint::paint_element_subtree(&mut m.doc, id, scale.clamp(0.1, 16.0))?;
+        let (width, height) = (size.width.ceil() as u32, size.height.ceil() as u32);
+        if width == 0 || height == 0 || width > MAX_WIDTH || height > MAX_HEIGHT {
+            return None;
+        }
+        let painted = Painted { scene, opaque: false, hash: 0, width, height, timings: Timings::default() };
+        Some(self.raster(painted, Backend::Cpu).0)
+    }
+
     /// Stage 3.
     pub fn raster(&mut self, painted: Painted, backend: Backend) -> (RgbaImage, Timings) {
         let Painted { scene, opaque, width, height, mut timings, .. } = painted;

@@ -1065,6 +1065,11 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn element_image(&self, key: u64, scale: f64) -> Option<(u32, u32, Vec<u8>)> {
+        let image = RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.paint_element(self.page, key, scale))?;
+        Some((image.width, image.height, image.data))
+    }
+
     fn geometry(&self) -> Option<ExternalGeometry> {
         let t = profile::on().then(Instant::now);
         let g = self.geometry_inner();

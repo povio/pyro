@@ -125,6 +125,31 @@ pub fn record_transition_boxes(
     Some(()) })?
 }
 
+/// pyro: HTML-in-Canvas `drawElementImage`: the element `id` and its subtree alone (nothing under,
+/// around or above it, no canvas background), its own transform cancelled and its border box's top
+/// left at the origin, at `scale` device pixels per CSS px. Returns the scene with the border box's
+/// size in device pixels; `None` without such an element or with a transform that cannot be undone.
+/// It paints a child of a canvas with content=drawable, which is not painted in place
+/// (`render_element_clipped`), as the root of the paint.
+pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> Option<(Scene, kurbo::Size)> {
+    #[cfg(feature = "svg")]
+    let _raster_scope = anyrender_svg::PageRasterScope::enter(&doc.raster_budget);
+    doc.ensure_paint_tree();
+    let (width, height) = doc.viewport().window_size;
+    let widgets = HashMap::new();
+    let painter = BlitzDomPainter::new(doc, scale, width, height, 0.0, 0.0, &widgets);
+    let node = doc.get_node(id)?;
+    let size = node.final_layout().size;
+    let parent = painter.node_transform(node, kurbo::Affine::IDENTITY).inverse();
+    if !parent.is_finite() {
+        return None;
+    }
+    painter.top_layer_root.set(Some(id));
+    let mut scene = Scene::new();
+    painter.render_element(&mut scene, id, parent, kurbo::Rect::new(-1e7, -1e7, 1e7, 1e7));
+    Some((scene, kurbo::Size::new(size.width as f64 * scale, size.height as f64 * scale)))
+}
+
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded
 /// top (`origin`, the unrounded top of its layout in the document in CSS px, plus the line's
 /// `unquantized_top` in layout units, `scale` to a CSS px) in Blink's layout units of 1/64 px,
