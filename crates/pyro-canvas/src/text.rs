@@ -111,10 +111,17 @@ pub fn release_thread() {
     drop(faced);
 }
 
-/// HTML "text preparation": ASCII whitespace becomes spaces (one line).
+/// HTML "text preparation": ASCII whitespace becomes spaces (one line). U+0000 is dropped: it
+/// draws nothing and takes no space, as in Chromium (`2d.text.measure.width.nullCharacter`), where
+/// a font without it would otherwise fall back to one that draws it.
 fn prepare(text: &str) -> Cow<'_, str> {
-    if text.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\x0c' | b'\r')) {
-        Cow::Owned(text.chars().map(|c| if matches!(c, '\t' | '\n' | '\x0c' | '\r') { ' ' } else { c }).collect())
+    if text.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\x0c' | b'\r' | b'\0')) {
+        Cow::Owned(
+            text.chars()
+                .filter(|&c| c != '\0')
+                .map(|c| if matches!(c, '\t' | '\n' | '\x0c' | '\r') { ' ' } else { c })
+                .collect(),
+        )
     } else {
         Cow::Borrowed(text)
     }
