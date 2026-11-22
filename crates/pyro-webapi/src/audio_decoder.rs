@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use pyro_js::{ClassDef, JsClass, JsError, JsResult, Object, Scope, Value};
-use pyro_media::audio::packet::PacketDecoder;
+use pyro_media::audio::packet::{PacketAudio, PacketDecoder};
 
 use crate::lazy_module::{lazy_globals, LazyModule};
 use crate::window::WindowHost;
@@ -79,7 +79,7 @@ fn create<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<'s>> {
             match operation.as_str() {
                 "decode" => {
                     let chunk = crate::encoded_chunks::audio_parts(s, args.get(1))?;
-                    decoder.decode(chunk.timestamp, &chunk.data).map_err(|e| JsError::dom("EncodingError", e))?
+                    decoder.decode(chunk.timestamp, chunk.data).map_err(|e| JsError::dom("EncodingError", e))?
                 }
                 "flush" => {
                     decoder.flush().map_err(|e| JsError::dom("EncodingError", e))?;
@@ -90,7 +90,13 @@ fn create<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<'s>> {
         };
         let frames = s.array(&[])?;
         if let Some(output) = output {
-            frames.set_index(0, crate::audio_data::decoded(s, output.timestamp, output.audio)?)?;
+            let data = match output.audio {
+                PacketAudio::Planar(audio) => crate::audio_data::decoded(s, output.timestamp, audio)?,
+                PacketAudio::Interleaved { format, sample_rate, channels, frames, data } => {
+                    crate::audio_data::decoded_pcm(s, output.timestamp, format, sample_rate, channels, frames, data)?
+                }
+            };
+            frames.set_index(0, data)?;
         }
         Ok(frames.value())
     })?;

@@ -341,6 +341,41 @@ pub(crate) fn wrap<'s>(s: &Scope<'s>, resource: &AudioResource) -> JsResult<Valu
     Ok(s.wrap::<AudioData>(Data::new(resource.clone()), None)?.value())
 }
 
+/// Wrap native-endian interleaved PCM without converting integer samples
+/// through floating point. The codec owns exactly one complete output block.
+pub(crate) fn decoded_pcm<'s>(
+    s: &Scope<'s>,
+    timestamp: i64,
+    format: pyro_media::audio::packet::PcmFormat,
+    sample_rate: u32,
+    channels: u32,
+    frames: u32,
+    bytes: Bytes,
+) -> JsResult<Value<'s>> {
+    use pyro_media::audio::packet::PcmFormat;
+    let encoding = match format {
+        PcmFormat::U8 => Encoding::U8,
+        PcmFormat::S16 => Encoding::S16,
+        PcmFormat::S32 => Encoding::S32,
+        PcmFormat::F32 => Encoding::F32,
+    };
+    let format = Format { encoding, planar: false };
+    let size = (frames as usize).checked_mul(channels as usize).and_then(|n| n.checked_mul(format.width()));
+    if sample_rate == 0 || channels == 0 || frames == 0 || size != Some(bytes.len()) {
+        return Err(JsError::Type("Invalid decoded PCM dimensions".into()));
+    }
+    let resource = AudioResource {
+        format,
+        rate: sample_rate as f32,
+        channels,
+        frames,
+        timestamp,
+        bytes,
+        cluster: crate::target::page_of(s)?.agent_cluster(),
+    };
+    wrap(s, &resource)
+}
+
 pub(crate) fn decoded<'s>(s: &Scope<'s>, timestamp: i64, decoded: pyro_media::audio::Decoded) -> JsResult<Value<'s>> {
     let channels =
         u32::try_from(decoded.channels.len()).map_err(|_| JsError::Range("Too many audio channels".into()))?;
