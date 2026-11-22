@@ -970,6 +970,18 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
         let Some(host) = current_owner else { return };
         (host, start, end)
     };
+    if backward && start != end {
+        let plan = selection(page).and_then(|(anchor, focus)| {
+            paragraph_join::ControlLine::from_select_edge(page, &page.dom.borrow(), host, anchor, focus)
+        });
+        if let Some(plan) = plan {
+            apply_edit(page, host, input_type, None, None, |page| {
+                let caret = plan.apply(&mut page.dom.borrow_mut());
+                set_selection(page, caret, caret);
+            });
+            return;
+        }
+    }
     let Some((start, end)) = select_edit_range(page, host, start, end) else { return };
     let child_line = child_line::Deletion::plan(page, &page.dom.borrow(), host, start, end, backward);
     let (start, end, span) = if let Some(plan) = &child_line {

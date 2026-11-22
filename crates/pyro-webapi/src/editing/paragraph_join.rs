@@ -578,6 +578,61 @@ fn preserve_line_style(
     Some(())
 }
 
+/// The leading edge of an inline select is a visible caret stop outside
+/// the control. Backspace there can join its line to the preceding block.
+pub(super) struct ControlLine {
+    destination: NodeId,
+    nodes: Vec<NodeId>,
+    line_break: Option<NodeId>,
+    caret: Point,
+}
+
+impl ControlLine {
+    pub(super) fn from_select_edge(page: &PageDom, dom: &Dom, host: NodeId, anchor: Point, focus: Point) -> Option<Self> {
+        let control = anchor.0;
+        if anchor.1 != 0 || !html_select(dom, control) || control == focus.0
+            || !dom.contains(control, focus.0).ok()? || dom.parent(control).ok()? != Some(host)
+        {
+            return None;
+        }
+        let destination = dom.prev_sibling(control).ok()??;
+        if !editable_paragraph(page, dom, destination, host) { return None; }
+        let caret = deep_backward(dom, (destination, len(dom, destination)));
+        if !is_text(dom, caret.0) || editing_host(dom, caret.0) != Some(host) { return None; }
+        let layout = page.layout();
+        let mut nodes = Vec::new();
+        let mut current = Some(control);
+        let mut line_break = None;
+        while let Some(node) = current {
+            if local(dom, node) == "br" {
+                if editing_host(dom, node) != Some(host) { return None; }
+                line_break = Some(node);
+                break;
+            }
+            if is_text(dom, node) {
+                if dom.char_data(node).ok()?.contains('\n') && crate::edit_commands::newlines_significant_in(page, dom, node) {
+                    return None;
+                }
+            } else {
+                let display = layout.computed_style_value(dom, node, "display");
+                if display == "block" { break; }
+                // A control or a noneditable inline box moves as a whole.
+                if !(html_select(dom, node) || !is_editable(dom, node)) || !display.starts_with("inline")
+                    || layout.computed_style_value(dom, node, "visibility") != "visible" { return None; }
+            }
+            nodes.push(node);
+            current = dom.next_sibling(node).ok()?;
+        }
+        (!nodes.is_empty()).then_some(Self { destination, nodes, line_break, caret })
+    }
+
+    pub(super) fn apply(self, dom: &mut Dom) -> Point {
+        for node in self.nodes { let _ = dom.append_child(self.destination, node); }
+        if let Some(br) = self.line_break { let _ = dom.remove_node(br); }
+        self.caret
+    }
+}
+
 /// Join just the first rendered line of inline siblings following a block.
 /// Preflight the affected subtree and record its text styling in preorder
 /// before changing the DOM. Range extraction moves fully contained nodes
