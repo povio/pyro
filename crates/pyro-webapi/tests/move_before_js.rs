@@ -420,3 +420,29 @@ fn a_picture_source_is_the_current_source_of_its_image() {
     assert_eq!(eval(r, "pic.moveBefore(src, img); img.currentSrc"), "http://localhost:5173/green.png");
     assert_eq!(eval(r, "src.media = '(min-width: 99999px)'; img.currentSrc"), "http://localhost:5173/red.png");
 }
+
+/// The rendering update's focus fixup: a focused element that becomes `display: none` (itself or
+/// through an ancestor) is blurred with `blur`/`focusout`, as in Chrome; one still rendered keeps
+/// focus (WPT css/selectors `focus-display-none-001`, `focus-within-display-none-001`).
+#[test]
+fn the_rendering_update_blurs_a_focused_element_that_is_no_longer_rendered() {
+    let e = env("<!doctype html><html><body><div id=wrap><input id=inp></div></body></html>");
+    let r = &e.main;
+    eval(
+        r,
+        "var events = []; for (const t of ['blur', 'focusout']) document.addEventListener(t, e => events.push(e.type), true); \
+         inp.focus();",
+    );
+    input::run_rendering_focus_fixup(&e.page);
+    assert_eq!(eval(r, "document.activeElement === inp"), "true");
+    for hide in ["inp", "wrap"] {
+        eval(r, &format!("{hide}.style.display = 'none'"));
+        input::run_rendering_focus_fixup(&e.page);
+        assert_eq!(
+            eval(r, "[document.activeElement === document.body, inp.matches(':focus'), wrap.matches(':focus-within'), events.join()].join('|')"),
+            "true|false|false|blur,focusout",
+            "{hide}: display none drops focus"
+        );
+        eval(r, &format!("{hide}.style.display = ''; events = []; inp.focus()"));
+    }
+}

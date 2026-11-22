@@ -376,6 +376,31 @@ pub fn run_focus_fixup(page: &Rc<PageDom>) {
     }
 }
 
+/// HTML "update the rendering": when the focused element is no longer being rendered (it or an
+/// ancestor became `display: none`), it loses focus, as in Chrome, which blurs it after the style
+/// update and fires `blur`/`focusout` (WPT css/selectors `focus-display-none-001`,
+/// `focus-within-display-none-001`). Narrower than [`run_focus_fixup`]: focusability is not
+/// rechecked here, so a dialog the dialog focusing steps focused keeps focus, and an `<area>`
+/// (rendered through its image map, with no box of its own) is left alone.
+pub fn run_rendering_focus_fixup(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    if page.dom.borrow().focused(page.document()).ok().flatten().is_none() {
+        return;
+    }
+    let lost = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
+        let area = dom.element(f).is_ok_and(|e| e.is_html() && &*e.name.local == "area");
+        (!area && !page.popover.forced_focus(f) && !layout.is_visible(&dom, f)).then_some(f)
+    };
+    if let Some(f) = lost {
+        blur_element(page, f);
+    }
+}
+
 /// Explicit blur keeps the owner's selected frame and remembered edit target.
 pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
     if let Some(owner) = sibling_page_of(page, el) {
