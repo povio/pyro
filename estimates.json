@@ -29,17 +29,17 @@
     "fetch/cross-origin-resource-policy": 10,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "FileAPI": 4,
     "html/browsers": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
     "xhr": 2,
-    "html/rendering": 1,
+    "quirks": 1,
     "IndexedDB": 1,
-    "svg/styling": 1,
-    "quirks": 1
+    "html/rendering": 1,
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -62,33 +62,33 @@
     "html/semantics": 127,
     "html/browsers": 85,
     "html/syntax": 30,
-    "fetch/api": 23,
     "html/webappapis": 23,
+    "fetch/api": 23,
     "html/infrastructure": 3
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 131,
+    "macbook_in_scope": 196,
     "studio_in_scope": 178,
     "other_dirs_out_of_scope": 26,
     "macbook_worker_variants_if_enabled": 8,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 217,
+   "distinct_census_pages": 282,
    "owner_reported_unlisted": 0,
-   "selector_union": 279,
-   "owner_estimate_reduction": 62,
-   "of_which_tentative": 41,
+   "selector_union": 377,
+   "owner_estimate_reduction": 95,
+   "of_which_tentative": 96,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 161,
+    "html/semantics": 250,
     "referrer-policy": 36,
-    "content-security-policy": 20,
     "html/interaction": 20,
+    "content-security-policy": 20,
     "webidl": 19,
-    "html/dom": 7,
+    "html/dom": 16,
     "workers": 6,
     "html/browsers": 5,
     "svg/path": 4,
@@ -1572,6 +1572,62 @@
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
+   "tentative": 0
+  },
+  "R-HTML-14": {
+   "state": "proposed",
+   "in_scope_pages": 45,
+   "out_of_scope_pages": 0,
+   "pages": 45,
+   "tentative": 27
+  },
+  "R-HTML-15": {
+   "state": "proposed",
+   "in_scope_pages": 28,
+   "out_of_scope_pages": 0,
+   "pages": 28,
+   "tentative": 28
+  },
+  "R-HTML-16": {
+   "state": "proposed",
+   "in_scope_pages": 6,
+   "out_of_scope_pages": 0,
+   "pages": 6,
+   "tentative": 0
+  },
+  "R-HTML-17": {
+   "state": "proposed",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
+   "pages": 5,
+   "tentative": 0
+  },
+  "R-HTML-18": {
+   "state": "decision-pending (coordinator)",
+   "in_scope_pages": 11,
+   "out_of_scope_pages": 0,
+   "pages": 11,
+   "tentative": 0
+  },
+  "R-HTML-19": {
+   "state": "proposed",
+   "in_scope_pages": 7,
+   "out_of_scope_pages": 0,
+   "pages": 7,
+   "tentative": 0
+  },
+  "R-HTML-20": {
+   "state": "proposed",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
+   "pages": 2,
+   "tentative": 0
+  },
+  "R-HTML-21": {
+   "state": "proposed",
+   "in_scope_pages": 5,
+   "out_of_scope_pages": 0,
+   "pages": 5,
    "tentative": 0
   }
  },
