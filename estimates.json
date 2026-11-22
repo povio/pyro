@@ -37,23 +37,23 @@
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
-    "fetch/data-urls": 6,
     "fetch/range": 6,
+    "fetch/data-urls": 6,
     "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "html/obsolete": 4,
-    "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "fetch/orb": 2,
+    "fetch/http-cache": 3,
     "xhr": 2,
-    "fetch/redirect-navigate": 1,
-    "quirks": 1,
-    "svg/styling": 1,
-    "IndexedDB": 1,
+    "fetch/orb": 2,
+    "fetch/content-type": 1,
     "fetch/security": 1,
+    "IndexedDB": 1,
+    "svg/styling": 1,
     "fetch/redirects": 1,
-    "fetch/content-type": 1
+    "fetch/redirect-navigate": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -66,24 +66,25 @@
    },
    "distinct_census_pages": 40,
    "owner_reported_unlisted": 0,
-   "selector_union": 489,
-   "owner_estimate_reduction": 449,
+   "selector_union": 506,
+   "owner_estimate_reduction": 466,
    "of_which_tentative": 183,
    "studio_css_reported_pages_not_deduped": 22,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/semantics": 150,
+    "html/semantics": 157,
     "html/canvas": 125,
     "html/browsers": 108,
-    "html/syntax": 37,
+    "html/syntax": 40,
     "html/webappapis": 35,
     "html/dom": 13,
     "fetch/compression-dictionary": 8,
-    "fetch/api": 5,
+    "html/infrastructure": 7,
     "html/interaction": 5,
+    "fetch/api": 5,
+    "html/select": 1,
     "html/obsolete": 1,
-    "html/infrastructure": 1,
-    "html/select": 1
+    "html/the-xhtml-syntax": 1
    }
   },
   "queued": {
@@ -2848,7 +2849,7 @@
    "tentative": 4
   },
   "BUCKET-markup-infra-b": {
-   "state": "deferred",
+   "state": "reserved",
    "in_scope_pages": 17,
    "out_of_scope_pages": 0,
    "pages": 17,
