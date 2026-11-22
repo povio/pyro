@@ -1,0 +1,4266 @@
+{
+ "original": {
+  "strictBefore": 0,
+  "strictAfter": 0,
+  "gains": 168,
+  "losses": 0,
+  "changes": [
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [auto] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (-0.25) should be [50px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (0.75) should be [250px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (1.25) should be [350px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [auto] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [auto] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [auto] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [auto] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [auto] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [auto] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [auto] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [auto] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (-0.25) should be [50px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (0.75) should be [250px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (1.25) should be [350px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [auto] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [auto] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [auto] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [auto] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [auto] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [auto] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [auto] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [auto] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [auto] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   }
+  ]
+ },
+ "45cbd3f26": {
+  "strictBefore": 0,
+  "strictAfter": 0,
+  "gains": 136,
+  "losses": 0,
+  "changes": [
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (-0.25) should be [50px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (0.75) should be [250px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (1.25) should be [350px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [max-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [min-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (-0.25) should be [50px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (0.75) should be [250px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [calc-size(calc-size(min-content, size / 2), size * 2)] to [calc-size(calc-size(any, 150px), size * 2)] at (1.25) should be [350px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [max-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [min-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   }
+  ]
+ },
+ "0b6f8dde5": {
+  "strictBefore": 0,
+  "strictAfter": 0,
+  "gains": 96,
+  "losses": 0,
+  "changes": [
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [fit-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(50px, size)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [fit-content] to [calc-size(any, 50px)] at (1.1) should be [45.00000000000001px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   }
+  ]
+ },
+ "f2b0c8d9a": {
+  "strictBefore": 0,
+  "strictAfter": 0,
+  "gains": 80,
+  "losses": 0,
+  "changes": [
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(50px, size)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <height> from [stretch] to [calc-size(any, 50px)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(50px, size)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [362.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (0) should be [300px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-height-interpolation.html",
+    "name": "CSS Transitions: property <height> from [stretch] to [calc-size(any, 50px)] at (1.1) should be [25.000000000000007px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [stretch] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(50px, size)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (-0.25) should be [237.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (0) should be [200px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (0.75) should be [87.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [stretch] to [calc-size(any, 50px)] at (1.25) should be [12.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   }
+  ]
+ },
+ "ef0b513e6": {
+  "strictBefore": 0,
+  "strictAfter": 0,
+  "gains": 48,
+  "losses": 0,
+  "changes": [
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions with transition: all: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [fit-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [max-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(50px, size)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (-0.25) should be [112.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0) should be [100px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (0.75) should be [62.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   },
+   {
+    "url": "css/css-values/calc-size/animation/calc-size-width-interpolation.html",
+    "name": "CSS Transitions: property <width> from [min-content] to [calc-size(any, 50px)] at (1.25) should be [37.5px]",
+    "occurrence": 1,
+    "before": "Fail",
+    "after": "Pass",
+    "signedChrome158": "Pass"
+   }
+  ]
+ }
+}
