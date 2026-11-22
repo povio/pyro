@@ -458,6 +458,61 @@ fn format_selected(page: &PageDom, dom: &mut Dom, host: NodeId, node: NodeId, ra
     wrap(dom, node, fmt).map(|_| ())
 }
 
+/// A color already rendered by a FONT or SPAN is still an editable
+/// declaration. Reapplying foreColor rewrites that selected run in the
+/// document's current output mode.
+fn foreground_carrier(dom: &Dom, node: NodeId, host: NodeId) -> Option<NodeId> {
+    let parent = dom.parent_element(node).ok()??;
+    if parent == host || !dom.element(parent).ok()?.is_html() { return None; }
+    let name = editing::local(dom, parent);
+    if !matches!(name.as_str(), "font" | "span") { return None; }
+    let style = DeclarationBlock::parse(dom.get_attribute(parent, "style").ok()?.unwrap_or(""));
+    (name == "font" && dom.get_attribute(parent, "color").ok()?.is_some() || !style.value("color").is_empty())
+        .then_some(parent)
+}
+
+fn color_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &Format, previous: Option<NodeId>, single: bool) -> Option<NodeId> {
+    let doc = dom.node_document(text).ok()?;
+    let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
+    let mut run = text;
+    if let Some(carrier) = foreground_carrier(dom, text, host) {
+        let outer = dom.parent_element(carrier).ok()??;
+        let mut points = [(text, 0), (text, editing::len(dom, text))];
+        let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
+        super::alignment::split_edge(dom, outer, text, true, &mut points)?;
+        let name = editing::local(dom, middle);
+        if name == "font" { dom.remove_attribute(middle, "color").ok()?; }
+        let mut style = DeclarationBlock::parse(dom.get_attribute(middle, "style").ok()?.unwrap_or(""));
+        if style.remove("color") {
+            if style.is_empty() { dom.remove_attribute(middle, "style").ok()?; }
+            else { dom.set_attribute(middle, "style", &style.css_text()).ok()?; }
+        }
+        if dom.attributes(middle).ok()?.is_empty() {
+            super::indentation::unwrap(dom, middle, &mut points)?;
+        } else {
+            run = middle;
+        }
+    }
+    let parent = dom.parent_element(run).ok()??;
+    if let Some(prev) = previous {
+        if dom.next_sibling(prev).ok()? == Some(run) {
+            dom.append_child(prev, run).ok()?;
+            return Some(prev);
+        }
+    }
+    if equivalent(fmt, &effective(page, dom, Kind::Foreground, parent)) { return None; }
+    if single && run != text && (legacy.is_none() || editing::local(dom, run) == "font") {
+        apply_to(dom, run, fmt, legacy);
+        // A carrier with other attributes belongs only to its original text.
+        return None;
+    }
+    let el = dom.create_element(doc, if legacy.is_some() { "font" } else { "span" }).ok()?;
+    apply_to(dom, el, fmt, legacy);
+    dom.insert_before(parent, el, Some(run)).ok()?;
+    dom.append_child(el, run).ok()?;
+    Some(el)
+}
+
 pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -> bool {
     let Some(fmt) = Format::parse(kind, value) else { return false };
     let Some((start, end)) = editing::selection_range(page) else { return false };
@@ -474,7 +529,11 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
         let dom = page.dom.borrow();
         nodes.iter().map(|&n| !equivalent(&fmt, &effective(page, &dom, kind, n))).collect()
     };
-    if !needs.contains(&true) {
+    let rewrite_color = kind == Kind::Foreground && {
+        let dom = page.dom.borrow();
+        nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| foreground_carrier(&dom, n, host).is_some())
+    };
+    if !rewrite_color && !needs.contains(&true) {
         return true;
     }
     super::record_host_edit(page, host, kind.input_type());
@@ -492,8 +551,12 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
         }
     }
     let mut changed = false;
+    let mut previous = None;
     for (&n, needs_format) in nodes.iter().zip(needs) {
-        if needs_format {
+        if rewrite_color {
+            previous = color_run(page, &mut dom, host, n, &fmt, previous, nodes.len() == 1);
+            changed = true;
+        } else if needs_format {
             if kind == Kind::Background && pyro_dom::color_well::is_fully_transparent(&fmt.css) {
                 changed |= clear_highlight(page, &mut dom, n);
             } else {
