@@ -588,13 +588,8 @@ pub(super) struct ControlLine {
 }
 
 impl ControlLine {
-    pub(super) fn from_select_edge(page: &PageDom, dom: &Dom, host: NodeId, anchor: Point, focus: Point) -> Option<Self> {
-        let control = anchor.0;
-        if anchor.1 != 0 || !html_select(dom, control) || control == focus.0
-            || !dom.contains(control, focus.0).ok()? || dom.parent(control).ok()? != Some(host)
-        {
-            return None;
-        }
+    pub(super) fn before_select(page: &PageDom, dom: &Dom, host: NodeId, control: NodeId) -> Option<Self> {
+        if dom.parent(control).ok()? != Some(host) || editing_host(dom, control) != Some(host) { return None; }
         let destination = dom.prev_sibling(control).ok()??;
         if !editable_paragraph(page, dom, destination, host) { return None; }
         let caret = deep_backward(dom, (destination, len(dom, destination)));

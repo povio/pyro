@@ -604,8 +604,9 @@ fn delete_range_with_merging(
         .then(|| dom.child_at(start.0, start.1).ok().flatten()).flatten();
     if let Some(child) = selected_child.filter(|&el| html_select(dom, el) && editing_host(dom, el) == Some(host)) {
         let _ = dom.remove_child(start.0, child);
+        if let Some(previous) = text_before_control(dom, host, start) { return previous; }
         let next = deep_forward(dom, start);
-        return if editing_host(dom, next.0) == Some(host) && is_text(dom, next.0) {
+        return if editing_host(dom, next.0) == Some(host) && is_text(dom, next.0) && !inside_select(dom, next.0) {
             next
         } else {
             start
@@ -737,6 +738,9 @@ fn insert_at_point(dom: &mut Dom, (n, off): Point, text: &str, replace_placehold
 /// A DOM selection can be inside a void element. Place typed text at its
 /// editable parent boundary, retaining preceding inline formatting if possible.
 fn typing_point(page: &PageDom, dom: &Dom, host: NodeId, caret: Point) -> Option<Point> {
+    if dom.child_at(caret.0, caret.1).ok().flatten().is_some_and(|n| html_select(dom, n)) {
+        return Some(text_before_control(dom, host, caret).unwrap_or(caret));
+    }
     let Ok(element) = dom.element(caret.0) else { return Some(insertion_point(dom, caret)) };
     if !element.is_html() || !pyro_dom::serialize::is_void(element.local_name()) {
         return Some(insertion_point(dom, caret));
@@ -839,6 +843,11 @@ fn link_typing_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) -> P
     (parent, index + u32::from(last))
 }
 
+fn text_before_control(dom: &Dom, host: NodeId, edge: Point) -> Option<Point> {
+    let previous = dom.child_at(edge.0, edge.1.checked_sub(1)?).ok()??;
+    (is_text(dom, previous) && editing_host(dom, previous) == Some(host)).then(|| (previous, len(dom, previous)))
+}
+
 /// DOM endpoints below a select do not expose a rendered selection direction.
 pub(crate) fn inside_select(dom: &Dom, mut node: NodeId) -> bool {
     while let Ok(Some(parent)) = dom.parent_element(node) {
@@ -868,6 +877,13 @@ fn select_edit_range(page: &PageDom, host: NodeId, start: Point, end: Point) -> 
         let parent = dom.parent(start.0).ok()??;
         let index = dom.index_in_parent(start.0).ok()?;
         return Some(((parent, index), (parent, index + 1)));
+    }
+    if start.0 != host && html_select(dom, start.0) && start.1 == 0 && start.0 != end.0
+        && selection(page).is_some_and(|(anchor, _)| anchor == start)
+        && dom.contains(start.0, end.0).ok()?
+    {
+        let outside = (dom.parent(start.0).ok()??, dom.index_in_parent(start.0).ok()?);
+        return Some((outside, outside));
     }
     if in_control(start.0) || selection(page).is_some_and(|(anchor, _)| inside_select(dom, anchor.0)) { return None; }
     Some((start, if in_control(end.0) { start } else { end }))
@@ -970,19 +986,28 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
         let Some(host) = current_owner else { return };
         (host, start, end)
     };
-    if backward && start != end {
-        let plan = selection(page).and_then(|(anchor, focus)| {
-            paragraph_join::ControlLine::from_select_edge(page, &page.dom.borrow(), host, anchor, focus)
-        });
-        if let Some(plan) = plan {
-            apply_edit(page, host, input_type, None, None, |page| {
-                let caret = plan.apply(&mut page.dom.borrow_mut());
-                set_selection(page, caret, caret);
-            });
-            return;
+    let Some((mut start, mut end)) = select_edit_range(page, host, start, end) else { return };
+    let control = (start == end).then(|| page.dom.borrow().child_at(start.0, start.1).ok().flatten()).flatten()
+        .filter(|&node| html_select(&page.dom.borrow(), node));
+    if let Some(control) = control {
+        if !backward {
+            end.1 += 1;
+        } else {
+            let plan = paragraph_join::ControlLine::before_select(page, &page.dom.borrow(), host, control);
+            if let Some(plan) = plan {
+                apply_edit(page, host, input_type, None, None, |page| {
+                    let caret = plan.apply(&mut page.dom.borrow_mut());
+                    set_selection(page, caret, caret);
+                });
+                return;
+            }
+            // A locked predecessor or the beginning of the host has no
+            // editable character to remove. Keep the control and its options.
+            let Some(previous) = text_before_control(&page.dom.borrow(), host, start) else { return };
+            start = previous;
+            end = previous;
         }
     }
-    let Some((start, end)) = select_edit_range(page, host, start, end) else { return };
     let child_line = child_line::Deletion::plan(page, &page.dom.borrow(), host, start, end, backward);
     let (start, end, span) = if let Some(plan) = &child_line {
         (start, end, Some(plan.range))
