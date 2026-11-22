@@ -4853,6 +4853,13 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
         }
         info
     };
+    // A document without a browsing context (createHTMLDocument, DOMParser) has scripting
+    // disabled: its scripts are already started and never run, even moved into a document
+    // that has one (html/semantics/scripting-1/the-script-element/execution-timing/120.html).
+    if crate::custom::document_page(page, doc).is_none() {
+        let _ = page.dom.borrow_mut().mark_script_started(node);
+        return Ok(());
+    }
     match info.kind {
         ScriptKind::Classic if !info.nomodule && info.src.is_none() => {}
         ScriptKind::Classic if !info.nomodule => {
