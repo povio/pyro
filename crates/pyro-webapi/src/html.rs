@@ -5064,9 +5064,13 @@ fn writes_blocked(page: &PageDom, doc: NodeId) -> bool {
 pub(crate) fn document_open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
     if a.len() >= 3 {
-        let open = s.global().get_atom("open")?;
-        let open = open.as_object().ok_or_else(|| JsError::Type("window.open is not a function".into()))?;
-        return open.call(None, &[a.get(0), a.get(1), a.get(2)]);
+        // HTML `document.open(url, name, features)`: the window open steps of the document's
+        // window (not whatever a page script put at `window.open`); InvalidAccessError for a
+        // document without one.
+        if n.id != page.document() || !page.is_fully_active() {
+            return Err(JsError::dom("InvalidAccessError", "The document has no window object."));
+        }
+        return crate::window::window_open(s, page, &a);
     }
     html_document(page, n.id)?;
     crate::custom::check_dynamic_markup(page, n.id)?;

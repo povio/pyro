@@ -1020,7 +1020,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 /// embedder's `target_window` hook) comes back the same way. The popup's
 /// session storage is copied from this document's now. `_self` navigates this
 /// document.
-fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<Value<'s>> {
+pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<Value<'s>> {
     let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
     let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
     let features = crate::window_features::WindowFeatures::parse(&crate::util::opt_dom_string(a.get(2))?.unwrap_or_default());
