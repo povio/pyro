@@ -1,0 +1,33 @@
+streams/readable-byte-streams/general.any.js parent 80/101 cand 101/101  []
+  GAIN ReadableStream with byte source: autoAllocateChunkSize
+  GAIN ReadableStream with byte source: Mix of auto allocate and BYOB
+  GAIN ReadableStream with byte source: read(view), then respondWithNewView() with a transferred ArrayBuffer
+  GAIN ReadableStream with byte source: enqueue() 1 byte, getReader(), then read(view) with Uint16Array
+  GAIN ReadableStream with byte source: enqueue() 3 byte, getReader(), then read(view) with 2-element Uint16Array
+  GAIN ReadableStream with byte source: read(view) with Uint32Array, then fill it by multiple respond() calls
+  GAIN ReadableStream with byte source: read(view) with Uint32Array, then fill it by multiple enqueue() calls
+  GAIN ReadableStream with byte source: Multiple read(view), close() and respond()
+  GAIN ReadableStream with byte source: respondWithNewView() with a transferred non-zero-length view (in the readable state)
+  GAIN ReadableStream with byte source: enqueue() discards auto-allocated BYOB request
+  GAIN ReadableStream with byte source: releaseLock() with pending read(view), read(view) on second reader, respond()
+  GAIN ReadableStream with byte source: releaseLock() with pending read(view), read(view) on second reader with 1 element Uint16Array, respond(1)
+  GAIN ReadableStream with byte source: releaseLock() with pending read(view), read(view) on second reader with 2 element Uint8Array, respond(3)
+  GAIN ReadableStream with byte source: releaseLock() with pending read(view), read(view) on second reader, respondWithNewView()
+  GAIN ReadableStream with byte source: releaseLock() with pending read(view), read(view) on second reader, enqueue()
+  GAIN ReadableStream with byte source: releaseLock() with pending read(view), read(view) on second reader, close(), respond(0)
+  GAIN ReadableStream with byte source: autoAllocateChunkSize, releaseLock() with pending read(), read() on second reader, respond()
+  GAIN ReadableStream with byte source: autoAllocateChunkSize, releaseLock() with pending read(), read(view) on second reader, respond()
+  GAIN ReadableStream with byte source: read(view) with 1 element Uint16Array, respond(1), releaseLock(), read(view) on second reader with 1 element Uint16Array, respond(1)
+  GAIN ReadableStream with byte source: read(view) with 1 element Uint16Array, respond(1), releaseLock(), read() on second reader, enqueue()
+  GAIN ReadableStream with byte source: autoAllocateChunkSize, read(), respondWithNewView()
+streams/readable-byte-streams/read-min.any.js parent 15/24 cand 23/24  []
+  GAIN ReadableStream with byte source: read({ min }), then read()
+  GAIN ReadableStream with byte source: read({ min }) with a DataView
+  GAIN ReadableStream with byte source: enqueue(), then read({ min })
+  GAIN ReadableStream with byte source: read({ min: 3 }) on a 3-byte Uint8Array, then multiple enqueue() up to 3 bytes
+  GAIN ReadableStream with byte source: read({ min: 3 }) on a 5-byte Uint8Array, then multiple enqueue() up to 3 bytes
+  GAIN ReadableStream with byte source: read({ min: 3 }) on a 5-byte Uint8Array, then multiple enqueue() up to 4 bytes
+  GAIN ReadableStream with byte source: read({ min }), then respondWithNewView() with a transferred ArrayBuffer
+  GAIN ReadableStream with byte source: read({ min }) when closed before view is filled
+streams/readable-byte-streams/tee.any.js parent 29/40 cand 30/40  []
+  GAIN ReadableStream teeing with byte source: reading an array with a byte offset should clone correctly
