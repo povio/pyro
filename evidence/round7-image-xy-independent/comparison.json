@@ -1,0 +1,1091 @@
+{
+  "wpt": [
+    {
+      "url": "css/cssom-view/cssom-view-img-attributes-001.html",
+      "name": "test x with display false",
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "css/cssom-view/cssom-view-img-attributes-001.html",
+      "name": "test y with display false",
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "css/cssom-view/cssom-view-img-attributes-001.html",
+      "name": "test x with display true",
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "css/cssom-view/cssom-view-img-attributes-001.html",
+      "name": "test y with display true",
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "css/cssom-view/image-x-y-zoom.html",
+      "name": "x and y properties for image elements with css zoom",
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "css/cssom-view/image-x-y-zoom.html",
+      "name": "x and y properties for image elements with css zoom 1",
+      "parent": "Fail",
+      "candidate": "Fail",
+      "chrome": "Pass"
+    }
+  ],
+  "fields": [
+    {
+      "stage": "initial",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 123,
+      "chrome": 123
+    },
+    {
+      "stage": "initial",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 461,
+      "chrome": 461
+    },
+    {
+      "stage": "initial",
+      "object": "image",
+      "field": "offsetLeft",
+      "parent": 24,
+      "candidate": 24,
+      "chrome": 24
+    },
+    {
+      "stage": "initial",
+      "object": "image",
+      "field": "offsetTop",
+      "parent": 72,
+      "candidate": 72,
+      "chrome": 72
+    },
+    {
+      "stage": "initial",
+      "object": "image",
+      "field": "rectX",
+      "parent": 139.75,
+      "candidate": 139.75,
+      "chrome": 139.75
+    },
+    {
+      "stage": "initial",
+      "object": "image",
+      "field": "rectY",
+      "parent": 473.75,
+      "candidate": 473.75,
+      "chrome": 473.75
+    },
+    {
+      "stage": "initial",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "initial",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "initial",
+      "object": "fixed",
+      "field": "offsetLeft",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "initial",
+      "object": "fixed",
+      "field": "offsetTop",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "initial",
+      "object": "fixed",
+      "field": "rectX",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "initial",
+      "object": "fixed",
+      "field": "rectY",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "initial",
+      "object": "scroll",
+      "field": 0,
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "initial",
+      "object": "scroll",
+      "field": 1,
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "initial",
+      "object": "scroll",
+      "field": 2,
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "initial",
+      "object": "scroll",
+      "field": 3,
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "nested",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 110,
+      "chrome": 110
+    },
+    {
+      "stage": "nested",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 430,
+      "chrome": 430
+    },
+    {
+      "stage": "nested",
+      "object": "image",
+      "field": "offsetLeft",
+      "parent": 24,
+      "candidate": 24,
+      "chrome": 24
+    },
+    {
+      "stage": "nested",
+      "object": "image",
+      "field": "offsetTop",
+      "parent": 72,
+      "candidate": 72,
+      "chrome": 72
+    },
+    {
+      "stage": "nested",
+      "object": "image",
+      "field": "rectX",
+      "parent": 126.75,
+      "candidate": 126.75,
+      "chrome": 126.75
+    },
+    {
+      "stage": "nested",
+      "object": "image",
+      "field": "rectY",
+      "parent": 442.75,
+      "candidate": 442.75,
+      "chrome": 442.75
+    },
+    {
+      "stage": "nested",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "nested",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "nested",
+      "object": "fixed",
+      "field": "offsetLeft",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "nested",
+      "object": "fixed",
+      "field": "offsetTop",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "nested",
+      "object": "fixed",
+      "field": "rectX",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "nested",
+      "object": "fixed",
+      "field": "rectY",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "nested",
+      "object": "scroll",
+      "field": 0,
+      "parent": 13,
+      "candidate": 13,
+      "chrome": 13
+    },
+    {
+      "stage": "nested",
+      "object": "scroll",
+      "field": 1,
+      "parent": 31,
+      "candidate": 31,
+      "chrome": 31
+    },
+    {
+      "stage": "nested",
+      "object": "scroll",
+      "field": 2,
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "nested",
+      "object": "scroll",
+      "field": 3,
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "window",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 110,
+      "chrome": 80
+    },
+    {
+      "stage": "window",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 430,
+      "chrome": 230
+    },
+    {
+      "stage": "window",
+      "object": "image",
+      "field": "offsetLeft",
+      "parent": 24,
+      "candidate": 24,
+      "chrome": 24
+    },
+    {
+      "stage": "window",
+      "object": "image",
+      "field": "offsetTop",
+      "parent": 72,
+      "candidate": 72,
+      "chrome": 72
+    },
+    {
+      "stage": "window",
+      "object": "image",
+      "field": "rectX",
+      "parent": 96.75,
+      "candidate": 96.75,
+      "chrome": 96.75
+    },
+    {
+      "stage": "window",
+      "object": "image",
+      "field": "rectY",
+      "parent": 242.75,
+      "candidate": 242.75,
+      "chrome": 242.75
+    },
+    {
+      "stage": "window",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "window",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "window",
+      "object": "fixed",
+      "field": "offsetLeft",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "window",
+      "object": "fixed",
+      "field": "offsetTop",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "window",
+      "object": "fixed",
+      "field": "rectX",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "window",
+      "object": "fixed",
+      "field": "rectY",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "window",
+      "object": "scroll",
+      "field": 0,
+      "parent": 13,
+      "candidate": 13,
+      "chrome": 13
+    },
+    {
+      "stage": "window",
+      "object": "scroll",
+      "field": 1,
+      "parent": 31,
+      "candidate": 31,
+      "chrome": 31
+    },
+    {
+      "stage": "window",
+      "object": "scroll",
+      "field": 2,
+      "parent": 30,
+      "candidate": 30,
+      "chrome": 30
+    },
+    {
+      "stage": "window",
+      "object": "scroll",
+      "field": 3,
+      "parent": 200,
+      "candidate": 200,
+      "chrome": 200
+    },
+    {
+      "stage": "relayout",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 69,
+      "chrome": 39
+    },
+    {
+      "stage": "relayout",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 457,
+      "chrome": 257
+    },
+    {
+      "stage": "relayout",
+      "object": "image",
+      "field": "offsetLeft",
+      "parent": -18,
+      "candidate": -18,
+      "chrome": -18
+    },
+    {
+      "stage": "relayout",
+      "object": "image",
+      "field": "offsetTop",
+      "parent": 98,
+      "candidate": 98,
+      "chrome": 98
+    },
+    {
+      "stage": "relayout",
+      "object": "image",
+      "field": "rectX",
+      "parent": 55.25,
+      "candidate": 55.25,
+      "chrome": 55.25
+    },
+    {
+      "stage": "relayout",
+      "object": "image",
+      "field": "rectY",
+      "parent": 269.25,
+      "candidate": 269.25,
+      "chrome": 269.25
+    },
+    {
+      "stage": "relayout",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "relayout",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "relayout",
+      "object": "fixed",
+      "field": "offsetLeft",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "relayout",
+      "object": "fixed",
+      "field": "offsetTop",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "relayout",
+      "object": "fixed",
+      "field": "rectX",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "relayout",
+      "object": "fixed",
+      "field": "rectY",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "relayout",
+      "object": "scroll",
+      "field": 0,
+      "parent": 13,
+      "candidate": 13,
+      "chrome": 13
+    },
+    {
+      "stage": "relayout",
+      "object": "scroll",
+      "field": 1,
+      "parent": 31,
+      "candidate": 31,
+      "chrome": 31
+    },
+    {
+      "stage": "relayout",
+      "object": "scroll",
+      "field": 2,
+      "parent": 30,
+      "candidate": 30,
+      "chrome": 30
+    },
+    {
+      "stage": "relayout",
+      "object": "scroll",
+      "field": 3,
+      "parent": 200,
+      "candidate": 200,
+      "chrome": 200
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 51,
+      "chrome": 21
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 555,
+      "chrome": 355
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "offsetLeft",
+      "parent": -35,
+      "candidate": -35,
+      "chrome": -18
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "offsetTop",
+      "parent": 197,
+      "candidate": 197,
+      "chrome": 98
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "rectX",
+      "parent": 53.5,
+      "candidate": 53.5,
+      "chrome": 53.5
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "rectY",
+      "parent": 379.5,
+      "candidate": 379.5,
+      "chrome": 379.5
+    },
+    {
+      "stage": "zoom",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "zoom",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "zoom",
+      "object": "fixed",
+      "field": "offsetLeft",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "zoom",
+      "object": "fixed",
+      "field": "offsetTop",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "zoom",
+      "object": "fixed",
+      "field": "rectX",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "zoom",
+      "object": "fixed",
+      "field": "rectY",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "zoom",
+      "object": "scroll",
+      "field": 0,
+      "parent": 13,
+      "candidate": 13,
+      "chrome": 13
+    },
+    {
+      "stage": "zoom",
+      "object": "scroll",
+      "field": 1,
+      "parent": 31,
+      "candidate": 31,
+      "chrome": 31
+    },
+    {
+      "stage": "zoom",
+      "object": "scroll",
+      "field": 2,
+      "parent": 30,
+      "candidate": 30,
+      "chrome": 30
+    },
+    {
+      "stage": "zoom",
+      "object": "scroll",
+      "field": 3,
+      "parent": 200,
+      "candidate": 200,
+      "chrome": 200
+    },
+    {
+      "stage": "hidden",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "hidden",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "hidden",
+      "object": "image",
+      "field": "offsetLeft",
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "hidden",
+      "object": "image",
+      "field": "offsetTop",
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "hidden",
+      "object": "image",
+      "field": "rectX",
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "hidden",
+      "object": "image",
+      "field": "rectY",
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "hidden",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "hidden",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "hidden",
+      "object": "fixed",
+      "field": "offsetLeft",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "hidden",
+      "object": "fixed",
+      "field": "offsetTop",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "hidden",
+      "object": "fixed",
+      "field": "rectX",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "hidden",
+      "object": "fixed",
+      "field": "rectY",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "hidden",
+      "object": "scroll",
+      "field": 0,
+      "parent": 13,
+      "candidate": 13,
+      "chrome": 13
+    },
+    {
+      "stage": "hidden",
+      "object": "scroll",
+      "field": 1,
+      "parent": 31,
+      "candidate": 31,
+      "chrome": 31
+    },
+    {
+      "stage": "hidden",
+      "object": "scroll",
+      "field": 2,
+      "parent": 30,
+      "candidate": 30,
+      "chrome": 30
+    },
+    {
+      "stage": "hidden",
+      "object": "scroll",
+      "field": 3,
+      "parent": 200,
+      "candidate": 200,
+      "chrome": 200
+    },
+    {
+      "stage": "detached",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "detached",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "detached",
+      "object": "image",
+      "field": "offsetLeft",
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "detached",
+      "object": "image",
+      "field": "offsetTop",
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "detached",
+      "object": "image",
+      "field": "rectX",
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "detached",
+      "object": "image",
+      "field": "rectY",
+      "parent": 0,
+      "candidate": 0,
+      "chrome": 0
+    },
+    {
+      "stage": "detached",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "detached",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "detached",
+      "object": "fixed",
+      "field": "offsetLeft",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "detached",
+      "object": "fixed",
+      "field": "offsetTop",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "detached",
+      "object": "fixed",
+      "field": "rectX",
+      "parent": 11,
+      "candidate": 11,
+      "chrome": 11
+    },
+    {
+      "stage": "detached",
+      "object": "fixed",
+      "field": "rectY",
+      "parent": 19,
+      "candidate": 19,
+      "chrome": 19
+    },
+    {
+      "stage": "detached",
+      "object": "scroll",
+      "field": 0,
+      "parent": 13,
+      "candidate": 13,
+      "chrome": 13
+    },
+    {
+      "stage": "detached",
+      "object": "scroll",
+      "field": 1,
+      "parent": 31,
+      "candidate": 31,
+      "chrome": 31
+    },
+    {
+      "stage": "detached",
+      "object": "scroll",
+      "field": 2,
+      "parent": 30,
+      "candidate": 30,
+      "chrome": 30
+    },
+    {
+      "stage": "detached",
+      "object": "scroll",
+      "field": 3,
+      "parent": 200,
+      "candidate": 200,
+      "chrome": 200
+    }
+  ],
+  "lostParentMatches": [],
+  "candidateDifferences": [
+    {
+      "stage": "window",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 110,
+      "chrome": 80
+    },
+    {
+      "stage": "window",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 430,
+      "chrome": 230
+    },
+    {
+      "stage": "window",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "window",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "relayout",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 69,
+      "chrome": 39
+    },
+    {
+      "stage": "relayout",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 457,
+      "chrome": 257
+    },
+    {
+      "stage": "relayout",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "relayout",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "x",
+      "parent": null,
+      "candidate": 51,
+      "chrome": 21
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "y",
+      "parent": null,
+      "candidate": 555,
+      "chrome": 355
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "offsetLeft",
+      "parent": -35,
+      "candidate": -35,
+      "chrome": -18
+    },
+    {
+      "stage": "zoom",
+      "object": "image",
+      "field": "offsetTop",
+      "parent": 197,
+      "candidate": 197,
+      "chrome": 98
+    },
+    {
+      "stage": "zoom",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "zoom",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "hidden",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "hidden",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    },
+    {
+      "stage": "detached",
+      "object": "fixed",
+      "field": "x",
+      "parent": null,
+      "candidate": 41,
+      "chrome": 11
+    },
+    {
+      "stage": "detached",
+      "object": "fixed",
+      "field": "y",
+      "parent": null,
+      "candidate": 219,
+      "chrome": 19
+    }
+  ]
+}
