@@ -2023,11 +2023,17 @@ impl Browser {
         opts: NavigateOpts,
         history: HistoryHandling,
     ) -> Result<LoaderId, JsError> {
-        // HTML "navigate": the document being left is asked first
-        // (`beforeunload` at its Window). The navigation goes on whatever its
-        // listeners answer (`pyro_webapi::lifecycle::before_unload`).
-        if let Some(leaving) = self.doc(page).and_then(|doc| doc.main_frame.page_dom.clone()) {
-            pyro_webapi::lifecycle::before_unload(&leaving);
+        // HTML "navigate" ("checking if unloading is canceled"): the document being left and the
+        // documents of its descendant frames are asked first, in tree order (`beforeunload` at
+        // their Windows). The navigation goes on whatever their listeners answer
+        // (`pyro_webapi::lifecycle::before_unload`).
+        let own = self.doc(page).and_then(|doc| doc.main_frame.page_dom.clone());
+        let descendants = self.page(page.page).map(|p| p.frames.subtree_documents(page)).unwrap_or_default();
+        let leaving = own.iter().cloned().chain(
+            descendants.into_iter().filter(|d| !own.as_ref().is_some_and(|own| Rc::ptr_eq(own, d))),
+        );
+        for document in leaving {
+            pyro_webapi::lifecycle::before_unload(&document);
         }
         self.cancel_lazy_frame(page);
         // The container policy (`fullscreen`) is taken as the navigation begins: an `allowfullscreen`
