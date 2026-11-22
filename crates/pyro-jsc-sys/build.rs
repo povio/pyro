@@ -47,6 +47,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_custom_value)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_compile_strings)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_rejection_tracker)");
+    println!("cargo::rustc-check-cfg=cfg(pyro_jsc_refuse_delete)");
 
     if target_os == "linux" {
         let Some(dir) = source_jsc(&inputs, &["libJavaScriptCore.a"], &linux_cache, false) else {
@@ -149,6 +150,10 @@ fn link_static(lib: &Path) {
     // Patch 0036 (JSGlobalContextSetPromiseRejectionTracker), the same way.
     if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0036-promise-rejection-tracker.patch").is_file()) {
         println!("cargo:rustc-cfg=pyro_jsc_rejection_tracker");
+    }
+    // Patch 0039 (JSObjectRefuseDeleteProperty), the same way.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0039-refused-deletes.patch").is_file()) {
+        println!("cargo:rustc-cfg=pyro_jsc_refuse_delete");
     }
 }
 
