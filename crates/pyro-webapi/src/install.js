@@ -305,6 +305,22 @@
     const offset = apply(typed ? viewOffset : dataViewOffset, value, []);
     return new Uint8Array_(buffer, offset, apply(typed ? viewLength : dataViewLength, value, []));
   };
+  const atomicLoad = typeof Atomics === 'object' ? Atomics.load : undefined;
+  // Only private bytes may reach the native decoder's slice copy. A shared
+  // source is read through its Uint8Array, one byte at a time, after options
+  // conversion. Ordinary Uint8Array element reads are also tear-free.
+  const privateDecoderView = view => {
+    const buffer = apply(viewBuffer, view, []);
+    try {
+      apply(bufferLength, buffer, []);
+      return view;
+    } catch (_) {
+      const length = apply(viewLength, view, []);
+      const copy = new Uint8Array_(length);
+      for (let i = 0; i < length; i++) copy[i] = atomicLoad ? atomicLoad(view, i) : view[i];
+      return copy;
+    }
+  };
   const transferBuffer = ArrayBuffer.prototype.transfer, byteSet = Uint8Array_.prototype.set;
   const Set_ = Set, setAdd = Set.prototype.add, setHas = Set.prototype.has;
   const CloneException = DOMException;
@@ -376,7 +392,7 @@
 
   return {
     blobParts,
-    encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, chunkTransferList, copyChunkInput, copyChunkTo, webIdlNumber: value => +value },
+    encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, privateDecoderView, chunkTransferList, copyChunkInput, copyChunkTo, webIdlNumber: value => +value },
     mutationOptions,
     intersection: [intersectionThresholds, freeze],
     formData: [formDataPopulated, formDataIteratorPopulated],

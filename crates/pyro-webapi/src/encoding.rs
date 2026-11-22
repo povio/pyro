@@ -230,7 +230,10 @@ impl JsClass for TextDecoder {
                 None => true,
             };
             let bytes = match view {
-                Some(view) => buffer_source_bytes(s, view)?.expect("fixedByteView returns a Uint8Array"),
+                Some(view) => {
+                    let private = encoding_helper(s, "privateDecoderView")?.call(None, &[view])?;
+                    buffer_source_bytes(s, private)?.expect("privateDecoderView returns a Uint8Array")
+                }
                 None => Vec::new(),
             };
             let mut slot = d.decoder.borrow_mut();
