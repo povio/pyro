@@ -629,12 +629,44 @@ pub(crate) fn options_add<'s>(
     Ok(())
 }
 
+/// Setting `HTMLOptionsCollection.length` and `HTMLSelectElement.length`
+/// (HTML §2.7.3): a longer length appends options without attributes or
+/// children to the select, a shorter one removes the last options of the
+/// collection from their parents. As browsers, a length past 100,000 options
+/// does nothing.
+pub(crate) fn options_set_length(page: &Rc<PageDom>, select: NodeId, v: Value<'_>) -> JsResult<()> {
+    const MAX_OPTIONS: usize = 100_000;
+    let length = to_u32(v)? as usize;
+    let mut dom = page.dom.borrow_mut();
+    let options = dom.select_options(select).js()?;
+    if length > options.len() {
+        if length > MAX_OPTIONS {
+            return Ok(());
+        }
+        let doc = dom.node_document(select).js()?;
+        for _ in options.len()..length {
+            let option = dom.create_element_ns(doc, Some("http://www.w3.org/1999/xhtml"), "option").js()?;
+            dom.insert_before(select, option, None).js()?;
+        }
+    } else {
+        for &option in options[length..].iter().rev() {
+            dom.remove_node(option).js()?;
+        }
+    }
+    Ok(())
+}
+
 pub struct HtmlOptionsCollection;
 impl JsClass for HtmlOptionsCollection {
     const NAME: &'static str = "HTMLOptionsCollection";
     type Data = CollectionData;
     type Parent = HtmlCollection;
     fn define(def: &mut ClassDef<Self>) {
+        def.accessor(
+            "length",
+            |s, c| Ok(s.number(c.root.page.dom.borrow().select_options(c.root.id).js()?.len() as f64)),
+            |_s, c, v| options_set_length(&c.root.page, c.root.id, v),
+        );
         def.accessor(
             "selectedIndex",
             |s, c| Ok(s.number(c.root.page.dom.borrow().selected_index(c.root.id).js()? as f64)),

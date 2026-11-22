@@ -2631,7 +2631,11 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
     def.getter("selectedOptions", |s, n| {
         Ok(collections::collection(s, n.page(), n.id, CollectionKind::SelectedOptions)?.value())
     });
-    def.getter("length", |s, n| Ok(s.number(n.page().dom.borrow().select_options(n.id).js()?.len() as f64)));
+    def.accessor(
+        "length",
+        |s, n| Ok(s.number(n.page().dom.borrow().select_options(n.id).js()?.len() as f64)),
+        |_s, n, v| collections::options_set_length(n.page(), n.id, v),
+    );
     def.accessor(
         "selectedIndex",
         |s, n| Ok(s.number(n.page().dom.borrow().selected_index(n.id).js()? as f64)),
