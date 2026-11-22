@@ -2827,10 +2827,59 @@ enum Caret {
     Host(Point),
 }
 
+/// Flat text offsets cannot distinguish selecting a table from starting
+/// inside its first cell, or ending a cell from starting the next one.
+struct TableSelection {
+    path: Vec<u32>,
+    cell: Option<&'static str>,
+    anchor: u32,
+    focus: u32,
+}
+
+impl TableSelection {
+    fn capture(dom: &Dom, host: NodeId, anchor: Point, focus: Point) -> Option<Self> {
+        if anchor.0 != focus.0 || anchor.1 == focus.1 { return None; }
+        let mut node = anchor.0;
+        let start = anchor.1.min(focus.1);
+        let end = anchor.1.max(focus.1);
+        let cell = if start == 0 && end == editing::len(dom, node) && local_html(dom, node, "td") { Some("td") }
+            else if start == 0 && end == editing::len(dom, node) && local_html(dom, node, "th") { Some("th") }
+            else if end - start == 1 && dom.child_at(node, start).ok()?.is_some_and(|n| local_html(dom, n, "table")) { None }
+            else { return None };
+        let mut path = Vec::new();
+        while node != host {
+            path.push(dom.index_in_parent(node).ok()?);
+            node = dom.parent(node).ok()??;
+        }
+        path.reverse();
+        Some(Self { path, cell, anchor: anchor.1, focus: focus.1 })
+    }
+
+    fn resolve(&self, dom: &Dom, host: NodeId) -> Option<(Point, Point)> {
+        let mut node = host;
+        for &index in &self.path { node = dom.child_at(node, index).ok()??; }
+        if editing::editing_host(dom, node) != Some(host) { return None; }
+        let start = self.anchor.min(self.focus);
+        let end = self.anchor.max(self.focus);
+        let count = dom.child_count(node).ok()?;
+        if end > count { return None; }
+        let (a, b) = if let Some(tag) = self.cell {
+            if !local_html(dom, node, tag) || start != 0 || end != count { return None; }
+            (editing::deep_forward(dom, (node, start)), editing::deep_backward(dom, (node, end)))
+        } else {
+            if end - start != 1 || !local_html(dom, dom.child_at(node, start).ok()??, "table") { return None; }
+            ((node, start), (node, end))
+        };
+        if editing::editing_host(dom, a.0) != Some(host) || editing::editing_host(dom, b.0) != Some(host)
+            || crate::range::compare_boundary_points_dom(dom, a, b) > 0 { return None; }
+        Some(if self.anchor < self.focus { (a, b) } else { (b, a) })
+    }
+}
+
 enum Saved {
     Control { value: String, selection: ControlSelection, opposite: Option<ControlSelection> },
     /// Saved anchor and focus offsets, in selection direction.
-    Host { html: String, selection: Option<(u32, u32)> },
+    Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection> },
 }
 
 struct Step {
@@ -2847,7 +2896,7 @@ impl Saved {
     fn bytes(&self) -> usize {
         match self {
             Saved::Control { value, .. } => value.len(),
-            Saved::Host { html, .. } => html.len(),
+            Saved::Host { html, table_selection, .. } => html.len() + table_selection.as_ref().map_or(0, |s| s.path.len() * size_of::<u32>()),
         }
     }
 }
@@ -2883,6 +2932,7 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
     }
     let html = dom.inner_html(target).ok()?;
     drop(dom);
+    let mut table_selection = None;
     let selection = editing::selection(page).and_then(|(anchor, focus)| {
         let dom = page.dom.borrow();
         let inside =
@@ -2891,10 +2941,11 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
         inside.then(|| {
             let flat = Flat::build(page, target);
             let dom = page.dom.borrow();
+            table_selection = TableSelection::capture(&dom, target, anchor, focus);
             (flat.pos_of(&dom, anchor), flat.pos_of(&dom, focus))
         })
     });
-    Some(Saved::Host { html, selection })
+    Some(Saved::Host { html, selection, table_selection })
 }
 
 fn caret(page: &PageDom, target: NodeId, control: bool) -> Option<Caret> {
@@ -2975,9 +3026,13 @@ fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
             }
             editing::queue_control_selectionchange(page, target);
         }
-        Saved::Host { html, selection } => {
+        Saved::Host { html, selection, table_selection } => {
             let ok = pyro_dom::parse::set_inner_html(&mut page.dom.borrow_mut(), target, &html).is_ok();
             if !ok {
+                return;
+            }
+            if let Some((anchor, focus)) = table_selection.and_then(|s| s.resolve(&page.dom.borrow(), target)) {
+                editing::set_selection(page, anchor, focus);
                 return;
             }
             let flat = Flat::build(page, target);
