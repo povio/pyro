@@ -1909,7 +1909,7 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
         let dom = page.dom.borrow();
         let doc = page.document();
         let current = dom.focused(doc).ok().flatten();
-        dom.sequential_focus_target(doc, current, backward, &|n| is_focusable_area(&layout, &dom, n))
+        dom.sequential_focus_target_with_layout(doc, current, backward, &|n| is_focusable_area(&layout, &dom, n), &layout)
     };
     if let Some(n) = next {
         focus_element(page, n);

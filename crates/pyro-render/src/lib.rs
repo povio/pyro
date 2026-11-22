@@ -2221,6 +2221,16 @@ impl Renderer {
         None
     }
 
+    /// Mirror only actual DOM owners; anonymous grid items have no focus target.
+    pub fn grid_item_starts(&self, page: u64, owner: u64) -> Vec<(u64, u16, u16)> {
+        let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
+        let items = mirror.node(owner).and_then(|id| mirror.doc.get_node(id)).and_then(|node| node.placed_grid_items());
+        items.into_iter().flatten().filter_map(|item| {
+            let key = mirror.key_of(blitz_dom::NodeId::from_u64(item.node.into()))?;
+            Some((key, item.row_start, item.column_start))
+        }).collect()
+    }
+
     pub fn css_animation_frames(&self, page: u64, key: u64, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
         let mirror = self.mirrors.get(&page)?;
         mirror.doc.css_animation_frames(mirror.node(key)?, name)

@@ -4622,7 +4622,7 @@ index 037a2d1c..aab051a4 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..90ed547e 100644
+index f0109c6e..87d1612c 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -5967,7 +5967,24 @@ index f0109c6e..90ed547e 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +2118,161 @@ impl DetailedGridItemsInfo {
+@@ -1425,6 +2089,8 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+ /// This matches the Chrome and Firefox's format as of 2nd Jan 2024.
+ #[derive(Debug, Clone, PartialEq)]
+ pub struct DetailedGridItemsInfo {
++    /// Layout node that generated this grid item.
++    pub node: NodeId,
+     /// row-start with 1-indexed grid line numbers
+     pub row_start: u16,
+     /// row-end with 1-indexed grid line numbers
+@@ -1447,6 +2113,7 @@ impl DetailedGridItemsInfo {
+         }
+ 
+         DetailedGridItemsInfo {
++            node: grid_item.node,
+             row_start: to_one_indexed_grid_line(grid_item.row_indexes.start),
+             row_end: to_one_indexed_grid_line(grid_item.row_indexes.end),
+             column_start: to_one_indexed_grid_line(grid_item.column_indexes.start),
+@@ -1454,3 +2121,161 @@ impl DetailedGridItemsInfo {
          }
      }
  }
