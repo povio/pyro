@@ -1,0 +1,25 @@
+const vm = require('node:vm'), fs = require('node:fs');
+const rate = 48000, frames = 1024, sec = frame => frame/rate;
+const tests=[];
+const set=(p,f,v)=>p.setValueAtTime(v,sec(f)), hold=(p,f)=>p.cancelAndHoldAtTime(sec(f));
+const ramp=(p,f,v,exp)=>p[exp?'exponentialRampToValueAtTime':'linearRampToValueAtTime'](v,sec(f));
+const cv=p=>p.setValueCurveAtTime([2,6,-2,4,0],sec(96),sec(512));
+const curve=f=>{if(f<96)return 1; const k=Math.min((f-96)/128,4), a=[2,6,-2,4,0], j=Math.floor(k);return a[j]+((a[j+1]??a[j])-a[j])*(k-j)};
+const cut=351.5;
+const test=(name,setup,expected)=>tests.push({name,setup,expected});
+test('uncut curve',cv,curve);
+test('curve cut with queued ramp',p=>{cv(p);ramp(p,900,7);hold(p,cut)},f=>curve(Math.min(f,cut)));
+test('new curve at cut',p=>{cv(p);hold(p,cut);p.setValueCurveAtTime([8,4],sec(cut),sec(64))},f=>f<cut?curve(f):8-4*Math.min(1,(f-cut)/64));
+test('overlap before cut rejected; later set accepted',p=>{cv(p);hold(p,cut);let error;try{set(p,350,9)}catch(e){error=e.name}if(error!=='NotSupportedError')throw Error(`overlap: ${error}`);set(p,352,9)},f=>f<352?curve(f):9);
+test('repeated earlier/same/later cut',p=>{cv(p);for(const t of [530,cut,cut,490])hold(p,t)},f=>curve(Math.min(f,cut)));
+for(const exp of [false,true]){const fn=f=>exp?2*4**(f/512):2+6*f/512;
+for(const t of [227.5,512])test(`${exp?'exp':'linear'} cut ${t}`,p=>{set(p,0,2);ramp(p,512,8,exp);set(p,600,13);hold(p,t)},f=>fn(Math.min(f,t)));
+test(`target held then ${exp?'exp':'linear'} ramp`,p=>{set(p,0,2);p.setTargetAtTime(6,sec(128),sec(64));hold(p,256);ramp(p,512,8,exp)},f=>{const v=6-4*Math.exp(-2);if(f<128)return 2;if(f<256)return 6-4*Math.exp(-(f-128)/64);const k=Math.min((f-256)/256,1);return exp?v*(8/v)**k:v+(8-v)*k});}
+test('new ramp from held curve',p=>{cv(p);hold(p,cut);ramp(p,600,10)},f=>f<cut?curve(f):curve(cut)+(10-curve(cut))*Math.min(1,(f-cut)/(600-cut)));
+test('nonbinary exact-cut reschedule',p=>{p.setValueCurveAtTime([0,1],sec(3),sec(96));hold(p,27);p.setValueAtTime(8,sec(27))},f=>f<3?1:f<27?(f-3)/96:8);
+test('one frame after nonbinary cut',p=>{p.setValueCurveAtTime([0,1],sec(3),sec(96));hold(p,27);set(p,28,8)},f=>f<3?1:f<28?Math.min(f-3,24)/96:8);
+test('exact SET retained',p=>{set(p,0,2);set(p,256,7);ramp(p,600,10);hold(p,256)},f=>f<256?2:7);
+test('idle hold on empty timeline',p=>{hold(p,256);ramp(p,512,5)},f=>1+4*Math.min(f,512)/512);
+test('idle hold after SET',p=>{set(p,64,2);set(p,600,12);hold(p,256);ramp(p,512,5)},f=>f<64?1:2+3*Math.min(f-64,448)/448);
+(async()=>{for(const file of process.argv.slice(2)){const api=vm.runInNewContext(fs.readFileSync(file,'utf8'),{EventTarget,Event,DOMException,queueMicrotask,setTimeout,performance,structuredClone})({activated:()=>true});let pass=0;
+for(const {name,setup,expected} of tests){try{const ctx=new api.OfflineAudioContext(1,frames,rate),src=ctx.createConstantSource();setup(src.offset);src.connect(ctx.destination);src.start();const data=(await ctx.startRendering()).getChannelData(0);let first,max=0;for(let f=0;f<frames;f++){const err=Math.abs(data[f]-expected(f));if(!(err<=2e-6)&&!first)first={f,got:data[f],want:expected(f)};max=Math.max(max,err)}if(first)throw Error(JSON.stringify({...first,max}));pass++;console.log('PASS',name)}catch(e){console.log('FAIL',name,e.name,e.message)}}console.log(file,pass+'/'+tests.length)}})();
