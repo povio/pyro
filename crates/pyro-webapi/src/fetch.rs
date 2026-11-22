@@ -822,7 +822,12 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let function = s.function("fetch", |s, _this, args| {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
-        match crate::streams::fetch_stream_body(s, args.get(0), args.get(1)) {
+        // streams.js `fetchBuffered` calls back with a boolean third argument and a body it
+        // has settled: that call does not take the stream path again.
+        let settled_body = args.get(2).is_boolean();
+        let streamed =
+            if settled_body { Ok(None) } else { crate::streams::fetch_stream_body(s, args.get(0), args.get(1)) };
+        match streamed {
             Ok(Some(sent)) => {
                 deferred.resolve(s, sent)?;
                 return Ok(promise);
@@ -840,8 +845,8 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 return Err(JsError::ContextDestroyed);
             }
             let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1))?;
-            // streams.js `fetchBuffered` passes `true` third: the body is a stream's bytes.
-            request.body_from_stream = request.body.is_some() && args.get(2).to_bool();
+            // streams.js `fetchBuffered` passes `true` third when the body is a stream's bytes.
+            request.body_from_stream = request.body.is_some() && settled_body && args.get(2).to_bool();
             // Init conversion can execute script, including embedder teardown.
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);

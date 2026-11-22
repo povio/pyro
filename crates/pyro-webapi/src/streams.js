@@ -2477,7 +2477,8 @@
       }
       if (!network) {
         copy.body = undefined;
-        return fetchFn(input, copy);
+        // `false`: no stream body; the call does not come back here for the Request's stream.
+        return fetchFn(input, copy, false);
       }
       let signal = copy.signal;
       if (signal === undefined && typeof input === 'object' && input !== null) signal = input.signal;
