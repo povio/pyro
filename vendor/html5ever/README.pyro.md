@@ -33,3 +33,22 @@ without changing the form element pointer. Outside templates, a fragment's
 nearest inclusive ancestor form still suppresses nested forms.
 
 An optional tree-builder hook reports an explicit HTML template end tag to a sink implementing content patching. It identifies the last open template after implied end tags. EOF stack unwinding leaves markers in place.
+
+## The change: options popped off the stack of open elements
+
+The HTML element popped off the stack of open elements steps of `<option>` run "maybe clone an option into
+selectedcontent" (WPT html/syntax/parsing `webkit02.dat`). Upstream calls the sink only after an explicit `</option>`
+(servo/html5ever#712), so an option closed by another option or by the end of the input never filled its
+`<selectedcontent>`.
+
+- `src/tree_builder/mod.rs`: `popped_off_stack` calls `TreeSink::maybe_clone_an_option_into_selectedcontent` for an
+  HTML option. `pop`, `remove_from_stack`, `pop_until`, `pop_until_current`, the EOF drain in `end` and every
+  truncation of the stack (`truncate_open_elems`: "any other end tag", adoption agency step 4, `<frameset>` in body)
+  report each element they take off, the current node first. The adoption agency's inner-loop removals (steps 13.5 and
+  13.6) remove rather than pop and do not report.
+- `src/tree_builder/rules.rs`: the `</option>` special case is gone; the end tag goes through "any other end tag" like
+  the specification's, and the pop reports it once.
+- The sink (`pyro-dom` `parse.rs` → `Dom::maybe_clone_option_into_selectedcontent`) does the cloning; `blitz-html`
+  keeps the trait's no-op.
+
+Tests: `crates/pyro-dom/tests/html_selectedcontent_parsing.rs`.

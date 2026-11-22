@@ -76,6 +76,9 @@ struct Sink<A: DomAccess> {
     /// contents go to. Such a template stays out of the tree and keeps its
     /// own fragment, so collecting it never takes the host's root along.
     declarative: RefCell<Vec<(u32, u32)>>,
+    /// This parser created a `<selectedcontent>`: until then a popped option
+    /// has none to fill, and the per-option select walk is skipped.
+    selectedcontent: Cell<bool>,
 }
 
 impl<A: DomAccess> Sink<A> {
@@ -98,6 +101,7 @@ impl<A: DomAccess> Sink<A> {
             quirks: Cell::new(None),
             pins: RefCell::new(vec![id]),
             declarative: RefCell::new(Vec::new()),
+            selectedcontent: Cell::new(false),
         }
     }
 
@@ -234,6 +238,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         // construction (`Sink::settle_custom`). Decided under the creation's
         // borrow: until a window defines a name, one set test per element.
         let template = flags.template;
+        if name.ns == markup5ever::ns!(html) && &*name.local == "selectedcontent" {
+            self.selectedcontent.set(true);
+        }
         let created = self.dom.with(|d| {
             // HTML "create an element for a token": the token's `is` attribute is the is value
             // of an HTML element.
@@ -368,6 +375,18 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             }
         }
         self.dom.with(|d| d.resources_element_popped(*node));
+    }
+    fn maybe_clone_an_option_into_selectedcontent(&self, option: &u32) {
+        if !self.selectedcontent.get() || self.stream_invalid() {
+            return;
+        }
+        let queued = self.dom.with(|d| {
+            d.maybe_clone_option_into_selectedcontent(*option);
+            d.custom_reactions_queued()
+        });
+        if queued {
+            self.run_custom_reactions();
+        }
     }
     fn get_template_contents(&self, target: &u32) -> u32 {
         if let Some(d) = self.declarative.borrow().iter().rev().find(|d| d.0 == *target) {

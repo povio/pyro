@@ -555,8 +555,10 @@ where
     }
 
     fn end(&self) {
-        for elem in self.open_elems.borrow_mut().drain(..).rev() {
+        let popped: Vec<Handle> = self.open_elems.borrow_mut().drain(..).rev().collect();
+        for elem in popped {
             self.sink.pop(&elem);
+            self.popped_off_stack(&elem);
         }
     }
 
@@ -789,7 +791,7 @@ where
 
             let Some((furthest_block_index, furthest_block)) = maybe_furthest_block else {
                 // 10.
-                self.open_elems.borrow_mut().truncate(fmt_elem_stack_index);
+                self.truncate_open_elems(fmt_elem_stack_index);
                 self.active_formatting.borrow_mut().remove(fmt_elem_index);
                 return;
             };
@@ -953,7 +955,32 @@ where
             .expect("no current element");
 
         self.sink.pop(&elem);
+        self.popped_off_stack(&elem);
         elem
+    }
+
+    /// The HTML element popped off the stack of open elements steps: an
+    /// `<option>` runs "maybe clone an option into selectedcontent". Every
+    /// way the tree builder takes elements off the stack reports here, so the
+    /// steps run for implicitly closed options and at EOF too
+    /// (servo/html5ever#712).
+    fn popped_off_stack(&self, elem: &Handle) {
+        if self.html_elem_named(elem, local_name!("option")) {
+            self.sink.maybe_clone_an_option_into_selectedcontent(elem);
+        }
+    }
+
+    /// Takes every element above `len` off the stack of open elements, the
+    /// current node first.
+    fn truncate_open_elems(&self, len: usize) {
+        let popped: Vec<Handle> = {
+            let mut open_elems = self.open_elems.borrow_mut();
+            let len = len.min(open_elems.len());
+            open_elems.drain(len..).rev().collect()
+        };
+        for elem in &popped {
+            self.popped_off_stack(elem);
+        }
     }
 
     fn remove_from_stack(&self, elem: &Handle) {
@@ -965,6 +992,7 @@ where
         if let Some(position) = position {
             self.open_elems.borrow_mut().remove(position);
             self.sink.pop(elem);
+            self.popped_off_stack(elem);
         }
     }
 
@@ -1195,7 +1223,10 @@ where
         TagSet: Fn(ExpandedName) -> bool,
     {
         while !self.current_node_in(&tag_set) {
-            self.open_elems.borrow_mut().pop();
+            let popped = self.open_elems.borrow_mut().pop();
+            if let Some(elem) = popped {
+                self.popped_off_stack(&elem);
+            }
         }
     }
 
@@ -1208,9 +1239,11 @@ where
         let mut n = 0;
         loop {
             n += 1;
-            match self.open_elems.borrow_mut().pop() {
+            let popped = self.open_elems.borrow_mut().pop();
+            match popped {
                 None => break,
                 Some(elem) => {
+                    self.popped_off_stack(&elem);
                     if pred(self.sink.elem_name(&elem).expanded()) {
                         break;
                     }
@@ -1610,7 +1643,7 @@ where
             // mis-nested tags
             self.unexpected(&tag);
         }
-        self.open_elems.borrow_mut().truncate(match_idx);
+        self.truncate_open_elems(match_idx);
     }
 
     fn handle_misnested_a_tags(&self, tag: &Tag) {

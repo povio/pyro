@@ -473,7 +473,7 @@ where
 
                     // FIXME: can we get here in the fragment case?
                     // What to do with the first element then?
-                    self.open_elems.borrow_mut().truncate(1);
+                    self.truncate_open_elems(1);
                     self.insert_element_for(tag);
                     self.mode.set(InsertionMode::InFrameset);
                     ProcessResult::Done
@@ -668,33 +668,6 @@ where
                     }
                     ProcessResult::Done
                 },
-                // FIXME: This branch does not exist like this in the specification, because it should run for
-                // implicitly closed option tags too. See https://github.com/servo/html5ever/issues/712.
-                Token::Tag(tag @ tag!(</option>)) => {
-                    let option_in_stack = self
-                        .open_elems
-                        .borrow()
-                        .iter()
-                        .find(|elem| self.html_elem_named(elem, local_name!("option")))
-                        .cloned();
-
-                    self.process_end_tag_in_body(tag);
-
-                    if let Some(option) = option_in_stack {
-                        if !self
-                            .open_elems
-                            .borrow()
-                            .iter()
-                            .any(|elem| self.sink.same_node(elem, &option))
-                        {
-                            self.sink
-                                .maybe_clone_an_option_into_selectedcontent(&option);
-                        }
-                    }
-
-                    ProcessResult::Done
-                },
-
                 Token::Tag(tag!(</p>)) => {
                     if !self.in_scope_named(button_scope, local_name!("p")) {
                         self.sink.parse_error(Borrowed("No <p> tag to close"));
@@ -1678,7 +1651,7 @@ where
                     }
 
                     if eq {
-                        self.open_elems.borrow_mut().truncate(stack_idx);
+                        self.truncate_open_elems(stack_idx);
                         return ProcessResult::Done;
                     }
 

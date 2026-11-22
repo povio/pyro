@@ -786,6 +786,81 @@ impl Dom {
             NIL
         }
     }
+    /// An option's "option element nearest ancestor select" (HTML): the
+    /// closest select ancestor, past at most one optgroup and no datalist,
+    /// hr or option.
+    fn option_nearest_ancestor_select(&self, opt: u32) -> u32 {
+        let mut optgroup = false;
+        let mut p = self.n(opt).parent;
+        while p != NIL {
+            match self.html_local(p).map(|l| &**l) {
+                Some("datalist" | "hr" | "option") => return NIL,
+                Some("optgroup") => {
+                    if optgroup {
+                        return NIL;
+                    }
+                    optgroup = true;
+                }
+                Some("select") => return p,
+                _ => {}
+            }
+            p = self.n(p).parent;
+        }
+        NIL
+    }
+    /// A select's "enabled selectedcontent" (HTML): none for a multiple
+    /// select, else its first selectedcontent descendant unless that one is
+    /// disabled, which it is inside a nested select.
+    fn enabled_selectedcontent(&self, select: u32) -> u32 {
+        if self.is_multiple(select) {
+            return NIL;
+        }
+        let mut cur = self.following_in(select, select);
+        while cur != NIL && self.html_local(cur).map(|l| &**l) != Some("selectedcontent") {
+            cur = self.following_in(cur, select);
+        }
+        if cur == NIL {
+            return NIL;
+        }
+        let mut p = self.n(cur).parent;
+        while p != select {
+            if p == NIL || self.html_local(p) == Some(&local_name!("select")) {
+                return NIL;
+            }
+            p = self.n(p).parent;
+        }
+        cur
+    }
+    /// "Maybe clone an option into selectedcontent" (HTML), which the HTML
+    /// parser runs whenever it pops an option off its stack of open
+    /// elements: a selected option of a select with an enabled
+    /// selectedcontent has its children cloned into that selectedcontent.
+    pub(crate) fn maybe_clone_option_into_selectedcontent(&mut self, opt: u32) {
+        if self.html_local(opt) != Some(&local_name!("option")) {
+            return;
+        }
+        let select = self.option_nearest_ancestor_select(opt);
+        if select == NIL || !self.option_selected_idx(opt) {
+            return;
+        }
+        let selectedcontent = self.enabled_selectedcontent(select);
+        if selectedcontent != NIL {
+            let _ = self.clone_selected_option_into(opt, selectedcontent);
+        }
+    }
+    /// "Clone selected option into select content": a fragment of deep
+    /// clones of the option's children replaces the selectedcontent's.
+    fn clone_selected_option_into(&mut self, opt: u32, selectedcontent: u32) -> DomResult<()> {
+        let doc = self.id_of(self.n(opt).owner_doc);
+        let fragment = self.create_fragment(doc)?;
+        let children: Vec<NodeId> = self.child_idx_iter(opt).map(|c| self.id_of(c)).collect();
+        for child in children {
+            let clone = self.clone_node(child, true, None)?;
+            self.append_child(fragment, clone)?;
+        }
+        let selectedcontent = self.id_of(selectedcontent);
+        self.replace_all(selectedcontent, Some(fragment))
+    }
     /// Options of a select (children and optgroup children), tree order.
     pub(crate) fn select_options_idx(&self, select: u32) -> Vec<u32> {
         let mut out = Vec::new();
