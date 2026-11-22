@@ -169,10 +169,14 @@ pub(super) fn change_selected(
     let [text] = selected.as_slice() else { return false };
     let Ok(Some(carrier)) = dom.parent_element(*text) else { return false };
     let name = editing::local(&dom, carrier);
-    if carrier == host || !matches!(name.as_str(), "s" | "u") { return false; }
+    if carrier == host || !matches!(name.as_str(), "s" | "u" | "span") { return false; }
     let style = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok().flatten().unwrap_or(""));
     let authored = style.value("text-decoration-line");
     if authored.is_empty() { return false; }
+    // CSS-mode toggles produce a SPAN with an explicit line longhand. A
+    // repeated command must remove only its target from that same line list.
+    if name == "span" && (!dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
+        || !Lines::parse(&authored).has(tag)) { return false; }
     let mut wanted = Lines::parse(&page.layout().computed_style_value(&dom, carrier, "text-decoration-line"));
     wanted.toggle(tag);
     let backward = editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
@@ -196,12 +200,23 @@ pub(super) fn change_selected(
         if css && wanted.underline { lines.push("underline"); }
         for line in authored.split_ascii_whitespace().filter(|v| matches!(*v, "overline" | "blink")) { lines.push(line); }
         if css && wanted.strike { lines.push("line-through"); }
+        let ua = match name.as_str() {
+            "s" => Lines { strike: true, ..Lines::default() },
+            "u" => Lines { underline: true, ..Lines::default() },
+            _ => Lines::default(),
+        };
+        if name != "span" && wanted == ua {
+            let _ = dom.set_attribute(middle, "style", &style.css_text());
+            drop(dom);
+            super::select_texts(page, &texts, backward);
+            return;
+        }
         if !lines.is_empty() { style.set("text-decoration-line", &lines.join(" "), false); }
         if style.is_empty() { let _ = dom.remove_attribute(middle, "style"); }
         else { let _ = dom.set_attribute(middle, "style", &style.css_text()); }
         if dom.attributes(middle).is_ok_and(|attrs| attrs.is_empty()) {
             super::indentation::unwrap(&mut dom, middle, &mut points);
-        } else {
+        } else if name != "span" {
             super::indentation::rename(&mut dom, middle, "span", &mut points);
         }
         if !css {
