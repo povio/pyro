@@ -11,7 +11,7 @@ test('decoded display aspect is applied before rotation', async () => {
   const realm = vm.createContext({EventTarget, DOMException, DOMRectReadOnly: class {}, EncodedVideoChunk});
   const factory = name => vm.runInContext(readFileSync(resolve(__dirname, '../../src', name), 'utf8'), realm);
   Object.assign(realm, factory('video_frame.js')({maxSide: 4096, maxArea: 4096 * 4096}));
-  const {VideoDecoder} = factory('video_decoder.js')({
+  const {VideoDecoder} = factory('video_decoder.js')(factory('decoder_queue.js'))({
     supports: () => true,
     isKeyChunk: () => true,
     postTask: setImmediate,
