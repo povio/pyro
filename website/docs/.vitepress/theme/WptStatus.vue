@@ -205,6 +205,14 @@ const chart = computed(() => {
         Separate release-candidate measurements appear in the
         <a :href="withBase('/reference/round-seven.html')">round seven report</a>.
       </p>
+      <details v-if="!props.path && kind === 'testharness'">
+        <summary>Why 6,507 URLs had no CI result at fc180f6c5</summary>
+        <p>Of the 6,507 missing baseline rows, separate measurements covered 5,648 non-CSS URLs and 489 CSS URLs.
+          Earlier runs covered another 249. The inspected archives contained no observation for the remaining 121.</p>
+        <p>Within those same 6,507 URLs, 4,318 were worker variants and 2,021 appeared on the earlier dashboard
+          before a baseline run lost shard 0. These counts overlap the categories above.
+          <a href="https://github.com/povio/pyro/tree/166a2be8c4d1e0b9ec4762d2a2b37df194e1cfbd/evidence/wpt-status-fc180f6c5">Per-URL audit and baseline history</a></p>
+      </details>
       <div class="stats">
         <div class="stat">
           <div class="big">{{ pct(counts[2], counts[0]) }}</div>
