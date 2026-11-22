@@ -409,6 +409,27 @@ impl<'a> FocusNavigation<'a> {
             && !self.is_slot(i)
             && !self.delegates_focus_idx(i)
             && area(self.id_of(i))
+            && self.radio_group_target(i, area)
+    }
+
+    /// A radio button in a group is reached by sequential navigation only as
+    /// its group's one stop (Chromium): the checked radio when it is a
+    /// focusable area, else the group's first radio that is, in tree order.
+    /// Other elements are not affected.
+    fn radio_group_target(&self, i: u32, area: &dyn Fn(NodeId) -> bool) -> bool {
+        let radio = self.html_local(i) == Some(&local_name!("input"))
+            && self.input_type_idx(i) == crate::forms::InputType::Radio;
+        if !radio {
+            return true;
+        }
+        let group = self.radio_group(i);
+        if group.len() <= 1 {
+            return true;
+        }
+        let focusable = |r: u32| r == i || area(self.id_of(r));
+        let checked = group.iter().copied().find(|&r| self.checkedness_idx(r)).filter(|&r| focusable(r));
+        let target = checked.or_else(|| group.iter().copied().find(|&r| focusable(r)));
+        target == Some(i)
     }
 
     fn enter_forward(&self, i: u32, area: &dyn Fn(NodeId) -> bool) -> Option<u32> {
