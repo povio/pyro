@@ -11,15 +11,19 @@
  "summary": {
   "historical292": {
    "currentDisposition": {
+    "Fail": 39,
+    "Pass": 50,
     "historicallyWithheld": 4,
-    "outsideRequestedShardSet": 288
+    "outsideRequestedShardSet": 199
    },
    "total": 292
   },
   "previous106": {
    "currentDisposition": {
+    "Fail": 16,
+    "Pass": 19,
     "newlyWithheld": 2,
-    "outsideRequestedShardSet": 104
+    "outsideRequestedShardSet": 69
    },
    "total": 106
   }

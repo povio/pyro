@@ -34,12 +34,16 @@ for name in ['native-events.jsonl','failures.jsonl']:
  f=w/'raw'/name
  if f.exists():
   (raw/name).write_text(''.join(l+'\n' for l in f.read_text().splitlines() if json.loads(l)['key'] in proven))
+for key in proven:
+ attempt=w/'infrastructure-attempts'/key
+ if attempt.is_dir():shutil.copytree(attempt,machine/'infrastructure-attempts'/key,dirs_exist_ok=True)
 for name in ['allocation.json','machine-provenance.json']:cp(w/name,machine/name)
 for name in ['github-artifact.json','github-run.json']:cp(w/'shipped'/name,out/name)
-for name in ['export.sh','release_identity.py','release-identity.json','publish.py']:cp(d/name,out/name)
+for name in ['export.sh','release_identity.py','release-identity.json','publish.py','directional.py']:cp(d/name,out/name)
 for name in ['aggregate.py','reference_index.py','tracked.py','wpt_ports.py']:cp(d/'exporter'/name,out/'exporter'/name)
 for f in snap.iterdir():
  if f.is_file():cp(f,out/'comparison'/f.name)
+subprocess.run([sys.executable,str(d/'directional.py'),str(snap),str(out/'asymmetric')],check=True)
 urls=summary['counts']['current']['pages'];assert urls==sum(counts.values())
 if n==160:assert urls==15072 and summary['requestedScopeComplete'] and not summary['fullCensusComplete']
 nms=summary['counts']['currentChrome'];v=summary['counts']

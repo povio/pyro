@@ -1550,12 +1550,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Pressing Enter when A[]B should cause \"insertLineBreak\" and shouldn't insert new paragraph: editingHost.innerHTML"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   147,
+   147
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Pressing Enter when A[]B should cause \"insertLineBreak\" and shouldn't insert new paragraph: editingHost.innerHTML",
    "cbdeb": [
@@ -1674,12 +1683,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"foo[<span style=\\\"font-weight: bold\\\">bar</span>]baz\" queryCommandState(\"stylewithcss\") after"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   842,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"foo[<span style=\\\"font-weight: bold\\\">bar</span>]baz\" queryCommandState(\"stylewithcss\") after",
    "cbdeb": [
@@ -1736,12 +1754,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"foo[<span style=\\\"font-weight: bold\\\">bar]</span>baz\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   842,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"foo[<span style=\\\"font-weight: bold\\\">bar]</span>baz\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -1860,12 +1887,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=font-weight:100>fo[o</span><span style=font-weight:200>b]ar</span>\" queryCommandState(\"stylewithcss\") after"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   41,
+   48
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=font-weight:100>fo[o</span><span style=font-weight:200>b]ar</span>\" queryCommandState(\"stylewithcss\") after",
    "cbdeb": [
@@ -1922,12 +1958,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"delete\",\"\"]] \"foo<span style=display:none>bar</span>[]baz\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   966,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"delete\",\"\"]] \"foo<span style=display:none>bar</span>[]baz\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -1984,12 +2029,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"delete\",\"\"]] \"<p style=color:blue>foo<p>[]bar\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   937,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"delete\",\"\"]] \"<p style=color:blue>foo<p>[]bar\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -2418,12 +2472,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"false\"],[\"fontname\",\"sans-serif\"]] \"[foo<pre>bar</pre>baz]\" queryCommandIndeterm(\"fontname\") after"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   984,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"false\"],[\"fontname\",\"sans-serif\"]] \"[foo<pre>bar</pre>baz]\" queryCommandIndeterm(\"fontname\") after",
    "cbdeb": [
@@ -2480,12 +2543,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"[foo<samp>bar</samp>baz]\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   984,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"[foo<samp>bar</samp>baz]\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -2542,12 +2614,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"fo[o<pre>b]ar</pre>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   222,
+   225
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"fo[o<pre>b]ar</pre>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -2604,12 +2685,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   987,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -2666,12 +2756,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   981,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -3100,12 +3199,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<pre>\"]] \"<div>[foobar]</div>\" queryCommandValue(\"defaultparagraphseparator\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   983,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected \"div\" but got \"p\"",
   "original": {
    "canonical": "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<pre>\"]] \"<div>[foobar]</div>\" queryCommandValue(\"defaultparagraphseparator\") before",
    "cbdeb": [
@@ -3162,12 +3270,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<div style=color:blue>[foo]</div>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   931,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<div style=color:blue>[foo]</div>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -3286,12 +3403,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"forwarddelete\",\"\"]] \"foo[]<blockquote style=\\\"color: blue\\\">bar</blockquote>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   935,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"forwarddelete\",\"\"]] \"foo[]<blockquote style=\\\"color: blue\\\">bar</blockquote>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -3348,12 +3474,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"forwarddelete\",\"\"]] \"<p style=color:blue>foo[]<p style=color:brown>bar\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   981,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"forwarddelete\",\"\"]] \"<p style=color:blue>foo[]<p style=color:brown>bar\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -3472,12 +3607,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"forwarddelete\",\"\"]] \"<p>foo[bar<p style=color:blue>baz]quz\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   957,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"forwarddelete\",\"\"]] \"<p>foo[bar<p style=color:blue>baz]quz\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -3658,12 +3802,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"inserthorizontalrule\",\"\"]] \"<div><b>foo</b>{<b>bar</b>}<b>baz</b></div>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   1329,
+   1348
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"inserthorizontalrule\",\"\"]] \"<div><b>foo</b>{<b>bar</b>}<b>baz</b></div>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -3782,12 +3935,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"insertimage\",\"/img/lion.svg\"]] \"[foo<span style=color:#aBcDeF>bar]</span>baz\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   922,
+   962
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"insertimage\",\"/img/lion.svg\"]] \"[foo<span style=color:#aBcDeF>bar]</span>baz\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -3906,12 +4068,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"insertorderedlist\",\"\"]] \"<ul style=color:blue><li>foo<li>[bar]<li>baz</ul>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   588,
+   761
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"insertorderedlist\",\"\"]] \"<ul style=color:blue><li>foo<li>[bar]<li>baz</ul>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -4154,12 +4325,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"p\"],[\"insertparagraph\",\"\"]] \"<p>foo<span style=color:#aBcDeF>[bar]</span>baz\" queryCommandState(\"stylewithcss\") after"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   957,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"p\"],[\"insertparagraph\",\"\"]] \"<p>foo<span style=color:#aBcDeF>[bar]</span>baz\" queryCommandState(\"stylewithcss\") after",
    "cbdeb": [
@@ -4216,12 +4396,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"insertparagraph\",\"\"]] \"<p>foo<span style=color:#aBcDeF>{bar}</span>baz\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   957,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"insertparagraph\",\"\"]] \"<p>foo<span style=color:#aBcDeF>{bar}</span>baz\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -4278,12 +4467,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"inserttext\",\"a\"]] \"<p>[foo<span style=color:#aBcDeF>bar]</span>baz\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   964,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"inserttext\",\"a\"]] \"<p>[foo<span style=color:#aBcDeF>bar]</span>baz\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -4526,12 +4724,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"fo[o<dfn>bar</dfn>b]az\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   827,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"fo[o<dfn>bar</dfn>b]az\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -4650,12 +4857,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"foo[]bar<p>extra\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   976,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"foo[]bar<p>extra\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -4898,12 +5114,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"<div style=text-align:center><p>foo</div><p>[bar]<div style=text-align:center><p>baz</div><p>extra\" queryCommandState(\"stylewithcss\") after"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   948,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"<div style=text-align:center><p>foo</div><p>[bar]<div style=text-align:center><p>baz</div><p>extra\" queryCommandState(\"stylewithcss\") after",
    "cbdeb": [
@@ -4960,12 +5185,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifycenter\",\"\"]] \"<div style=text-align:center><p>foo</div><p>[bar]<div style=text-align:center><p>baz</div><p>extra\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   948,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifycenter\",\"\"]] \"<div style=text-align:center><p>foo</div><p>[bar]<div style=text-align:center><p>baz</div><p>extra\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -5270,12 +5504,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifyfull\",\"\"]] \"<p>[foo]<p align=justify>bar<p>extra\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   718,
+   762
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifyfull\",\"\"]] \"<p>[foo]<p align=justify>bar<p>extra\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -5332,12 +5575,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifyleft\",\"\"]] \"<center><p>[foo]<p>bar</center><p>extra\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   958,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifyleft\",\"\"]] \"<center><p>[foo]<p>bar</center><p>extra\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -5580,12 +5832,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifyright\",\"\"]] \"<p>[foo]<p align=right>bar<p>extra\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   769,
+   814
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifyright\",\"\"]] \"<p>[foo]<p align=right>bar<p>extra\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -5704,12 +5965,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"outdent\",\"\"]] \"<blockquote style=\\\"margin-right: 0px;\\\" dir=\\\"ltr\\\"><p>foo[bar]</p><p>baz</p></blockquote><p>extra\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   982,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"outdent\",\"\"]] \"<blockquote style=\\\"margin-right: 0px;\\\" dir=\\\"ltr\\\"><p>foo[bar]</p><p>baz</p></blockquote><p>extra\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -5890,12 +6160,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   833,
+   1000
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -6076,12 +6355,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   1005,
+   1273
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: Wrong result returned expected false but got true",
   "original": {
    "canonical": "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
    "cbdeb": [
@@ -6262,12 +6550,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "Response.body is null for responses with status=204 (method=POST)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   7,
+   11
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected 204 but got 200",
   "original": {
    "canonical": "Response.body is null for responses with status=204 (method=POST)",
    "cbdeb": [
@@ -6324,12 +6621,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Response.body is null for responses with status=304 (method=OPTIONS)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   7,
+   11
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Response.body is null for responses with status=304 (method=OPTIONS)",
    "cbdeb": [
@@ -6771,12 +7077,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "redirected to same-origin HTMLVideoElement: origin unclear getImageData"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   15,
+   27
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "promise_test: Unhandled rejection with value: object \"InvalidStateError: The source image could not be decoded.\"",
   "original": {
    "canonical": "redirected to same-origin HTMLVideoElement: origin unclear getImageData",
    "cbdeb": [
@@ -6833,12 +7148,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "table th align attribute middle is correct"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   16,
+   58
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"center\" but got \"-webkit-center\"",
   "original": {
    "canonical": "table th align attribute middle is correct",
    "cbdeb": [
@@ -7019,12 +7343,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "window error: Move fetch-error external classic script to iframe after-prepare"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   4,
+   5
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_unreached: Window error event shouldn't fired on destination window Reached unreachable code",
   "original": {
    "canonical": "window error: Move fetch-error external classic script to iframe after-prepare",
    "cbdeb": [
@@ -7329,12 +7662,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "Mixed-Content: Expects blocked for worklet-paint-import-data to same-http origin and swap-scheme redirection from https context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   8
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: The resource request should be 'blocked'. expected \"blocked\" but got \"upgraded\"",
   "original": {
    "canonical": "Mixed-Content: Expects blocked for worklet-paint-import-data to same-http origin and swap-scheme redirection from https context.",
    "cbdeb": [
@@ -7453,12 +7795,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for iframe-tag to same-http origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for iframe-tag to same-http origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -7515,12 +7866,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for iframe-tag to same-http origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for iframe-tag to same-http origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -7577,12 +7937,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for iframe-tag to same-http origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for iframe-tag to same-http origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -7639,12 +8008,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for iframe-tag to same-https origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -7701,12 +8079,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -7949,12 +8336,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   10,
+   10
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -8135,12 +8531,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -8197,12 +8602,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -8259,12 +8673,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -8321,12 +8744,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -8693,12 +9125,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -8755,12 +9196,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -8817,12 +9267,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -8879,12 +9338,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -8941,12 +9409,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -9313,12 +9790,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -9375,12 +9861,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -9437,12 +9932,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -9623,12 +10127,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for a-tag to cross-http origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for a-tag to cross-http origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -9685,12 +10198,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for a-tag to same-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for a-tag to same-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -9871,12 +10393,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -9933,12 +10464,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -9995,12 +10535,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -10057,12 +10606,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -10119,12 +10677,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -10181,12 +10748,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -11545,12 +12121,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -13033,12 +13618,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for script-tag to cross-http origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for script-tag to cross-http origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -13281,12 +13875,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -13343,12 +13946,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -13405,12 +14017,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -13467,12 +14088,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -13529,12 +14159,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for a-tag to cross-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for a-tag to cross-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -13591,12 +14230,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for a-tag to same-http origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for a-tag to same-http origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -14707,12 +15355,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -14769,12 +15426,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -14893,12 +15559,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -14955,12 +15630,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -15017,12 +15701,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -15079,12 +15772,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -15451,12 +16153,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -15513,12 +16224,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -15575,12 +16295,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -15637,12 +16366,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and swap-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and swap-origin redirection from http context.",
    "cbdeb": [
@@ -16009,12 +16747,21 @@
   "shard": "guard-history-002"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects omitted for svg-a-tag to same-https origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   4,
+   4
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects omitted for svg-a-tag to same-https origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -16443,12 +17190,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-http origin and keep-origin redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-http origin and keep-origin redirection from http context.",
    "cbdeb": [
@@ -16505,12 +17261,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "Referrer Policy: Expects origin for iframe-tag to same-http origin and no-redirect redirection from http context."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   12,
+   12
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "Referrer Policy: Expects origin for iframe-tag to same-http origin and no-redirect redirection from http context.",
    "cbdeb": [
@@ -17249,12 +18014,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "Custom element via is-attribute on html element, where is attribute is not default-allowed."
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   3,
+   24
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "Unsupported sanitizer rule: elements",
   "original": {
    "canonical": "Custom element via is-attribute on html element, where is attribute is not default-allowed.",
    "cbdeb": [
@@ -17311,12 +18085,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "Subresource load matched with URLPattern condition"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   4,
+   18
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"Network\\n\" but got \"nfbjn\"",
   "original": {
    "canonical": "Subresource load matched with URLPattern condition",
    "cbdeb": [
@@ -17717,12 +18500,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "After re-appending the last over element to the deepest mouseenter target without the original parent at mouseover, mouse boundary events should not be fired"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   11
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "After re-appending the last over element to the deepest mouseenter target without the original parent at mouseover, mouse boundary events should not be fired",
    "cbdeb": [
@@ -17779,12 +18571,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "XMLHttpRequest: send() - Redirects (basics) (304, GET, content.py)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   23,
+   34
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected 304 but got 200",
   "original": {
    "canonical": "XMLHttpRequest: send() - Redirects (basics) (304, GET, content.py)",
    "cbdeb": [

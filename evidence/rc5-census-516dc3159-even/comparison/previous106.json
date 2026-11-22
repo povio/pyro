@@ -262,12 +262,21 @@
   "shard": "guard-history-000"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "cross-origin HTMLVideoElement: origin unclear getImageData"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   15,
+   27
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "promise_test: Unhandled rejection with value: object \"InvalidStateError: The source image could not be decoded.\"",
   "original": {
    "canonical": "cross-origin HTMLVideoElement: origin unclear getImageData",
    "chrome158": [
@@ -305,12 +314,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "redirected to cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   15,
+   27
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "redirected to cross-origin HTMLVideoElement: origin unclear 2dContext.drawImage",
    "chrome158": [
@@ -348,12 +366,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "window error: Move fetch-error external classic script to iframe after-prepare"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   4,
+   5
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_unreached: Window error event shouldn't fired on destination window Reached unreachable code",
   "original": {
    "canonical": "window error: Move fetch-error external classic script to iframe after-prepare",
    "chrome158": [
@@ -391,12 +418,21 @@
   "shard": "guard-history-001"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "contenteditable=plaintext-only in the design mode should not prevent the style edit"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   2,
+   3
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"plaintext-only\\\"><b>ABC</b></div>\" but got \"<div contenteditable=\\\"plaintext-only\\\">ABC</div>\"",
   "original": {
    "canonical": "contenteditable=plaintext-only in the design mode should not prevent the style edit",
    "chrome158": [
@@ -434,12 +470,21 @@
   "shard": "guard-main-004"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"\\\"><div contenteditable=\\\"plaintext-only\\\"><b>abc</b></div></div>\" but got \"<div contenteditable=\\\"\\\"><div contenteditable=\\\"plaintext-only\\\">abc</div><",
   "original": {
    "canonical": "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
    "chrome158": [
@@ -477,12 +522,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"\\\"><div contenteditable=\\\"plaintext-only\\\"><b>abc</b></div></div>\" but got \"<div contenteditable=\\\"\\\"><div contenteditable=\\\"plaintext-only\\\">abc</div><",
   "original": {
    "canonical": "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
    "chrome158": [
@@ -520,12 +574,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"true\\\"><div contenteditable=\\\"plaintext-only\\\"><b>abc</b></div></div>\" but got \"<div contenteditable=\\\"true\\\"><div contenteditable=\\\"plaintext-only\\\">ab",
   "original": {
    "canonical": "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
    "chrome158": [
@@ -563,12 +626,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"true\\\"><div contenteditable=\\\"plaintext-only\\\"><b>abc</b></div></div>\" but got \"<div contenteditable=\\\"true\\\"><div contenteditable=\\\"plaintext-only\\\">ab",
   "original": {
    "canonical": "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
    "chrome158": [
@@ -606,12 +678,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"\\\">AB<div contenteditable=\\\"plaintext-only\\\">C<b>D</b></div><b>E</b>F</div>\" but got \"<div contenteditable=\\\"\\\">AB<div contenteditable=\\\"plaintext-only\\",
   "original": {
    "canonical": "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
    "chrome158": [
@@ -649,12 +730,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"\\\">AB<div contenteditable=\\\"plaintext-only\\\">C<b>D</b></div><b>E</b>F</div>\" but got \"<div contenteditable=\\\"\\\">AB<div contenteditable=\\\"plaintext-only\\",
   "original": {
    "canonical": "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
    "chrome158": [
@@ -692,12 +782,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"true\\\">AB<div contenteditable=\\\"plaintext-only\\\">C<b>D</b></div><b>E</b>F</div>\" but got \"<div contenteditable=\\\"true\\\">AB<div contenteditable=\\\"plainte",
   "original": {
    "canonical": "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
    "chrome158": [
@@ -735,12 +834,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"true\\\">AB<div contenteditable=\\\"plaintext-only\\\">C<b>D</b></div><b>E</b>F</div>\" but got \"<div contenteditable=\\\"true\\\">AB<div contenteditable=\\\"plainte",
   "original": {
    "canonical": "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
    "chrome158": [
@@ -778,12 +886,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"\\\">A<b>B</b><div contenteditable=\\\"plaintext-only\\\"><b>C</b>D</div>EF</div>\" but got \"<div contenteditable=\\\"\\\">AB<div contenteditable=\\\"plaintext-only\\",
   "original": {
    "canonical": "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
    "chrome158": [
@@ -821,12 +938,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"\\\">A<b>B</b><div contenteditable=\\\"plaintext-only\\\"><b>C</b>D</div>EF</div>\" but got \"<div contenteditable=\\\"\\\">AB<div contenteditable=\\\"plaintext-only\\",
   "original": {
    "canonical": "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
    "chrome158": [
@@ -864,12 +990,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"true\\\">A<b>B</b><div contenteditable=\\\"plaintext-only\\\"><b>C</b>D</div>EF</div>\" but got \"<div contenteditable=\\\"true\\\">AB<div contenteditable=\\\"plainte",
   "original": {
    "canonical": "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
    "chrome158": [
@@ -907,12 +1042,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   24,
+   56
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected \"<div contenteditable=\\\"true\\\">A<b>B</b><div contenteditable=\\\"plaintext-only\\\"><b>C</b>D</div>EF</div>\" but got \"<div contenteditable=\\\"true\\\">AB<div contenteditable=\\\"plainte",
   "original": {
    "canonical": "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
    "chrome158": [
@@ -950,12 +1094,21 @@
   "shard": "guard-main-006"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance is defined"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance is defined",
    "chrome158": [
@@ -990,12 +1143,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)",
    "chrome158": [
@@ -1030,12 +1192,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].entryType == \"measure\""
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].entryType == \"measure\"",
    "chrome158": [
@@ -1070,12 +1241,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].name == \"measure_mark_start_nav_end\""
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].name == \"measure_mark_start_nav_end\"",
    "chrome158": [
@@ -1110,12 +1290,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].startTime is correct"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_mark_start_nav_end\")[0].startTime is correct",
    "chrome158": [
@@ -1150,12 +1339,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].duration is approximately correct (up to 20ms difference allowed)",
    "chrome158": [
@@ -1190,12 +1388,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].entryType == \"measure\""
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].entryType == \"measure\"",
    "chrome158": [
@@ -1230,12 +1437,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].name == \"measure_nav_start_mark_end\""
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].name == \"measure_nav_start_mark_end\"",
    "chrome158": [
@@ -1270,12 +1486,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].startTime is correct"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_mark_end\")[0].startTime is correct",
    "chrome158": [
@@ -1310,12 +1535,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].duration is approximately correct (up to 20ms difference allowed)",
    "chrome158": [
@@ -1350,12 +1584,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].entryType == \"measure\""
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].entryType == \"measure\"",
    "chrome158": [
@@ -1390,12 +1633,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].name == \"measure_nav_start_nav_end\""
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].name == \"measure_nav_start_nav_end\"",
    "chrome158": [
@@ -1430,12 +1682,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].startTime is correct"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_nav_end\")[0].startTime is correct",
    "chrome158": [
@@ -1470,12 +1731,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].duration is approximately correct (up to 20ms difference allowed)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].duration is approximately correct (up to 20ms difference allowed)",
    "chrome158": [
@@ -1510,12 +1780,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].entryType == \"measure\""
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].entryType == \"measure\"",
    "chrome158": [
@@ -1550,12 +1829,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].name == \"measure_nav_start_no_end\""
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].name == \"measure_nav_start_no_end\"",
    "chrome158": [
@@ -1590,12 +1878,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].startTime is correct"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   17,
+   17
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "window.performance.getEntriesByName(\"measure_nav_start_no_end\")[0].startTime is correct",
    "chrome158": [
@@ -1630,12 +1927,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "WebSockets: non-ascii URL in query, document encoding windows-1252"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   true,
+   1,
+   1
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "WebSockets: non-ascii URL in query, document encoding windows-1252",
    "chrome158": [
@@ -1768,12 +2074,21 @@
   "shard": "ordinary-014"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "Response.body is null for responses with status=204 (method=OPTIONS)"
+  ],
   "currentHead": "516dc3159ff4602bd3a11e98607c262c0ffc65c4",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   8,
+   11
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: expected 204 but got 200",
   "original": {
    "canonical": "Response.body is null for responses with status=204 (method=OPTIONS)",
    "chrome158": [
