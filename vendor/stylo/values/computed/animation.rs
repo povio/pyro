@@ -23,6 +23,9 @@ pub use crate::values::specified::animation::{
 /// A computed value for the `animation-duration` property.
 pub type AnimationDuration = generics::GenericAnimationDuration<Time>;
 
+/// A computed value for `interest-delay-start` and `interest-delay-end`.
+pub type InterestDelay = generics::GenericInterestDelay<Time>;
+
 impl AnimationDuration {
     /// Returns the amount of seconds this time represents.
     #[inline]

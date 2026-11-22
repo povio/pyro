@@ -166,6 +166,18 @@ impl Parse for AnimationDuration {
     }
 }
 
+/// A specified value for `interest-delay-start` and `interest-delay-end`.
+pub type InterestDelay = generics::GenericInterestDelay<Time>;
+
+impl Parse for InterestDelay {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|i| i.expect_ident_matching("normal")).is_ok() {
+            return Ok(Self::normal());
+        }
+        Time::parse_non_negative(context, input).map(InterestDelay::Time)
+    }
+}
+
 /// https://drafts.csswg.org/css-animations/#animation-iteration-count
 #[derive(
     Clone, Debug, MallocSizeOf, PartialEq, Parse, SpecifiedValueInfo, ToCss, ToShmem, ToTyped,

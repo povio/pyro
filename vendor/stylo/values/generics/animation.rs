@@ -32,6 +32,50 @@ pub enum GenericAnimationDuration<T> {
 
 pub use self::GenericAnimationDuration as AnimationDuration;
 
+/// The `interest-delay-start` and `interest-delay-end` properties: `normal | <time [0s,∞]>`.
+///
+/// https://open-ui.org/components/interest-invokers.explainer/
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    MallocSizeOf,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+)]
+#[repr(C, u8)]
+pub enum GenericInterestDelay<T> {
+    /// The initial value: the user agent's delay.
+    Normal,
+    /// The time value, <time [0s,∞]>.
+    Time(T),
+}
+
+pub use self::GenericInterestDelay as InterestDelay;
+
+impl<T> InterestDelay<T> {
+    /// Returns the `normal` value.
+    pub fn normal() -> Self {
+        Self::Normal
+    }
+}
+
+impl<T: ToTyped> ToTyped for InterestDelay<T> {
+    fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
+        match *self {
+            Self::Normal => {
+                dest.push(TypedValue::Keyword(KeywordValue(CssString::from("normal"))));
+                Ok(())
+            },
+            Self::Time(ref t) => t.to_typed(dest),
+        }
+    }
+}
+
 impl<T> AnimationDuration<T> {
     /// Returns the `auto` value.
     pub fn auto() -> Self {

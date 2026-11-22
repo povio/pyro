@@ -31,6 +31,11 @@ crate (`diff -ruN`).
   (upstream: gecko only). pyro-render's PDF output reads them to place page cuts of paper-cut
   documents. Nothing else reads them; computed values of other properties are unchanged.
 
+- `properties/longhands.toml`, `properties/shorthands.toml`, `properties/shorthands.rs`, `values/*/animation.rs`:
+  the interest invokers' `interest-delay-start` and `interest-delay-end` longhands (`normal | <time [0s,∞]>`,
+  initial `normal`, discretely animated) and the `interest-delay` shorthand (one or two values, the end copying
+  the start), as Chrome ships them (WPT html/semantics/interestfor). Upstream stylo has none.
+
 - `properties/longhands.toml`: `margin-trim` is parsed and computed for servo too (upstream: gecko
   only), with `rebuild_box` restyle damage. Taffy's block layout reads it through stylo_taffy
   (vendor/taffy/README.pyro.md).

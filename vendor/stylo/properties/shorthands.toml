@@ -370,6 +370,10 @@ spec = "https://drafts.csswg.org/css-flexbox/#flex-property"
 extra_prefixes = ["webkit"]
 derive_serialize = true
 
+[interest-delay]
+sub_properties = ["interest-delay-start", "interest-delay-end"]
+spec = "https://open-ui.org/components/interest-invokers.explainer/"
+
 [gap]
 sub_properties = ["row-gap", "column-gap"]
 spec = "https://drafts.csswg.org/css-align-3/#gap-shorthand"

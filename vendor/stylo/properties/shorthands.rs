@@ -1345,6 +1345,42 @@ pub mod gap {
     }
 }
 
+pub mod interest_delay {
+    pub use crate::properties::generated::shorthands::interest_delay::*;
+
+    use super::*;
+    use crate::properties::longhands::{interest_delay_end, interest_delay_start};
+
+    pub fn parse_value(
+        context: &ParserContext,
+        input: &mut Parser,
+    ) -> Result<Longhands, ParseError> {
+        let start = interest_delay_start::parse(context, input)?;
+        let end = input
+            .try_parse(|input| interest_delay_end::parse(context, input))
+            .unwrap_or(start.clone());
+
+        Ok(expanded! {
+            interest_delay_start: start,
+            interest_delay_end: end,
+        })
+    }
+
+    impl<'a> ToCss for LonghandsToSerialize<'a> {
+        fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+        where
+            W: fmt::Write,
+        {
+            self.interest_delay_start.to_css(dest)?;
+            if self.interest_delay_start != self.interest_delay_end {
+                dest.write_char(' ')?;
+                self.interest_delay_end.to_css(dest)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 pub mod marker {
     pub use crate::properties::generated::shorthands::marker::*;
 

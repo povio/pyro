@@ -51,7 +51,8 @@ pub use self::angle::Angle;
 pub use self::animation::{
     AnimationComposition, AnimationDirection, AnimationDuration, AnimationFillMode,
     AnimationIterationCount, AnimationName, AnimationPlayState, AnimationRangeEnd,
-    AnimationRangeStart, AnimationTimeline, ScrollAxis, TimelineName, TransitionBehavior,
+    AnimationRangeStart, AnimationTimeline, InterestDelay, ScrollAxis, TimelineName,
+    TransitionBehavior,
     TransitionProperty, ViewTimelineInset, ViewTransitionClass, ViewTransitionName,
 };
 pub use self::background::{

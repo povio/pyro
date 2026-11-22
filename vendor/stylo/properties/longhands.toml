@@ -2338,6 +2338,22 @@ animation_type = "none"
 spec = "https://drafts.csswg.org/css-transitions-2/#transition-behavior-property"
 affects = ""
 
+[interest-delay-start]
+type = "InterestDelay"
+initial = "computed::InterestDelay::normal()"
+struct = "ui"
+animation_type = "discrete"
+spec = "https://open-ui.org/components/interest-invokers.explainer/"
+affects = ""
+
+[interest-delay-end]
+type = "InterestDelay"
+initial = "computed::InterestDelay::normal()"
+struct = "ui"
+animation_type = "discrete"
+spec = "https://open-ui.org/components/interest-invokers.explainer/"
+affects = ""
+
 [transition-delay]
 type = "Time"
 initial = "computed::Time::zero()"
