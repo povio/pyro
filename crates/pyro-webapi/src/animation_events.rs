@@ -205,6 +205,9 @@ pub(crate) struct State {
     /// `Dom::removal_count` when [`cancel_orphaned_transitions`] last looked for running
     /// transitions whose element left its place in the tree.
     transitions_removals: Cell<u64>,
+    /// A style change event canceled a running transition: the `CSSTransition` objects script
+    /// holds are told ([`sync_canceled_runs`]), so that their `ready` rejects and they go idle.
+    runs_canceled: Cell<bool>,
 }
 
 /// A CSS animation or transition `getAnimations()` lists.
@@ -759,7 +762,19 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         }
     }
     finish_overlay_exits(page);
+    sync_canceled_runs(page);
     schedule(page, planned, defer);
+}
+
+/// The `CSSTransition` objects of the transitions a style change event canceled go idle (their
+/// `ready` rejects with an `AbortError`), in a task, as `getAnimations()` would find them: Chrome
+/// cancels them in the style change event (WPT `CSSTransition-ready`, `CSSTransition-canceling`).
+/// Only once script called `getAnimations()` (no object exists before).
+fn sync_canceled_runs(page: &Rc<PageDom>) {
+    let state = &page.animation_events;
+    if state.runs_canceled.replace(false) && state.listed.get() {
+        crate::animations::push_css_runs(page, false);
+    }
 }
 
 /// Script changed the state of CSS animation `id`'s object (play, pause,
@@ -971,6 +986,7 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         }
     }
     finish_overlay_exits(page);
+    sync_canceled_runs(page);
     schedule(page, planned, true);
 }
 
@@ -1145,6 +1161,7 @@ fn transitions_from_changes(
 /// `transitioncancel`, whose `elapsedTime` is how far its active phase got.
 fn cancel_running(state: &State, transition: &Timeline, now_ms: f64, planned: &mut Vec<Planned>) {
     if transition.live.replace(false) && !transition.ended.get() {
+        state.runs_canceled.set(true);
         let local = state.scripted.borrow().values().find(|effect| effect.css_id() == Some(transition.id))
             .and_then(|effect| effect.current(now_ms)).unwrap_or(now_ms - transition.start_ms);
         let mut event = cancel_event(transition.el, transition.pseudo, &transition.name);
@@ -1436,6 +1453,9 @@ struct Starting {
     /// Their events, planned after the cancel events of the transitions
     /// they replace.
     events: Vec<Planned>,
+    /// The running transitions whose end value the after-change style no longer has, none
+    /// replacing them: canceled ([`start_transitions_of`]).
+    ended: FxHashSet<u64>,
 }
 
 fn cancel_event(el: NodeId, pseudo: Option<PseudoElement>, name: &str) -> Planned {
@@ -1458,7 +1478,7 @@ impl Starting {
     /// Replaces the running transitions of the elements and properties that
     /// start again, and starts the new ones.
     fn commit(self, state: &State, planned: &mut Vec<Planned>) {
-        if self.timelines.is_empty() && self.changed.is_empty() {
+        if self.timelines.is_empty() && self.changed.is_empty() && self.ended.is_empty() {
             return;
         }
         let mut running = state.transitions.borrow_mut();
@@ -1470,11 +1490,13 @@ impl Starting {
                 .is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
             let unlisted = self.changed.get(&(known.el, known.pseudo))
                 .is_some_and(|(style, properties)| !pyro_dom::timing::lists_transition(style, properties, &known.name));
-            if (same || unlisted) && known.live.get() && !known.ended.get() {
+            let ended = self.ended.contains(&known.id);
+            if (same || unlisted || ended) && known.live.get() && !known.ended.get() {
                 known.live.set(false);
+                state.runs_canceled.set(true);
                 planned.push(cancel_event(known.el, known.pseudo, &known.name));
             }
-            !same && !unlisted
+            !same && !unlisted && !ended
         });
         if running.len() == previous_count && self.timelines.is_empty() { return; }
         planned.extend(self.events);
@@ -1521,12 +1543,23 @@ fn start_transitions_of(
     // The after-change style's custom properties resolve `var()` (a pseudo-element's: the
     // element's).
     let style_of = |e: NodeId| if e == el && pseudo.is_none() { Some(now.clone()) } else { style.stylo_style(dom, e) };
-    let ElementTiming { transitions, transition_properties, .. } = rules.element_for(dom, el, pseudo, &style_of);
+    let ElementTiming { transitions, transition_properties, transition_claims, .. } =
+        rules.element_for(dom, el, pseudo, &style_of);
     if !state.transitions.borrow().is_empty() {
         if let Some(properties) = transition_properties {
             starting.changed.insert((el, pseudo), (now.clone(), properties));
         }
     }
+    // Whether an item of `transition-property` after `index` names `longhand` (changed): that item
+    // decides its transition, even one that starts none (a zero combined duration, or `normal`
+    // behavior for a value that does not interpolate).
+    let claimed_later = |index: usize, longhand: &str| {
+        transition_claims.iter().skip(index + 1).flatten().any(|item| {
+            item == "all"
+                || item == longhand
+                || pyro_dom::timing::changed_longhands_with(before, now, item, true).contains(&longhand)
+        })
+    };
     let mut started = Vec::new();
     for transition in transitions.iter().rev() {
         let custom = if transition.property == "all" {
@@ -1535,7 +1568,7 @@ fn start_transitions_of(
         let changed =
             pyro_dom::timing::changed_longhands_with(before, now, &transition.property, transition.allow_discrete);
         for longhand in changed.into_iter().chain(custom.iter().map(String::as_str)) {
-            if started.iter().any(|name| name == longhand) {
+            if started.iter().any(|name| name == longhand) || claimed_later(transition.index, longhand) {
                 continue;
             }
             started.push(longhand.to_owned());
@@ -1597,6 +1630,24 @@ fn start_transitions_of(
             starting.events.push(event("transitionstart", delay, (-delay).max(0.0), Some(1)));
             starting.events.push(event("transitionend", delay + duration, duration, Some(ENDED)));
             starting.timelines.push(timeline);
+        }
+    }
+    // A running transition of a property no transition started for now whose after-change value
+    // is no longer its end value is canceled (css-transitions-1 §3: a zero combined duration, a
+    // value it cannot interpolate to, `transition-behavior` back to `normal` for a discrete one;
+    // WPT `CSSTransition-canceling`, `transition-behavior`).
+    if let Ok(running) = state.transitions.try_borrow() {
+        for known in running.iter() {
+            if known.el != el || known.pseudo != pseudo || !known.live.get() || known.ended.get() {
+                continue;
+            }
+            if started.iter().any(|name| *name == known.name) {
+                continue;
+            }
+            let Some((_, end)) = &known.styles else { continue };
+            if pyro_dom::timing::end_value_differs(end, now, &known.name) {
+                starting.ended.insert(known.id);
+            }
         }
     }
 }

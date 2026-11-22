@@ -306,6 +306,8 @@ pub struct TransitionTiming {
     /// `transition-behavior: allow-discrete`: values that do not interpolate
     /// transition too (flipping halfway).
     pub allow_discrete: bool,
+    /// Its position in `transition-property` (see [`ElementTiming::transition_claims`]).
+    pub index: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -315,6 +317,12 @@ pub struct ElementTiming {
     /// Transitions whose combined duration is positive.
     pub transitions: Vec<TransitionTiming>,
     pub transition_properties: Option<Vec<String>>,
+    /// Every item of `transition-property` in order (`None` for `none`), whatever its combined
+    /// duration: a later item naming a property decides its transition, so one that cannot start
+    /// (a zero combined duration, or `normal` behavior for a discrete value) keeps an earlier
+    /// `all` or shorthand item from starting one (css-transitions-1 §2.1, WPT
+    /// `zero-duration-multiple-transition`, `transition-behavior`).
+    pub transition_claims: Vec<Option<String>>,
 }
 
 /// The animation and transition rules of a document's sheets.
@@ -816,6 +824,7 @@ impl TimingRules {
             for (i, property) in properties.iter().enumerate() {
                 let duration_ms = time_ms(lists.item(Longhand::TransitionDuration, i)).unwrap_or(0.0).max(0.0);
                 let delay_ms = time_ms(lists.item(Longhand::TransitionDelay, i)).unwrap_or(0.0);
+                out.transition_claims.push((property != "none").then(|| property.clone()));
                 if property == "none" || duration_ms + delay_ms <= 0.0 {
                     continue;
                 }
@@ -826,6 +835,7 @@ impl TimingRules {
                     delay_ms,
                     easing: (easing != "ease").then(|| easing.to_owned()),
                     allow_discrete: lists.item(Longhand::TransitionBehavior, i) == "allow-discrete",
+                    index: i,
                 });
             }
         }
@@ -1158,6 +1168,21 @@ pub fn changed_longhands_with<'a>(
         .filter(|id| differs(*id))
         .map(|id| id.name())
         .collect()
+}
+
+/// Whether `longhand` (a longhand or custom property a transition runs) has another computed
+/// value in `now` than in `end` (a running transition's after-change style): css-transitions-1 §3
+/// cancels a running transition whose end value is no longer the after-change value when no new
+/// transition replaces it. A logical longhand maps through `now`'s writing mode.
+pub fn end_value_differs(end: &StyleSnapshot, now: &StyleSnapshot, longhand: &str) -> bool {
+    use style::properties::PropertyDeclarationId;
+    let Some(id) = crate::stylo::property_id(longhand) else { return false };
+    let physical = match id.as_shorthand() {
+        Err(PropertyDeclarationId::Longhand(id)) => PropertyDeclarationId::Longhand(id.to_physical(now.writing_mode)),
+        Err(custom) => custom,
+        Ok(_) => return false,
+    };
+    crate::animation::transition_endpoint_css(physical, end) != crate::animation::transition_endpoint_css(physical, now)
 }
 
 /// The keyframes a transition of `longhand` runs between: its computed value
