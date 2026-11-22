@@ -358,12 +358,16 @@ impl BaseDocument {
         use style::values::computed::Size;
         let node = self.get_node(node_id)?;
         let live = node.primary_styles()?;
-        let (basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
+        let (mut basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
         if !live.writing_mode.is_horizontal() { return None; }
         let (live, sampled) = (live.get_position(), sampled.get_position());
         let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
         let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
             (Size::CalcSizeAny(_) | Size::CalcSizePercentage(_), Size::CalcSizeAny(value) | Size::CalcSizePercentage(value)) => value,
+            (Size::CalcSizeAny(_), Size::CalcSizeAuto(value)) => {
+                basis = self.auto_basis_in_block_flow(node_id, width, percent);
+                value
+            }
             (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
             (Size::CalcSizeStretch(_), Size::CalcSizeStretch(value)) |
             (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) |
@@ -373,6 +377,58 @@ impl BaseDocument {
         };
         let reference = if calculation.0.has_percentage() { basis? } else { 0.0 };
         Some(calculation.0.resolve_size(CSSPixelLength::new(reference), CSSPixelLength::new(percent.unwrap_or_default())).px().min(max.unwrap_or(f32::INFINITY)).max(min))
+    }
+
+    fn auto_basis_in_block_flow(&self, id: NodeId, width: bool, percent: Option<f32>) -> Option<f32> {
+        use style::values::computed::{Margin, MaxSize, Overflow, Size};
+        let block = |values: &ComputedValues| {
+            let display = values.clone_display();
+            display.outside() == DisplayOutside::Block && display.inside() == DisplayInside::Flow
+                && values.clone_position() == Position::Static && !values.clone_float().is_floating()
+                && values.writing_mode.is_horizontal() && values.effective_zoom.value() == 1.0
+                && !values.get_column().is_multicol() && values.get_box().used_containment().is_empty()
+                && values.clone_overflow_x() == Overflow::Visible && values.clone_overflow_y() == Overflow::Visible
+        };
+        let node = self.get_node(id)?;
+        let parent = self.get_node(node.layout_parent.get()?)?;
+        let live = node.primary_styles()?;
+        let container = parent.primary_styles()?;
+        let position = live.get_position();
+        let element = node.element_data()?;
+        if !block(&live) || !block(&container) || crate::layout::replaced::is_replaced(element)
+            || matches!(element.name.local.as_ref(), "html" | "body" | "input" | "button" | "textarea" | "select" | "fieldset" | "legend" | "meter" | "progress")
+            || !matches!(position.aspect_ratio.ratio, PreferredRatio::None)
+        { return None; }
+        let fixed = |size: &Size| matches!(size, Size::LengthPercentage(value) if value.0.to_length().is_some());
+        let margin = |value: &Margin, reference: f32| match value {
+            Margin::LengthPercentage(value) => Some(value.resolve(CSSPixelLength::new(reference)).px()),
+            Margin::Auto => Some(0.0),
+            _ => None,
+        };
+        let layout = self.physical_unrounded_layout(id);
+        let border_box = position.box_sizing == BoxSizing::BorderBox;
+        if width {
+            if !fixed(&container.get_position().width) || !position.min_width.is_auto() || !matches!(position.max_width, MaxSize::None) { return None; }
+            let reference = percent?;
+            let margins = live.get_margin();
+            let inset = layout.padding.left + layout.padding.right + layout.border.left + layout.border.right;
+            let content = (reference - margin(&margins.margin_left, reference)? - margin(&margins.margin_right, reference)? - inset).max(0.0);
+            return Some(content + if border_box { inset } else { 0.0 });
+        }
+        if node.flags.is_inline_root() || !position.min_height.is_auto() || !matches!(position.max_height, MaxSize::None) { return None; }
+        let children = node.layout_children.borrow();
+        let [child_id] = children.as_deref()? else { return None };
+        let child = self.get_node(*child_id)?;
+        let child_style = child.primary_styles()?;
+        let child_position = child_style.get_position();
+        let margins = child_style.get_margin();
+        let zero_margin = |value: &Margin| matches!(value, Margin::LengthPercentage(value) if !value.has_percentage() && value.resolve(CSSPixelLength::new(0.0)).px() == 0.0);
+        if !block(&child_style) || !fixed(&child_position.height) || !child_position.min_height.is_auto()
+            || !matches!(child_position.max_height, MaxSize::None) || !zero_margin(&margins.margin_top) || !zero_margin(&margins.margin_bottom)
+            || child_style.clone_clear() != style::computed_values::clear::T::None
+        { return None; }
+        let inset = layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
+        Some(self.physical_unrounded_layout(*child_id).size.height + if border_box { inset } else { 0.0 })
     }
 
     fn resolved_style_value_with_style(

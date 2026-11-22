@@ -1,0 +1,20 @@
+<!doctype html><body><pre id="out"></pre><script>
+for (const axis of ['width','height']) for (const mode of ['transition','css','waapi']) for (const fraction of [.5,.75,1]) {
+  const parent = document.body.appendChild(document.createElement('div'));
+  parent.style.cssText = 'width:200px;height:300px';
+  const target = parent.appendChild(document.createElement('div'));
+  target.appendChild(document.createElement('div')).style.height='100px';
+  const endpoint = 'calc-size(any, 50px)';
+  const style = document.head.appendChild(document.createElement('style'));
+  style.textContent=`@keyframes paired${axis} {from {${axis}:auto} to {${axis}:${endpoint}}}`;
+  target.style[axis]='auto';
+  const before=getComputedStyle(target)[axis];
+  const easing=fraction===1?'steps(1,start)':fraction===.5?'linear':'cubic-bezier(0,0.8333333333,1,0.8333333333)';
+  if(mode==='transition'){target.style.transition=`${axis} 100s ${easing} -50s`;target.style[axis]=endpoint;}
+  if(mode==='css')target.style.animation=`paired${axis} 100s ${easing} -50s`;
+  if(mode==='waapi'){const animation=target.animate([{[axis]:'auto'},{[axis]:endpoint}],{duration:100000,easing,fill:'both'});animation.pause();animation.currentTime=50000;}
+  const used=getComputedStyle(target)[axis];
+  document.getElementById('out').append(JSON.stringify({axis,mode,fraction,before,inline:target.style[axis],used,typed:String(target.computedStyleMap().get(axis))})+'\n');
+  parent.remove();style.remove();
+}
+</script></body>
