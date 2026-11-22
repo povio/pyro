@@ -329,6 +329,28 @@ fn popovertarget_buttons() {
 }
 
 #[test]
+fn command_activation_precedes_popover_applicability_and_preserves_dialog_invoker() {
+    let e = env("<body><button id=b type=button commandfor=p command=show-popover></button>
+        <div id=p></div><dialog id=d><button id=r type=button commandfor=d command=request-close></button></dialog></body>");
+    assert_eq!(e.eval(
+        "const b=document.getElementById('b'), p=document.getElementById('p'), d=document.getElementById('d'),
+               r=document.getElementById('r'), seen=[];
+         p.addEventListener('command', ev => {
+           seen.push(ev.isTrusted, ev.composed, ev.cancelable, ev.bubbles, ev.source===b);
+           p.setAttribute('popover','manual');
+         }, {once:true});
+         b.click();
+         seen.push(p.matches(':popover-open'));
+         p.hidePopover();
+         b.commandForElement=d; b.command='show-modal';
+         d.addEventListener('beforetoggle', ev => seen.push(ev.newState, ev.source===b, ev.source===r));
+         b.click(); r.click();
+         seen.join()"
+    ), "true,true,true,false,true,true,open,true,false,closed,false,true");
+    e.page.dispose();
+}
+
+#[test]
 fn command_invokers() {
     let e = env("<body><dialog id=d><button id=cl commandfor=d command=close value=done>x</button>
            <button id=rc commandfor=d command=request-close value=asked>r</button></dialog>

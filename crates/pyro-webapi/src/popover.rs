@@ -619,7 +619,7 @@ pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, 
     if down {
         page.popover.pointerdown_dialog.set(ancestor);
     } else if page.popover.pointerdown_dialog.take() == ancestor && ancestor != Some(topmost) {
-        request_close_dialog(page, topmost, None);
+        request_close_dialog(page, topmost, None, None);
     }
 }
 
@@ -658,7 +658,7 @@ pub(crate) fn close_request(page: &Rc<PageDom>) -> bool {
             remove_watcher(page, w);
         }
     } else {
-        request_close_dialog(page, w, None);
+        request_close_dialog(page, w, None, None);
     }
     true
 }
@@ -757,7 +757,7 @@ fn show_dialog(page: &Rc<PageDom>, el: NodeId) -> JsResult<()> {
 
 /// `dialog.showModal()`; with `throw` false (the `show-modal` command),
 /// the invalid states do nothing.
-fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool) -> JsResult<()> {
+fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool, source: Option<NodeId>) -> JsResult<()> {
     let fail = |name: &'static str, message: &str| if throw { Err(JsError::dom(name, message)) } else { Ok(()) };
     {
         let dom = page.dom.borrow();
@@ -780,7 +780,7 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool) -> JsResult<()
             return fail("InvalidStateError", "The element is not in a Document.");
         }
     }
-    if !fire_toggle(page, el, "beforetoggle", false, true, true, None) {
+    if !fire_toggle(page, el, "beforetoggle", false, true, true, source) {
         return Ok(());
     }
     {
@@ -789,7 +789,7 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool) -> JsResult<()
             return Ok(());
         }
     }
-    queue_toggle(page, el, false, true, None);
+    queue_toggle(page, el, false, true, source);
     let previous = focused(page);
     overlay_style_flush(page, el);
     {
@@ -841,14 +841,14 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
 
 /// `dialog.requestClose(result)` and a close request: a cancelable
 /// `cancel`, then the dialog closes unless it was canceled.
-pub(crate) fn request_close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String>) {
+fn request_close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String>, source: Option<NodeId>) {
     if !is_open(&page.dom.borrow(), el) {
         return;
     }
     if !crate::input::fire_simple(page, el, "cancel", false, true) {
         return;
     }
-    close_dialog(page, el, result, None);
+    close_dialog(page, el, result, source);
 }
 
 /// `<form method=dialog>` submission: closes the form's nearest `dialog`
@@ -882,7 +882,7 @@ pub(crate) fn define_dialog<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) 
         Ok(s.undefined())
     });
     def.method("showModal", 0, |s, n, _a| {
-        show_modal_dialog(n.page(), n.id, true)?;
+        show_modal_dialog(n.page(), n.id, true, None)?;
         Ok(s.undefined())
     });
     def.method("close", 0, |s, n, a| {
@@ -892,7 +892,7 @@ pub(crate) fn define_dialog<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) 
     });
     def.method("requestClose", 0, |s, n, a| {
         let result = if a.get(0).is_undefined() { None } else { Some(dom_string(a.get(0))?) };
-        request_close_dialog(n.page(), n.id, result);
+        request_close_dialog(n.page(), n.id, result, None);
         Ok(s.undefined())
     });
     def.accessor(
@@ -949,7 +949,7 @@ fn reflected_element(dom: &Dom, el: NodeId, attr: &str, explicit: Option<NodeId>
     let v = dom.get_attribute(el, attr).ok().flatten()?;
     if v.is_empty() {
         return explicit.filter(|&t| {
-            dom.is_connected(t).unwrap_or(false) || dom.root_node(t, false).ok() == dom.root_node(el, false).ok()
+            dom.root_node(t, false).is_ok_and(|root| dom.shadow_including_contains(root, el))
         });
     }
     let root = dom.root_node(el, false).ok()?;
@@ -1054,16 +1054,18 @@ pub(crate) fn button_activation(page: &Rc<PageDom>, button: NodeId, event_target
         popover_target_activation(page, button, event_target);
         return;
     };
-    let (raw, command, is_popover, is_dialog) = {
+    let (raw, command, html_target, is_dialog) = {
         let dom = page.dom.borrow();
         let raw = dom.get_attribute(button, "command").ok().flatten().unwrap_or("").to_owned();
         let command = command_state(&raw);
-        (raw, command, popover_type(&dom, target).is_some(), is_html(&dom, target, "dialog"))
+        (raw, command, dom.element(target).is_ok_and(|e| e.is_html()), is_html(&dom, target, "dialog"))
     };
     let Some(command) = command else { return };
     let popover_command = matches!(command, Command::TogglePopover | Command::ShowPopover | Command::HidePopover);
     let dialog_command = matches!(command, Command::Close | Command::RequestClose | Command::ShowModal);
-    if (popover_command && !is_popover) || (dialog_command && !is_dialog) {
+    // Popover commands dispatch on any HTML element. A listener can
+    // add or remove its popover attribute before the default action.
+    if (popover_command && !html_target) || (dialog_command && !is_dialog) {
         return;
     }
     let (key, source) = {
@@ -1072,6 +1074,7 @@ pub(crate) fn button_activation(page: &Rc<PageDom>, button: NodeId, event_target
     };
     let Some(key) = key else { return };
     let ev = EventCore::trusted(page, EventInterface::CommandEvent, "command", false, true);
+    ev.state.borrow_mut().composed = true;
     {
         let mut f = ev.fields.borrow_mut();
         f.command = if command == Command::Custom { raw } else { raw.to_ascii_lowercase() };
@@ -1092,15 +1095,16 @@ pub(crate) fn button_activation(page: &Rc<PageDom>, button: NodeId, event_target
             }
         }
         Command::HidePopover => {}
+        Command::ShowModal | Command::Close | Command::RequestClose if showing => {}
         Command::ShowModal => {
-            let _ = show_modal_dialog(page, target, false);
+            let _ = show_modal_dialog(page, target, false, Some(button));
         }
         Command::Close | Command::RequestClose => {
             let value = page.dom.borrow().get_attribute(button, "value").ok().flatten().map(str::to_owned);
             if command == Command::Close {
                 close_dialog(page, target, value, Some(button));
             } else {
-                request_close_dialog(page, target, value);
+                request_close_dialog(page, target, value, Some(button));
             }
         }
     }
