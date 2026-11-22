@@ -125,6 +125,10 @@ pub(crate) struct ResourceQueue {
     /// Each `<style>`'s count of children changes (HTML: each one replaces its CSS style sheet
     /// object, also when its text stays the same).
     pub(crate) sheet_generations: rustc_hash::FxHashMap<NodeId, u32>,
+    /// Script-inserted scripts prepared at their post-connection step whose
+    /// fetch the loader has not started yet: what prepare saw, and the
+    /// preparation-time document. Each entry pins its node.
+    pub(crate) prepared_scripts: rustc_hash::FxHashMap<NodeId, (ScriptInfo, NodeId)>,
 }
 
 impl Dom {
@@ -601,6 +605,25 @@ impl Dom {
         self.bump();
         self.note(crate::dom::Change::State(i));
         Ok(())
+    }
+
+    /// Records a script-inserted script prepared at insertion (already
+    /// started): its `info` as prepare saw it and its preparation-time
+    /// `document`, for the loader's resource-event drain to start its fetch
+    /// from even if the element was removed, moved or lost its `src` since.
+    pub fn stash_prepared_script(&mut self, script: NodeId, info: ScriptInfo, document: NodeId) -> DomResult<()> {
+        self.add_ref(script)?;
+        if self.resources.prepared_scripts.insert(script, (info, document)).is_some() {
+            self.release(script);
+        }
+        Ok(())
+    }
+
+    /// Takes what [`Dom::stash_prepared_script`] recorded for `script`.
+    pub fn take_prepared_script(&mut self, script: NodeId) -> Option<(ScriptInfo, NodeId)> {
+        let entry = self.resources.prepared_scripts.remove(&script)?;
+        self.release(script);
+        Some(entry)
     }
 
     /// Sets the script's "force async" (the `async` IDL attribute's setter

@@ -2308,7 +2308,16 @@ impl Browser {
         let base = state.main_frame.base_url.clone();
         drop(state);
         let dom = bindings.dom.clone();
-        let info = {
+        // Prepared at its insertion (`prepare_inserted_script`): start it as
+        // prepared, unless it was moved to another document since (it would
+        // not run there; HTML "execute the script element" step 2).
+        let prepared = dom.borrow_mut().take_prepared_script(node);
+        let info = if let Some((info, document)) = prepared {
+            if document != bindings.document() {
+                return;
+            }
+            info
+        } else {
             let mut d = dom.borrow_mut();
             let Ok(info) = d.script_info(node) else { return };
             // Spec order: an already-started element, an inline element
@@ -3206,13 +3215,14 @@ fn graph_loaded(
     });
 }
 
-/// The synchronous part of "prepare the script element" for a script the
-/// parser did not insert (`PageHooks::script_connected`, a post-connection
-/// step): an inline classic script executes here, before the DOM call that
-/// connected it (or gave it its text) returns. External scripts, modules and
-/// import maps need the loader and stay queued as `ResourceKind::Script`
-/// resource events for `Browser::script_event`, which finds an element this
-/// function ran "already started".
+/// "Prepare the script element" for a script the parser did not insert
+/// (`PageHooks::script_connected`, a post-connection step), before the DOM
+/// call that connected it (or gave it its text or `src`) returns: an inline
+/// classic script executes here. External scripts, modules and import maps
+/// need the loader: they are prepared here too (already started, with what
+/// prepare saw stashed in the DOM) and their `ResourceKind::Script` resource
+/// event has `Browser::script_event` start them, so a script removed, moved
+/// or stripped of its `src` by the inserting script still runs as prepared.
 pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
     if frame.sandbox.scripts_disabled {
         return;
@@ -3225,10 +3235,15 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
         if info.already_started || info.parser_inserted || !dom.is_connected(node).unwrap_or(false) {
             return;
         }
-        if info.src.is_some() || info.inline_text.is_empty() || info.kind != ScriptKind::Classic || info.nomodule {
+        if (info.src.is_none() && info.inline_text.is_empty()) || info.kind == ScriptKind::Data {
             return;
         }
         let _ = dom.mark_script_started(node);
+        if info.src.is_some() || info.kind != ScriptKind::Classic || info.nomodule {
+            let document = bindings.document();
+            let _ = dom.stash_prepared_script(node, info, document);
+            return;
+        }
         info.inline_text
     };
     let Ok(scope) = realm.scope() else { return };
