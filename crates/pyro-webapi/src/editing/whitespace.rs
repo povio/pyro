@@ -25,6 +25,7 @@ enum Next {
     Boundary,
     Break,
     Text(NodeId),
+    PreservedText(NodeId),
     Content,
 }
 
@@ -41,10 +42,12 @@ fn adjacent(page: &PageDom, dom: &Dom, host: NodeId, mut n: NodeId, forward: boo
             loop {
                 if editing::is_text(dom, n) {
                     if !dom.char_data(n).unwrap_or("").is_empty() {
-                        return if editing::editing_host(dom, n) == Some(host) && collapses(page, dom, n) {
+                        return if editing::editing_host(dom, n) != Some(host) {
+                            Next::Content
+                        } else if collapses(page, dom, n) {
                             Next::Text(n)
                         } else {
-                            Next::Content
+                            Next::PreservedText(n)
                         };
                     }
                     break;
@@ -112,7 +115,14 @@ pub(super) fn consume_padding_lf(page: &PageDom, dom: &mut Dom, host: NodeId, (n
         return;
     }
     let empty_line = text.ends_with("\n\n")
-        || (text == "\n" && matches!(adjacent(page, dom, host, node, false), Next::Boundary | Next::Break));
+        || (text == "\n" && match adjacent(page, dom, host, node, false) {
+            Next::Boundary | Next::Break => true,
+            Next::Text(previous) | Next::PreservedText(previous) => {
+                dom.char_data(previous).is_ok_and(|data| data.ends_with('\n'))
+                    && crate::edit_commands::newlines_significant_in(page, dom, previous)
+            }
+            Next::Content => false,
+        });
     if empty_line && editing::plaintext_at(dom, node)
         && crate::edit_commands::newlines_significant_in(page, dom, node)
         && matches!(adjacent(page, dom, host, node, true), Next::Boundary)
@@ -128,7 +138,7 @@ fn extend(page: &PageDom, dom: &Dom, host: NodeId, mut node: NodeId, forward: bo
     loop {
         let n = match adjacent(page, dom, host, node, forward) {
             Next::Boundary | Next::Break => return true,
-            Next::Content => return false,
+            Next::Content | Next::PreservedText(_) => return false,
             Next::Text(n) => n,
         };
         let text = dom.char_data(n).unwrap_or("");
@@ -219,7 +229,7 @@ fn deletes_visible_space(
             None => match adjacent(page, dom, host, node, forward) {
                 Next::Boundary | Next::Break => return Some(true),
                 // Replaced or noneditable content might have no rendered width.
-                Next::Content => return None,
+                Next::Content | Next::PreservedText(_) => return None,
                 Next::Text(n) => {
                     let value = dom.char_data(n).ok()?;
                     if forward {
