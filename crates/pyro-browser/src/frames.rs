@@ -2207,7 +2207,15 @@ impl Browser {
                 let initiator =
                     parent_key.and_then(|k| host.page_dom(k)).map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
                 let js_url = url.clone();
+                // The frame holds its parent's `load` until the script has run and its string
+                // result (a new document) has begun: the parent's `load` sees that document.
+                if let Some(mut doc) = self.doc_mut(key) {
+                    doc.pending_frame_attributes += 1;
+                }
                 self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
+                    if let Some(mut doc) = b.doc_mut(key) {
+                        doc.pending_frame_attributes = doc.pending_frame_attributes.saturating_sub(1);
+                    }
                     let connected = |b: &Browser| {
                         b.page(key.page).is_some_and(|p| p.frames.dom.borrow().is_connected(owner).unwrap_or(false))
                     };
