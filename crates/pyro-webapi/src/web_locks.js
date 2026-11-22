@@ -105,7 +105,13 @@
             (e) => { if (lock) native.release(id); fail2(e); },
           );
         };
-        const grant = (grantedId) => { id = grantedId; abortSteps.delete(id); run(new Lock(token, name, mode)); };
+        let granted = false;
+        const grant = (grantedId) => {
+          id = grantedId;
+          granted = true;
+          abortSteps.delete(id);
+          run(new Lock(token, name, mode));
+        };
         const stolen = () => fail2(dom("Lock broken by another request with the 'steal' option.", 'AbortError'));
         id = native.request(encode(name), mode === 'exclusive', ifAvailable, steal, grant, stolen);
         if (id === 0) {
@@ -113,7 +119,7 @@
           resolve().then(() => run(null));
           return promise;
         }
-        if (signal !== undefined) {
+        if (signal !== undefined && !granted) {
           abortSteps.set(id, () => {
             abortSteps.delete(id);
             if (native.abort(id)) fail2(call.call(signalReason, signal));

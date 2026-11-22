@@ -15,6 +15,9 @@ pub(super) struct StorageKey {
     pub origin: String,
     pub top_level_site: Option<String>,
     pub cross_site_ancestor: bool,
+    /// Embedders without a cross-thread wakeup route can participate only
+    /// with other local-only clients on their own thread.
+    pub local_thread: Option<ThreadId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,6 +191,7 @@ mod tests {
             origin: "https://example.test".into(),
             top_level_site: Some("https://example.test".into()),
             cross_site_ancestor: false,
+            local_thread: None,
         }
     }
 
@@ -246,6 +250,28 @@ mod tests {
         assert!(service.remove(&key(), "resource", 3, false).0);
         assert_eq!(client.next_notice(), None);
         assert!(service.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn posterless_embedders_do_not_admit_requests_into_other_threads_queues() {
+        let service = LockService::default();
+        let local_key = StorageKey { local_thread: Some(std::thread::current().id()), ..key() };
+        let local = Arc::new(Client::new(1, None));
+        service.acquire(local_key.clone(), "k".into(), request(1, &local, Mode::Exclusive), false, false);
+        let remote_service = service.clone();
+        std::thread::spawn(move || {
+            let other = Arc::new(Client::new(2, None));
+            let other_key = StorageKey { local_thread: Some(std::thread::current().id()), ..key() };
+            for scope in [other_key, key()] {
+                assert!(remote_service.query(&scope).0.is_empty());
+                assert!(remote_service.acquire(scope, "k".into(), request(2, &other, Mode::Exclusive), false, true).0);
+            }
+            remote_service.dispose(2);
+        }).join().unwrap();
+        assert_eq!(service.query(&local_key).0.len(), 1);
+        assert_eq!(local.next_notice(), Some(Notice::Grant(1)));
+        assert_eq!(local.next_notice(), None);
+        service.dispose(1);
     }
 
     #[test]

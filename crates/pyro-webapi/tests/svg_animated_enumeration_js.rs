@@ -674,6 +674,40 @@ fn web_locks_abort_uses_the_signal_algorithm() {
     assert_eq!(env.eval("abortDone"), "AbortError|two|false|true");
 }
 
+/// The no-hook embedding runs local posted tasks inline. A synchronous
+/// grant must not retain the signal as though the request were still queued.
+#[test]
+fn web_locks_inline_grant_does_not_register_abort_after_delivery() {
+    let env = Env::new("https://locks.test/");
+    env.page.set_hooks(None);
+    assert_eq!(env.eval(r#"
+        globalThis.controller = new AbortController();
+        globalThis.fresh = new AbortController();
+        globalThis.entered = false;
+        globalThis.result = "pending";
+        navigator.locks.request("inline", {signal: controller.signal}, () => {
+          entered = true;
+          return new Promise(r => { globalThis.finish = r; });
+        }).then(v => { result = v; }, e => { result = e.name; });
+        entered
+    "#), "true");
+    {
+        let scope = env.realm.scope().unwrap();
+        let next_hook = |name| {
+            let controller = scope.global().get(name).unwrap().as_object().unwrap();
+            let signal = scope.unwrap::<pyro_webapi::abort::AbortSignal>(controller.get("signal").unwrap()).unwrap();
+            let id = signal.add_abort_hook(Box::new(|_| {})).unwrap();
+            signal.remove_abort_hook(id);
+            id
+        };
+        assert!(next_hook("controller") == next_hook("fresh"));
+    }
+    env.eval("controller.abort(); finish('released')");
+    env.until("result === 'released'");
+    env.eval("navigator.locks.query().then(s => { globalThis.clean = !s.held.length && !s.pending.length; })");
+    env.until("globalThis.clean === true");
+}
+
 /// A range slider follows the pointer along its inline axis: x in a horizontal writing mode (from
 /// the right for `direction: rtl`), y in a vertical one.
 #[test]

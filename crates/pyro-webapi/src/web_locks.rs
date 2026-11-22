@@ -64,6 +64,7 @@ pub(crate) fn locks<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>
 struct Callbacks {
     realm: WeakRealm,
     grant: Option<Persistent>,
+    abort_hook: Option<crate::abort::AbortRegistration>,
     stolen: Persistent,
     key: StorageKey,
     name: String,
@@ -85,6 +86,11 @@ fn manager_key(s: &Scope<'_>, page: &PageDom) -> Option<StorageKey> {
         origin: crate::storage::tuple_origin(s, page)?,
         top_level_site: page.cookie_partition_key(),
         cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
+        local_thread: CLIENTS.with(|clients| {
+            let remote = clients.borrow().get(&page.id()).map(|c| c.route.poster.is_some())
+                .unwrap_or_else(|| page.remote_poster().is_some());
+            (!remote).then(|| std::thread::current().id())
+        }),
     })
 }
 
@@ -105,6 +111,7 @@ fn deliver(route: &Client) {
         Notice::Grant(id) => CLIENTS.with(|clients| {
             let mut clients = clients.borrow_mut();
             let req = clients.get_mut(&route.page)?.requests.get_mut(&id)?;
+            drop(req.abort_hook.take());
             Some((req.realm.clone(), req.grant.take()?))
         }),
         Notice::Stolen(id) => forget(route.page, id).map(|req| (req.realm, req.stolen)),
@@ -177,6 +184,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let callbacks = Callbacks {
             realm: s.realm().downgrade(),
             grant: Some(Persistent::new(s, a.get(4))),
+            abort_hook: None,
             stolen: Persistent::new(s, a.get(5)),
             key: key.clone(),
             name: name.clone(),
@@ -219,16 +227,17 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let signal = s
             .unwrap::<crate::abort::AbortSignal>(a.get(0))
             .ok_or_else(|| JsError::Type("not an AbortSignal".into()))?;
-        let id = a.get(1).to_number()?;
+        let id = a.get(1).to_number()? as u64;
+        let page_id = crate::target::page_of(s)?.id();
         let realm = s.realm().downgrade();
-        let _ = signal.add_abort_hook(Box::new(move |_page| {
+        let registration = signal.register_native(Box::new(move |_page| {
             let Some(realm) = realm.upgrade() else { return };
             let Ok(s) = realm.scope() else { return };
             let Ok(page) = crate::target::page_of(&s) else { return };
             let run = || -> JsResult<()> {
                 let module = MODULE.module(&s, &page)?;
                 if let Some(f) = module.get("abortRequest")?.as_object() {
-                    f.call(None, &[s.number(id)])?;
+                    f.call(None, &[s.number(id as f64)])?;
                 }
                 Ok(())
             };
@@ -236,6 +245,11 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                 s.report_exception(&e);
             }
         }));
+        CLIENTS.with(|clients| {
+            if let Some(req) = clients.borrow_mut().get_mut(&page_id).and_then(|c| c.requests.get_mut(&id)) {
+                req.abort_hook = registration;
+            }
+        });
         Ok(s.undefined())
     })?;
     native.set_atom("watchAbort", watch.value())?;
