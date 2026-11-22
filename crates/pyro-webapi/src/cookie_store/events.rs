@@ -87,7 +87,7 @@ type Inbox = Arc<Mutex<Vec<CookieChange>>>;
 
 pub(crate) struct WindowObserver {
     realm: RealmId,
-    target: TargetKey,
+    target: Option<TargetKey>,
     jar: Weak<Mutex<CookieJar>>,
     subscription: u64,
     inbox: Inbox,
@@ -102,25 +102,20 @@ impl Drop for WindowObserver {
     }
 }
 
-/// Called once when this window's CookieStore is created.
-pub(crate) fn observe(
-    s: &Scope<'_>,
-    page: &Rc<PageDom>,
-    store: Object<'_>,
-    url: &pyro_net::Url,
-    partition: Option<&str>,
-) -> JsResult<()> {
+/// Observe the creation URL before author script runs. The JS CookieStore and
+/// its EventTarget are still made lazily: a listener first installed between
+/// the mutation and the delivery task can receive the queued change.
+pub(crate) fn install_window(s: &Scope<'_>, page: &Rc<PageDom>) {
     let realm = s.realm_id();
-    if page.cookie_observers.borrow().iter().any(|o| o.realm == realm) {
-        return Ok(());
+    if page.cookie_observers.borrow().iter().any(|o| o.realm == realm) || !crate::secure_context::secure(s, page) {
+        return;
     }
-    let target = s.unwrap::<EventTarget>(store.value()).ok_or(JsError::ContextDestroyed)?.key;
-    let Some(jar) = page.net.borrow().as_ref().map(|n| n.cookies().clone()) else { return Ok(()) };
+    let Ok(url) = super::environment(s, page) else { return };
+    let Some(jar) = page.net.borrow().as_ref().map(|n| n.cookies().clone()) else { return };
     let inbox: Inbox = Arc::default();
     let queue = inbox.clone();
     let page_id = page.id();
-    let url = url.clone();
-    let partition = partition.map(str::to_owned);
+    let partition = page.cookie_partition_key();
     let site = page.cookie_site_context();
     let poster = page.remote_poster();
     let has_poster = poster.is_some();
@@ -150,12 +145,21 @@ pub(crate) fn observe(
     let subscription = jar.lock().unwrap_or_else(|e| e.into_inner()).observe(callback);
     page.cookie_observers.borrow_mut().push(WindowObserver {
         realm,
-        target,
+        target: None,
         jar: Arc::downgrade(&jar),
         subscription,
         inbox,
         has_poster,
     });
+}
+
+pub(crate) fn bind_target(s: &Scope<'_>, page: &Rc<PageDom>, store: Object<'_>) -> JsResult<()> {
+    // Some embedders supply their network client after installing the realm.
+    install_window(s, page);
+    let key = s.unwrap::<EventTarget>(store.value()).ok_or(JsError::ContextDestroyed)?.key;
+    if let Some(observer) = page.cookie_observers.borrow_mut().iter_mut().find(|o| o.realm == s.realm_id()) {
+        observer.target = Some(key);
+    }
     Ok(())
 }
 
@@ -171,7 +175,7 @@ fn deliver(page_id: u64, realm_id: RealmId, inbox: &Inbox, changes: Vec<CookieCh
         .borrow()
         .iter()
         .find(|o| o.realm == realm_id && Arc::ptr_eq(&o.inbox, inbox))
-        .map(|o| o.target);
+        .and_then(|o| o.target);
     let Some(key) = key else { return };
     if !page.dom.borrow().has_listener_for(key, "change") {
         return;

@@ -379,3 +379,21 @@ fn cookie_changes_deliver_trusted_frozen_lists_after_the_mutation() {
     e.page.after_task();
     assert_eq!(eval(&e.main, "log[1]"), "true|true|true||theme:false|true");
 }
+
+#[test]
+fn cookie_change_listener_registered_after_mutation_in_the_same_turn_receives_the_event() {
+    let e = crate::support::network::Env::new("https://cookie.test/app");
+    assert_eq!(
+        e.eval(r#"
+            document.cookie = 'early=before-first-getter; path=/; secure';
+            const changes = [];
+            cookieStore.addEventListener('change', e => {
+                changes.push([e.isTrusted, e.target === cookieStore, e.changed[0].name, e.changed[0].value].join('|'));
+            });
+            changes.length
+        "#),
+        "0"
+    );
+    e.until("changes.length === 1");
+    assert_eq!(e.eval("changes.join()"), "true|true|early|before-first-getter");
+}

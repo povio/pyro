@@ -259,10 +259,8 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     let module = result.as_object().expect("CookieStore module");
     s.set_hidden(holder, MODULE, result)?;
     if window {
-        if let Ok(url) = environment(s, page) {
-            let store = module.get_atom("cookieStore")?.as_object().expect("CookieStore singleton");
-            events::observe(s, page, store, &url, page.cookie_partition_key().as_deref())?;
-        }
+        let store = module.get_atom("cookieStore")?.as_object().expect("CookieStore singleton");
+        events::bind_target(s, page, store)?;
     }
     Ok(module)
 }

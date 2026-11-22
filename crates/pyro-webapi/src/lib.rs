@@ -313,6 +313,7 @@ pub fn rebind_window(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     install_listener_connected_hook(&page);
     realm.set_embedder(page.clone());
     cookie_store::bind_environment(scope, &page)?;
+    cookie_store::events::install_window(scope, &page);
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     mutation_observer::bind(scope, &page)
 }
@@ -379,6 +380,7 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
     cookie_store::bind_environment(scope, &page)?;
+    cookie_store::events::install_window(scope, &page);
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     realm.set_rejection_hooks(event::REJECTION_HOOKS);

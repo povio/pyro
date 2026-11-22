@@ -626,6 +626,22 @@ fn cookie_partition_cross_site(request: &Request, url: &Url) -> bool {
         }))
 }
 
+/// RFC 6265bis allows a top-level navigation to set any SameSite cookie,
+/// even when initiated cross-site and using an unsafe method. Subresource
+/// responses remain subject to the request's site-for-cookies.
+fn response_cookie_site(request: &Request, url: &Url) -> SiteContext {
+    if request.destination == Destination::Document {
+        return SiteContext::SameSite;
+    }
+    if cookie_partition_cross_site(request, url) {
+        return SiteContext::CrossSite;
+    }
+    match request.origin.as_deref() {
+        Some(origin) => Url::parse(origin).map_or(SiteContext::CrossSite, |origin| site_context(Some(&origin), url, false, false)),
+        None => SiteContext::SameSite,
+    }
+}
+
 /// A response's headers with the values in one allocation of their own.
 /// hyper's HTTP/1 parser hands out values that are slices of the connection's
 /// read buffer, which grows to 400 KB on a busy connection: a head that is
@@ -1890,7 +1906,7 @@ impl Io {
         let now = crate::cookies::now_secs();
         let mut jar = self.cookies.lock().unwrap();
         let partition = request_cookie_partition(request, url);
-        let site = if cookie_partition_cross_site(request, url) { SiteContext::CrossSite } else { SiteContext::SameSite };
+        let site = response_cookie_site(request, url);
         for v in headers.get_all(header::SET_COOKIE) {
             // HeaderValue::to_str only accepts visible ASCII. Cookie Store
             // names/values can contain UTF-8, including a leading BOM.
@@ -3187,5 +3203,36 @@ pub(crate) fn includes_credentials(credentials: Credentials, basic_tainting: boo
         Credentials::Include => true,
         Credentials::SameOrigin => basic_tainting,
         Credentials::Omit => false,
+    }
+}
+
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+
+    #[test]
+    fn response_cookie_site_distinguishes_subresources_and_top_level_navigation() {
+        use crate::cookies::{now_secs, Access};
+        let url = Url::parse("https://widget.test/").unwrap();
+        let mut request = Request::get(url.clone(), Destination::Iframe);
+        request.top_level_site = Some("https://site.test".into());
+        request.origin = Some("https://site.test".into());
+        request.method = Method::POST;
+        let mut jar = CookieJar::new();
+        for destination in [Destination::Iframe, Destination::Fetch, Destination::Document] {
+            request.destination = destination;
+            let top = destination == Destination::Document;
+            let site = response_cookie_site(&request, &url);
+            let partition = request_cookie_partition(&request, &url);
+            assert_eq!(site == SiteContext::SameSite, top);
+            assert_eq!(partition.as_deref(), Some(if top { "https://widget.test" } else { "https://site.test" }));
+            assert_eq!(
+                jar.set_from_header_in(&url, "a=lax; Secure; SameSite=Lax", Access::Http, now_secs(), partition.as_deref(), site), top
+            );
+            assert!(jar.set_from_header_in(
+                &url, "b=none; Secure; SameSite=None; Partitioned", Access::Http, now_secs(), partition.as_deref(), site
+            ));
+        }
     }
 }
