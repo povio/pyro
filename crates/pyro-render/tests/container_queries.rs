@@ -298,3 +298,23 @@ body {margin:0}
     assert_eq!(size(&doc, "#w"), (150.0, 10.0));
     assert_eq!(size(&doc, "#no"), (400.0, 5.0));
 }
+
+/// pyro: a container query with an unknown feature selects no container, so it never matches,
+/// even where its known part is true (WPT css-conditional container-queries/query-evaluation,
+/// container-selection-unknown-features).
+#[test]
+fn container_query_with_an_unknown_feature_never_matches() {
+    const UNKNOWN: &str = r#"<!doctype html><style>
+#c {container-type:size;width:200px;height:100px}
+i {display:block;width:1px;height:1px}
+@container (width > 0px) {#known {width:10px}}
+@container (width > 0px) or (foo: bar) {#or {width:20px}}
+@container (width > 0px) or foo(bar) {#fn {width:30px}}
+</style><div id=c><i id=known></i><i id=or></i><i id=fn></i></div>"#;
+    let mut doc = HtmlDocument::from_html(UNKNOWN, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#known"), (10.0, 1.0));
+    assert_eq!(size(&doc, "#or"), (1.0, 1.0));
+    assert_eq!(size(&doc, "#fn"), (1.0, 1.0));
+}

@@ -485,3 +485,9 @@ without a style context (custom properties left as they are): pyro serializes a 
   `listbox`) whose appearance is not base leaves the `@appearance-base` subtree it inherited: a select of auto
   appearance nested in one of `appearance: base-select` keeps its auto look, as do its options (Chromium). WPT html
   `customizable-select/base-appearance-inheritance`.
+- Round 7 (css-conditional C2): `queries/condition.rs` `QueryCondition::contains_unknown`, `stylesheets/container_rule.rs`
+  `ContainerCondition::has_unknown`: a container query with a `<general-enclosed>` (an unknown feature or function)
+  selects no query container and never matches (CSS Conditional 5 § 7.1, as Chrome: `(width > 0px) or (foo: bar)` is
+  false). Enclosed text with substitution references (`var()`, `attr()`, `env()`) is exempt: it is parsed again at
+  match time (`matches_general`). WPT css-conditional `container-queries/query-evaluation`,
+  `container-selection-unknown-features`.

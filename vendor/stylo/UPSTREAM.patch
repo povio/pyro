@@ -5421,7 +5421,7 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
              value,
 diff -ruN a/queries/condition.rs b/queries/condition.rs
 --- a/queries/condition.rs	2026-11-11 19:55:57
-+++ b/queries/condition.rs	2026-11-21 19:04:27
++++ b/queries/condition.rs	2026-11-22 20:29:48
 @@ -25,6 +25,8 @@
  use crate::substitution;
  use crate::substitution::AttrTaint;
@@ -5500,12 +5500,10 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              } else {
                  let value = custom_properties::SpecifiedValue::parse(context, input)?;
                  // `!important` is allowed (but ignored) after the value.
-@@ -417,6 +428,34 @@
-             StyleFeatureValue::Value(None)
-         };
+@@ -419,6 +430,34 @@
          Ok(Self { name, value })
-+    }
-+
+     }
+ 
 +    fn matches_element(&self, context: &substitution::SubstitutionReplacementContext, attr_tainted: &mut bool) -> bool {
 +        let ctx = context.computed_context;
 +        let registration = context.stylist.get_custom_property_registration(&self.name);
@@ -5532,9 +5530,11 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +            StyleFeatureValue::Keyword(CSSWideKeyword::Unset) => current == initial,
 +            StyleFeatureValue::Keyword(_) => false,
 +        }
-     }
- 
++    }
++
      // Substitute custom-property references in `value`, then re-parse and compute it,
+     // and compare against `current_value`.
+     fn substitute_and_compare(
 @@ -479,6 +518,7 @@
              .inherited_custom_properties()
              .get(registration, &self.name);
@@ -5578,7 +5578,32 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              | Self::MozPref(..) => {},
              Self::Not(ref cond) => cond.visit(visitor),
              Self::Operation(ref conds, _op) => {
-@@ -772,6 +826,7 @@
+@@ -764,6 +818,24 @@
+             },
+             Self::InParens(ref cond) => cond.visit(visitor),
+         }
++    }
++
++    /// pyro: whether the condition has an unknown or unsupported part: a `<general-enclosed>`,
++    /// except one with substitution references (`var()`, `attr()`, `env()`), which is parsed
++    /// again once they are substituted at match time (`matches_general`). A container query with
++    /// one selects no query container (CSS Conditional 5 § 7.1).
++    pub fn contains_unknown(&self, context: &ParserContext) -> bool {
++        let mut unknown = false;
++        self.visit(&mut |condition| {
++            if let Self::GeneralEnclosed(ref text, ..) = *condition
++                && !unknown
++            {
++                let references = custom_properties::SpecifiedValue::parse(context, &mut Parser::new(text))
++                    .is_ok_and(|value| value.has_references());
++                unknown = !references;
++            }
++        });
++        unknown
+     }
+ 
+     /// Returns the union of all flags in the expression. This is useful for
+@@ -772,6 +844,7 @@
          let mut result = FeatureFlags::empty();
          self.visit(&mut |condition| match condition {
              Self::Style(..) => result.insert(FeatureFlags::STYLE),
@@ -5586,7 +5611,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              Self::Feature(f) => result.insert(f.feature_flags()),
              Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
              _ => {},
-@@ -834,6 +889,9 @@
+@@ -834,6 +907,9 @@
              Self::InParens(ref c) => c.matches(context, custom, attribute_tracker),
              Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
              Self::Style(ref c) => c.matches(context, attribute_tracker),
@@ -5596,7 +5621,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              Self::MozPref(ref c) => c.matches(context),
              Self::Operation(ref conditions, op) => {
                  debug_assert!(!conditions.is_empty(), "We never create an empty op");
-@@ -962,6 +1020,16 @@
+@@ -962,6 +1038,16 @@
              },
              Token::Function(ref name) => {
                  match_ignore_ascii_case! { name,
@@ -5613,7 +5638,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
                      "style" if StyleQuery::enabled(feature_type) => {
                          let query = try_parse_block(context, input, start, start_location, |input| {
                              StyleQuery::parse(context, input, feature_type)
-@@ -998,5 +1066,161 @@
+@@ -998,5 +1084,161 @@
  
      fn new_operation(conditions: Box<[Self]>, operator: Operator) -> Self {
          Self::Operation(conditions, operator)
@@ -5637,7 +5662,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +            return Ok(Self::Else);
 +        }
 +        Self::parse_internal(cx, input, FeatureType::Container, AllowOr::Yes)
-+    }
+     }
 +
 +    /// Walks only the predicates needed to determine the result. The cascade uses the
 +    /// same walk as substitution so untaken boolean arms add no cycle edges.
@@ -5654,7 +5679,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +            Self::Media(q) => f(IfPredicate::Media(q)),
 +            Self::Supports(q) => f(IfPredicate::Supports(q)),
 +        }
-     }
++    }
  }
 +
 +pub(crate) enum IfPredicate<'a> {
@@ -7759,8 +7784,32 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
 --- a/stylesheets/container_rule.rs	2026-11-11 19:55:57
-+++ b/stylesheets/container_rule.rs	2026-11-20 13:27:27
-@@ -273,6 +273,8 @@
++++ b/stylesheets/container_rule.rs	2026-11-22 20:29:48
+@@ -147,6 +147,10 @@
+     condition: Option<QueryCondition>,
+     #[css(skip)]
+     flags: FeatureFlags,
++    /// pyro: the condition has an unknown feature (`QueryCondition::contains_unknown`): it
++    /// selects no query container, so it never matches.
++    #[css(skip)]
++    has_unknown: bool,
+     #[css(skip)]
+     attributes_referenced: AttrReferenceSet,
+ }
+@@ -240,10 +244,12 @@
+         let flags = condition
+             .as_ref()
+             .map_or(FeatureFlags::empty(), |c| c.cumulative_flags());
++        let has_unknown = condition.as_ref().is_some_and(|c| c.contains_unknown(context));
+         Ok(Self {
+             name,
+             condition,
+             flags,
++            has_unknown,
+             attributes_referenced,
+         })
+     }
+@@ -273,6 +279,8 @@
          // Filter by container-type.
          let container_type = *box_style.get_container_type();
          let available_axes = container_type_axes(container_type, wm);
@@ -7769,7 +7818,7 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
          if !available_axes.contains(self.flags.container_axes()) {
              return TraversalResult::InProgress;
          }
-@@ -290,6 +292,7 @@
+@@ -290,6 +298,7 @@
          TraversalResult::Done(ContainerLookupResult {
              element: potential_container,
              info: ContainerInfo {
@@ -7777,7 +7826,19 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
                  size,
                  wm,
                  inherited_style: {
-@@ -442,6 +445,7 @@
+@@ -351,6 +360,11 @@
+         if self.flags.contains(FeatureFlags::STYLE) {
+             invalidation_flags.insert(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY);
+         }
++        // pyro: CSS Conditional 5 § 7.1: a container query with unknown or unsupported features
++        // selects no query container (`((width) or (unknown))` is false, as in Chrome).
++        if self.has_unknown {
++            return KleeneValue::False;
++        }
+         let (container, info) = match result {
+             Some(r) => (r.element, (r.info, r.style)),
+             None => {
+@@ -442,6 +456,7 @@
  /// Information needed to evaluate an individual container query.
  #[derive(Clone)]
  pub struct ContainerInfo {

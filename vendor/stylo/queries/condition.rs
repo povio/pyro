@@ -820,6 +820,24 @@ impl QueryCondition {
         }
     }
 
+    /// pyro: whether the condition has an unknown or unsupported part: a `<general-enclosed>`,
+    /// except one with substitution references (`var()`, `attr()`, `env()`), which is parsed
+    /// again once they are substituted at match time (`matches_general`). A container query with
+    /// one selects no query container (CSS Conditional 5 § 7.1).
+    pub fn contains_unknown(&self, context: &ParserContext) -> bool {
+        let mut unknown = false;
+        self.visit(&mut |condition| {
+            if let Self::GeneralEnclosed(ref text, ..) = *condition
+                && !unknown
+            {
+                let references = custom_properties::SpecifiedValue::parse(context, &mut Parser::new(text))
+                    .is_ok_and(|value| value.has_references());
+                unknown = !references;
+            }
+        });
+        unknown
+    }
+
     /// Returns the union of all flags in the expression. This is useful for
     /// container queries.
     pub fn cumulative_flags(&self) -> FeatureFlags {
