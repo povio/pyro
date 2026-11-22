@@ -164,6 +164,9 @@ struct MediaState {
     /// decoder) last presented to frame callbacks, and how many were.
     presented: Option<f64>,
     presented_frames: u32,
+    /// HTML "blocked on its media element's pending text tracks": the load
+    /// of this generation stopped at HAVE_CURRENT_DATA until they settle.
+    blocked_on_tracks: Option<u32>,
 }
 
 /// A `<video>`'s resource, kept to decode frames from: the bytes until the
@@ -228,6 +231,7 @@ impl Default for MediaState {
             next_frame_callback: 1,
             presented: None,
             presented_frames: 0,
+            blocked_on_tracks: None,
         }
     }
 }
@@ -529,12 +533,17 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
         MediaChange::TrackChildrenChanged(track) => {
             track_load::sync_parent(page, node);
             check_track_resource(page, track);
+            text_tracks_settled(page, node);
         }
         MediaChange::TrackChanged => {
-            if let Some(parent) = track_load::media_parent(page, node) {
+            let parent = track_load::media_parent(page, node);
+            if let Some(parent) = parent {
                 track_load::sync_parent(page, parent);
             }
             check_track_resource(page, node);
+            if let Some(parent) = parent {
+                text_tracks_settled(page, parent);
+            }
         }
         MediaChange::Src => load(page, node),
         MediaChange::Inserted => {
@@ -1286,8 +1295,20 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
         with(page, node, |st| st.ready = HAVE_CURRENT_DATA);
         set_delaying(page, node, false);
         want_frame(page, node);
-        fire(page, node, generation, "loadeddata");
+        if fire(page, node, generation, "loadeddata") {
+            past_current_data(page, node, generation);
+        }
     });
+}
+
+/// After HAVE_CURRENT_DATA: the ready states that follow, one task each,
+/// unless pending text tracks block the element there (HTML: until each
+/// track whose mode is not disabled has loaded or failed).
+fn past_current_data(page: &Rc<PageDom>, node: NodeId, generation: u32) {
+    if track_load::pending_tracks(page, node) {
+        with(page, node, |st| st.blocked_on_tracks = Some(generation));
+        return;
+    }
     queue(page, node, generation, move |page| {
         let playing = with(page, node, |st| {
             st.ready = HAVE_FUTURE_DATA;
@@ -1326,6 +1347,21 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
         with(page, node, |st| st.network = NETWORK_IDLE);
         fire(page, node, generation, "suspend");
     });
+}
+
+/// A text track of `media` loaded, failed, changed or went: a load blocked
+/// on pending text tracks goes on once none is left.
+pub(crate) fn text_tracks_settled(page: &Rc<PageDom>, media: NodeId) {
+    let Some(generation) = peek(page, media, |st| st.blocked_on_tracks) else { return };
+    if peek(page, media, |st| st.generation) != generation {
+        with(page, media, |st| st.blocked_on_tracks = None);
+        return;
+    }
+    if track_load::pending_tracks(page, media) {
+        return;
+    }
+    with(page, media, |st| st.blocked_on_tracks = None);
+    past_current_data(page, media, generation);
 }
 
 /// HTML "dedicated media source failure steps".

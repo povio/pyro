@@ -44,6 +44,17 @@ pub(crate) fn track_ready_state(page: &PageDom, track: NodeId) -> u16 {
     page.media.track_loads.tracks.borrow().get(&track).map_or(NONE, |load| load.ready)
 }
 
+/// HTML "pending text tracks" of `media`: its track children whose load is
+/// selected (mode showing or hidden) and not yet loaded or failed.
+pub(crate) fn pending_tracks(page: &PageDom, media: NodeId) -> bool {
+    let children = {
+        let dom = page.dom.borrow();
+        dom.element_children(media).into_iter().flatten().collect::<Vec<_>>()
+    };
+    let tracks = page.media.track_loads.tracks.borrow();
+    children.iter().any(|child| tracks.get(child).is_some_and(|load| matches!(load.ready, NONE | LOADING)))
+}
+
 pub(super) fn media_parent(page: &PageDom, track: NodeId) -> Option<NodeId> {
     let dom = page.dom.borrow();
     let parent = dom.parent_element(track).ok()??;
@@ -137,7 +148,11 @@ pub(crate) fn check_track_resource(page: &Rc<PageDom>, node: NodeId) {
         }
         drop(previous);
     }
-    if !enabled { return }
+    if !enabled {
+        // A track no longer selected stops being pending.
+        crate::media::text_tracks_settled(page, parent);
+        return;
+    }
     let generation = loads.generation.get().wrapping_add(1);
     loads.generation.set(generation);
     {
@@ -156,6 +171,9 @@ pub(crate) fn check_track_resource(page: &Rc<PageDom>, node: NodeId) {
         if aborted {
             page.media.track_loads.tracks.borrow_mut().get_mut(&node).unwrap().ready = ERROR;
             crate::input::fire_simple(&page, node, "error", false, false);
+            if let Some(parent) = media_parent(&page, node) {
+                crate::media::text_tracks_settled(&page, parent);
+            }
             if !current(&page, node, generation) { return }
         }
         let Some(parent) = media_parent(&page, node) else { return };
@@ -167,6 +185,7 @@ pub(crate) fn check_track_resource(page: &Rc<PageDom>, node: NodeId) {
         // Mode may change again before the queued selection begins.
         if helper(&page, node, "trackMode", None, |v| v.to_string()).is_none_or(|m| m == "disabled") {
             page.media.track_loads.tracks.borrow_mut().remove(&node);
+            crate::media::text_tracks_settled(&page, parent);
             return;
         }
         page.media.track_loads.tracks.borrow_mut().get_mut(&node).unwrap().ready = LOADING;
@@ -201,4 +220,7 @@ fn finish(page: &Rc<PageDom>, node: NodeId, generation: u64, result: Result<Medi
         load.fetch.take();
     }
     crate::input::fire_simple(page, node, if success { "load" } else { "error" }, false, false);
+    if let Some(parent) = media_parent(page, node) {
+        crate::media::text_tracks_settled(page, parent);
+    }
 }
