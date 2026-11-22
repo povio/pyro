@@ -637,16 +637,21 @@ impl Dom {
         let Some(local) = self.html_local(idx) else { return false };
         let e = self.n(idx).element().unwrap();
         match &**local {
+            // As Chromium: a disabled select disables its options and optgroups too.
             "option" => {
+                if self.option_disabled_idx(idx) {
+                    return true;
+                }
+                let select = self.option_nearest_ancestor_select(idx);
+                select != NIL && self.is_disabled_idx(select)
+            }
+            "optgroup" => {
                 if e.attr_local(&local_name!("disabled")).is_some() {
                     return true;
                 }
-                let p = self.n(idx).parent;
-                p != NIL
-                    && self.html_local(p) == Some(&local_name!("optgroup"))
-                    && self.n(p).element().unwrap().attr_local(&local_name!("disabled")).is_some()
+                let select = self.subtree_ancestor_select(idx);
+                select != NIL && self.is_disabled_idx(select)
             }
-            "optgroup" => e.attr_local(&local_name!("disabled")).is_some(),
             "input" | "button" | "select" | "textarea" | "fieldset" => {
                 if e.attr_local(&local_name!("disabled")).is_some() {
                     return true;
@@ -671,6 +676,25 @@ impl Dom {
             }
             _ => self.face_disabled_idx(idx),
         }
+    }
+    /// An option's own disabledness (HTML): its `disabled` attribute, or
+    /// its nearest optgroup's, past wrapper elements but not past a select,
+    /// datalist, hr or option. The selectedness setting algorithm skips
+    /// these options.
+    pub(crate) fn option_disabled_idx(&self, idx: u32) -> bool {
+        if self.n(idx).element().is_some_and(|e| e.attr_local(&local_name!("disabled")).is_some()) {
+            return true;
+        }
+        let mut p = self.n(idx).parent;
+        while p != NIL {
+            match self.html_local(p).map(|l| &**l) {
+                Some("optgroup") => return self.n(p).element().unwrap().attr_local(&local_name!("disabled")).is_some(),
+                Some("select" | "datalist" | "hr" | "option") => return false,
+                _ => {}
+            }
+            p = self.n(p).parent;
+        }
+        false
     }
     pub fn is_disabled(&self, id: NodeId) -> DomResult<bool> {
         Ok(self.is_disabled_idx(self.check(id)?))
@@ -822,27 +846,44 @@ impl Dom {
     /// Before `node` leaves its parent: an option its select shows as
     /// selected only by default (the selectedness setting algorithm picked
     /// it) keeps that selectedness outside the select, as its selectedness
-    /// is state of the option. Covers an option and the options of an
-    /// optgroup.
+    /// is state of the option. Covers an option and every option of the
+    /// select's list of options inside `node` (an optgroup, a wrapper div).
     pub(crate) fn options_before_remove(&mut self, node: u32) {
-        let (select, options): (u32, Vec<u32>) = match self.html_local(node).map(|l| &**l) {
-            Some("option") => (self.option_select(node), vec![node]),
-            Some("optgroup") => {
-                let parent = self.n(node).parent;
-                if parent == NIL || self.html_local(parent) != Some(&local_name!("select")) {
-                    return;
-                }
-                let options =
-                    self.child_idx_iter(node).filter(|&c| self.html_local(c) == Some(&local_name!("option"))).collect();
-                (parent, options)
-            }
-            _ => return,
+        // 0: nothing, 1: an option, 2: an element that can hold options.
+        let kind = match self.html_local(node).map(|l| &**l) {
+            Some("option") => 1,
+            // Elements whose options are never their ancestor select's.
+            Some("select" | "datalist" | "hr") => 0,
+            _ if self.n(node).element().is_none() || self.n(node).first_child == NIL => 0,
+            _ => 2,
         };
+        match kind {
+            1 => {
+                let select = self.option_select(node);
+                if select != NIL {
+                    self.keep_default_selectedness(select, &[node]);
+                }
+            }
+            2 => self.subtree_options_before_remove(node),
+            _ => {}
+        }
+    }
+    /// [`Self::options_before_remove`] for an element that can hold options
+    /// of a select around it.
+    fn subtree_options_before_remove(&mut self, node: u32) {
+        let select = self.subtree_ancestor_select(node);
         if select == NIL {
             return;
         }
+        let options: Vec<u32> =
+            self.select_options_idx(select).into_iter().filter(|&o| self.is_inclusive_ancestor_idx(node, o)).collect();
+        if !options.is_empty() {
+            self.keep_default_selectedness(select, &options);
+        }
+    }
+    fn keep_default_selectedness(&mut self, select: u32, options: &[u32]) {
         let selected = self.selected_options_idx(select);
-        for option in options {
+        for &option in options {
             if selected.contains(&option) && !self.option_explicit(option) {
                 if let Some(e) = self.n_mut(option).element_mut() {
                     e.control.get_or_insert_with(Default::default).selected = Some(true);
@@ -850,16 +891,41 @@ impl Dom {
             }
         }
     }
-    fn option_select(&self, opt: u32) -> u32 {
-        let mut p = self.n(opt).parent;
-        if p != NIL && self.html_local(p) == Some(&local_name!("optgroup")) {
+    /// The select whose list of options the options inside `node` can be
+    /// in: the nearest select ancestor, unless a datalist, hr or option (or
+    /// a second optgroup, `node` included) comes first.
+    fn subtree_ancestor_select(&self, node: u32) -> u32 {
+        let mut optgroup = self.html_local(node) == Some(&local_name!("optgroup"));
+        let mut p = self.n(node).parent;
+        while p != NIL {
+            match self.html_local(p).map(|l| &**l) {
+                Some("datalist" | "hr" | "option") => return NIL,
+                Some("optgroup") => {
+                    if optgroup {
+                        return NIL;
+                    }
+                    optgroup = true;
+                }
+                Some("select") => return p,
+                _ => {}
+            }
             p = self.n(p).parent;
         }
-        if p != NIL && self.html_local(p) == Some(&local_name!("select")) {
-            p
-        } else {
-            NIL
+        NIL
+    }
+    fn is_inclusive_ancestor_idx(&self, ancestor: u32, mut node: u32) -> bool {
+        while node != NIL {
+            if node == ancestor {
+                return true;
+            }
+            node = self.n(node).parent;
         }
+        false
+    }
+    /// The select whose list of options holds `opt`: its "option element
+    /// nearest ancestor select" (HTML).
+    fn option_select(&self, opt: u32) -> u32 {
+        self.option_nearest_ancestor_select(opt)
     }
     /// An option's "option element nearest ancestor select" (HTML): the
     /// closest select ancestor, past at most one optgroup and no datalist,
@@ -936,17 +1002,37 @@ impl Dom {
         let selectedcontent = self.id_of(selectedcontent);
         self.replace_all(selectedcontent, Some(fragment))
     }
-    /// Options of a select (children and optgroup children), tree order.
+    /// A select's list of options (HTML "get the list of options"): its
+    /// option descendants in tree order whose option element nearest
+    /// ancestor select is this select. A walk skips what holds none: the
+    /// insides of options, hrs, datalists, nested selects, and of an
+    /// optgroup inside another optgroup.
     pub(crate) fn select_options_idx(&self, select: u32) -> Vec<u32> {
         let mut out = Vec::new();
-        for c in self.child_idx_iter(select) {
-            match self.html_local(c).map(|l| &**l) {
-                Some("option") => out.push(c),
-                Some("optgroup") => {
-                    out.extend(self.child_idx_iter(c).filter(|&g| self.html_local(g) == Some(&local_name!("option"))))
-                }
-                _ => {}
+        // The optgroup the walk is inside (NIL: none).
+        let mut optgroup = NIL;
+        let mut cur = self.n(select).first_child;
+        while cur != NIL {
+            if optgroup != NIL && !self.is_inclusive_ancestor_idx(optgroup, cur) {
+                optgroup = NIL;
             }
+            let descend = match self.html_local(cur).map(|l| &**l) {
+                Some("option") => {
+                    out.push(cur);
+                    false
+                }
+                Some("hr" | "datalist" | "select") => false,
+                Some("optgroup") => {
+                    if optgroup != NIL {
+                        false
+                    } else {
+                        optgroup = cur;
+                        true
+                    }
+                }
+                _ => self.n(cur).element().is_some(),
+            };
+            cur = if descend { self.following_in(cur, select) } else { self.following_skipping(cur, select) };
         }
         out
     }
@@ -977,11 +1063,38 @@ impl Dom {
             .and_then(|s| s.trim().parse::<u32>().ok())
             .unwrap_or(1);
         if size <= 1 {
-            if let Some(&first) = opts.iter().find(|&&o| !self.is_disabled_idx(o)) {
+            if let Some(&first) = opts.iter().find(|&&o| !self.option_disabled_idx(o)) {
                 return vec![first];
             }
         }
         Vec::new()
+    }
+    /// A select's "placeholder label option" (HTML), NIL when none: for a
+    /// single select of display size 1, the first option of its list of
+    /// options when that option's value is empty and no optgroup groups it
+    /// (a wrapper element does not stop it from being one).
+    fn select_placeholder_idx(&self, select: u32) -> u32 {
+        let e = self.n(select).element().unwrap();
+        if e.attr_local(&local_name!("multiple")).is_some() {
+            return NIL;
+        }
+        let size = e.attr_local(&local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(1);
+        if size > 1 {
+            return NIL;
+        }
+        let Some(&first) = self.select_options_idx(select).first() else { return NIL };
+        let mut p = self.n(first).parent;
+        while p != select {
+            if self.html_local(p) == Some(&local_name!("optgroup")) {
+                return NIL;
+            }
+            p = self.n(p).parent;
+        }
+        if self.option_value(self.id_of(first)).is_ok_and(|v| v.is_empty()) {
+            first
+        } else {
+            NIL
+        }
     }
     pub fn select_options(&self, select: NodeId) -> DomResult<Vec<NodeId>> {
         let s = self.check(select)?;
@@ -998,6 +1111,12 @@ impl Dom {
             Some(sel) => opts.iter().position(|o| o == sel).map_or(-1, |p| p as i32),
             None => -1,
         })
+    }
+    /// An option's "option element nearest ancestor select" (HTML): the
+    /// select whose list of options holds it.
+    pub fn option_nearest_select(&self, opt: NodeId) -> DomResult<Option<NodeId>> {
+        let o = self.check(opt)?;
+        Ok(self.opt_id(self.option_nearest_ancestor_select(o)))
     }
     pub fn option_selected(&self, opt: NodeId) -> DomResult<bool> {
         Ok(self.option_selected_idx(self.check(opt)?))
@@ -1933,11 +2052,7 @@ impl Dom {
             "select" => {
                 v.value_missing = required && {
                     let sel = self.selected_options_idx(i);
-                    // Placeholder label option (first, empty value, size 1 single select).
-                    sel.is_empty()
-                        || (e.attr_local(&local_name!("multiple")).is_none()
-                            && sel.first() == self.select_options_idx(i).first()
-                            && self.option_value(self.id_of(sel[0]))?.is_empty())
+                    sel.is_empty() || sel.first().is_some_and(|&o| self.select_placeholder_idx(i) == o)
                 };
             }
             _ => {}

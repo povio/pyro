@@ -2654,6 +2654,10 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
     });
     def.pure_method("namedItem", 1, |s, n, a| {
         let name = dom_string(a.get(0))?;
+        // HTMLCollection's namedItem: the empty string names nothing.
+        if name.is_empty() {
+            return Ok(s.null());
+        }
         let dom = n.page().dom.borrow();
         let found = dom.select_options(n.id).js()?.into_iter().find(|&o| {
             dom.element(o).is_ok_and(|e| e.id() == Some(name.as_str()) || e.attr("name") == Some(name.as_str()))
@@ -2714,18 +2718,13 @@ simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
     });
     reflect_bool!(def, "disabled", "disabled");
     reflect_bool!(def, "defaultSelected", "selected");
+    // The form of the option's nearest ancestor select (HTML), else null.
     def.getter("form", |s, n| {
         let dom = n.page().dom.borrow();
-        let mut p = dom.parent(n.id).js()?;
-        while let Some(x) = p {
-            if dom.element(x).is_ok_and(|e| &*e.name.local == "select") {
-                let f = reflected_association(&dom, n.id, dom.form_owner(x).js()?);
-                drop(dom);
-                return node_value(s, n.page(), f);
-            }
-            p = dom.parent(x).js()?;
-        }
-        Ok(s.null())
+        let Some(select) = dom.option_nearest_select(n.id).js()? else { return Ok(s.null()) };
+        let f = reflected_association(&dom, n.id, dom.form_owner(select).js()?);
+        drop(dom);
+        node_value(s, n.page(), f)
     });
     def.accessor(
         "value",

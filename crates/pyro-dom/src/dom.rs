@@ -4320,7 +4320,7 @@ impl Dom {
         }
         Ok(())
     }
-    fn following_skipping(&self, idx: u32, root: u32) -> u32 {
+    pub(crate) fn following_skipping(&self, idx: u32, root: u32) -> u32 {
         let mut cur = idx;
         while cur != root && cur != NIL {
             if self.n(cur).next != NIL {

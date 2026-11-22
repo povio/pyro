@@ -1141,8 +1141,8 @@ impl Dom {
             self.state_dependents(i, &mut dependents);
             self.auto_dir_ancestors(i, &mut dependents);
         }
-        // A fieldset or optgroup whose own attributes changed (`disabled`) can disable or enable
-        // the controls and options inside it.
+        // A fieldset, optgroup or select whose own attributes changed (`disabled`) can disable or
+        // enable the controls and options inside it.
         for &i in changed.iter() {
             self.disabled_dependents(i, &mut dependents);
         }
@@ -1327,10 +1327,10 @@ impl Dom {
         (!out.is_empty()).then_some(out)
     }
 
-    /// The elements inside a fieldset or optgroup `i` whose `:enabled`/`:disabled` state token
-    /// follows its `disabled` attribute (the controls, options and nested fieldsets).
+    /// The elements inside a fieldset, optgroup or select `i` whose `:enabled`/`:disabled` state
+    /// token follows its `disabled` attribute (the controls, options and nested fieldsets).
     fn disabled_dependents(&self, i: u32, out: &mut Vec<u32>) {
-        if !self.slot_live(i) || !matches!(self.html_local(i).map(|l| &**l), Some("fieldset" | "optgroup")) {
+        if !self.slot_live(i) || !matches!(self.html_local(i).map(|l| &**l), Some("fieldset" | "optgroup" | "select")) {
             return;
         }
         let mut n = self.n(i).first_child;
