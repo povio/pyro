@@ -13,7 +13,7 @@ try {
   const page = await browser.newPage();
   if (modulePath) {
     const source = await readFile(modulePath, 'utf8');
-    await page.addInitScript(`Object.assign(globalThis, (${source})({activated: () => false}))`);
+    await page.addInitScript(`{ const audio = (${source})({activated: () => false}); Object.assign(globalThis, audio); globalThis.installedAudio = audio; }`);
   }
   await page.route('**/*', async route => {
     const path = new URL(route.request().url()).pathname;
@@ -25,6 +25,7 @@ try {
   const outcomes = {};
   for (const name of pages) {
     await page.goto('https://wpt.test' + directory + name);
+    if (modulePath) assert.ok(await page.evaluate(() => globalThis.installedAudio?.OfflineAudioContext === OfflineAudioContext && globalThis.installedAudio?.AudioBufferSourceNode === AudioBufferSourceNode), 'Web Audio module installation failed');
     await page.waitForFunction(() => globalThis.results);
     outcomes[name] = await page.evaluate(() => globalThis.results);
   }
