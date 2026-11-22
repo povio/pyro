@@ -38,9 +38,15 @@ impl Default for FetchLimits {
             // Chrome throws for no number of pending requests; 64 failed pages that
             // start one per encoding label (encoding/single-byte-decoder.any.html).
             max_requests: 1024,
-            max_body_bytes: 16 * 1024 * 1024,
-            max_total_body_bytes: 64 * 1024 * 1024,
-            max_body_chunks: 8192,
+            // Chrome caps no response body; one is as large as pyro-net
+            // takes (`NetConfig::max_body`, 256 MiB): fetch/content-encoding's
+            // big-*-body pages decode to 27 MB.
+            max_body_bytes: 256 * 1024 * 1024,
+            // Room for one largest body and its clone (counted twice).
+            max_total_body_bytes: 512 * 1024 * 1024,
+            // A largest body in 4 KiB network chunks (a `Bytes` handle each,
+            // 2 MiB of handles).
+            max_body_chunks: 65_536,
         }
     }
 }
