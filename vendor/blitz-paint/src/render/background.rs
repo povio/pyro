@@ -699,19 +699,16 @@ impl ElementCx<'_, '_> {
                 self.draw_gradient_layer(scene, gradient, layer, area, current_color)
             }
             GenericImage::Url(_) => {
-                // pyro: HTML-in-Canvas privacy: a layer image of another origin is left out
-                // (`Privacy`).
+                // pyro: HTML-in-Canvas privacy: a layer image from an opaque response is left out,
+                // the pixels of any other are allowed (`Privacy`).
                 if let Some(privacy) = &self.context.privacy {
                     let Some(data) = layer.image_data else { return };
-                    if !super::Privacy::same_origin(self.context.dom.as_ref().url(), &data.url) {
+                    if super::Privacy::opaque(&data.image) {
                         return;
                     }
-                    // An SVG layer paints vector commands the scene scan does not see as an image.
-                    if !matches!(data.image, ImageData::Raster(_)) {
-                        privacy.unclassified.set(true);
+                    if let ImageData::Raster(raster) = &data.image {
+                        privacy.allowed.borrow_mut().push(raster.data.id());
                     }
-                    // Not allowed yet (its pixels taint): a same-origin URL may redirect to another
-                    // origin, which only the response's opaque flag tells (see `Privacy`).
                 }
                 self.draw_raster_image_layer(scene, layer, area);
                 #[cfg(feature = "svg")]

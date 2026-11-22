@@ -42922,7 +42922,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,51 +930,121 @@
+@@ -585,51 +930,165 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -42977,23 +42977,67 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +        let mut result = self.data.parse(&resolved_url, bytes);
 +        // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
 +        // orientation 1, which `image-orientation: none` has nothing to undo of.
-+        // pyro: the tainting the provider reports with the response (the stored value's), never
-+        // inferred from the final URL.
-+        let _ = &final_url;
++        // pyro: the tainting the provider reports with the response (the stored value's) decides
++        // the orientation, never inferred from the final URL.
 +        let opaque = self.data.options.cors.is_none() && tainted;
 +        if opaque {
 +            if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
 +                *orientation = 1;
 +            }
 +        }
++        // pyro: HTML-in-Canvas privacy: an opaque response is noted with its pixels; so is one,
++        // fetched without CORS, whose final URL is of another origin than its request's (for a
++        // provider that reports no tainting).
++        let redirected = self.data.options.cors.is_none()
++            && match (Url::parse(&resolved_url), Url::parse(&final_url)) {
++                (Ok(request), Ok(response)) => request.origin() != response.origin(),
++                _ => false,
++            };
++        if opaque || redirected {
++            match &result {
++                Ok(Resource::Image(_, _, _, pixels, _)) => note_opaque_image(image_key(pixels)),
++                #[cfg(feature = "svg")]
++                Ok(Resource::Svg(_, svg)) => note_opaque_image(svg_image_key(svg)),
++                _ => {}
++            }
++        }
 +        // pyro: an image fetched with CORS (or other options) answers under its key.
 +        let key = self.data.options.cache_key(&resolved_url);
 +        self.respond(key, result)
++    }
++}
++
++pub use pyro_raster::decode_jpeg;
++
++/// pyro: the images whose response was opaque (a no-cors response tainted by another origin, a
++/// redirect through one included), by [`image_key`]/[`svg_image_key`]: HTML-in-Canvas privacy
++/// (blitz-paint `Privacy`) leaves them out of what a page can read back from a canvas.
++static OPAQUE_IMAGES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
++    std::sync::LazyLock::new(Default::default);
++
++/// pyro: the key of a decoded raster image's pixels (its `Blob` id, kept by every clone).
++pub fn image_key(pixels: &linebender_resource_handle::Blob<u8>) -> u64 {
++    pixels.id()
++}
++
++/// pyro: the key of a parsed SVG image (its tree's address while it lives; a later image at a
++/// reused address only reads as opaque, and is left out).
++#[cfg(feature = "svg")]
++pub fn svg_image_key(svg: &crate::node::SvgImageData) -> u64 {
++    std::sync::Arc::as_ptr(&svg.tree) as usize as u64
++}
++
++/// pyro: whether the image with `key` came from an opaque response ([`OPAQUE_IMAGES`]).
++pub fn is_opaque_image(key: u64) -> bool {
++    OPAQUE_IMAGES.lock().is_ok_and(|set| set.contains(&key))
++}
++
++fn note_opaque_image(key: u64) {
++    if let Ok(mut set) = OPAQUE_IMAGES.lock() {
++        set.insert(key);
      }
  }
  
-+pub use pyro_raster::decode_jpeg;
-+
  impl ImageHandler {
 -    fn parse(&self, bytes: Bytes) -> Result<Resource, String> {
 -        let image_err = match image::ImageReader::new(Cursor::new(&bytes))
@@ -43071,7 +43115,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +1064,62 @@
+@@ -649,6 +1108,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -43134,7 +43178,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1271,11 @@
+@@ -800,3 +1315,11 @@
          );
      }
  }

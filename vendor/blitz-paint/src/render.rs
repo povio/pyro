@@ -2590,8 +2590,9 @@ fn svg_viewport_affine(svg: &blitz_dom::node::SvgImageData, width: f32, height: 
 
 /// Ensure that the `resized_image` field has a correctly sized image
 /// pyro: HTML-in-Canvas privacy, while `paint_element_subtree` paints an element for a canvas a page
-/// can read back: images from another origin than the document's are left out (CSS image layers,
-/// `<img>`), and the pixels of those from its own origin are recorded as allowed. What this cannot
+/// can read back: images whose response was opaque (another origin without CORS, a redirect through
+/// one: blitz-dom `net::is_opaque_image`) are left out (CSS image layers, `<img>`), and the pixels of
+/// the others (same-origin, `data:`, CORS-approved) are recorded as allowed. What this cannot
 /// classify is drawn and makes the paint taint the canvas (`subtree_may_taint`).
 #[derive(Default)]
 pub(crate) struct Privacy {
@@ -2602,9 +2603,15 @@ pub(crate) struct Privacy {
 }
 
 impl Privacy {
-    /// Whether `url` may be drawn: of the document's origin (`document`), or a `data:` URL.
-    pub(crate) fn same_origin(document: &blitz_traits::net::Url, url: &blitz_traits::net::Url) -> bool {
-        url.scheme() == "data" || url.origin() == document.origin()
+    /// Whether `image` came from an opaque response, which must not be drawn.
+    pub(crate) fn opaque(image: &blitz_dom::node::ImageData) -> bool {
+        match image {
+            blitz_dom::node::ImageData::Raster(raster) => blitz_dom::net::is_opaque_image(blitz_dom::net::image_key(&raster.data)),
+            #[cfg(feature = "svg")]
+            blitz_dom::node::ImageData::Svg(svg) => blitz_dom::net::is_opaque_image(blitz_dom::net::svg_image_key(svg)),
+            #[allow(unreachable_patterns)]
+            _ => false,
+        }
     }
 }
 
@@ -7201,6 +7208,35 @@ impl ElementCx<'_, '_> {
         true
     }
 
+    /// pyro: HTML-in-Canvas privacy: whether this inline `<svg>` references a resource outside the
+    /// document: an `href` that is not a fragment or `data:` URL, or a `url()` in an attribute
+    /// that is not a fragment of this document.
+    #[cfg(feature = "svg")]
+    fn inline_svg_references_resources(&self) -> bool {
+        let tree = self.context.dom.as_ref().tree();
+        let mut stack: Vec<NodeId> = self.node.children.to_vec();
+        while let Some(id) = stack.pop() {
+            let Some(node) = tree.get(id) else { continue };
+            if let Some(element) = node.element_data() {
+                let external = element.attrs().iter().any(|attr| {
+                    let value = attr.value.trim();
+                    if &*attr.name.local == "href" {
+                        return !(value.is_empty() || value.starts_with('#') || value.starts_with("data:"));
+                    }
+                    value.match_indices("url(").any(|(at, _)| {
+                        let rest = value[at + 4..].trim_start().trim_start_matches(['"', '\'']);
+                        !rest.starts_with('#')
+                    })
+                });
+                if external {
+                    return true;
+                }
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        false
+    }
+
     #[cfg(feature = "svg")]
     fn draw_svg(&self, scene: &mut impl PaintScene) {
         use style::properties::generated::longhands::object_fit::computed_value::T as ObjectFit;
@@ -7208,16 +7244,18 @@ impl ElementCx<'_, '_> {
         let Some(svg) = self.svg else {
             return;
         };
-        // pyro: HTML-in-Canvas privacy: an SVG image of another origin is left out; any other one
-        // taints (its vector paint is not an image the scene scan sees, and a same-origin URL may
-        // redirect to another origin).
+        // pyro: HTML-in-Canvas privacy: an SVG image from an opaque response (another origin
+        // without CORS, a redirect through one) is left out (`Privacy`). An inline `<svg>` is the
+        // document's own content, unless it references another resource (an `<image>`, `<use>` or
+        // `feImage` href, a `url()` of another document), which it draws as vector paint the scene
+        // scan does not see: that taints.
         if let Some(privacy) = &self.context.privacy {
-            let dom = self.context.dom.as_ref();
-            let source = self.element.attr(local_name!("src")).and_then(|src| dom.base_url().join(src).ok());
-            if source.is_some_and(|url| !Privacy::same_origin(dom.url(), &url)) {
+            if blitz_dom::net::is_opaque_image(blitz_dom::net::svg_image_key(svg)) {
                 return;
             }
-            privacy.unclassified.set(true);
+            if self.element.name.local == local_name!("svg") && self.inline_svg_references_resources() {
+                privacy.unclassified.set(true);
+            }
         }
         // pyro: its `prefers-color-scheme` blocks and `light-dark()` colours follow this element's
         // used colour scheme (blitz-dom `SvgImageData::for_color_scheme`).
@@ -7672,26 +7710,20 @@ impl ElementCx<'_, '_> {
             }
             return;
         }
-        // pyro: HTML-in-Canvas privacy: an image of another origin is left out; one of the
-        // document's own is allowed; one whose source cannot be told (`srcset`, `<picture>`,
-        // generated content) is drawn and taints.
-        if let Some(privacy) = &self.context.privacy {
-            let dom = self.context.dom.as_ref();
-            let source = self.element.attr(local_name!("src")).and_then(|src| dom.base_url().join(src).ok());
-            let chosen = self.element.attr(local_name!("srcset")).is_some()
-                || self
-                    .node
-                    .parent
-                    .and_then(|parent| dom.get_node(parent))
-                    .and_then(|parent| parent.element_data())
-                    .is_some_and(|parent| parent.name.local == local_name!("picture"));
-            match source {
-                Some(url) if !chosen && !Privacy::same_origin(dom.url(), &url) => return,
-                // Not allowed yet: a same-origin URL may redirect to another origin (or a service
-                // worker may answer it opaquely), so until the response's opaque flag is carried
-                // here, its pixels taint as an unclassified image does.
-                Some(_) if !chosen => {}
-                _ => privacy.unclassified.set(true),
+        // pyro: HTML-in-Canvas privacy: an image from an opaque response is left out; the pixels
+        // of any other are allowed (`Privacy`), whichever source (`src`, `srcset`, `<picture>`,
+        // generated content) chose it.
+        // A canvas's or a video's pixels come from the page (a canvas a cross-origin image tainted,
+        // a cross-origin video frame), not from a response noted here: they taint.
+        if let Some(privacy) = &self.context.privacy
+            && let Some(image) = self.element.image_data()
+        {
+            if !matches!(&*self.element.name.local, "img" | "input" | "image") {
+                privacy.unclassified.set(true);
+            } else if Privacy::opaque(image) {
+                return;
+            } else if let Some(raster) = self.element.raster_image_data() {
+                privacy.allowed.borrow_mut().push(raster.data.id());
             }
         }
         if let Some(image) = self.element.raster_image_data() {
