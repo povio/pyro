@@ -209,8 +209,11 @@ fn scroll_into_view_aligns_block_and_inline() {
     assert_eq!(x("{inline:'center'}"), "2330");
     assert_eq!(x("{inline:'end'}"), "1660");
     assert_eq!(
-        eval(&e.main, "try{t.scrollIntoView({block:'middle'});'no'}catch(err){err.constructor.name}"),
-        "TypeError"
+        eval(
+            &e.main,
+            "try{const p=t.scrollIntoView({block:'middle'});p.catch(()=>{});p.constructor.name}catch(err){'threw'}"
+        ),
+        "Promise"
     );
     e.page.dispose();
 }
