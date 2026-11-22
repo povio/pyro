@@ -235,6 +235,12 @@ impl Dom {
         layout: Option<&crate::layout::Layout>,
     ) -> Option<NodeId> {
         let (owner, flags) = self.focusgroup_owner_of(current)?;
+        // A grid focusgroup moves by table rows and columns, which this
+        // does not implement; it never navigates linearly (on a non-table
+        // element it is not a focusgroup of either kind in Chrome either).
+        if flags.behavior == FocusgroupBehavior::Grid {
+            return None;
+        }
         let mut items = self.focusgroup_items_in_order(owner, area, layout);
         if !items.contains(&current) {
             // `current` is focused, so it is an item even when `area` says
