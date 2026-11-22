@@ -15,3 +15,5 @@ Eight serial fresh browser processes ran in ABBA/BAAB order. Each fixture had on
 | reading-base-7d932ecfa | ordinary | 3.42 | 2.5 |
 | reading-f58a64328 | ordinary | 3.41 | 3.0 |
 | reading-f58a64328 | reading | 4.73 | 4.0 |
+
+The 2.074-second probe averaged 27.51% host CPU (27.61% on baseline arms, 27.43% on candidate arms). A scoped-registry compiler overlapped; dedicated QA and external CI did not. [Per-arm host receipt](host.json)
