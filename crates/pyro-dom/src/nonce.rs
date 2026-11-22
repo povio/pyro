@@ -174,3 +174,43 @@ impl Dom {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crate::dom::Dom;
+    use crate::node::DocumentKind;
+
+    fn provenance(dom: &Dom, doc: crate::node::NodeId) -> Vec<(String, bool, bool)> {
+        dom.trusted_types_policies(doc).iter().map(|p| (p.text.to_string(), p.report_only, p.meta)).collect()
+    }
+
+    #[test]
+    fn header_policies_are_not_meta() {
+        let mut dom = Dom::new();
+        let doc = dom.create_document(DocumentKind::Html, "https://a.test/");
+        dom.set_trusted_types_policies(doc, "trusted-types a; report-uri /h", "require-trusted-types-for 'script'").unwrap();
+        dom.add_csp_policies(doc, "trusted-types b", false, true);
+        assert_eq!(
+            provenance(&dom, doc),
+            [
+                ("trusted-types a; report-uri /h".to_owned(), false, false),
+                ("require-trusted-types-for 'script'".to_owned(), true, false),
+                ("trusted-types b".to_owned(), false, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_meta_in_head_is_meta() {
+        let dom: crate::parse::DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = crate::parse::parse_document(
+            &dom,
+            "https://a.test/",
+            r#"<head><meta http-equiv="Content-Security-Policy" content="trusted-types m; report-uri /r"></head>"#,
+        );
+        assert_eq!(provenance(&dom.borrow(), doc), [("trusted-types m; report-uri /r".to_owned(), false, true)]);
+    }
+}
