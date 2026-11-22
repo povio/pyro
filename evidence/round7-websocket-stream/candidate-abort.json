@@ -1,0 +1,31 @@
+{
+  "surface": "function",
+  "pre": [
+    "AbortError",
+    "AbortError",
+    true,
+    false,
+    false,
+    true,
+    true
+  ],
+  "mid": [
+    "AbortError",
+    "AbortError",
+    true,
+    false,
+    false,
+    true,
+    true
+  ],
+  "close": [
+    "WebSocketError",
+    "WebSocketError",
+    false,
+    false,
+    false,
+    true,
+    true
+  ],
+  "preConnections": 0
+}

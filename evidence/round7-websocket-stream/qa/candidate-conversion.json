@@ -1,0 +1,32 @@
+{
+  "surface": "function",
+  "writes": {
+    "object": [
+      "text",
+      "converted"
+    ],
+    "number": [
+      "text",
+      "42"
+    ],
+    "view": [
+      "binary",
+      [
+        9,
+        10
+      ]
+    ],
+    "blob": [
+      "text",
+      "[object Blob]"
+    ],
+    "symbol": [
+      "error",
+      "TypeError"
+    ],
+    "symbolObject": [
+      "error",
+      "TypeError"
+    ]
+  }
+}

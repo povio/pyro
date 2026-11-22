@@ -31,7 +31,7 @@ use http_body_util::{Empty, Full};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 use super::{tls_config, tls_config_insecure, wall_time, Cmd, Io, NetClient, NetEvent};
@@ -98,6 +98,7 @@ pub enum WsEvent {
 pub type WsSink = Box<dyn FnMut(WsEvent) + Send>;
 
 enum WsCommand {
+    Pull,
     Text(String),
     Binary(Bytes),
     Close(Option<u16>, String),
@@ -108,9 +109,18 @@ enum WsCommand {
 #[derive(Debug)]
 pub struct WebSocketHandle {
     tx: mpsc::UnboundedSender<WsCommand>,
+    // Dropping a stream may need to interrupt a transport write already
+    // awaiting capacity, when the command receiver cannot observe its EOF.
+    stream_lifetime: Option<oneshot::Sender<()>>,
 }
 
 impl WebSocketHandle {
+    /// Request one more incoming message on a demand-controlled connection.
+    pub fn pull(&self) {
+        if self.stream_lifetime.is_some() {
+            let _ = self.tx.send(WsCommand::Pull);
+        }
+    }
     pub fn send_text(&self, text: String) {
         let _ = self.tx.send(WsCommand::Text(text));
     }
@@ -183,6 +193,16 @@ impl NetClient {
     /// the I/O thread; if that thread has stopped it gets `Closed` at once,
     /// on the caller's thread.
     pub fn websocket(&self, req: WebSocketRequest, sink: WsSink) -> (RequestId, WebSocketHandle) {
+        self.start_websocket(req, sink, false)
+    }
+
+    /// Like [`Self::websocket`], with each incoming data message delivered
+    /// on demand. Control frames use the same handshake and protocol handling.
+    pub fn websocket_stream(&self, req: WebSocketRequest, sink: WsSink) -> (RequestId, WebSocketHandle) {
+        self.start_websocket(req, sink, true)
+    }
+
+    fn start_websocket(&self, req: WebSocketRequest, sink: WsSink, demand_controlled: bool) -> (RequestId, WebSocketHandle) {
         let id = self.next_request_id();
         let (tx, rx) = mpsc::unbounded_channel();
         let shared = &self.inner.shared;
@@ -193,7 +213,13 @@ impl NetClient {
                 timestamp: shared.now(),
             });
         }
-        let start = Box::new(Start { id, req, rx, sink });
+        let (stream_lifetime, dropped) = if demand_controlled {
+            let (owner, dropped) = oneshot::channel();
+            (Some(owner), Some(dropped))
+        } else {
+            (None, None)
+        };
+        let start = Box::new(Start { id, req, rx, sink, dropped });
         if let Err(mpsc::error::SendError(Cmd::WebSocket(start))) =
             self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::WebSocket(start))
         {
@@ -208,7 +234,7 @@ impl NetClient {
                 });
             }
         }
-        (id, WebSocketHandle { tx })
+        (id, WebSocketHandle { tx, stream_lifetime })
     }
 }
 
@@ -238,6 +264,7 @@ pub(crate) struct Start {
     req: WebSocketRequest,
     rx: mpsc::UnboundedReceiver<WsCommand>,
     sink: WsSink,
+    dropped: Option<oneshot::Receiver<()>>,
 }
 
 /// Whether `port` is a Fetch "bad port": connections to it fail.
@@ -581,12 +608,17 @@ impl Io {
 
     /// Runs one connection to its end.
     pub(crate) async fn websocket(self: std::rc::Rc<Self>, start: Start) {
-        let Start { id, req, mut rx, sink } = start;
+        let Start { id, req, mut rx, sink, mut dropped } = start;
         let observer = Observer { shared: self.shared.clone(), id };
         let opened = tokio::select! {
             opened = self.ws_open(&req, &observer) => Some(opened),
             // The owner dropped its handle: no more events.
-            _ = wait_for_drop(&mut rx) => None,
+            _ = async {
+                match &mut dropped {
+                    Some(owner) => { let _ = owner.await; }
+                    None => wait_for_drop(&mut rx).await,
+                }
+            } => None,
         };
         let mut delivery = Delivery { sink: Some(sink), observer, closed: false };
         let Some(opened) = opened else {
@@ -598,7 +630,17 @@ impl Io {
             Err(message) => return delivery.fail(message),
         };
         delivery.send(WsEvent::Open { protocol, extensions, headers });
-        self.ws_run(io, deflate, &mut rx, &mut delivery).await;
+        if let Some(dropped) = dropped {
+            tokio::select! {
+                () = self.ws_run(io, deflate, &mut rx, &mut delivery, true) => {}
+                _ = dropped => {
+                    delivery.sink = None;
+                    delivery.close(false, 1006, String::new(), false);
+                }
+            }
+        } else {
+            self.ws_run(io, deflate, &mut rx, &mut delivery, false).await;
+        }
     }
 
     async fn ws_open(&self, req: &WebSocketRequest, delivery: &Observer) -> Result<Opened, String> {
@@ -811,7 +853,9 @@ impl Io {
         mut deflate: Option<Box<Deflate>>,
         rx: &mut mpsc::UnboundedReceiver<WsCommand>,
         delivery: &mut Delivery,
+        demand_controlled: bool,
     ) {
+        let mut credit = demand_controlled.then_some(0usize);
         let max = self.shared.config.max_body;
         let mut inbuf = BytesMut::with_capacity(8 * 1024);
         // An unfinished fragmented message: its opcode, whether it is
@@ -821,6 +865,129 @@ impl Io {
         let mut close_received: Option<(u16, String)> = None;
         let mut deadline: Option<tokio::time::Instant> = None;
         loop {
+            let read_allowed = loop {
+                // Peek only the opcode while out of credit. A Close or Ping
+                // at the front can still be handled without a pending read.
+                // On local close, drain to the peer's Close without posting data.
+                if credit == Some(0) && !close_sent && inbuf.first().is_some_and(|b| b & 0x0f <= 2) {
+                    break false;
+                }
+                let frame = match parse_frame(&mut inbuf, max, deflate.is_some()) {
+                    Ok(Some(frame)) => frame,
+                    Ok(None) => break true,
+                    Err(Violation(code, message)) => {
+                        return self.ws_fail(&mut io, delivery, close_sent, code, message).await;
+                    }
+                };
+                // RSV1 is the "compressed" bit of a data message's first frame.
+                if frame.rsv1 && !matches!(frame.opcode, 0x1 | 0x2) {
+                    let message = if frame.opcode == 0x0 {
+                        "Received a continuation frame with RSV1 set.".to_owned()
+                    } else {
+                        format!("Received a control frame with RSV1 set: opcode = {}", frame.opcode)
+                    };
+                    return self.ws_fail(&mut io, delivery, close_sent, 1002, message).await;
+                }
+                let complete = match frame.opcode {
+                    0x0 => {
+                        let Some((opcode, compressed, mut bytes)) = fragment.take() else {
+                            return self.ws_fail(&mut io, delivery, close_sent, 1002, "Received unexpected continuation frame.".into()).await;
+                        };
+                        if bytes.len() + frame.payload.len() > max {
+                            return self.ws_fail(&mut io, delivery, close_sent, 1009, "Message is too big".into()).await;
+                        }
+                        bytes.extend_from_slice(&frame.payload);
+                        if frame.fin {
+                            Some((opcode, compressed, bytes.freeze()))
+                        } else {
+                            fragment = Some((opcode, compressed, bytes));
+                            None
+                        }
+                    }
+                    0x1 | 0x2 => {
+                        if fragment.is_some() {
+                            return self.ws_fail(&mut io, delivery, close_sent, 1002, "Received start of new message but previous message is unfinished.".into()).await;
+                        }
+                        if frame.fin {
+                            Some((frame.opcode, frame.rsv1, frame.payload))
+                        } else {
+                            fragment = Some((frame.opcode, frame.rsv1, BytesMut::from(&frame.payload[..])));
+                            None
+                        }
+                    }
+                    0x8 => {
+                        let payload = frame.payload;
+                        let (code, reason) = match payload.len() {
+                            0 => (1005, String::new()),
+                            1 => return self.ws_fail(&mut io, delivery, close_sent, 1002, "Received a broken close frame containing an invalid size body.".into()).await,
+                            _ => {
+                                let code = u16::from_be_bytes([payload[0], payload[1]]);
+                                if !valid_close_code(code) {
+                                    return self.ws_fail(&mut io, delivery, close_sent, 1002, format!("Received a broken close frame containing an invalid close code: {code}")).await;
+                                }
+                                match std::str::from_utf8(&payload[2..]) {
+                                    Ok(reason) => (code, reason.to_owned()),
+                                    Err(_) => return self.ws_fail(&mut io, delivery, close_sent, 1007, "Received a broken close frame containing invalid UTF-8.".into()).await,
+                                }
+                            }
+                        };
+                        if !close_sent {
+                            // Echo the code, as Chromium does.
+                            let echo = if code == 1005 { None } else { Some(code) };
+                            let _ = write_frame(&mut io, 0x8, false, &close_payload(echo, "")).await;
+                            close_sent = true;
+                        }
+                        // The first Close frame is the one reported (a
+                        // peer answering our echo sends another).
+                        close_received.get_or_insert((code, reason));
+                        deadline = Some(tokio::time::Instant::now() + CONNECTION_CLOSE_TIMEOUT);
+                        None
+                    }
+                    0x9 => {
+                        if !close_sent {
+                            let _ = write_frame(&mut io, 0xA, false, &frame.payload).await;
+                        }
+                        None
+                    }
+                    0xA => None,
+                    other => {
+                        return self.ws_fail(&mut io, delivery, close_sent, 1002, format!("Unrecognized frame opcode: {other}")).await;
+                    }
+                };
+                let Some((opcode, compressed, payload)) = complete else { continue };
+                if close_received.is_some() {
+                    continue;
+                }
+                let deliver_message = !demand_controlled || !close_sent;
+                if let Some(remaining) = &mut credit {
+                    if deliver_message {
+                        *remaining -= 1;
+                    }
+                }
+                let payload = match (compressed, deflate.as_mut()) {
+                    (true, Some(deflate)) => match deflate.decompress(&payload, max).await {
+                        Ok(inflated) => Bytes::from(inflated),
+                        Err(InflateError(code, message)) => {
+                            return self.ws_fail(&mut io, delivery, close_sent, code, message).await;
+                        }
+                    },
+                    _ => payload,
+                };
+                if opcode == 0x1 {
+                    let Ok(text) = std::str::from_utf8(&payload) else {
+                        return self.ws_fail(&mut io, delivery, close_sent, 1007, "Could not decode a text frame as UTF-8.".into()).await;
+                    };
+                    delivery.observe(|| WebSocketActivity::FrameReceived { opcode, payload: payload.clone() });
+                    if deliver_message {
+                        delivery.send(WsEvent::Text(text.to_owned()));
+                    }
+                } else {
+                    delivery.observe(|| WebSocketActivity::FrameReceived { opcode, payload: payload.clone() });
+                    if deliver_message {
+                        delivery.send(WsEvent::Binary(payload));
+                    }
+                }
+            };
             let timeout = async {
                 match deadline {
                     Some(at) => tokio::time::sleep_until(at).await,
@@ -828,7 +995,14 @@ impl Io {
                 }
             };
             tokio::select! {
-                read = io.read_buf(&mut inbuf) => {
+                read = async {
+                    if credit == Some(0) && !close_sent {
+                        // At most one control frame's worth of lookahead.
+                        (&mut io).take(127).read_buf(&mut inbuf).await
+                    } else {
+                        io.read_buf(&mut inbuf).await
+                    }
+                }, if read_allowed => {
                     let n = match read {
                         Ok(n) => n,
                         Err(_) => 0,
@@ -840,114 +1014,6 @@ impl Io {
                         }
                         return;
                     }
-                    loop {
-                        let frame = match parse_frame(&mut inbuf, max, deflate.is_some()) {
-                            Ok(Some(frame)) => frame,
-                            Ok(None) => break,
-                            Err(Violation(code, message)) => {
-                                return self.ws_fail(&mut io, delivery, close_sent, code, message).await;
-                            }
-                        };
-                        // RSV1 is the "compressed" bit of a data message's first frame.
-                        if frame.rsv1 && !matches!(frame.opcode, 0x1 | 0x2) {
-                            let message = if frame.opcode == 0x0 {
-                                "Received a continuation frame with RSV1 set.".to_owned()
-                            } else {
-                                format!("Received a control frame with RSV1 set: opcode = {}", frame.opcode)
-                            };
-                            return self.ws_fail(&mut io, delivery, close_sent, 1002, message).await;
-                        }
-                        let complete = match frame.opcode {
-                            0x0 => {
-                                let Some((opcode, compressed, mut bytes)) = fragment.take() else {
-                                    return self.ws_fail(&mut io, delivery, close_sent, 1002, "Received unexpected continuation frame.".into()).await;
-                                };
-                                if bytes.len() + frame.payload.len() > max {
-                                    return self.ws_fail(&mut io, delivery, close_sent, 1009, "Message is too big".into()).await;
-                                }
-                                bytes.extend_from_slice(&frame.payload);
-                                if frame.fin {
-                                    Some((opcode, compressed, bytes.freeze()))
-                                } else {
-                                    fragment = Some((opcode, compressed, bytes));
-                                    None
-                                }
-                            }
-                            0x1 | 0x2 => {
-                                if fragment.is_some() {
-                                    return self.ws_fail(&mut io, delivery, close_sent, 1002, "Received start of new message but previous message is unfinished.".into()).await;
-                                }
-                                if frame.fin {
-                                    Some((frame.opcode, frame.rsv1, frame.payload))
-                                } else {
-                                    fragment = Some((frame.opcode, frame.rsv1, BytesMut::from(&frame.payload[..])));
-                                    None
-                                }
-                            }
-                            0x8 => {
-                                let payload = frame.payload;
-                                let (code, reason) = match payload.len() {
-                                    0 => (1005, String::new()),
-                                    1 => return self.ws_fail(&mut io, delivery, close_sent, 1002, "Received a broken close frame containing an invalid size body.".into()).await,
-                                    _ => {
-                                        let code = u16::from_be_bytes([payload[0], payload[1]]);
-                                        if !valid_close_code(code) {
-                                            return self.ws_fail(&mut io, delivery, close_sent, 1002, format!("Received a broken close frame containing an invalid close code: {code}")).await;
-                                        }
-                                        match std::str::from_utf8(&payload[2..]) {
-                                            Ok(reason) => (code, reason.to_owned()),
-                                            Err(_) => return self.ws_fail(&mut io, delivery, close_sent, 1007, "Received a broken close frame containing invalid UTF-8.".into()).await,
-                                        }
-                                    }
-                                };
-                                if !close_sent {
-                                    // Echo the code, as Chromium does.
-                                    let echo = if code == 1005 { None } else { Some(code) };
-                                    let _ = write_frame(&mut io, 0x8, false, &close_payload(echo, "")).await;
-                                    close_sent = true;
-                                }
-                                // The first Close frame is the one reported (a
-                                // peer answering our echo sends another).
-                                close_received.get_or_insert((code, reason));
-                                deadline = Some(tokio::time::Instant::now() + CONNECTION_CLOSE_TIMEOUT);
-                                None
-                            }
-                            0x9 => {
-                                if !close_sent {
-                                    let _ = write_frame(&mut io, 0xA, false, &frame.payload).await;
-                                }
-                                None
-                            }
-                            0xA => None,
-                            other => {
-                                return self.ws_fail(&mut io, delivery, close_sent, 1002, format!("Unrecognized frame opcode: {other}")).await;
-                            }
-                        };
-                        let Some((opcode, compressed, payload)) = complete else { continue };
-                        if close_received.is_some() {
-                            continue;
-                        }
-                        let payload = match (compressed, deflate.as_mut()) {
-                            (true, Some(deflate)) => match deflate.decompress(&payload, max).await {
-                                Ok(inflated) => Bytes::from(inflated),
-                                Err(InflateError(code, message)) => {
-                                    return self.ws_fail(&mut io, delivery, close_sent, code, message).await;
-                                }
-                            },
-                            _ => payload,
-                        };
-                        if opcode == 0x1 {
-                            let Ok(text) = std::str::from_utf8(&payload) else {
-                                return self.ws_fail(&mut io, delivery, close_sent, 1007, "Could not decode a text frame as UTF-8.".into()).await;
-                            };
-                            let text = text.to_owned();
-                            delivery.observe(|| WebSocketActivity::FrameReceived { opcode, payload: payload.clone() });
-                            delivery.send(WsEvent::Text(text));
-                        } else {
-                            delivery.observe(|| WebSocketActivity::FrameReceived { opcode, payload: payload.clone() });
-                            delivery.send(WsEvent::Binary(payload));
-                        }
-                    }
                 }
                 command = rx.recv() => {
                     let Some(command) = command else {
@@ -957,6 +1023,12 @@ impl Io {
                         return;
                     };
                     let (opcode, payload, len) = match command {
+                        WsCommand::Pull => {
+                            if let Some(remaining) = &mut credit {
+                                *remaining = remaining.saturating_add(1);
+                            }
+                            continue;
+                        }
                         WsCommand::Text(text) => {
                             let len = text.len();
                             (0x1, Bytes::from(text), len)

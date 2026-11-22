@@ -1,7 +1,7 @@
-// WebSocket and CloseEvent (HTML "Web sockets"), made on a realm's first use
-// of either name. The script evaluates to a function of the engine's helpers
+// WebSocket, CloseEvent, WebSocketStream and WebSocketError are made on a
+// realm's first use of one of these interfaces. The script evaluates to a function of the engine's helpers
 // (websocket.rs) that returns the module object:
-// { WebSocket, CloseEvent, deliver, define }.
+// { WebSocket, CloseEvent, WebSocketStream, WebSocketError, deliver, define }.
 //
 // The connection lives on the network thread; the engine calls `deliver`
 // from a task of this realm's event loop for each of its events, in order.
@@ -221,7 +221,228 @@
     get reason() { if (!isObject(this) || !(#code in this)) throw new TE('Illegal invocation'); return this.#reason; }
   }
 
-  const deliver = WebSocket.deliver;
+  // WebSocketStream uses the same transport as WebSocket, but its readable
+  // source requests one message at a time and its sink waits for the socket
+  // to acknowledge each write. Neither queue is drained by polling.
+  const { streamSlot, errorSlot, streamConstructors, pull, writeStream } = native;
+  let streamPromise;
+
+  function deferred() {
+    // A classic socket never needs the stream promise implementation.
+    const PromiseC = streamPromise ??= Promise;
+    let resolve, reject;
+    const promise = new PromiseC((ok, fail) => { resolve = ok; reject = fail; });
+    return { promise, resolve, reject };
+  }
+
+  // Store a settled outcome even when no one has requested the attribute.
+  // An unobserved opened/closed attribute must not manufacture an unhandled
+  // rejected Promise. Once read, the attribute always returns that Promise.
+  function promiseProperty() {
+    let result, status, value;
+    function settle(kind, v) {
+      if (status) return;
+      status = kind;
+      if (result) result[kind](v);
+      else value = v;
+    }
+    return {
+      get promise() {
+        if (!result) {
+          result = deferred();
+          if (status) {
+            result[status](value);
+            value = undefined;
+          }
+        }
+        return result.promise;
+      },
+      resolve(v) { settle('resolve', v); },
+      reject(e) { settle('reject', e); },
+    };
+  }
+
+  function dictionary(value) {
+    if (value != null && !isObject(value)) throw new TE('Expected a dictionary');
+    return value;
+  }
+
+  function closeInfo(value) {
+    const options = dictionary(value);
+    const rawCode = options?.closeCode;
+    // The unary plus is ToNumber, including when an object yields BigInt.
+    let code = rawCode === undefined ? null : clampShort(+rawCode);
+    const rawReason = options?.reason;
+    const text = rawReason === undefined ? '' : S(rawReason);
+    if (code !== null && code !== 1000 && (code < 3000 || code > 4999))
+      throw new DOMEx('The close code must be 1000 or between 3000 and 4999.', 'InvalidAccessError');
+    const reason = closeReason(text);
+    if (code === null && reason !== '') code = 1000;
+    return { closeCode: code, reason };
+  }
+
+  class WebSocketError extends DOMEx {
+    constructor(message = '', init = undefined) {
+      const text = S(message);
+      const info = closeInfo(init);
+      super(text, 'WebSocketError');
+      errorSlot.set(this, info);
+    }
+    get closeCode() {
+      const info = errorSlot.get(this);
+      if (!info) throw new TE('Illegal invocation');
+      return info.closeCode;
+    }
+    get reason() {
+      const info = errorSlot.get(this);
+      if (!info) throw new TE('Illegal invocation');
+      return info.reason;
+    }
+  }
+
+  function connectionError(message, code, reason) {
+    // Received codes (including abnormal closure) need not be codes that
+    // script is allowed to send.
+    const error = new WebSocketError(message);
+    errorSlot.set(error, { closeCode: code, reason });
+    return error;
+  }
+
+  function streamOf(value) {
+    const st = streamSlot.get(value);
+    if (!st) throw new TE('Illegal invocation');
+    return st;
+  }
+
+  function startClose(st, info) {
+    if (st.phase === CLOSING || st.phase === CLOSED) return;
+    const connecting = st.phase === CONNECTING;
+    st.phase = CLOSING;
+    if (connecting) abort(st.id);
+    else close(st.id, info?.closeCode ?? -1, info?.reason ?? '');
+  }
+
+  function abortedHandshake(st) {
+    if (st.phase !== CONNECTING) return;
+    st.phase = CLOSED;
+    const error = new DOMEx('The WebSocket handshake was aborted.', 'AbortError');
+    st.opened.reject(error);
+    st.closed.reject(error);
+  }
+
+  class WebSocketStream {
+    constructor(url, options = undefined) {
+      if (!arguments.length) throw new TE('WebSocketStream requires a URL');
+      const href = S(url);
+      const dict = dictionary(options);
+      const protocols = dict?.protocols;
+      if (protocols !== undefined && !isObject(protocols)) throw new TE('Expected a sequence of protocols');
+      const list = [];
+      if (protocols !== undefined) {
+        for (const protocol of protocols) list.push(S(protocol));
+      }
+      const signal = dict?.signal;
+      const st = {
+        id: 0, url: '', phase: CONNECTING, opened: promiseProperty(), closed: promiseProperty(),
+        reader: null, writer: null, read: null, write: null, readerCancelled: false, writerClosing: false,
+      };
+      streamSlot.set(this, st);
+      const result = connect(this, href, list, true, signal);
+      st.id = result[0];
+      st.url = result[1];
+      if (st.id === 0) abortedHandshake(st);
+      else if (st.id < 0) streamDelivery(st, 'close', false, 1006, '', true);
+    }
+
+    get url() { return streamOf(this).url; }
+    get opened() { return streamOf(this).opened.promise; }
+    get closed() { return streamOf(this).closed.promise; }
+    close(options = undefined) {
+      const st = streamOf(this);
+      startClose(st, closeInfo(options));
+    }
+  }
+
+  function openedStreams(st, protocol, extensions) {
+    const [Readable, Writable] = streamConstructors();
+    const readable = new Readable({
+      start(controller) { st.reader = controller; },
+      pull() {
+        if (st.phase !== OPEN) return;
+        st.read = deferred();
+        pull(st.id);
+        return st.read.promise;
+      },
+      cancel(reason) {
+        st.readerCancelled = true;
+        startClose(st, errorSlot.get(reason));
+      },
+    });
+    const writable = new Writable({
+      start(controller) { st.writer = controller; },
+      write(chunk) {
+        if (st.phase !== OPEN) throw new DOMEx('The WebSocketStream is closing.', 'InvalidStateError');
+        const write = deferred();
+        st.write = write;
+        try { writeStream(st.id, chunk); }
+        catch (error) { st.write = null; throw error; }
+        return write.promise;
+      },
+      close() {
+        st.writerClosing = true;
+        startClose(st, null);
+        return st.closed.promise;
+      },
+      abort(reason) { startClose(st, errorSlot.get(reason)); },
+    });
+    st.opened.resolve({ readable, writable, protocol, extensions });
+  }
+
+  function streamDelivery(st, kind, a, b, c, d) {
+    if (st.phase === CLOSED) return;
+    if (kind === 'open') {
+      if (st.phase !== CONNECTING) return;
+      st.phase = OPEN;
+      openedStreams(st, a, b);
+    } else if (kind === 'abort') {
+      abortedHandshake(st);
+    } else if (kind === 'message') {
+      if (st.phase === OPEN && !st.readerCancelled)
+        st.reader.enqueue(a);
+      st.read?.resolve();
+      st.read = null;
+    } else if (kind === 'sent') {
+      st.write?.resolve();
+      st.write = null;
+    } else if (kind === 'close') {
+      const wasOpened = st.reader !== null;
+      st.phase = CLOSED;
+      if (!wasOpened)
+        st.opened.reject(connectionError('WebSocket closed before the handshake completed.', null, ''));
+      const clean = wasOpened && a && !d && !st.write;
+      const error = clean ? null : connectionError('The WebSocket connection was not cleanly closed.', b, c);
+      const invalid = new DOMEx('The WebSocketStream is closed.', 'InvalidStateError');
+      if (st.reader && !st.readerCancelled) {
+        if (clean) st.reader.close();
+        else st.reader.error(error);
+      }
+      if (st.writer && !st.writerClosing) st.writer.error(error ?? invalid);
+      st.write?.reject(invalid);
+      st.write = null;
+      st.read?.resolve();
+      st.read = null;
+      st.reader = st.writer = null;
+      if (clean) st.closed.resolve({ closeCode: b, reason: c });
+      else st.closed.reject(error);
+    }
+  }
+
+  const classicDelivery = WebSocket.deliver;
+  function deliver(socket, kind, a, b, c, d) {
+    const st = streamSlot.get(socket);
+    if (st) streamDelivery(st, kind, a, b, c, d);
+    else classicDelivery(socket, kind, a, b, c, d);
+  }
   delete WebSocket.deliver;
 
   // WebIDL shapes: enumerable members, constants on both the interface and
@@ -236,6 +457,8 @@
     }
     define(proto, toStringTag, { value: name, configurable: true });
   }
+  idl(WebSocketStream, 'WebSocketStream');
+  idl(WebSocketError, 'WebSocketError');
   idl(WebSocket, 'WebSocket');
   idl(CloseEvent, 'CloseEvent');
   const constants = [['CONNECTING', CONNECTING], ['OPEN', OPEN], ['CLOSING', CLOSING], ['CLOSED', CLOSED]];
@@ -248,6 +471,8 @@
   return {
     WebSocket,
     CloseEvent,
+    WebSocketStream,
+    WebSocketError,
     deliver,
     define(target, name, value) {
       define(target, name, { value, writable: true, enumerable: false, configurable: true });

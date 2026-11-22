@@ -1,0 +1,101 @@
+{
+  "scores": {
+    "baseFull": 13,
+    "candidateFull": 57,
+    "chrome158Full": 50,
+    "baseNamed": 134,
+    "candidateNamed": 554,
+    "chrome158Named": 548,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 2,
+    "lpOnly": 8,
+    "gained": 420
+  },
+  "gainsByPage": {
+    "websockets/stream/tentative/abort.any.html?wpt_flags=h2": 4,
+    "websockets/stream/tentative/abort.any.html?wss": 5,
+    "websockets/stream/tentative/abort.any.serviceworker.html?wpt_flags=h2": 4,
+    "websockets/stream/tentative/abort.any.serviceworker.html?wss": 5,
+    "websockets/stream/tentative/abort.any.sharedworker.html?wpt_flags=h2": 4,
+    "websockets/stream/tentative/abort.any.sharedworker.html?wss": 5,
+    "websockets/stream/tentative/abort.any.worker.html?wpt_flags=h2": 4,
+    "websockets/stream/tentative/abort.any.worker.html?wss": 5,
+    "websockets/stream/tentative/backpressure-receive.any.html?wss": 1,
+    "websockets/stream/tentative/backpressure-receive.any.serviceworker.html?wss": 1,
+    "websockets/stream/tentative/backpressure-receive.any.sharedworker.html?wss": 1,
+    "websockets/stream/tentative/backpressure-receive.any.worker.html?wss": 1,
+    "websockets/stream/tentative/backpressure-send.any.html?wss": 1,
+    "websockets/stream/tentative/backpressure-send.any.serviceworker.html?wss": 1,
+    "websockets/stream/tentative/backpressure-send.any.sharedworker.html?wss": 1,
+    "websockets/stream/tentative/backpressure-send.any.worker.html?wss": 1,
+    "websockets/stream/tentative/close.any.html?default": 27,
+    "websockets/stream/tentative/close.any.html?wpt_flags=h2": 1,
+    "websockets/stream/tentative/close.any.html?wss": 27,
+    "websockets/stream/tentative/close.any.serviceworker.html?default": 27,
+    "websockets/stream/tentative/close.any.serviceworker.html?wpt_flags=h2": 1,
+    "websockets/stream/tentative/close.any.serviceworker.html?wss": 27,
+    "websockets/stream/tentative/close.any.sharedworker.html?default": 27,
+    "websockets/stream/tentative/close.any.sharedworker.html?wpt_flags=h2": 1,
+    "websockets/stream/tentative/close.any.sharedworker.html?wss": 27,
+    "websockets/stream/tentative/close.any.worker.html?default": 27,
+    "websockets/stream/tentative/close.any.worker.html?wpt_flags=h2": 1,
+    "websockets/stream/tentative/close.any.worker.html?wss": 27,
+    "websockets/stream/tentative/constructor.any.html?wpt_flags=h2": 5,
+    "websockets/stream/tentative/constructor.any.html?wss": 8,
+    "websockets/stream/tentative/constructor.any.serviceworker.html?wpt_flags=h2": 5,
+    "websockets/stream/tentative/constructor.any.serviceworker.html?wss": 8,
+    "websockets/stream/tentative/constructor.any.sharedworker.html?wpt_flags=h2": 5,
+    "websockets/stream/tentative/constructor.any.sharedworker.html?wss": 8,
+    "websockets/stream/tentative/constructor.any.worker.html?wpt_flags=h2": 5,
+    "websockets/stream/tentative/constructor.any.worker.html?wss": 8,
+    "websockets/stream/tentative/read.any.html?default": 1,
+    "websockets/stream/tentative/read.any.html?wss": 1,
+    "websockets/stream/tentative/read.any.serviceworker.html?default": 1,
+    "websockets/stream/tentative/read.any.serviceworker.html?wss": 1,
+    "websockets/stream/tentative/read.any.sharedworker.html?default": 1,
+    "websockets/stream/tentative/read.any.sharedworker.html?wss": 1,
+    "websockets/stream/tentative/read.any.worker.html?default": 1,
+    "websockets/stream/tentative/read.any.worker.html?wss": 1,
+    "websockets/stream/tentative/remote-close.any.html?default": 7,
+    "websockets/stream/tentative/remote-close.any.html?wss": 7,
+    "websockets/stream/tentative/remote-close.any.serviceworker.html?default": 7,
+    "websockets/stream/tentative/remote-close.any.serviceworker.html?wss": 7,
+    "websockets/stream/tentative/remote-close.any.sharedworker.html?default": 7,
+    "websockets/stream/tentative/remote-close.any.sharedworker.html?wss": 7,
+    "websockets/stream/tentative/remote-close.any.worker.html?default": 7,
+    "websockets/stream/tentative/remote-close.any.worker.html?wss": 7,
+    "websockets/stream/tentative/websocket-error.any.html": 10,
+    "websockets/stream/tentative/websocket-error.any.serviceworker.html": 10,
+    "websockets/stream/tentative/websocket-error.any.sharedworker.html": 10,
+    "websockets/stream/tentative/websocket-error.any.worker.html": 10
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 92
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "cd83d2ff8700a0cd807ba85ba81d24b4998f7a4b0ad457b8a089ad7347a08c6c"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 92
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "f78029638669dc31f21f0624be6cbb3c78cdeffd65b5b265dd858b056adddcd0"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 88,
+        "timeout": 4
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "ba124893c9edaa15d6263a318d276e755c84b97cd03a0e40d66667088a7487ef"
+    }
+  }
+}

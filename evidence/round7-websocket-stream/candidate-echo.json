@@ -1,0 +1,47 @@
+{
+  "surface": [
+    "function",
+    "function"
+  ],
+  "identity": [
+    true,
+    true,
+    true
+  ],
+  "streams": [
+    true,
+    true,
+    "demo",
+    ""
+  ],
+  "echo": [
+    [
+      false,
+      "[object String]",
+      "hello"
+    ],
+    [
+      false,
+      "[object Uint8Array]",
+      [
+        22,
+        33
+      ]
+    ],
+    [
+      false,
+      "[object Uint8Array]",
+      []
+    ],
+    [
+      false,
+      "[object String]",
+      ""
+    ]
+  ],
+  "close": [
+    4000,
+    "done",
+    true
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "dedicated": {
+    "available": "function",
+    "echo": "worker echo",
+    "closed": [
+      3999,
+      "worker"
+    ]
+  }
+}

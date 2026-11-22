@@ -1,0 +1,19 @@
+{
+  "open": [
+    true,
+    "classic",
+    "arraybuffer"
+  ],
+  "received": [
+    "classic",
+    [
+      5
+    ],
+    []
+  ],
+  "closed": [
+    true,
+    3001,
+    "classic close"
+  ]
+}
