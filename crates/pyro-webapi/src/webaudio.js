@@ -680,7 +680,8 @@
             }
             return;
           }
-          if (count < 1 || count > this.maxChannelCount) {
+          if (count === 0) throw new DE('Destination channel count must be positive.', 'NotSupportedError');
+          if (count > this.maxChannelCount) {
             throw new DE(`Failed to set the 'channelCount' property on 'AudioNode': The channel count provided (${count}) is outside the range [1, ${this.maxChannelCount}].`, 'IndexSizeError');
           }
           this.channelCount = count;
