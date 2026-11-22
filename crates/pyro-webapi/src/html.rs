@@ -5641,14 +5641,19 @@ fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value
         let focus_visible = options.get_atom("focusVisible")?;
         (options.get_atom("preventScroll")?.to_bool(), (!focus_visible.is_undefined()).then(|| focus_visible.to_bool()))
     };
-    // Chrome's `HTMLLabelElement::focus`: a label that is not focusable itself (no `tabindex`)
-    // passes focus to its labeled control, an inert label too (WPT the-dialog-element/
-    // inert-label-focus: the control in a modal dialog takes it).
+    // Chrome's `HTMLLabelElement::focus`: a label that is not a focusable area itself (no valid
+    // `tabindex`, not rendered, or inert) passes focus to its labeled control (WPT
+    // the-dialog-element/inert-label-focus: the control in a modal dialog takes it).
     let target = {
-        let dom = n.page().dom.borrow();
-        let is_label = dom.element(n.id).is_ok_and(|e| e.is_html() && &*e.name.local == "label");
-        if is_label && !dom.has_attribute(n.id, "tabindex").unwrap_or(false) {
-            dom.labeled_control(n.id).ok().flatten().unwrap_or(n.id)
+        let is_label = n.page().dom.borrow().element(n.id).is_ok_and(|e| e.is_html() && &*e.name.local == "label");
+        if is_label {
+            let layout = n.page().layout();
+            let dom = n.page().dom.borrow();
+            if crate::input::is_focusable_area(&layout, &dom, n.id) {
+                n.id
+            } else {
+                dom.labeled_control(n.id).ok().flatten().unwrap_or(n.id)
+            }
         } else {
             n.id
         }
