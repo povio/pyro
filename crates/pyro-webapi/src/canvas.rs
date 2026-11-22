@@ -844,7 +844,12 @@ pub(crate) fn to_blob<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, a: 
         };
         if let Some(f) = callback.get(&s).as_object() {
             if let Err(e) = f.call(None, &[blob]) {
-                crate::lifecycle::report_diagnostic(&s, &e);
+                // Web IDL: a callback's exception is reported in the callback's own realm.
+                let callback_realm = s.object_realm(f).filter(|r| !r.is_disposed());
+                match callback_realm.as_ref().and_then(|r| r.scope().ok()) {
+                    Some(cs) => crate::lifecycle::report_diagnostic(&cs, &e),
+                    None => crate::lifecycle::report_diagnostic(&s, &e),
+                }
             }
         }
     }));
