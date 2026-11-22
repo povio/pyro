@@ -2902,11 +2902,9 @@ fn dispatch_mouse_inner(
             crate::popover::light_dismiss(page, target, m.x, m.y, false);
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
-            let mouseup_ok = if !page.compat_mouse_suppressed.replace(false) {
-                fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo)
-            } else {
-                true
-            };
+            // (No mouseup, no mouseup default handling: nor a pick.)
+            let mouseup_ok = !page.compat_mouse_suppressed.replace(false)
+                && fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo);
             // A release on an option of a customizable select's open picker picks it.
             if mouseup_ok && m.button == MouseButton::Left && !page.is_disposed() {
                 select_picker_option_release(page, target);
