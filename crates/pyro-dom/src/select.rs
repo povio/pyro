@@ -820,11 +820,11 @@ impl Dom {
         matches!(&self.n(doc).kind, NodeKind::Document(d) if d.kind == crate::node::DocumentKind::Html)
     }
 
+    /// `:link`/`:any-link` (HTML § 4.16.3): an `a` or `area` element with an `href` attribute
+    /// (not a `link` element).
     fn is_link(&self, idx: u32) -> bool {
         self.n(idx).element().is_some_and(|e| {
-            e.is_html()
-                && matches!(&*e.name.local, "a" | "area" | "link")
-                && e.attr_local(&local_name!("href")).is_some()
+            e.is_html() && matches!(&*e.name.local, "a" | "area") && e.attr_local(&local_name!("href")).is_some()
         })
     }
 
