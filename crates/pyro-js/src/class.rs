@@ -277,7 +277,7 @@ impl OwnName {
 
 /// Builder passed to [`JsClass::define`].
 pub struct ClassDef<C: JsClass> {
-    global_getters: Vec<(&'static str, MemberCall)>,
+    global_accessors: Vec<(&'static str, MemberCall, Option<MemberCall>)>,
     pub(crate) methods: Vec<MethodSpec>,
     pub(crate) statics: Vec<MethodSpec>,
     pub(crate) accessors: Vec<AccessorSpec>,
@@ -359,7 +359,7 @@ fn assert_zst<F>() {
 impl<C: JsClass> ClassDef<C> {
     fn new() -> Self {
         ClassDef {
-            global_getters: Vec::new(),
+            global_accessors: Vec::new(),
             methods: Vec::new(),
             statics: Vec::new(),
             accessors: Vec::new(),
@@ -423,7 +423,18 @@ impl<C: JsClass> ClassDef<C> {
     }
 
     pub fn global_getter(&mut self, name: &'static str, getter: GetterFn<C>) -> &mut Self {
-        self.global_getters.push((name, MemberCall { invoke: getter_invoke::<C>, f: getter as *const () }));
+        self.global_accessors.push((name, MemberCall { invoke: getter_invoke::<C>, f: getter as *const () }, None));
+        self
+    }
+
+    /// A read-write attribute of a [Global] interface, installed on the
+    /// global object without also adding it to the interface prototype.
+    pub fn global_accessor(&mut self, name: &'static str, getter: GetterFn<C>, setter: SetterFn<C>) -> &mut Self {
+        self.global_accessors.push((
+            name,
+            MemberCall { invoke: getter_invoke::<C>, f: getter as *const () },
+            Some(MemberCall { invoke: setter_invoke::<C>, f: setter as *const () }),
+        ));
         self
     }
 
@@ -991,7 +1002,7 @@ pub(crate) struct Brand {
 
 /// `ClassDef` without the marker type parameter.
 pub(crate) struct ClassDefErased {
-    pub global_getters: Vec<(&'static str, MemberCall)>,
+    pub global_accessors: Vec<(&'static str, MemberCall, Option<MemberCall>)>,
     pub methods: Vec<MethodSpec>,
     pub statics: Vec<MethodSpec>,
     pub accessors: Vec<AccessorSpec>,
@@ -1273,7 +1284,7 @@ fn shared_class<C: JsClass>(parent: Option<&'static ClassDefErased>) -> &'static
         callback_interface: def.callback_interface,
         instance_class,
         def: ClassDefErased {
-            global_getters: def.global_getters,
+            global_accessors: def.global_accessors,
             methods: def.methods,
             statics: def.statics,
             accessors: def.accessors,

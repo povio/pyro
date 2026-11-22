@@ -779,6 +779,33 @@ fn register_survives_a_navigation_during_the_script_fetch() {
 }
 
 #[test]
+fn cookie_subscriptions_survive_update_and_allow_cleanup_after_unregister() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(&thread, page, "navigator.serviceWorker.register('/wait.js', {scope:'/worker/'}).then(r => globalThis.reg = r); 'ok'");
+    until(&mut thread, page, "globalThis.reg?.active?.state === 'activated'");
+    eval(&thread, page, r#"
+        globalThis.done = null;
+        (async () => {
+            const manager = reg.cookies, subscriptions = [{name:'unchanged'}];
+            await manager.subscribe(subscriptions);
+            await reg.update();
+            const worker = await new Promise(resolve => reg.addEventListener('updatefound',
+                () => resolve(reg.installing), {once:true}));
+            if (worker.state !== 'activated') await new Promise(resolve => worker.addEventListener(
+                'statechange', () => { if (worker.state === 'activated') resolve(); }));
+            const saved = await manager.getSubscriptions();
+            await reg.unregister();
+            await manager.unsubscribe(subscriptions);
+            return [saved.length, saved[0].name, (await manager.getSubscriptions()).length].join(',');
+        })().then(value => done = value, error => done = error.name);
+        'ok'
+    "#);
+    until(&mut thread, page, "done !== null");
+    assert_eq!(eval(&thread, page, "done"), "1,unchanged,0");
+}
+
+#[test]
 fn waiting_worker_activates_when_the_last_client_goes() {
     let (server, mut thread) = setup();
     let page = open(&mut thread, &server, "/page");

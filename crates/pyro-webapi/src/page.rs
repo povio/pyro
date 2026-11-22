@@ -79,6 +79,8 @@ impl ImageBytes {
 }
 
 pub struct PageDom {
+    /// Cookie Store uses the environment creation URL even after a history update.
+    pub(crate) cookie_creation_url: std::cell::OnceCell<String>,
     pub dom: DomRef,
     id: u64,
     disposed: Cell<bool>,
@@ -105,6 +107,9 @@ pub struct PageDom {
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
     opaque_origin: Cell<bool>,
+    /// Schemeful site of this environment's top-level document at creation.
+    cookie_partition_key: RefCell<Option<String>>,
+    cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
     agent_cluster: RefCell<AgentCluster>,
     /// HTML "sticky activation": the user interacted with the document.
     sticky_activation: Cell<bool>,
@@ -217,6 +222,7 @@ pub struct PageDom {
     /// CSS animation and transition event timelines.
     pub(crate) animation_events: crate::animation_events::State,
     pub net: RefCell<Option<pyro_net::NetClient>>,
+    pub(crate) cookie_observers: RefCell<Vec<crate::cookie_store::events::WindowObserver>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
     pub(crate) resizes: crate::resize_observer::BindingState,
     /// Scroll event targets awaiting the next rendering update, per document
@@ -851,7 +857,13 @@ impl PageDom {
     pub fn new(dom: DomRef, document: NodeId) -> Rc<PageDom> {
         dom.borrow_mut().watch_iframes(document).expect("page document");
         dom.borrow_mut().set_document_scripting(document, true).expect("page document");
+        // Standalone PageDom embedders create a top-level document. The frame
+        // and worker embedders supply the actual inherited storage site below.
+        let cookie_partition_key = dom.borrow().document_data(document).ok()
+            .and_then(|d| pyro_net::Url::parse(d.url.as_ref()).ok())
+            .and_then(|url| pyro_net::cookies::partition_key(&url));
         Rc::new_cyclic(|this| PageDom {
+            cookie_creation_url: Default::default(),
             this: this.clone(),
             frame_sized: Cell::new(false),
             sw_client: RefCell::new(None),
@@ -875,6 +887,12 @@ impl PageDom {
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
             opaque_origin: Cell::new(false),
+            cookie_site_context: Cell::new(if cookie_partition_key.is_some() {
+                pyro_net::cookies::SiteContext::SameSite
+            } else {
+                pyro_net::cookies::SiteContext::CrossSite
+            }),
+            cookie_partition_key: RefCell::new(cookie_partition_key),
             agent_cluster: RefCell::new(AgentCluster { group: AgentClusterGroup::default(), origin: "".into() }),
             sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
@@ -916,6 +934,7 @@ impl PageDom {
             event_unforgeables: RefCell::new(FxHashMap::default()),
             animation_events: Default::default(),
             net: RefCell::new(None),
+            cookie_observers: Default::default(),
             identity: RefCell::new(Default::default()),
             context_services: Default::default(),
             max_touch_points: Cell::new(0),
@@ -1229,6 +1248,7 @@ impl PageDom {
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
         crate::websocket::dispose(self);
+        self.cookie_observers.borrow_mut().clear();
         crate::xhr::dispose(self);
         crate::resource_timing::dispose(self);
         crate::file_reader::dispose(self);
@@ -1330,6 +1350,21 @@ impl PageDom {
     pub fn set_opaque_origin(&self, opaque: bool) {
         self.opaque_origin.set(opaque);
     }
+    pub fn set_cookie_context(&self, key: Option<String>, site: pyro_net::cookies::SiteContext) {
+        *self.cookie_partition_key.borrow_mut() = key;
+        self.cookie_site_context.set(site);
+    }
+
+    /// A document's site for cookies is opaque if any ancestor is cross-site,
+    /// even when this document itself matches the top-level site.
+    pub fn cookie_site_context(&self) -> pyro_net::cookies::SiteContext {
+        self.cookie_site_context.get()
+    }
+
+    pub fn cookie_partition_key(&self) -> Option<String> {
+        self.cookie_partition_key.borrow().clone()
+    }
+
     pub fn has_opaque_origin(&self) -> bool {
         self.opaque_origin.get()
     }
@@ -2230,6 +2265,7 @@ impl PageDom {
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(self: &Rc<Self>) {
         self.timeline_time.set(None);
+        crate::cookie_store::events::after_task(self);
         // Drawing changes no DOM: offscreen frames are committed whether or
         // not the task was otherwise quiet (one empty-list check without).
         crate::canvas::commit_frames(self);

@@ -115,6 +115,8 @@ struct Socket {
     /// The `WebSocket` object: kept alive until the connection is closed.
     object: Persistent,
     url: pyro_net::Url,
+    top_level_site: Option<String>,
+    cookie_site: pyro_net::cookies::SiteContext,
     handle: RefCell<Option<WebSocketHandle>>,
     /// Bytes written since the last `sent` delivery, and whether one is posted.
     sent: Arc<AtomicUsize>,
@@ -230,7 +232,7 @@ fn deliver(key: u64, event: WsEvent) {
             // The handshake's cookies become visible to script now.
             if let Some(page) = socket.page.upgrade() {
                 if let Some(net) = page.net.borrow().as_ref() {
-                    net.store_websocket_cookies(&socket.url, &headers);
+                    net.store_websocket_cookies_for(&socket.url, &headers, socket.top_level_site.as_deref(), socket.cookie_site);
                 }
             }
             call_deliver(&socket, "open", |s| {
@@ -283,12 +285,17 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         }
         validate_protocols(&protocols)?;
         let key = NEXT.with(|n| n.replace(n.get() + 1));
+        let top_level_site = page.cookie_partition_key();
+        let same_site = page.cookie_site_context() == pyro_net::cookies::SiteContext::SameSite
+            && top_level_site.is_some() && pyro_net::cookies::partition_key(&url) == top_level_site;
         let socket = Rc::new(Socket {
             realm: s.realm().downgrade(),
             realm_id: s.realm_id(),
             page: Rc::downgrade(&page),
             object: Persistent::new(s, a.get(0)),
             url: url.clone(),
+            top_level_site,
+            cookie_site: if same_site { pyro_net::cookies::SiteContext::SameSite } else { pyro_net::cookies::SiteContext::CrossSite },
             handle: RefCell::new(None),
             sent: Arc::default(),
             sent_posted: Arc::default(),
@@ -315,6 +322,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                     url: url.clone(),
                     protocols,
                     origin,
+                    top_level_site: socket.top_level_site.clone(),
+                    cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
                     frame_id: page.request_context().frame_id,
                     defaults: defaults.defaults,
                 };

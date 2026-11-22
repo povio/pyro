@@ -65,6 +65,7 @@ use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use pyro_js::{WeakRealm, JsError, JsResult, Object, Persistent, Scope, Value};
+use pyro_net::cookies::SiteContext;
 use pyro_net::{Destination, NetClient, Request, RequestId, RequestMode, ResponseEvent, ResponseSink};
 use pyro_runtime::LoopHandle;
 use rustc_hash::FxHashMap;
@@ -183,12 +184,12 @@ impl Registry {
     }
 
     /// "Match service worker registration": the longest scope that prefixes `url`.
-    fn matching(&self, url: &str) -> Option<Rc<Registration>> {
+    fn matching(&self, url: &str, partition: Option<&str>, site: SiteContext) -> Option<Rc<Registration>> {
         let url = url.split('#').next().unwrap_or(url);
         self.registrations
             .borrow()
             .iter()
-            .filter(|r| !r.uninstalling.get() && url.starts_with(r.scope.as_str()))
+            .filter(|r| !r.uninstalling.get() && r.partition.as_deref() == partition && r.site == site && url.starts_with(r.scope.as_str()))
             .max_by_key(|r| r.scope.len())
             .cloned()
     }
@@ -219,6 +220,7 @@ impl Registry {
 
     fn remove(&self, registration: &Rc<Registration>) {
         self.registrations.borrow_mut().retain(|r| !Rc::ptr_eq(r, registration));
+        registration.cookies.clear();
     }
 }
 
@@ -270,6 +272,8 @@ pub(crate) struct ClientInner {
     /// The creation URL (what scopes match).
     url: String,
     origin: String,
+    partition: Option<String>,
+    site: SiteContext,
     nested: bool,
     controller: RefCell<Option<Rc<Version>>>,
 }
@@ -278,6 +282,9 @@ pub(crate) struct Registration {
     id: u64,
     scope: String,
     origin: String,
+    partition: Option<String>,
+    site: SiteContext,
+    cookies: Arc<crate::cookie_store::subscriptions::Subscriptions>,
     update_via_cache: String,
     module: Cell<bool>,
     installing: RefCell<Option<Rc<Version>>>,
@@ -372,7 +379,7 @@ impl Version {
         let Some(context) = registration.context.upgrade() else { return };
         let json = self.json();
         for client in context.service_workers.live_clients() {
-            let Some(page) = client.page.upgrade().filter(|_| client.origin == registration.origin) else { continue };
+            let Some(page) = client.page.upgrade().filter(|_| registration.shares_storage(&client)) else { continue };
             let json = json.clone();
             post_to_module(&page, false, move |s, glue| call(s, glue, "worker", &[s.string(&json)]));
         }
@@ -387,6 +394,10 @@ impl Version {
 }
 
 impl Registration {
+    fn shares_storage(&self, client: &ClientInner) -> bool {
+        self.origin == client.origin && self.partition == client.partition && self.site == client.site
+    }
+
     fn newest(&self) -> Option<Rc<Version>> {
         self.installing
             .borrow()
@@ -427,6 +438,7 @@ impl Registration {
 
     /// Ends every version (the registration is gone).
     fn clear(&self) {
+        self.cookies.clear();
         for slot in [&self.evaluating, &self.installing, &self.waiting, &self.active] {
             if let Some(version) = slot.take() {
                 version.redundant();
@@ -435,15 +447,19 @@ impl Registration {
     }
 
     /// Tells each client page that touched the API about the new state.
-    fn notify(self: &Rc<Self>, update_found: bool) {
+    fn notify(self: &Rc<Self>) {
         self.bump();
+        self.notify_clients(false);
+    }
+
+    fn notify_clients(self: &Rc<Self>, update_found: bool) {
         let Some(context) = self.context.upgrade() else { return };
         for client in context.service_workers.live_clients() {
             let Some(page) = client.page.upgrade() else { continue };
-            if client.origin != self.origin {
+            if !self.shares_storage(&client) {
                 continue;
             }
-            let matches = context.service_workers.matching(&client.url).is_some_and(|r| Rc::ptr_eq(&r, self));
+            let matches = context.service_workers.matching(&client.url, client.partition.as_deref(), client.site).is_some_and(|r| Rc::ptr_eq(&r, self));
             let json = self.json(matches);
             post_to_module(&page, false, move |s, glue| {
                 call(s, glue, "registration", &[s.string(&json), s.boolean(update_found)]);
@@ -534,6 +550,8 @@ fn client_with_id(page: &Rc<PageDom>, reserved: Option<String>) -> Option<Rc<Cli
         page: Rc::downgrade(page),
         url: url.to_string(),
         origin,
+        partition: page.cookie_partition_key(),
+        site: page.cookie_site_context(),
         nested: page.is_nested_frame(),
         controller: RefCell::new(None),
     });
@@ -565,7 +583,10 @@ pub(crate) fn document_created(page: &Rc<PageDom>) {
     if !matches!(url.scheme(), "http" | "https") {
         return;
     }
-    let Some(active) = context.service_workers.matching(url.as_str()).and_then(|r| r.active.borrow().clone()) else {
+    let active = context.service_workers
+        .matching(url.as_str(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
+        .and_then(|r| r.active.borrow().clone());
+    let Some(active) = active else {
         return;
     };
     if let Some(client) = client_with_id(page, reserved) {
@@ -660,7 +681,16 @@ pub fn navigation_route(services: &ContextServices, request: &Request) -> Option
         return None;
     }
     let registry = &services.service_workers;
-    let version = registry.matching(request.url.as_str())?.active.borrow().clone()?;
+    let partition = if request.destination == Destination::Document {
+        pyro_net::cookies::partition_key(&request.url)
+    } else { request.top_level_site.clone() };
+    let site = if request.destination == Destination::Document
+        || (!request.cross_site_ancestor && partition.is_some() && partition == pyro_net::cookies::partition_key(&request.url)) {
+        SiteContext::SameSite
+    } else {
+        SiteContext::CrossSite
+    };
+    let version = registry.matching(request.url.as_str(), partition.as_deref(), site)?.active.borrow().clone()?;
     if version.state.get() == State::Redundant {
         return None;
     }
@@ -728,10 +758,10 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
                 return reply_error("InvalidStateError", "Only the active worker can claim clients.");
             }
             for client in registry.live_clients() {
-                if client.origin != registration.origin {
+                if !registration.shares_storage(&client) {
                     continue;
                 }
-                if !registry.matching(&client.url).is_some_and(|r| Rc::ptr_eq(&r, &registration)) {
+                if !registry.matching(&client.url, client.partition.as_deref(), client.site).is_some_and(|r| Rc::ptr_eq(&r, &registration)) {
                     continue;
                 }
                 if client.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, version)) {
@@ -751,7 +781,7 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
             let mut out = String::from("[");
             if matches!(kind.as_str(), "window" | "all") {
                 for client in registry.live_clients() {
-                    if client.origin != registration.origin {
+                    if !registration.shares_storage(&client) {
                         continue;
                     }
                     let controlled = client.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, version));
@@ -770,7 +800,7 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
         QueryKind::Get(id) => Ok(registry
             .live_clients()
             .iter()
-            .find(|c| c.id == id && c.origin == registration.origin)
+            .find(|c| c.id == id && registration.shares_storage(c))
             .map_or_else(|| "null".to_owned(), |c| client_json(c))),
         QueryKind::Unregister => Ok(unregister(&registration).to_string()),
         // A worker's own update() changes nothing: its script is what it runs.
@@ -787,7 +817,7 @@ fn post_to_client(
     let Some(registration) = version.registration.upgrade() else { return };
     let Some(context) = registration.context.upgrade() else { return };
     let Some(client) = context.service_workers.live_clients().into_iter().find(|c| c.id == client) else { return };
-    if client.origin != registration.origin {
+    if !registration.shares_storage(&client) {
         return;
     }
     let Some(page) = client.page.upgrade() else { return };
@@ -817,7 +847,7 @@ fn lifecycle_done(version: &Rc<Version>, kind: Lifecycle, ok: bool) {
             registration.installing.take();
             if !ok {
                 version.redundant();
-                registration.notify(false);
+                registration.notify();
                 end_update(&registration);
                 return;
             }
@@ -825,7 +855,7 @@ fn lifecycle_done(version: &Rc<Version>, kind: Lifecycle, ok: bool) {
                 old.redundant();
             }
             version.set_state(State::Installed);
-            registration.notify(false);
+            registration.notify();
             try_activate(&registration);
             end_update(&registration);
         }
@@ -834,7 +864,8 @@ fn lifecycle_done(version: &Rc<Version>, kind: Lifecycle, ok: bool) {
                 return;
             }
             version.set_state(State::Activated);
-            registration.notify(false);
+            registration.cookies.activated();
+            registration.notify();
         }
     }
 }
@@ -853,6 +884,7 @@ fn try_activate(registration: &Rc<Registration>) {
     registration.waiting.take();
     let old = registration.active.replace(Some(waiting.clone()));
     waiting.state.set(State::Activating);
+    if let Some(handle) = waiting.thread.borrow().clone() { registration.cookies.activating(waiting.id, handle); }
     if let Some(old) = &old {
         // Its clients move to the new worker.
         for client in context.service_workers.live_clients() {
@@ -868,7 +900,7 @@ fn try_activate(registration: &Rc<Registration>) {
         }
         old.redundant();
     }
-    registration.notify(false);
+    registration.notify();
     waiting.run(|s, _| crate::service_worker_scope::lifecycle(s, Lifecycle::Activate));
 }
 
@@ -911,7 +943,7 @@ fn unregister(registration: &Rc<Registration>) -> bool {
         .any(|slot| slot.borrow().as_ref().is_some_and(|v| v.controls_any()));
     if !controls {
         registration.clear();
-        registration.notify(false);
+        registration.notify();
     }
     true
 }
@@ -959,7 +991,7 @@ impl Settle {
             registration
                 .context
                 .upgrade()
-                .and_then(|ctx| ctx.service_workers.matching(&c.url))
+                .and_then(|ctx| ctx.service_workers.matching(&c.url, c.partition.as_deref(), c.site))
                 .is_some_and(|r| r.id == registration.id)
         });
         self.done(Ok(format!("{{\"reg\":{}}}", registration.json(matches))));
@@ -1060,7 +1092,8 @@ fn register(
     let context = page.context_services();
     let registry = &context.service_workers;
     let scope = scope_url.to_string();
-    let existing = registry.registrations.borrow().iter().find(|r| r.scope == scope && !r.uninstalling.get()).cloned();
+    let existing = registry.registrations.borrow().iter()
+        .find(|r| r.scope == scope && r.shares_storage(&client) && !r.uninstalling.get()).cloned();
     let registration = match existing {
         Some(registration) => {
             let same = registration.newest().is_some_and(|v| v.script_url == script_url.as_str())
@@ -1090,6 +1123,11 @@ fn register(
                 id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
                 scope,
                 origin: client.origin.clone(),
+                partition: client.partition.clone(),
+                site: client.site,
+                cookies: crate::cookie_store::subscriptions::Subscriptions::new(
+                    scope_url.clone(), client.partition.clone(), client.site, page.net.borrow().as_ref().map(|net| net.cookies()),
+                ),
                 update_via_cache,
                 module: Cell::new(module),
                 installing: RefCell::new(None),
@@ -1140,6 +1178,8 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: pyro_
         if registration.update_via_cache == "all" { pyro_net::CacheMode::Default } else { pyro_net::CacheMode::NoCache };
     request.headers.insert("service-worker", pyro_net::http::HeaderValue::from_static("script"));
     page.apply_request_defaults(&mut request);
+    request.top_level_site = registration.partition.clone();
+    request.cross_site_ancestor = registration.site == SiteContext::CrossSite;
     #[derive(Default)]
     struct Fetched {
         head: Option<pyro_net::ResponseHead>,
@@ -1348,6 +1388,9 @@ fn start_version(
     let service = ServiceStart {
         version: id,
         registration: registration.id,
+        partition_key: registration.partition.clone(),
+        cookie_site_context: registration.site,
+        cookies: registration.cookies.clone(),
         scope: registration.scope.clone(),
         script_url: script_url.to_string(),
         update_via_cache: registration.update_via_cache.clone(),
@@ -1434,8 +1477,11 @@ fn install(registration: &Rc<Registration>, version: &Rc<Version>, settle: Settl
         old.redundant();
     }
     version.state.set(State::Installing);
-    registration.notify(true);
+    // Service Workers "Install": update the installing state, resolve the
+    // register/update job, then queue updatefound on the client event loops.
+    registration.bump();
     settle.registration(registration);
+    registration.notify_clients(true);
     version.run(|s, _| crate::service_worker_scope::lifecycle(s, Lifecycle::Install));
 }
 
@@ -1445,7 +1491,7 @@ fn install(registration: &Rc<Registration>, version: &Rc<Version>, settle: Settl
 /// Registration `id` when it belongs to the page's origin.
 fn same_origin_registration(page: &Rc<PageDom>, id: u64) -> Option<Rc<Registration>> {
     let client = client_of(page)?;
-    page.context_services().service_workers.by_id(id).filter(|r| r.origin == client.origin)
+    page.context_services().service_workers.by_id(id).filter(|r| r.shares_storage(&client))
 }
 
 fn existing<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Object<'s>>> {
@@ -1465,6 +1511,21 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     let holder = crate::worker_scope::module_holder(s, page)?;
     let client = client_of(page);
     let native = s.object();
+    let f = s.function("cookieManager", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let id = a.get(0).to_number()? as u64;
+        let cookies = if let Some(registration) = same_origin_registration(&page, id) {
+            registration.cookies.clone()
+        } else {
+            let scope = pyro_net::Url::parse(&a.get(1).to_string()?).map_err(|_| JsError::ContextDestroyed)?;
+            let list = crate::cookie_store::subscriptions::Subscriptions::new(scope, page.cookie_partition_key(), page.cookie_site_context(), None);
+            list.clear();
+            list
+        };
+        crate::cookie_store::subscriptions::manager(s, &page, cookies, None)
+    })?;
+    native.set_atom("cookieManager", f.value())?;
+    native.set_atom("registrationCookies", crate::streams::shared_slot(s, page, "ServiceWorkerRegistration.cookies")?)?;
     let f = s.function("register", |s, _, a| {
         let page = crate::target::page_of(s)?;
         let id = a.get(0).to_number()? as u64;
@@ -1506,7 +1567,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
             url.to_string()
         };
         let settle = Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() };
-        match page.context_services().service_workers.matching(&url) {
+        match page.context_services().service_workers.matching(&url, client.partition.as_deref(), client.site) {
             Some(registration) => settle.registration(&registration),
             None => settle.done(Ok("{\"reg\":null}".into())),
         }
@@ -1520,10 +1581,10 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
             client_of(&page).ok_or_else(|| JsError::dom("SecurityError", "The document is in an invalid state."))?;
         let context = page.context_services();
         let registry = &context.service_workers;
-        let mine = registry.matching(&client.url);
+        let mine = registry.matching(&client.url, client.partition.as_deref(), client.site);
         let mut out = String::from("{\"regs\":[");
         for registration in
-            registry.registrations.borrow().iter().filter(|r| r.origin == client.origin && !r.uninstalling.get())
+            registry.registrations.borrow().iter().filter(|r| r.shares_storage(&client) && !r.uninstalling.get())
         {
             if out.len() > 10 {
                 out.push(',');
@@ -1581,7 +1642,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
             return Ok(s.undefined());
         }
         let Some(client) = client_of(&page) else { return Ok(s.undefined()) };
-        if !version.registration.upgrade().is_some_and(|r| r.origin == client.origin) {
+        if !version.registration.upgrade().is_some_and(|r| r.shares_storage(&client)) {
             return Ok(s.undefined());
         }
         let size = message.size();
@@ -1601,7 +1662,8 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     let initial = s.object();
     let controller = client.as_ref().and_then(|c| c.controller.borrow().clone());
     initial.set_atom("controller", controller.map_or_else(|| s.null(), |v| s.string(&v.json())))?;
-    let ready = client.as_ref().and_then(|c| page.context_services().service_workers.matching(&c.url));
+    let ready = client.as_ref()
+        .and_then(|c| page.context_services().service_workers.matching(&c.url, c.partition.as_deref(), c.site));
     initial.set_atom("ready", ready.map_or_else(|| s.null(), |r| s.string(&r.json(true))))?;
     initial.set_atom("clientId", client.as_ref().map_or_else(|| s.string(""), |c| s.string(&c.id)))?;
     initial.set_atom("url", client.as_ref().map_or_else(|| s.string(""), |c| s.string(&c.url)))?;

@@ -7,6 +7,7 @@
 //! (including private suffixes), pinned through the psl dependency lockfile.
 
 use std::borrow::Cow;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustc_hash::FxHashMap;
@@ -40,10 +41,41 @@ pub struct Cookie {
     pub secure: bool,
     pub http_only: bool,
     pub same_site: SameSite,
+    /// Schemeful site of the outermost document for a Partitioned cookie.
+    pub partition_key: Option<String>,
+    /// Distinguishes a first-party context from the same site nested under
+    /// a cross-site ancestor in the same top-level site.
+    pub partition_has_cross_site_ancestor: bool,
     creation: u64,
 }
 
 impl Cookie {
+    /// Scope of a non-HTTP cookie read or change event. A deletion uses the
+    /// removed cookie's domain and path, not the URL of the writer.
+    pub fn visible_in(&self, url: &Url, partition: Option<&str>, site: SiteContext) -> bool {
+        !self.http_only
+            && self.in_partition(partition, site == SiteContext::CrossSite)
+            && self.same_site_allows(site)
+            && (!self.secure || is_trustworthy(url))
+            && host_str(url).is_some_and(|host| domain_match(&host, self))
+            && path_match(url.path(), &self.path)
+    }
+
+    fn in_partition(&self, partition: Option<&str>, ancestor: bool) -> bool {
+        self.partition_key
+            .as_deref()
+            .is_none_or(|key| Some(key) == partition && self.partition_has_cross_site_ancestor == ancestor)
+    }
+
+    fn same_site_allows(&self, site: SiteContext) -> bool {
+        matches!(
+            (site, self.same_site),
+            (SiteContext::SameSite, _)
+                | (_, SameSite::None)
+                | (SiteContext::CrossSiteTopLevelSafe, SameSite::Lax | SameSite::Unspecified)
+        )
+    }
+
     pub fn size(&self) -> usize {
         self.name.len() + self.value.len()
     }
@@ -67,11 +99,32 @@ pub enum SiteContext {
     CrossSite,
 }
 
+/// Cookie Store IDL options after USVString and Web IDL numeric conversion.
+/// Expiry is in Unix seconds (converted from the DOM timestamp by the caller).
+pub struct CookieOptions<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+    pub domain: Option<&'a str>,
+    pub path: &'a str,
+    pub expires: Option<f64>,
+    pub max_age: Option<i64>,
+    pub same_site: SameSite,
+    pub partitioned: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum CookieChange {
+    Changed(Cookie),
+    Deleted(Cookie),
+}
+
 #[derive(Default)]
 pub struct CookieJar {
     by_domain: FxHashMap<String, Vec<Cookie>>,
     count: usize,
     seq: u64,
+    observer_sequence: u64,
+    observers: FxHashMap<u64, Arc<dyn Fn(CookieChange) + Send + Sync>>,
 }
 
 pub fn now_secs() -> f64 {
@@ -116,11 +169,18 @@ pub fn is_trustworthy(url: &Url) -> bool {
 /// Registrable domain using the embedded PSL; IPs and single-label hosts
 /// remain their own site.
 pub fn site_of(host: &str) -> &str {
-    if is_ip(host) {
-        host
-    } else {
-        pyro_psl::domain_str(host).unwrap_or(host)
-    }
+    if is_ip(host) { host } else { pyro_psl::domain_str(host).unwrap_or(host) }
+}
+
+/// Partition an origin by scheme and registrable domain. WebSockets use
+/// their HTTP-equivalent origin for cookie selection.
+pub fn partition_key(url: &Url) -> Option<String> {
+    let scheme = match url.scheme() {
+        "ws" | "http" => "http",
+        "wss" | "https" => "https",
+        _ => return None,
+    };
+    Some(format!("{scheme}://{}", site_of(&host_str(url)?)))
 }
 
 fn default_path(url: &Url) -> String {
@@ -139,11 +199,7 @@ fn domain_matches(host: &str, domain: &str) -> bool {
 }
 
 fn domain_match(host: &str, c: &Cookie) -> bool {
-    if c.host_only {
-        host == c.domain
-    } else {
-        domain_matches(host, &c.domain)
-    }
+    if c.host_only { host == c.domain } else { domain_matches(host, &c.domain) }
 }
 
 fn path_match(req: &str, cookie: &str) -> bool {
@@ -190,6 +246,7 @@ struct ParsedSetCookie<'a> {
     path: Option<&'a str>,
     secure: bool,
     http_only: bool,
+    partitioned: bool,
     same_site: SameSite,
 }
 
@@ -247,6 +304,8 @@ fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
             out.secure = true;
         } else if key.eq_ignore_ascii_case("httponly") {
             out.http_only = true;
+        } else if key.eq_ignore_ascii_case("partitioned") {
+            out.partitioned = true;
         } else if key.eq_ignore_ascii_case("samesite") {
             out.same_site = if val.eq_ignore_ascii_case("strict") {
                 SameSite::Strict
@@ -365,10 +424,141 @@ impl CookieJar {
         self.count == 0
     }
 
+    /// Subscribe to committed changes. Called under the jar lock: observers
+    /// enqueue delivery and must not reenter the jar or run application code.
+    pub fn observe(&mut self, observer: Arc<dyn Fn(CookieChange) + Send + Sync>) -> u64 {
+        self.observer_sequence += 1;
+        self.observers.insert(self.observer_sequence, observer);
+        self.observer_sequence
+    }
+
+    pub fn unobserve(&mut self, id: u64) {
+        self.observers.remove(&id);
+    }
+
+    fn notify(&self, change: CookieChange) {
+        let cookie = match &change {
+            CookieChange::Changed(c) | CookieChange::Deleted(c) => c,
+        };
+        if !cookie.http_only {
+            for observer in self.observers.values() {
+                observer(change.clone());
+            }
+        }
+    }
+
+    /// Cookie Store's "set a cookie" algorithm. Build fields directly:
+    /// dictionary values never become a Set-Cookie header or its attributes.
+    pub fn store_script_in(
+        &mut self,
+        url: &Url,
+        options: CookieOptions<'_>,
+        now: f64,
+        partition: Option<&str>,
+        site: SiteContext,
+    ) -> Result<(), &'static str> {
+        let name = trim_wsp(options.name);
+        let value = trim_wsp(options.value);
+        let forbidden = |byte: u8| byte == b';' || (byte.is_ascii_control() && byte != b'\t');
+        if name.bytes().chain(value.bytes()).any(forbidden)
+            || name.contains('=')
+            || name.len() + value.len() > MAX_COOKIE_BYTES
+        {
+            return Err("Invalid cookie name or value.");
+        }
+        if name.is_empty()
+            && (value.is_empty()
+                || value.contains('=')
+                || ["__Host-", "__Http-", "__Secure-"].into_iter().any(|p| starts_with_ci(value, p)))
+        {
+            return Err("Invalid nameless cookie.");
+        }
+        if starts_with_ci(name, "__Http-") || starts_with_ci(name, "__Host-Http-") {
+            return Err("An HTTP-only prefix cannot be set by script.");
+        }
+        let host = host_str(url).ok_or("The cookie URL has no host.")?;
+        let (domain, host_only) = match options.domain {
+            Some(raw) => {
+                if raw.starts_with('.') {
+                    return Err("Cookie domains must not begin with a dot.");
+                }
+                let (domain, _) = canonical_domain(raw).ok_or("Invalid cookie domain.")?;
+                if domain.len() > MAX_COOKIE_ATTRIBUTE_BYTES
+                    || !domain_matches(&host, &domain)
+                    || domain != host && (is_ip(&domain) || pyro_psl::suffix_str(&domain) == Some(domain.as_str()))
+                {
+                    return Err("The cookie domain does not match the current host.");
+                }
+                let public_suffix = !is_ip(&domain) && pyro_psl::suffix_str(&domain) == Some(domain.as_str());
+                (domain, public_suffix)
+            }
+            None => (host.into_owned(), true),
+        };
+        let path = if options.path.is_empty() { default_path(url) } else { options.path.to_owned() };
+        if !path.starts_with('/')
+            || path.len() > MAX_COOKIE_ATTRIBUTE_BYTES
+            || !valid_prefix(name, true, options.domain.is_none(), &path, options.same_site)
+        {
+            return Err("Invalid cookie path or cookie name prefix.");
+        }
+        let expires = match (options.expires, options.max_age) {
+            (Some(_), Some(_)) => return Err("Both expires and maxAge were specified."),
+            (Some(t), None) if !t.is_finite() => return Err("Invalid cookie expiry."),
+            (Some(t), None) => Some(t.min(now + MAX_COOKIE_AGE_SECS)),
+            (None, Some(n)) => Some(now + (n as f64).min(MAX_COOKIE_AGE_SECS)),
+            _ => None,
+        };
+        let partition_key = if options.partitioned {
+            Some(partition.ok_or("No cookie partition is available.")?.to_owned())
+        } else {
+            None
+        };
+        if is_trustworthy(url) && (site == SiteContext::SameSite || options.same_site == SameSite::None) {
+            self.seq += 1;
+            self.store(
+                Cookie {
+                    name: name.to_owned(),
+                    value: value.to_owned(),
+                    domain,
+                    host_only,
+                    path,
+                    expires,
+                    secure: true,
+                    http_only: false,
+                    same_site: options.same_site,
+                    partition_has_cross_site_ancestor: options.partitioned && site == SiteContext::CrossSite,
+                    partition_key,
+                    creation: self.seq,
+                },
+                Access::Script,
+                now,
+            );
+        }
+        Ok(())
+    }
+
     /// Processes one `Set-Cookie` header value (or a `document.cookie`
     /// assignment when `access == Script`). Returns whether it was stored.
     pub fn set_from_header(&mut self, url: &Url, header: &str, access: Access, now: f64) -> bool {
+        self.set_from_header_in(url, header, access, now, None, SiteContext::SameSite)
+    }
+
+    pub fn set_from_header_in(
+        &mut self,
+        url: &Url,
+        header: &str,
+        access: Access,
+        now: f64,
+        partition: Option<&str>,
+        site: SiteContext,
+    ) -> bool {
         let Some(parsed) = parse_set_cookie(header) else { return false };
+        let partition_key = if parsed.partitioned {
+            let Some(key) = partition.filter(|_| parsed.secure) else { return false };
+            Some(key.to_owned())
+        } else {
+            None
+        };
         let Some(host) = host_str(url) else { return false };
         let (domain, host_only) = match parsed.domain {
             Some(d) => {
@@ -387,6 +577,8 @@ impl CookieJar {
                     secure: false,
                     http_only: false,
                     same_site: SameSite::Unspecified,
+                    partition_key: None,
+                    partition_has_cross_site_ancestor: false,
                     creation: 0,
                 };
                 if !domain_match(&host, &probe) {
@@ -409,6 +601,12 @@ impl CookieJar {
             return false;
         }
         let same_site = parsed.same_site;
+        // The caller uses SameSite for receipt during a top-level navigation.
+        // Cross-site subresource responses and non-HTTP writes cannot set a
+        // Lax or Strict cookie; attribute absence has Lax-by-default behavior.
+        if same_site != SameSite::None && (site == SiteContext::CrossSite || access == Access::Script && site != SiteContext::SameSite) {
+            return false;
+        }
         let name = parsed.name;
         if !valid_prefix(name, secure, host_only, &path, same_site) {
             return false;
@@ -426,6 +624,8 @@ impl CookieJar {
             && !is_trustworthy(url)
             && self.by_domain.values().flatten().any(|old| {
                 old.secure
+                    && old.partition_key == partition_key
+                    && old.partition_has_cross_site_ancestor == (parsed.partitioned && site == SiteContext::CrossSite)
                     && old.name == name
                     && old.expires.is_none_or(|e| e > now)
                     && (domain_matches(&domain, &old.domain) || domain_matches(&old.domain, &domain))
@@ -445,6 +645,8 @@ impl CookieJar {
             secure,
             http_only,
             same_site,
+            partition_has_cross_site_ancestor: parsed.partitioned && site == SiteContext::CrossSite,
+            partition_key,
             creation: self.seq,
         };
         self.store(c, access, now)
@@ -452,33 +654,50 @@ impl CookieJar {
 
     fn store(&mut self, mut c: Cookie, access: Access, now: f64) -> bool {
         let list = self.by_domain.entry(c.domain.clone()).or_default();
-        if let Some(pos) = list.iter().position(|o| o.name == c.name && o.path == c.path && o.host_only == c.host_only)
-        {
-            if list[pos].http_only && access == Access::Script {
+        let index = list.iter().position(|old| {
+            old.name == c.name
+                && old.host_only == c.host_only
+                && old.path == c.path
+                && old.partition_key == c.partition_key
+                && old.partition_has_cross_site_ancestor == c.partition_has_cross_site_ancestor
+        });
+        let mut previous = None;
+        if let Some(index) = index {
+            let old = &list[index];
+            if old.http_only && old.expires.is_none_or(|t| t > now) && access == Access::Script {
                 return false;
             }
-            c.creation = list[pos].creation;
-            list.remove(pos);
+            c.creation = old.creation;
+            if *old == c && c.expires.is_none_or(|e| e > now) {
+                return true;
+            }
+            previous = Some(list.remove(index));
             self.count -= 1;
         }
         if c.expires.is_some_and(|e| e <= now) {
-            // Expired: acts as deletion.
             if list.is_empty() {
                 self.by_domain.remove(&c.domain);
             }
+            if let Some(old) = previous {
+                self.notify(CookieChange::Deleted(old));
+            }
             return true;
         }
+        let change = (!self.observers.is_empty() && !c.http_only).then(|| CookieChange::Changed(c.clone()));
         list.push(c);
+        self.count += 1;
         if list.len() > MAX_PER_DOMAIN {
-            // Evict the least recently created cookie of this domain.
             if let Some((i, _)) = list.iter().enumerate().min_by_key(|(_, c)| c.creation) {
-                list.remove(i);
+                let evicted = list.remove(i);
                 self.count -= 1;
+                self.notify(CookieChange::Deleted(evicted));
             }
         }
-        self.count += 1;
         if self.count > MAX_TOTAL {
             self.evict_oldest();
+        }
+        if let Some(change) = change {
+            self.notify(change);
         }
         true
     }
@@ -490,19 +709,43 @@ impl CookieJar {
             .flat_map(|(d, l)| l.iter().map(move |c| (c.creation, d.clone())))
             .min_by_key(|(c, _)| *c);
         if let Some((creation, d)) = victim {
-            if let Some(l) = self.by_domain.get_mut(&d) {
-                l.retain(|c| c.creation != creation);
-                if l.is_empty() {
-                    self.by_domain.remove(&d);
-                }
+            let list = self.by_domain.get_mut(&d).expect("victim in jar");
+            let index = list.iter().position(|c| c.creation == creation).expect("victim in domain");
+            let evicted = list.remove(index);
+            if list.is_empty() {
+                self.by_domain.remove(&d);
             }
             self.count -= 1;
+            self.notify(CookieChange::Deleted(evicted));
         }
     }
 
     /// Cookies applicable to `url`, sorted per RFC 6265 (longer paths first,
     /// then earlier creation). Expired cookies encountered are purged.
     pub fn matching(&mut self, url: &Url, access: Access, site: SiteContext, now: f64) -> Vec<&Cookie> {
+        self.matching_for(url, access, site, now, None)
+    }
+
+    pub fn matching_for(
+        &mut self,
+        url: &Url,
+        access: Access,
+        site: SiteContext,
+        now: f64,
+        partition: Option<&str>,
+    ) -> Vec<&Cookie> {
+        self.matching_partition(url, access, site, now, partition, site == SiteContext::CrossSite)
+    }
+
+    pub fn matching_partition(
+        &mut self,
+        url: &Url,
+        access: Access,
+        site: SiteContext,
+        now: f64,
+        partition: Option<&str>,
+        ancestor: bool,
+    ) -> Vec<&Cookie> {
         // An empty jar (most contexts) matches nothing: no host or domain work.
         if self.by_domain.is_empty() {
             return Vec::new();
@@ -519,32 +762,35 @@ impl CookieJar {
                 domains.push(rest);
             }
         }
+        let mut expired = Vec::new();
         for d in &domains {
             if let Some(l) = self.by_domain.get_mut(*d) {
                 let before = l.len();
-                l.retain(|c| c.expires.is_none_or(|e| e > now));
+                l.retain(|c| {
+                    let live = c.expires.is_none_or(|e| e > now);
+                    if !live && !self.observers.is_empty() && !c.http_only {
+                        expired.push(c.clone());
+                    }
+                    live
+                });
                 self.count -= before - l.len();
                 if l.is_empty() {
                     self.by_domain.remove(*d);
                 }
             }
         }
+        for c in expired {
+            self.notify(CookieChange::Deleted(c));
+        }
         let mut out: Vec<&Cookie> = domains
             .iter()
             .filter_map(|d| self.by_domain.get(*d))
             .flat_map(|l| l.iter())
-            .filter(|c| domain_match(&host, c))
+            .filter(|c| c.in_partition(partition, ancestor) && domain_match(&host, c))
             .filter(|c| path_match(path, &c.path))
             .filter(|c| !c.secure || secure_ok)
             .filter(|c| !(c.http_only && access == Access::Script))
-            .filter(|c| {
-                matches!(
-                    (site, c.same_site),
-                    (SiteContext::SameSite, _)
-                        | (_, SameSite::None)
-                        | (SiteContext::CrossSiteTopLevelSafe, SameSite::Lax | SameSite::Unspecified)
-                )
-            })
+            .filter(|c| c.same_site_allows(site))
             .collect();
         out.sort_by(|a, b| b.path.len().cmp(&a.path.len()).then(a.creation.cmp(&b.creation)));
         out
@@ -552,7 +798,28 @@ impl CookieJar {
 
     /// `Cookie` request header value, or None if no cookie applies.
     pub fn header_for(&mut self, url: &Url, site: SiteContext, now: f64) -> Option<String> {
-        let list = self.matching(url, Access::Http, site, now);
+        self.header_for_partition(url, site, now, None)
+    }
+
+    pub fn header_for_partition(
+        &mut self,
+        url: &Url,
+        site: SiteContext,
+        now: f64,
+        partition: Option<&str>,
+    ) -> Option<String> {
+        self.header_for_context(url, site, now, partition, site == SiteContext::CrossSite)
+    }
+
+    pub fn header_for_context(
+        &mut self,
+        url: &Url,
+        site: SiteContext,
+        now: f64,
+        partition: Option<&str>,
+        ancestor: bool,
+    ) -> Option<String> {
+        let list = self.matching_partition(url, Access::Http, site, now, partition, ancestor);
         if list.is_empty() {
             return None;
         }
@@ -572,10 +839,14 @@ impl CookieJar {
 
     /// `document.cookie` getter.
     pub fn document_cookie(&mut self, url: &Url, now: f64) -> String {
+        self.document_cookie_in(url, now, None, SiteContext::SameSite)
+    }
+
+    pub fn document_cookie_in(&mut self, url: &Url, now: f64, partition: Option<&str>, site: SiteContext) -> String {
         if !matches!(url.scheme(), "http" | "https") {
             return String::new();
         }
-        let list = self.matching(url, Access::Script, SiteContext::SameSite, now);
+        let list = self.matching_for(url, Access::Script, site, now, partition);
         list.iter()
             .map(|c| if c.name.is_empty() { c.value.clone() } else { format!("{}={}", c.name, c.value) })
             .collect::<Vec<_>>()
@@ -634,31 +905,49 @@ impl CookieJar {
             secure,
             http_only,
             same_site,
+            partition_key: None,
+            partition_has_cross_site_ancestor: false,
             creation: self.seq,
         };
         self.store(c, Access::Http, now_secs())
     }
 
-    /// Deletes cookies by name, optionally restricted by domain and path.
+    /// Deletes unpartitioned cookies by name, optionally restricted by domain and path.
     pub fn delete(&mut self, name: &str, domain: Option<&str>, path: Option<&str>) -> usize {
         let mut removed = 0;
+        let mut changes = Vec::new();
+        let observing = !self.observers.is_empty();
         self.by_domain.retain(|d, l| {
-            let before = l.len();
             l.retain(|c| {
-                !(c.name == name
+                let matches = c.partition_key.is_none()
+                    && c.name == name
                     && domain.is_none_or(|x| x.trim_start_matches('.').eq_ignore_ascii_case(d))
-                    && path.is_none_or(|p| c.path == p))
+                    && path.is_none_or(|p| c.path == p);
+                if matches {
+                    removed += 1;
+                    if observing && !c.http_only {
+                        changes.push(c.clone());
+                    }
+                }
+                !matches
             });
-            removed += before - l.len();
             !l.is_empty()
         });
         self.count -= removed;
+        for cookie in changes {
+            self.notify(CookieChange::Deleted(cookie));
+        }
         removed
     }
 
     pub fn clear(&mut self) {
-        self.by_domain.clear();
+        let old = std::mem::take(&mut self.by_domain);
         self.count = 0;
+        if !self.observers.is_empty() {
+            for cookie in old.into_values().flatten() {
+                self.notify(CookieChange::Deleted(cookie));
+            }
+        }
     }
 }
 
@@ -683,6 +972,185 @@ pub fn site_context(initiator: Option<&Url>, target: &Url, top_level_nav: bool, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn options<'a>(name: &'a str, value: &'a str) -> CookieOptions<'a> {
+        CookieOptions {
+            name,
+            value,
+            domain: None,
+            path: "/",
+            expires: None,
+            max_age: None,
+            same_site: SameSite::Strict,
+            partitioned: false,
+        }
+    }
+
+    #[test]
+    fn cookie_store_dictionary_normalization_validation_and_http_only() {
+        let mut jar = CookieJar::new();
+        let u = Url::parse("https://a.example.test/nested/page").unwrap();
+        let now = 10.;
+        jar.store_script_in(
+            &u,
+            CookieOptions { path: "", ..options("  x\t", "\tv  ") },
+            now,
+            None,
+            SiteContext::SameSite,
+        )
+        .unwrap();
+        jar.store_script_in(
+            &u,
+            CookieOptions { domain: Some("A.Example.Test"), ..options("x", "domain") },
+            now,
+            None,
+            SiteContext::SameSite,
+        )
+        .unwrap();
+        assert_eq!(jar.document_cookie(&u, now), "x=v; x=domain");
+        for value in [
+            options("", ""),
+            options("", "other=value"),
+            options("a=b", "v"),
+            options("a", "v; secure"),
+            options("__http-forbidden", "v"),
+            options("", "__SECURE-hidden"),
+            options("a", "control\r"),
+            CookieOptions { path: "relative", ..options("a", "b") },
+            CookieOptions { domain: Some("test"), ..options("a", "b") },
+            CookieOptions { domain: Some(".example.test"), ..options("a", "b") },
+            CookieOptions { expires: Some(30.), max_age: Some(3), ..options("a", "b") },
+        ] {
+            assert!(jar.store_script_in(&u, value, now, None, SiteContext::SameSite).is_err());
+        }
+        assert!(jar.set_from_header(&u, "secret=private; HttpOnly; Secure; Path=/", Access::Http, now));
+        // RFC storage rejection does not make the Cookie Store dictionary invalid.
+        jar.store_script_in(&u, options("secret", "new"), now, None, SiteContext::SameSite).unwrap();
+        jar.store_script_in(
+            &u,
+            CookieOptions { max_age: Some(0), ..options("secret", "") },
+            now,
+            None,
+            SiteContext::SameSite,
+        )
+        .unwrap();
+        assert!(!jar.document_cookie(&u, now).contains("secret"));
+        assert!(jar.header_for(&u, SiteContext::SameSite, now).unwrap().contains("secret=private"));
+        let suffix = Url::parse("https://com/").unwrap();
+        jar.store_script_in(
+            &suffix,
+            CookieOptions { domain: Some("com"), ..options("suffix", "value") },
+            now,
+            None,
+            SiteContext::SameSite,
+        )
+        .unwrap();
+        assert!(
+            jar.matching(&Url::parse("https://a.com/").unwrap(), Access::Script, SiteContext::SameSite, now).is_empty()
+        );
+    }
+
+    #[test]
+    fn cookie_store_partition_and_same_site_are_both_enforced() {
+        let mut jar = CookieJar::new();
+        let u = Url::parse("https://widget.example.test/app").unwrap();
+        let top = Some("https://example.test");
+        let other = Some("https://other.test");
+        for (key, site, value) in [
+            (top, SiteContext::SameSite, "first"),
+            (top, SiteContext::CrossSite, "nested"),
+            (other, SiteContext::CrossSite, "other"),
+        ] {
+            jar.store_script_in(
+                &u,
+                CookieOptions { same_site: SameSite::None, partitioned: true, ..options("part", value) },
+                1.,
+                key,
+                site,
+            )
+            .unwrap();
+        }
+        jar.store_script_in(&u, options("strict", "hidden"), 1., None, SiteContext::SameSite).unwrap();
+        jar.store_script_in(
+            &u,
+            CookieOptions { same_site: SameSite::Lax, ..options("lax", "hidden") },
+            1.,
+            None,
+            SiteContext::SameSite,
+        )
+        .unwrap();
+        assert!(jar.set_from_header(&u, "private=no; Secure; HttpOnly; SameSite=None; Path=/", Access::Http, 1.));
+        let visible = jar.matching_for(&u, Access::Script, SiteContext::CrossSite, 1., top);
+        assert_eq!(visible.iter().map(|c| c.value.as_str()).collect::<Vec<_>>(), ["nested"]);
+        for cookie in jar.all() {
+            assert_eq!(
+                cookie.visible_in(&u, top, SiteContext::CrossSite),
+                cookie.name == "part" && cookie.value == "nested"
+            );
+        }
+        assert_eq!(jar.document_cookie_in(&u, 1., other, SiteContext::CrossSite), "part=other");
+        assert!(jar.document_cookie_in(&u, 1., top, SiteContext::SameSite).contains("part=first"));
+        assert!(!jar.document_cookie(&u, 1.).contains("part="));
+        assert!(!jar.set_from_header(&u, "part=unkeyed; Secure; Partitioned", Access::Http, 1.));
+    }
+
+    #[test]
+    fn cookie_store_changes_include_http_and_script_and_skip_nonchanges() {
+        let mut jar = CookieJar::new();
+        let u = Url::parse("https://example.test/a").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let id = jar.observe(Arc::new(move |event| {
+            tx.send(event).unwrap();
+        }));
+        jar.store_script_in(&u, options("x", "one"), 10., None, SiteContext::SameSite).unwrap();
+        jar.store_script_in(&u, options("x", "one"), 10., None, SiteContext::SameSite).unwrap();
+        jar.store_script_in(
+            &u,
+            CookieOptions { same_site: SameSite::Lax, ..options("x", "one") },
+            10.,
+            None,
+            SiteContext::SameSite,
+        )
+        .unwrap();
+        jar.store_script_in(
+            &u,
+            CookieOptions { max_age: Some(0), ..options("x", "") },
+            10.,
+            None,
+            SiteContext::SameSite,
+        )
+        .unwrap();
+        jar.store_script_in(
+            &u,
+            CookieOptions { max_age: Some(0), ..options("missing", "") },
+            10.,
+            None,
+            SiteContext::SameSite,
+        )
+        .unwrap();
+        assert!(jar.set_from_header(&u, "server=v; Secure; Max-Age=5; Path=/", Access::Http, 10.));
+        assert!(jar.set_from_header(&u, "private=v; Secure; HttpOnly; Path=/", Access::Http, 10.));
+        jar.document_cookie(&u, 16.);
+        jar.unobserve(id);
+        jar.clear();
+        let events: Vec<_> = rx
+            .try_iter()
+            .map(|event| match event {
+                CookieChange::Changed(c) => ("changed", c.name),
+                CookieChange::Deleted(c) => ("deleted", c.name),
+            })
+            .collect();
+        assert_eq!(
+            events,
+            vec![
+                ("changed", "x".to_owned()),
+                ("changed", "x".to_owned()),
+                ("deleted", "x".to_owned()),
+                ("changed", "server".to_owned()),
+                ("deleted", "server".to_owned())
+            ]
+        );
+    }
 
     #[test]
     fn direct_cookie_invalid_inputs_are_atomic() {

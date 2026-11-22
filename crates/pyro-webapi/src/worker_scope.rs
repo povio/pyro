@@ -77,6 +77,8 @@ pub(crate) struct WorkerStart {
     origin: Option<String>,
     creator_cluster: Option<crate::page::AgentCluster>,
     creator_secure: bool,
+    cookie_partition_key: Option<String>,
+    cookie_site_context: pyro_net::cookies::SiteContext,
     user_agent: Option<UserAgentOverride>,
     extra_headers: HeaderMap,
     cache_disabled: bool,
@@ -120,6 +122,8 @@ impl WorkerStart {
             frame_id: page.request_context().frame_id,
             origin: s.realm().origin(),
             creator_cluster: Some(page.agent_cluster()),
+            cookie_partition_key: page.cookie_partition_key(),
+            cookie_site_context: page.cookie_site_context(),
             creator_secure: s.global_data::<WorkerGlobalScope>()
                 .map_or_else(|| crate::secure_context::secure(s, page), |parent| parent.secure),
             user_agent: page.identity.borrow().value.clone(),
@@ -164,6 +168,8 @@ impl WorkerStart {
             frame_id: None,
             origin: Some(origin),
             creator_cluster: None,
+            cookie_partition_key: service.partition_key.clone(),
+            cookie_site_context: service.cookie_site_context,
             creator_secure: true,
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
@@ -570,6 +576,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
             page.inherit_agent_cluster(cluster.clone());
         }
     }
+    let cookie_site = if start.url.scheme() == "data" { pyro_net::cookies::SiteContext::CrossSite } else { start.cookie_site_context };
+    page.set_cookie_context(start.cookie_partition_key.clone(), cookie_site);
     page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(start.permissions.clone())));
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
@@ -642,6 +650,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         install(&s, &page, global)?;
         if let Some(service) = &start.service {
             crate::service_worker_scope::install(&s, service, start.poster.clone(), start.shared.clone())?;
+            crate::cookie_store::bind_environment(&s, &page)?;
+            crate::cookie_store::exposure::install(&s, true)?;
         }
     }
     // A synchronous request parks this thread: `terminate()` must still end it.
@@ -1197,6 +1207,10 @@ impl JsClass for ServiceWorkerGlobalScope {
                 );
             )+};
         }
+        def.global_getter("cookieStore", |s, g| crate::cookie_store::member(s, &g.target.page, "cookieStore"));
+        def.global_accessor("oncookiechange",
+            |s, g| crate::target::event_handler(s, &g.target, "cookiechange"),
+            |s, g, value| crate::target::set_event_handler(s, &g.target, "cookiechange", value));
         handlers!("oninstall" => "install", "onactivate" => "activate", "onfetch" => "fetch",
             "onmessage" => "message", "onmessageerror" => "messageerror");
     }

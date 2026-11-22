@@ -378,7 +378,8 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Download | ResourceKind::Object => pyro_net::Destination::Other,
         };
         // Resource Timing: the document that gets this fetch's entry.
-        let timed = request.initiator.and_then(|i| Some((i, requesting_document(browser, &request)?)));
+        let document = requesting_document(browser, &request);
+        let timed = request.initiator.zip(document.clone());
         let render_blocking = request.kind == ResourceKind::Stylesheet;
         let priority = request.loader_id.as_ref().filter(|_| request.parser_priority || request.kind == ResourceKind::Image)
             .map(|document| (document.clone(), request.parser_priority));
@@ -386,6 +387,14 @@ impl ResourceLoader for NetLoader {
         req.parser_priority = request.parser_priority;
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
+            if request.kind == ResourceKind::Document {
+                req.top_level_site = pyro_net::cookies::partition_key(&req.url);
+            } else {
+                // Nested navigations use their embedding document. Other
+                // resources use the initiating document's complete frame chain.
+                req.top_level_site = document.as_ref().and_then(|d| d.cookie_partition_key());
+                req.cross_site_ancestor = document.is_none_or(|d| d.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite);
+            }
         }
         if request.kind == ResourceKind::ModuleScript || request.crossorigin.is_some() {
             req.mode = pyro_net::RequestMode::Cors;

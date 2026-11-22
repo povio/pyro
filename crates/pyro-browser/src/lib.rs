@@ -1752,6 +1752,9 @@ impl Browser {
                 if let Some(dom) = &p.main_frame.page_dom {
                     dom.set_window_agent_cluster(p.frames.cluster_group.get(), frames::frame_origin_key(&p.main_frame));
                     dom.set_base_url(&origin.2);
+                    let site = pyro_net::Url::parse(&origin.0).ok().and_then(|url| pyro_net::cookies::partition_key(&url));
+                    let context = if site.is_some() { pyro_net::cookies::SiteContext::SameSite } else { pyro_net::cookies::SiteContext::CrossSite };
+                    dom.set_cookie_context(site, context);
                     let doc = dom.document();
                     let _ = dom.dom.borrow_mut().set_document_base_url(doc, Some(&origin.2));
                 }
