@@ -2951,3 +2951,9 @@ child. WPT css/selectors/old-tests `css3-modsel-153`, `css3-modsel-d1b`.
 
 `src/lang.rs`, `range_matches`: a language tag with a subtag longer than 8 characters matches no range, as in
 Chrome (and pyro-dom's `lang_range_matches`). WPT css/selectors/selectors-4 `lang-singleton-subtag-matching`.
+
+## Classes from the no-namespace `class` attribute only
+
+`src/node/element.rs` (`ElementData::new`), `src/mutator.rs` (`set_attribute`, `clear_attribute`): only a
+`class` attribute in no namespace gives the element's classes, as `id` already did; an XHTML-namespaced
+`xhtml:class` in an XML document does not. WPT css/selectors/old-tests `css3-modsel-171`.

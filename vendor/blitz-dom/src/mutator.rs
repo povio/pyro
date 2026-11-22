@@ -570,7 +570,8 @@ impl DocumentMutator<'_> {
             element.id = Some(Atom::from(value))
         }
 
-        if *attr == local_name!("class") {
+        // pyro: the `class` attribute in no namespace only, as for `id`.
+        if *attr == local_name!("class") && name.ns == markup5ever::ns!() {
             element.classes = crate::node::parse_classes(value);
         }
 
@@ -800,7 +801,7 @@ impl DocumentMutator<'_> {
             element.id = None;
         }
 
-        if name.local == local_name!("class") {
+        if name.local == local_name!("class") && name.ns == markup5ever::ns!() {
             element.classes.clear();
         }
 
