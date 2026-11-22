@@ -961,6 +961,12 @@ fn keyboard_click(page: &Rc<PageDom>, el: NodeId) {
 fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
     let (url, target, noopener, referrer_policy, pings) = {
         let dom = page.dom.borrow();
+        // An `<area>` that is not connected is not followed (its activation behavior needs it
+        // in the document, as Chromium checks); an `<a>` is.
+        let area = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "area");
+        if area && !dom.is_connected(el).unwrap_or(false) {
+            return;
+        }
         let Some(href) = dom.get_attribute(el, "href").ok().flatten().or_else(|| svg_link_href(&dom, el)) else {
             return;
         };
