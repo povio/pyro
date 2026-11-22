@@ -3,15 +3,15 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 366,
+    "macbook_in_scope": 370,
     "studio_in_scope": 29,
     "other_dirs_out_of_scope": 16,
     "macbook_worker_variants_if_enabled": 140,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 533,
+   "distinct_census_pages": 537,
    "owner_reported_unlisted": 5,
-   "selector_union": 579,
+   "selector_union": 583,
    "owner_estimate_reduction": 51,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
@@ -20,7 +20,7 @@
     "html/canvas": 292,
     "html/interaction": 100,
     "html/semantics": 67,
-    "fetch/api": 39,
+    "fetch/api": 40,
     "fetch/content-encoding": 21,
     "scheduler": 19,
     "html/syntax": 12,
@@ -28,6 +28,7 @@
     "encoding": 7,
     "FileAPI": 4,
     "fetch/data-urls": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
     "quirks": 1,
     "svg/styling": 1,
@@ -59,15 +60,15 @@
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 220,
+    "macbook_in_scope": 216,
     "studio_in_scope": 308,
     "other_dirs_out_of_scope": 297,
     "macbook_worker_variants_if_enabled": 17,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 716,
+   "distinct_census_pages": 712,
    "owner_reported_unlisted": 0,
-   "selector_union": 848,
+   "selector_union": 844,
    "owner_estimate_reduction": 132,
    "of_which_tentative": 190,
    "studio_css_reported_pages_not_deduped": 122,
@@ -80,21 +81,18 @@
     "content-security-policy": 72,
     "html/browsers": 54,
     "intersection-observer": 36,
-    "webidl": 19,
     "html/webappapis": 19,
+    "webidl": 19,
     "html/dom": 13,
     "workers": 12,
-    "fetch/range": 5,
     "html/interaction": 5,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "svg/path": 4,
-    "fetch/data-urls": 3,
-    "html/infrastructure": 3,
     "fetch/http-cache": 3,
-    "fetch/nosniff": 2,
+    "html/infrastructure": 3,
+    "fetch/data-urls": 3,
     "encoding": 2,
-    "fetch/api": 1,
-    "fetch/corb": 1,
     "dom/nodes": 1
    }
   }
@@ -1186,7 +1184,7 @@
    "tentative": 0
   },
   "R-FETCH-12": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 4,
    "out_of_scope_pages": 0,
    "pages": 4,
@@ -1361,12 +1359,12 @@
    "tentative": 160
   }
  },
- "implemented_total_estimate": 562,
+ "implemented_total_estimate": 566,
  "milestones_reached": [
   250,
   500
  ],
- "macbook_in_scope_implemented": 366,
+ "macbook_in_scope_implemented": 370,
  "macbook_in_scope_milestones": [
   100,
   200,
