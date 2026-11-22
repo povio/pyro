@@ -346,15 +346,15 @@ pub fn report_diagnostic(s: &Scope<'_>, error: &JsError) {
 }
 
 /// HTML "reveal" (update the rendering, before the animation frame callbacks): the first
-/// rendering update of a document fires `pagereveal` at its Window, once. Gap: it is a plain
-/// `Event` (no `PageRevealEvent.viewTransition`), and a document that never requests an animation
-/// frame never gets it.
+/// rendering update of a document fires `pagereveal` at its Window, once: a PageRevealEvent whose
+/// `viewTransition` is null (there are no view transitions here). Gap: a document that never
+/// requests an animation frame never gets it.
 pub fn reveal(page: &Rc<PageDom>) {
     if page.revealed.replace(true) {
         return;
     }
     let Some(w) = page.window_target() else { return };
-    let ev = EventCore::trusted(page, EventInterface::Event, "pagereveal", false, false);
+    let ev = EventCore::trusted(page, EventInterface::PageRevealEvent, "pagereveal", false, false);
     fire(page, w, &ev);
 }
 

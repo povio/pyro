@@ -38,6 +38,8 @@ pub enum EventInterface {
     PopStateEvent,
     HashChangeEvent,
     PageTransitionEvent,
+    /// HTML `pagereveal`.
+    PageRevealEvent,
     MessageEvent,
     StorageEvent,
     MediaQueryListEvent,
@@ -91,6 +93,9 @@ pub struct EventFields {
     pub(crate) previous_task_priority: Option<pyro_runtime::WebTaskPriority>,
     pub detail: f64,
     pub custom_detail: Option<Persistent>,
+    /// `PageRevealEvent.viewTransition` (null: no view transitions here, unless a constructor
+    /// was given one).
+    pub(crate) view_transition: Option<Persistent>,
     /// `UIEvent.view` given to a constructor or init method (a Window).
     pub view: Option<Persistent>,
     pub screen_x: f64,
@@ -440,6 +445,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::PopStateEvent => s.wrap::<PopStateEvent>(d, Some(key)),
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
+        EventInterface::PageRevealEvent => s.wrap::<PageRevealEvent>(d, Some(key)),
         EventInterface::MessageEvent => s.wrap::<MessageEvent>(d, Some(key)),
         EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
         EventInterface::MediaQueryListEvent => s.wrap::<MediaQueryListEvent>(d, Some(key)),
@@ -992,6 +998,15 @@ fn fill_transition<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'
 
 fn fill_pagetransition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.persisted = get_bool(init, "persisted")?;
+    Ok(())
+}
+
+/// `PageRevealEventInit`: `viewTransition`, an object or null.
+fn fill_page_reveal_swap<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    if let Some(o) = init {
+        let v = o.get("viewTransition")?;
+        f.view_transition = (!v.is_undefined() && !v.is_null()).then(|| Persistent::new(s, v));
+    }
     Ok(())
 }
 
@@ -2040,6 +2055,20 @@ impl JsClass for PageTransitionEvent {
     }
 }
 
+/// HTML `PageRevealEvent`: fired at a document's first rendering opportunity.
+pub struct PageRevealEvent;
+impl JsClass for PageRevealEvent {
+    const NAME: &'static str = "PageRevealEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<PageRevealEvent>(s, nt, a, EventInterface::PageRevealEvent, fill_page_reveal_swap)
+        });
+        def.getter("viewTransition", |s, e| Ok(e.fields.borrow().view_transition.as_ref().map_or(s.null(), |p| p.get(s))));
+    }
+}
+
 /// CSS Animations `AnimationEvent` (`animationstart`, `animationiteration`,
 /// `animationend`, `animationcancel`).
 pub struct AnimationEvent;
@@ -2154,6 +2183,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<PopStateEvent>();
     engine.register::<HashChangeEvent>();
     engine.register::<PageTransitionEvent>();
+    engine.register::<PageRevealEvent>();
     engine.register::<MessageEvent>();
     engine.register::<StorageEvent>();
     engine.register::<MediaQueryListEvent>();
