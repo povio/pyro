@@ -92,7 +92,7 @@ fn create<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<'s>> {
         if let Some(output) = output {
             let data = match output.audio {
                 PacketAudio::Planar(audio) => crate::audio_data::decoded(s, output.timestamp, audio)?,
-                PacketAudio::Interleaved { format, sample_rate, channels, frames, data } => {
+                PacketAudio::Pcm { format, sample_rate, channels, frames, data } => {
                     crate::audio_data::decoded_pcm(s, output.timestamp, format, sample_rate, channels, frames, data)?
                 }
             };

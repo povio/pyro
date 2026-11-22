@@ -341,7 +341,7 @@ pub(crate) fn wrap<'s>(s: &Scope<'s>, resource: &AudioResource) -> JsResult<Valu
     Ok(s.wrap::<AudioData>(Data::new(resource.clone()), None)?.value())
 }
 
-/// Wrap native-endian interleaved PCM without converting integer samples
+/// Wrap native-endian typed PCM without converting integer samples
 /// through floating point. The codec owns exactly one complete output block.
 pub(crate) fn decoded_pcm<'s>(
     s: &Scope<'s>,
@@ -353,13 +353,12 @@ pub(crate) fn decoded_pcm<'s>(
     bytes: Bytes,
 ) -> JsResult<Value<'s>> {
     use pyro_media::audio::packet::PcmFormat;
-    let encoding = match format {
-        PcmFormat::U8 => Encoding::U8,
-        PcmFormat::S16 => Encoding::S16,
-        PcmFormat::S32 => Encoding::S32,
-        PcmFormat::F32 => Encoding::F32,
+    let format = match format {
+        PcmFormat::U8 => Format { encoding: Encoding::U8, planar: false },
+        PcmFormat::S16 => Format { encoding: Encoding::S16, planar: false },
+        PcmFormat::S32 => Format { encoding: Encoding::S32, planar: false },
+        PcmFormat::F32Planar => Format { encoding: Encoding::F32, planar: true },
     };
-    let format = Format { encoding, planar: false };
     let size = (frames as usize).checked_mul(channels as usize).and_then(|n| n.checked_mul(format.width()));
     if sample_rate == 0 || channels == 0 || frames == 0 || size != Some(bytes.len()) {
         return Err(JsError::Type("Invalid decoded PCM dimensions".into()));
