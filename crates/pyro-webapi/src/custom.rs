@@ -571,6 +571,32 @@ pub(crate) fn run_upgrades(page: &Rc<PageDom>) {
         if batch.is_empty() {
             return;
         }
+        // A child window's realm runs this too, while the frame inserting
+        // its iframe is still creating it: that window cannot resolve the
+        // windows of other documents yet, so candidates of another displayed
+        // document stay queued for the inserting window, not dropped.
+        let foreign: Vec<Option<NodeId>> = {
+            let dom = page.dom.borrow();
+            batch.iter().map(|candidate| {
+                let doc = match candidate {
+                    pyro_dom::upgrade::UpgradeCandidate::Connected(el) => dom.node_document(*el).ok()?,
+                    pyro_dom::upgrade::UpgradeCandidate::Created { document, .. } => *document,
+                };
+                (doc != page.document() && dom.is_in_active_document(doc)).then_some(doc)
+            }).collect()
+        };
+        let mut resolved = FxHashMap::default();
+        let (batch, deferred): (Vec<_>, Vec<_>) = batch.into_iter().zip(foreign).partition(|(_, doc)| {
+            doc.is_none_or(|doc| *resolved.entry(doc).or_insert_with(|| document_page(page, doc).is_some()))
+        });
+        let batch: Vec<_> = batch.into_iter().map(|(candidate, _)| candidate).collect();
+        let deferred: Vec<_> = deferred.into_iter().map(|(candidate, _)| candidate).collect();
+        if !deferred.is_empty() {
+            page.dom.borrow_mut().requeue_upgrade_reactions(deferred);
+            if batch.is_empty() {
+                return;
+            }
+        }
         // Capture strong definition and registry references before invoking
         // any author constructor. It may adopt a later sibling or remove
         // the document that provided that sibling's definition.
