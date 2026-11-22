@@ -171,8 +171,12 @@
   // is not marked handled: an unobserved rejection reaches `unhandledrejection`
   // (Chrome). `finished` follows an internal copy of the callback's outcome so
   // `updateCallbackDone` stays unhandled too.
-  function skip(st, reason) {
+  // `pyroOnly`: a skip Chrome would not make (one of Pyro's limits): its `ready` rejection is
+  // marked handled, so it raises no `unhandledrejection` (a Playwright `pageerror`) where Chrome
+  // runs the transition.
+  function skip(st, reason, pyroOnly) {
     if (st.phase === 'done') return;
+    if (pyroOnly && !st.readySettled) handled(st.ready.promise);
     const before = st.phase === 'pending-capture';
     if (st.runs) { st.runs.release(); st.runs = null; }
     if (before) pending.delete(st.scope);
@@ -213,8 +217,8 @@
       if (st.marked) scopeState(st.scope, 1);
       if (!capture(st)) return;
       try { st.runs = transitionAnimations(st.root); } catch (_) { st.runs = null; }
-      if (!st.runs) { skip(st, new DOMException('Cannot animate transition boxes', 'InvalidStateError')); return; }
-      if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes')); return; }
+      if (!st.runs) { skip(st, new DOMException('Cannot animate transition boxes', 'InvalidStateError'), true); return; }
+      if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes'), true); return; }
       st.phase = 'animating';
       st.readySettled = true;
       st.ready.resolve();
@@ -222,9 +226,9 @@
       later(function checkAnimations() {
         if (st.phase !== 'animating') return;
         const entries = transitionAnimations(st.root, true);
-        if (entries === null || ++frames > 4096) { skip(st, abortError('Transition animation limit reached')); return; }
+        if (entries === null || ++frames > 4096) { skip(st, abortError('Transition animation limit reached'), true); return; }
         st.runs.sync(entries);
-        if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes')); return; }
+        if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes'), true); return; }
         if (st.runs.active()) { later(checkAnimations); return; }
         st.animationDone = true;
         finish(st);
@@ -274,7 +278,7 @@
     }
     st.admitted = captureValid(root, false, false, scope, true);
     if (!st.admitted) {
-      skip(st, new DOMException('View transition capture limit reached', 'InvalidStateError'));
+      skip(st, new DOMException('View transition capture limit reached', 'InvalidStateError'), true);
       return self;
     }
     st.marked = true;
