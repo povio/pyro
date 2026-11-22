@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 942,
-    "studio_in_scope": 203,
+    "studio_in_scope": 227,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -14,7 +14,7 @@
    "selector_union": 1507,
    "owner_estimate_reduction": 231,
    "of_which_tentative": 170,
-   "studio_css_reported_pages_not_deduped": 54,
+   "studio_css_reported_pages_not_deduped": 78,
    "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 430,
@@ -35,21 +35,21 @@
     "html/infrastructure": 9,
     "workers": 9,
     "encoding": 7,
-    "fetch/corb": 6,
     "fetch/data-urls": 6,
-    "fetch/range": 5,
+    "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "FileAPI": 4,
     "fetch/nosniff": 3,
-    "fetch/http-cache": 3,
     "html/rendering": 3,
+    "fetch/http-cache": 3,
     "fetch/orb": 2,
     "xhr": 2,
-    "quirks": 1,
-    "IndexedDB": 1,
     "fetch/security": 1,
+    "fetch/redirect-navigate": 1,
+    "quirks": 1,
     "svg/styling": 1,
-    "fetch/redirect-navigate": 1
+    "IndexedDB": 1
    }
   },
   "in_progress": {
@@ -78,15 +78,15 @@
     "fetch/api": 7,
     "html/browsers": 6,
     "IndexedDB": 6,
-    "html/webappapis": 5,
     "html/dom": 5,
+    "html/webappapis": 5,
     "fetch/security": 4,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/http-cache": 1,
-    "fetch/images": 1,
     "fetch/redirects": 1,
+    "fetch/images": 1,
+    "fetch/range": 1,
     "fetch/content-type": 1,
-    "fetch/range": 1
+    "fetch/http-cache": 1
    }
   },
   "queued": {
@@ -256,7 +256,7 @@
    "tentative": 0
   },
   "S03": {
-   "state": "proposed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": null,
    "out_of_scope_pages": null,
    "pages": null,
@@ -2473,9 +2473,30 @@
    "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
+  },
+  "SC-CQ-C123": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-CQ-scroll-state": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
+  },
+  "SC-wasm-streaming": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": null,
+   "out_of_scope_pages": null,
+   "pages": null,
+   "tentative": null
   }
  },
- "implemented_total_estimate": 1384,
+ "implemented_total_estimate": 1408,
  "milestones_reached": [
   250,
   500,
