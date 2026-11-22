@@ -1112,6 +1112,18 @@ fn compute_inner(
         let extra = (outer_height - resolved_border.top).max(0.0);
         content_box_inset.top += extra;
         resolved_content_box_inset.top += extra;
+        // pyro: with a definite block size, the legend's spill past the border comes out of the
+        // content box (HTML § 15.3.13): percentage heights in the content resolve against what is
+        // left of it, at least zero (WPT `fieldset-block-size`). Its items were resolved without it.
+        if let (true, Some(height)) = (extra > 0.0, container_content_box_size.height) {
+            let inner_width = (container_outer_width - content_box_inset.horizontal_axis_sum()).max(0.0);
+            let basis = Size { width: Some(inner_width), height: Some((height - extra).max(0.0)) };
+            let mut regenerated = generate_item_list(tree, node_id, basis);
+            if index < regenerated.len() {
+                regenerated.remove(index);
+                items = regenerated;
+            }
+        }
         rendered_legend = Some((index, legend));
     }
 
