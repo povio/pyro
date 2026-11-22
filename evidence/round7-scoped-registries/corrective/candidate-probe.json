@@ -1,0 +1,123 @@
+[
+  [
+    "global construction",
+    true
+  ],
+  [
+    "document registry",
+    true
+  ],
+  [
+    "valid name predicate",
+    "SyntaxError"
+  ],
+  [
+    "construct distinct registry",
+    true
+  ],
+  [
+    "separate definitions and promise",
+    [
+      true,
+      true,
+      true,
+      true
+    ]
+  ],
+  [
+    "element creation",
+    [
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  ],
+  [
+    "shadow fragment",
+    [
+      true,
+      true,
+      true
+    ]
+  ],
+  [
+    "initialize null subtree",
+    [
+      true,
+      true,
+      true,
+      true
+    ]
+  ],
+  [
+    "connected late definition",
+    [
+      true,
+      [
+        "constructed",
+        "attribute",
+        "connected"
+      ]
+    ]
+  ],
+  [
+    "inert document and import",
+    [
+      true,
+      true,
+      true
+    ]
+  ],
+  [
+    "default and scoped adoption",
+    [
+      true,
+      true
+    ]
+  ],
+  [
+    "definition follows connected foreign document",
+    [
+      true,
+      true,
+      [
+        true
+      ]
+    ]
+  ],
+  [
+    "registry document connection order",
+    [
+      true,
+      true,
+      [
+        "b",
+        "a"
+      ]
+    ]
+  ],
+  [
+    "independent shadow-host flags in two global registries",
+    [
+      "NotSupportedError",
+      true
+    ]
+  ],
+  [
+    "independent component registries",
+    [
+      48,
+      true
+    ]
+  ],
+  [
+    "same constructor in two registries",
+    [
+      true,
+      true,
+      true
+    ]
+  ]
+]

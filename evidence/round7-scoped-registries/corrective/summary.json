@@ -1,0 +1,100 @@
+{
+  "scores": {
+    "baseFull": 96,
+    "candidateFull": 141,
+    "chrome158Full": 172,
+    "baseNamed": 3642,
+    "candidateNamed": 4093,
+    "chrome158Named": 4201,
+    "lost": 0,
+    "new": 133,
+    "missing": 0,
+    "chromeOnly": 140,
+    "lpOnly": 32,
+    "gained": 451
+  },
+  "gainsByPage": {
+    "custom-elements/CustomElementRegistry-getName.html": 2,
+    "custom-elements/CustomElementRegistry.html": 3,
+    "custom-elements/Document-createElement-customized-builtins.html": 1,
+    "custom-elements/Document-createElement-svg.svg": 1,
+    "custom-elements/Document-createElement.html": 23,
+    "custom-elements/Document-createElementNS.html": 1,
+    "custom-elements/custom-element-reaction-queue.html": 1,
+    "custom-elements/form-associated/form-disabled-legend.html": 3,
+    "custom-elements/parser/parser-sets-attributes-after-built-in-constructor.html": 4,
+    "custom-elements/pseudo-class-defined-customized-builtins.html": 10,
+    "custom-elements/pseudo-class-defined.html": 10,
+    "custom-elements/reactions/Range.html": 1,
+    "custom-elements/reactions/ShadowRoot.html": 1,
+    "custom-elements/registries/Construct.html": 3,
+    "custom-elements/registries/CustomElementRegistry-define.html": 3,
+    "custom-elements/registries/CustomElementRegistry-initialize.html": 13,
+    "custom-elements/registries/CustomElementRegistry-multi-register.html": 2,
+    "custom-elements/registries/CustomElementRegistry-upgrade.html": 2,
+    "custom-elements/registries/Document-createElement.html": 10,
+    "custom-elements/registries/Document-createElementNS.html": 10,
+    "custom-elements/registries/Document-customElementRegistry.html": 4,
+    "custom-elements/registries/Document-importNode-cross-document.window.html": 15,
+    "custom-elements/registries/Document-importNode.html": 20,
+    "custom-elements/registries/Element-customElementRegistry-exceptions.html": 2,
+    "custom-elements/registries/Element-customElementRegistry.html": 11,
+    "custom-elements/registries/Element-innerHTML.html": 12,
+    "custom-elements/registries/ShadowRoot-init-customElementRegistry.html": 12,
+    "custom-elements/registries/ShadowRoot-init-declarative.html": 3,
+    "custom-elements/registries/ShadowRoot-innerHTML.html": 4,
+    "custom-elements/registries/adoption.window.html": 36,
+    "custom-elements/registries/constructor-direct-call-fallback-registry.window.html": 2,
+    "custom-elements/registries/constructor-reentry-createElement.window.html": 4,
+    "custom-elements/registries/constructor-reentry-with-different-definition.html": 4,
+    "custom-elements/registries/element-mutation-null-registry-removal.html": 1,
+    "custom-elements/registries/element-mutation.html": 15,
+    "custom-elements/registries/global.window.html": 5,
+    "custom-elements/registries/pseudo-class-defined.window.html": 3,
+    "custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html": 7,
+    "custom-elements/registries/scoped-registry-append.html": 15,
+    "custom-elements/registries/scoped-registry-define-upgrade-criteria.html": 12,
+    "custom-elements/registries/scoped-registry-define-upgrade-order.html": 7,
+    "custom-elements/registries/scoped-registry-effective-global-registry.html": 66,
+    "custom-elements/registries/scoped-registry-initialize-upgrades.html": 12,
+    "custom-elements/registries/scoped-registry-initialize.html": 27,
+    "custom-elements/registries/scoped-registry-registry-define-get-etc.html": 7,
+    "custom-elements/registries/template.window.html": 9,
+    "custom-elements/registries/upgrade.html": 2,
+    "custom-elements/registries/valid-custom-element-names.html": 16,
+    "custom-elements/shadow-descendant-lifecycle-order.html": 2,
+    "custom-elements/upgrading.html": 8,
+    "custom-elements/upgrading/Document-importNode.html": 2,
+    "custom-elements/upgrading/Node-cloneNode.html": 1,
+    "custom-elements/upgrading/upgrading-parser-created-element.html": 1
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 187,
+        "error": 10
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "e6349be9a3d92d00aee49c9612b0b5f7d9c0da24124a1caa5c29dadb58bb4699"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 191,
+        "error": 6
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "5c38117b2750033521dd0bceb036920a36b1eef0ec4f7e7f2974432f45becc2f"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 193,
+        "error": 4
+      },
+      "restarts": null,
+      "watchdogKills": null,
+      "receiptSHA256": "96d408677b5c64f615789fa6bfbc2bcad19f2c41a1e8ea366f7b5c3908062241"
+    }
+  }
+}

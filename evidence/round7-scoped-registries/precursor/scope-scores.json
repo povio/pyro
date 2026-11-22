@@ -1,0 +1,248 @@
+{
+  "base": {
+    "scoped": {
+      "pages": 40,
+      "observedNames": 2323,
+      "namedPasses": 2056,
+      "strict": 4,
+      "pageOutcome": {
+        "complete": 35,
+        "error": 5
+      },
+      "harnessOutcome": {
+        "OK": 35,
+        "Error": 5
+      },
+      "nonOK": [
+        [
+          "custom-elements/registries/Document-createElement.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: Illegal constructor",
+          0
+        ],
+        [
+          "custom-elements/registries/Document-createElementNS.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: Illegal constructor",
+          0
+        ],
+        [
+          "custom-elements/registries/Document-importNode.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: Illegal constructor",
+          0
+        ],
+        [
+          "custom-elements/registries/scoped-registry-effective-global-registry.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: Illegal constructor",
+          0
+        ],
+        [
+          "custom-elements/registries/scoped-registry-initialize.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: Illegal constructor",
+          0
+        ]
+      ]
+    },
+    "legacy": {
+      "pages": 157,
+      "observedNames": 1890,
+      "namedPasses": 1586,
+      "strict": 92,
+      "pageOutcome": {
+        "complete": 152,
+        "error": 5
+      },
+      "harnessOutcome": {
+        "OK": 152,
+        "Error": 5
+      },
+      "nonOK": [
+        [
+          "custom-elements/form-associated/ElementInternals-behavior-accessibility.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+          0
+        ],
+        [
+          "custom-elements/form-associated/ElementInternals-submit-behavior-dialog.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+          0
+        ],
+        [
+          "custom-elements/form-associated/ElementInternals-submit-behavior.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+          0
+        ],
+        [
+          "custom-elements/form-associated/form-disabled-callback.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: not form-associated",
+          10
+        ],
+        [
+          "custom-elements/parser/parser-uses-constructed-element.html",
+          "error",
+          "Error",
+          "Uncaught NotSupportedError: The result of constructing a custom element \"instantiates-itself-before-super\" must be the element the parser created.",
+          0
+        ]
+      ]
+    }
+  },
+  "candidate": {
+    "scoped": {
+      "pages": 40,
+      "observedNames": 2456,
+      "namedPasses": 2427,
+      "strict": 34,
+      "pageOutcome": {
+        "complete": 40
+      },
+      "harnessOutcome": {
+        "OK": 40
+      },
+      "nonOK": [],
+      "delta": {
+        "gained": 371,
+        "matchedGain": 238,
+        "gainChromePass": 344,
+        "newPass": 133,
+        "newName": 133,
+        "gainChromeFail": 27
+      }
+    },
+    "legacy": {
+      "pages": 157,
+      "observedNames": 1890,
+      "namedPasses": 1613,
+      "strict": 101,
+      "pageOutcome": {
+        "complete": 152,
+        "error": 5
+      },
+      "harnessOutcome": {
+        "OK": 152,
+        "Error": 5
+      },
+      "nonOK": [
+        [
+          "custom-elements/form-associated/ElementInternals-behavior-accessibility.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+          0
+        ],
+        [
+          "custom-elements/form-associated/ElementInternals-submit-behavior-dialog.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+          0
+        ],
+        [
+          "custom-elements/form-associated/ElementInternals-submit-behavior.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+          0
+        ],
+        [
+          "custom-elements/form-associated/form-disabled-callback.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: not form-associated",
+          10
+        ],
+        [
+          "custom-elements/parser/parser-uses-constructed-element.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: The custom element has already been constructed.",
+          0
+        ]
+      ],
+      "delta": {
+        "gained": 28,
+        "matchedGain": 28,
+        "gainChromePass": 28,
+        "lost": 1
+      }
+    }
+  },
+  "chrome158": {
+    "scoped": {
+      "pages": 40,
+      "observedNames": 2456,
+      "namedPasses": 2426,
+      "strict": 35,
+      "pageOutcome": {
+        "complete": 39,
+        "error": 1
+      },
+      "harnessOutcome": {
+        "OK": 39,
+        "Error": 1
+      },
+      "nonOK": [
+        [
+          "custom-elements/registries/scoped-registry-append.html",
+          "error",
+          "Error",
+          "Uncaught TypeError: Failed to construct 'HTMLElement': Illegal constructor",
+          16
+        ]
+      ]
+    },
+    "legacy": {
+      "pages": 157,
+      "observedNames": 1892,
+      "namedPasses": 1775,
+      "strict": 137,
+      "pageOutcome": {
+        "complete": 154,
+        "error": 3
+      },
+      "harnessOutcome": {
+        "OK": 154,
+        "Error": 3
+      },
+      "nonOK": [
+        [
+          "custom-elements/form-associated/ElementInternals-behavior-accessibility.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: HTMLSubmitButtonBehavior is not defined",
+          0
+        ],
+        [
+          "custom-elements/form-associated/ElementInternals-submit-behavior-dialog.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: HTMLSubmitButtonBehavior is not defined",
+          0
+        ],
+        [
+          "custom-elements/form-associated/ElementInternals-submit-behavior.tentative.html",
+          "error",
+          "Error",
+          "Uncaught ReferenceError: HTMLSubmitButtonBehavior is not defined",
+          0
+        ]
+      ]
+    }
+  }
+}
