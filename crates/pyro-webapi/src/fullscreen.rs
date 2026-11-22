@@ -134,7 +134,8 @@ fn settle(realm: WeakRealm, deferred: Deferred, error: Option<&'static str>) {
 
 /// Whether `el` may be made fullscreen ("fullscreen element ready check" and the request's
 /// own checks, without the activation): an HTML element other than `<dialog>`, or an SVG or
-/// MathML root, connected to a document that is fully active and allowed to use fullscreen.
+/// MathML root, that is not a showing popover, connected to a document that is fully active
+/// and allowed to use fullscreen.
 fn ready(page: &PageDom, el: NodeId) -> bool {
     if !enabled(page) {
         return false;
@@ -144,6 +145,10 @@ fn ready(page: &PageDom, el: NodeId) -> bool {
         return false;
     }
     let Ok(data) = dom.element(el) else { return false };
+    // Fullscreen "requestFullscreen()": a showing popover is refused (TypeError), as is a dialog.
+    if dom.is_popover_showing(el) {
+        return false;
+    }
     let ns = data.namespace();
     if *ns == markup5ever::ns!(html) {
         return *data.local_name() != markup5ever::local_name!("dialog");
