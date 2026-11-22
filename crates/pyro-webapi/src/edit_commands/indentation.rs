@@ -80,7 +80,7 @@ fn wrapper_for(dom: &Dom, node: NodeId, host: NodeId) -> Option<NodeId> {
     ancestor(dom, parent, host, |d, n| is_indent(d, n) || list(d, n))
 }
 
-fn unwrap(dom: &mut Dom, el: NodeId, points: &mut [Point; 2]) -> Option<()> {
+pub(super) fn unwrap(dom: &mut Dom, el: NodeId, points: &mut [Point; 2]) -> Option<()> {
     let p = dom.parent(el).ok()??;
     let at = dom.index_in_parent(el).ok()?;
     let count = dom.child_count(el).ok()?;
@@ -98,7 +98,7 @@ fn unwrap(dom: &mut Dom, el: NodeId, points: &mut [Point; 2]) -> Option<()> {
     Some(())
 }
 
-fn rename(dom: &mut Dom, node: NodeId, tag: &str, points: &mut [Point; 2]) -> Option<NodeId> {
+pub(super) fn rename(dom: &mut Dom, node: NodeId, tag: &str, points: &mut [Point; 2]) -> Option<NodeId> {
     let parent = dom.parent(node).ok()??;
     let el = dom.create_element(dom.node_document(parent).ok()?, tag).ok()?;
     for a in dom.attributes(node).ok()?.to_vec() {

@@ -133,7 +133,12 @@ pub(super) fn toggle_state(page: &PageDom, range: (Point, Point), tag: &str) -> 
 pub(super) fn set_toggle(page: &PageDom, range: (Point, Point), tag: &'static str, enabled: bool) {
     let mut slot = page.typing_values.borrow_mut();
     let pending = pending_at(&mut slot, range);
-    pending.toggles.retain(|(t, _)| *t != tag);
+    if matches!(tag, "sub" | "sup") {
+        pending.toggles.retain(|(t, _)| !matches!(*t, "sub" | "sup"));
+        pending.toggles.push((if tag == "sub" { "sup" } else { "sub" }, false));
+    } else {
+        pending.toggles.retain(|(t, _)| *t != tag);
+    }
     pending.toggles.push((tag, enabled));
 }
 
@@ -431,6 +436,76 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     true
 }
 
+/// Locate the element providing the caret's superscript or subscript.
+fn script_carrier(page: &PageDom, dom: &Dom, node: NodeId, host: NodeId) -> Option<(NodeId, &'static str)> {
+    let layout = page.layout();
+    let mut cur = dom.parent_element(node).ok().flatten();
+    while let Some(el) = cur {
+        let value = layout.computed_style_value(dom, el, "vertical-align");
+        match value.as_str() {
+            "sub" => return Some((el, "sub")),
+            "super" => return Some((el, "sup")),
+            _ => {}
+        }
+        if el == host { break; }
+        cur = dom.parent_element(el).ok().flatten();
+    }
+    None
+}
+
+/// A typing override affects the insertion style on the immediate text
+/// container. A script higher in the inline tree remains observable there
+/// until typing actually splits the carrier.
+pub(super) fn caret_script_state(page: &PageDom, point: Point, tag: &str) -> Option<bool> {
+    let dom = page.dom.borrow();
+    if !editing::is_text(&dom, point.0) { return None; }
+    let host = editing::editing_host(&dom, point.0)?;
+    let container = dom.parent_element(point.0).ok()??;
+    let carrier = script_carrier(page, &dom, point.0, host);
+    let own = carrier.is_some_and(|(_, script)| script == tag);
+    Some(match toggle_state(page, (point, point), tag) {
+        Some(enabled) => enabled || carrier.is_some_and(|(node, script)| node != container && script == tag),
+        None => own,
+    })
+}
+
+/// Split just the script-bearing inline at the inserted text. Preserve
+/// unrelated CSS and attributes on that portion when removing the script.
+fn clear_script(page: &PageDom, dom: &mut Dom, typed: NodeId, host: NodeId) -> Option<bool> {
+    let Some((carrier, _)) = script_carrier(page, dom, typed, host) else { return Some(true) };
+    let tag = editing::local(dom, carrier);
+    let authored = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
+    // Typing can remove a semantic tag or an inline declaration. A class
+    // rule continues to style the inserted text (including the other side
+    // of a split), unless another script is explicitly applied inside it.
+    if !matches!(tag.as_str(), "sub" | "sup") && authored.value("vertical-align").is_empty() {
+        return Some(true);
+    }
+    if carrier == host || !matches!(tag.as_str(), "sub" | "sup" | "span") {
+        return Some(false);
+    }
+    let parent = dom.parent_element(carrier).ok()??;
+    let mut edges = [(typed, 0), (typed, editing::len(dom, typed))];
+    let middle = super::alignment::split_edge(dom, parent, typed, false, &mut edges)?;
+    super::alignment::split_edge(dom, parent, typed, true, &mut edges)?;
+    let mut declarations = DeclarationBlock::parse(dom.get_attribute(middle, "style").ok()?.unwrap_or(""));
+    if declarations.remove("vertical-align") {
+        if declarations.is_empty() {
+            dom.remove_attribute(middle, "style").ok()?;
+        } else {
+            dom.set_attribute(middle, "style", &declarations.css_text()).ok()?;
+        }
+    }
+    if dom.attributes(middle).ok()?.is_empty() {
+        super::indentation::unwrap(dom, middle, &mut edges)?;
+    } else {
+        if editing::local(dom, middle) != "span" {
+            super::indentation::rename(dom, middle, "span", &mut edges)?;
+        }
+    }
+    Some(true)
+}
+
 /// Isolate only the newly inserted UTF-16 text and carry the pending values
 /// to it. Later typing inherits its inline style from that wrapper.
 pub(crate) fn format_typed(
@@ -447,7 +522,9 @@ pub(crate) fn format_typed(
     let parent = dom.parent_element(end.0).ok()??;
     let layout = page.layout();
     pending.toggles.retain(|&(tag, enabled)| {
-        let active = if tag == "b" {
+        let active = if matches!(tag, "sub" | "sup") {
+            script_carrier(page, dom, end.0, host).is_some_and(|(_, active)| active == tag)
+        } else if tag == "b" {
             layout.computed_style_value(dom, parent, "font-weight").parse::<f64>().is_ok_and(|w| w >= 600.0)
         } else {
             let style = layout.computed_style_value(dom, parent, "font-style");
@@ -475,9 +552,15 @@ pub(crate) fn format_typed(
         }
     }
     for &(tag, enabled) in &pending.toggles {
-        let (property, value) = super::inline_css(tag)?;
+        let (property, value) = match tag {
+            "sub" => ("vertical-align", "sub"),
+            "sup" => ("vertical-align", "super"),
+            _ => super::inline_css(tag)?,
+        };
         let carriers: &[&str] = if tag == "b" { &["b", "strong"] } else { &["i", "em"] };
-        if !enabled {
+        if !enabled && matches!(tag, "sub" | "sup") {
+            if clear_script(page, dom, typed, host)? { continue; }
+        } else if !enabled {
             while let Some(ancestor) = super::ancestor_format(dom, typed, host, carriers, true) {
                 super::hoist(dom, typed, ancestor);
                 if dom.contains(ancestor, typed).unwrap_or(false) {
@@ -494,7 +577,7 @@ pub(crate) fn format_typed(
         let css = !enabled || dom.document_data(doc).ok()?.style_with_css;
         let wrapper = dom.create_element(doc, if css { "span" } else { tag }).ok()?;
         if css {
-            let value = if enabled { value } else { "normal" };
+            let value = if enabled { value } else if property == "vertical-align" { "baseline" } else { "normal" };
             dom.set_attribute(wrapper, "style", &format!("{property}: {value};")).ok()?;
         }
         let parent = dom.parent_element(typed).ok()??;

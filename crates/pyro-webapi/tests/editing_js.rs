@@ -320,6 +320,16 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn collapsed_script_commands_format_only_new_text() {
+    let e = env("<body><div id=ed contenteditable>a<sup>bc</sup>d</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = ed.innerHTML; getSelection().collapse(ed.children[0].firstChild, 1)");
+    assert_eq!(eval(r, "[document.execCommand('subscript'), document.queryCommandState('subscript'), document.queryCommandState('superscript'), ed.innerHTML===original, document.queryCommandEnabled('undo')].join()"), "true,true,false,true,false");
+    assert_eq!(eval(r, "document.execCommand('insertText',false,'X'); ed.innerHTML"), "a<sup>b</sup><sub>X</sub><sup>c</sup>d");
+    assert_eq!(eval(r, "document.execCommand('undo'); ed.innerHTML===original"), "true");
+}
+
+#[test]
 fn format_block_keeps_custom_blocks_and_joins_selected_lines() {
     let e = env("<body><div id=ed contenteditable><x-block style='display:block'>alpha</x-block><p>beta</p></div></body>");
     let r = &e.main;
