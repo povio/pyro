@@ -33,15 +33,59 @@ pub(crate) struct Preloads {
     /// The fetch options of scripts for the modules they import (HTML "descendant script fetch
     /// options"), by script URL or inline module script identity.
     module_options: HashMap<String, ModuleFetchOptions>,
+    /// The nonce of the document's inline scripts, for the `import()`s the engine reports with
+    /// the document (or its base) URL as their referrer: an inline classic or module script's,
+    /// and a string compilation's (`eval`, `Function`, a `setTimeout` string). They can only be
+    /// attributed to the inline scripts as a whole ([`InlineNonce`]).
+    inline_nonce: InlineNonce,
+}
+
+/// The one nonce of a document's inline scripts that ran (CSP): set by the first non-empty one,
+/// cleared for good by a later different one (fail closed: no inline script vouches for an
+/// `import()` then).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum InlineNonce {
+    #[default]
+    Unset,
+    Set(String),
+    Conflicting,
+}
+
+impl InlineNonce {
+    /// An inline script with `nonce` (its element's, read from it; empty: none) runs.
+    pub(crate) fn note(&mut self, nonce: &str) {
+        if nonce.is_empty() {
+            return;
+        }
+        match self {
+            InlineNonce::Unset => *self = InlineNonce::Set(nonce.to_owned()),
+            InlineNonce::Set(known) if known != nonce => *self = InlineNonce::Conflicting,
+            InlineNonce::Set(_) | InlineNonce::Conflicting => {}
+        }
+    }
+
+    /// The nonce, while every nonced inline script that ran had it.
+    pub(crate) fn get(&self) -> Option<&str> {
+        match self {
+            InlineNonce::Set(nonce) => Some(nonce),
+            InlineNonce::Unset | InlineNonce::Conflicting => None,
+        }
+    }
 }
 
 /// What a script hands the module fetches it starts (its static imports, `import()`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ModuleFetchOptions {
     /// `None`: the document's policy.
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// `None`: "same-origin".
     pub credentials: Option<pyro_net::Credentials>,
+    /// The cryptographic nonce of the script element the options came from (HTML "descendant
+    /// script fetch options"): CSP checks the imports with it. Only a script element's options
+    /// set it, read from the element; `None` for anything else (an event handler's or a
+    /// `javascript:` URL's `import()` has no script element), and when two elements registered
+    /// options under one key with different nonces.
+    pub nonce: Option<String>,
 }
 
 /// Scripts' fetch options kept per document, at most.
@@ -50,17 +94,33 @@ const MAX_MODULE_OPTIONS: usize = 4096;
 impl Preloads {
     /// The fetch options of the script `key` names, when known.
     pub(crate) fn module_options(&self, key: &str) -> Option<ModuleFetchOptions> {
-        self.module_options.get(key).copied()
+        self.module_options.get(key).cloned()
     }
 
     /// A script element's own options (its `crossorigin` and `referrerpolicy`).
-    pub(crate) fn set_module_options(&mut self, key: String, options: ModuleFetchOptions) {
+    pub(crate) fn set_module_options(&mut self, key: String, mut options: ModuleFetchOptions) {
         if options == ModuleFetchOptions::default() && !self.module_options.contains_key(&key) {
             return;
+        }
+        // Two elements of one URL with different nonces: neither is the imports' (fail closed).
+        if let Some(previous) = self.module_options.get(&key) {
+            if previous.nonce.is_some() && previous.nonce != options.nonce {
+                options.nonce = None;
+            }
         }
         if self.module_options.len() < MAX_MODULE_OPTIONS || self.module_options.contains_key(&key) {
             self.module_options.insert(key, options);
         }
+    }
+
+    /// An inline script of the document with `nonce` ran ([`InlineNonce::note`]).
+    pub(crate) fn note_inline_nonce(&mut self, nonce: &str) {
+        self.inline_nonce.note(nonce);
+    }
+
+    /// The nonce of the document's inline scripts ([`InlineNonce::get`]).
+    pub(crate) fn inline_nonce(&self) -> Option<&str> {
+        self.inline_nonce.get()
     }
 
     /// An imported module's options: its importer's, unless it has its own already.
@@ -335,6 +395,7 @@ impl Browser {
             return;
         };
         let request = FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -353,5 +414,29 @@ impl Browser {
         if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish)) {
             cancel.disarm();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InlineNonce;
+
+    #[test]
+    fn the_inline_nonce_is_the_one_every_nonced_inline_script_had() {
+        let mut nonce = InlineNonce::default();
+        assert_eq!(nonce.get(), None);
+        // A script without a nonce changes nothing.
+        nonce.note("");
+        assert_eq!(nonce.get(), None);
+        nonce.note("abc");
+        assert_eq!(nonce.get(), Some("abc"));
+        nonce.note("");
+        nonce.note("abc");
+        assert_eq!(nonce.get(), Some("abc"));
+        // A different one clears it for good.
+        nonce.note("xyz");
+        assert_eq!(nonce.get(), None);
+        nonce.note("abc");
+        assert_eq!(nonce.get(), None);
     }
 }

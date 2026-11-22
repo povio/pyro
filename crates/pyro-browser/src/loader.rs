@@ -122,6 +122,9 @@ pub struct FetchRequest {
     /// Only part of the body is needed (a media element's headers):
     /// `Resource::partial` says when the body was cut.
     pub part: Option<pyro_webapi::BodyPart>,
+    /// The CSP guard of a request its initiator checked (`pyro_webapi::csp`): the client
+    /// checks each redirect against it. `None`: unchecked, or no policy.
+    pub csp: Option<std::sync::Arc<pyro_net::csp::RequestCsp>>,
 }
 
 impl FetchRequest {
@@ -406,6 +409,7 @@ impl ResourceLoader for NetLoader {
             .map(|document| (document.clone(), request.parser_priority));
         let mut req = pyro_net::Request::get(url, destination);
         req.parser_priority = request.parser_priority;
+        req.csp = request.csp.clone();
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
             if request.kind == ResourceKind::Document {
@@ -1247,7 +1251,25 @@ impl ModuleFetcher for PageModuleFetcher {
                     scope.report_exception(&e);
                 }
             };
+            let options = referrer_key.as_deref().and_then(|key| b.doc(page)?.preloads.module_options(key));
+            let registered = options.is_some();
+            if let (Some(options), Some(mut doc)) = (options.clone(), b.doc_mut(page)) {
+                // Its own imports get the same, unless its response gives a referrer policy.
+                doc.preloads.inherit_module_options(url.clone(), options);
+            }
+            let options = options.unwrap_or_default();
+            // CSP: the import is checked with the nonce its referring script passed down. An
+            // `import()` the engine reports with the document (or base) URL as its referrer (an
+            // inline classic or module script's, a string compilation's) has no options of its
+            // own: it takes the nonce of the document's inline scripts, while they all had one.
+            let descendant_nonce = b.import_nonce(page, referrer_key.as_deref(), registered, &options);
             if let Some((bytes, mime)) = blob {
+                // A blob: module is checked as one (script-src `blob:`), with no fetch.
+                let module = Some(ty).filter(|ty| *ty != ModuleType::JavaScript);
+                if let Err(error) = b.script_csp_check(page, &url, module, None, false, descendant_nonce.as_deref(), None) {
+                    complete(b, Err(error));
+                    return;
+                }
                 let essence = pyro_net::parse_content_type(&mime).0;
                 let result = match pyro_webapi::module_script::mime_error(ty, &essence, &url) {
                     Some(e) => Err(e),
@@ -1256,16 +1278,11 @@ impl ModuleFetcher for PageModuleFetcher {
                 complete(b, result);
                 return;
             }
-            let options = referrer_key.as_deref().and_then(|key| b.doc(page)?.preloads.module_options(key));
-            if let (Some(options), Some(mut doc)) = (options, b.doc_mut(page)) {
-                // Its own imports get the same, unless its response gives a referrer policy.
-                doc.preloads.inherit_module_options(url.clone(), options);
-            }
-            let options = options.unwrap_or_default();
             let opts = ScriptFetch {
                 referrer,
                 referrer_policy: options.referrer_policy,
                 credentials: options.credentials,
+                descendant_nonce,
                 ..ScriptFetch::default()
             };
             if let Some(credentials) = worklet_credentials {
@@ -1343,6 +1360,20 @@ pub(crate) struct ScriptFetch {
     /// The request's referrer (`None`: the document's URL): an imported
     /// module's importing script.
     pub referrer: Option<String>,
+    /// The script element (`None`: an import, a preload): the request's CSP initiator, whose
+    /// cryptographic nonce is read from it when the request is checked, and the target of its
+    /// violations.
+    pub element: Option<NodeId>,
+    /// The element is parser-inserted (CSP `'strict-dynamic'` does not trust it).
+    pub parser_inserted: bool,
+    /// An import's CSP initiator when it has no element: the nonce its referring script passed
+    /// down (HTML "descendant script fetch options", [`crate::preload::ModuleFetchOptions`]).
+    /// `None`: the request is unattributed and matches no nonce-source.
+    pub descendant_nonce: Option<String>,
+    /// The initiator already ran the request's CSP pre-request check (a module script element
+    /// that joins the document's module fetches): its guard, attached as is, with no second
+    /// check of the request.
+    pub csp_checked: Option<std::sync::Arc<pyro_net::csp::RequestCsp>>,
 }
 
 impl ScriptFetch {
@@ -1356,17 +1387,29 @@ impl ScriptFetch {
             credentials: None,
             charset: info.charset.clone(),
             referrer: None,
+            element: Some(info.node),
+            parser_inserted: info.parser_inserted,
+            descendant_nonce: None,
+            csp_checked: None,
         }
     }
 
     /// The options a script fetched (or inlined) with these hands the modules
-    /// it imports: its referrer policy, and "include" credentials for
-    /// `crossorigin=use-credentials` ("same-origin" otherwise).
-    fn module_options(&self) -> crate::preload::ModuleFetchOptions {
+    /// it imports: its referrer policy, "include" credentials for
+    /// `crossorigin=use-credentials` ("same-origin" otherwise), and (CSP) the
+    /// nonce of its element, read from the element in `bindings` (HTML
+    /// "descendant script fetch options" carry the cryptographic nonce).
+    fn module_options(&self, bindings: Option<&pyro_webapi::PageDom>) -> crate::preload::ModuleFetchOptions {
         let include = self.crossorigin.as_deref().is_some_and(|c| c.eq_ignore_ascii_case("use-credentials"));
+        let nonce = self
+            .element
+            .zip(bindings)
+            .map(|(el, bindings)| pyro_webapi::csp::element_nonce(bindings, el))
+            .filter(|nonce| !nonce.is_empty());
         crate::preload::ModuleFetchOptions {
             referrer_policy: self.referrer_policy,
             credentials: include.then_some(pyro_net::Credentials::Include),
+            nonce,
         }
     }
 }
@@ -1504,6 +1547,7 @@ impl Browser {
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
         }
         let req = FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: opts.post.clone(),
@@ -1785,8 +1829,13 @@ impl Browser {
         page_dom.set_last_modified(resource.last_modified);
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
-        // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
-        if let Some(csp) = resource.header_csp.as_deref().filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp)) {
+        // A page that bypasses CSP (`Page.setBypassCSP`) records no policy, from a header or a
+        // `<meta>`.
+        let bypass_csp = self.page(page.page).is_some_and(|p| p.bypass_csp);
+        if bypass_csp {
+            let _ = dom.borrow_mut().set_csp_bypassed(doc, true);
+        }
+        if let Some(csp) = resource.header_csp.as_deref().filter(|_| !bypass_csp) {
             let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
             if !enforce.is_empty() {
                 let _ = dom.borrow_mut().set_header_csp(doc, true);
@@ -2090,7 +2139,10 @@ impl Browser {
             self.block_rendering_on_script(page, node, ty == ScriptType::Classic && !info.async_ && !info.defer);
         }
         match (ty, src_url) {
-            (ScriptType::Classic, None) => self.execute_at_insertion_point(page, &info.inline_text, &base, &element),
+            (ScriptType::Classic, None) => {
+                self.note_inline_script_nonce(page, node);
+                self.execute_at_insertion_point(page, &info.inline_text, &base, &element)
+            }
             (ScriptType::Classic, Some(url)) if info.async_ => {
                 self.fetch_async(page, ty, url, element, ScriptFetch::of(&info))
             }
@@ -2169,8 +2221,10 @@ impl Browser {
         done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
     ) {
         // What the script hands the modules it imports (both kinds: a classic script's `import()`).
+        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        let options = opts.module_options(bindings.as_deref());
         if let Some(mut doc) = self.doc_mut(page) {
-            doc.preloads.set_module_options(url.clone(), opts.module_options());
+            doc.preloads.set_module_options(url.clone(), options);
         }
         let shared = kind == ResourceKind::ModuleScript
             && opts.integrity.is_none()
@@ -2179,10 +2233,86 @@ impl Browser {
             && opts.module.is_none_or(|ty| ty == ModuleType::JavaScript)
             && opts.crossorigin.as_deref().is_none_or(|c| !c.eq_ignore_ascii_case("use-credentials"));
         if shared {
-            self.fetch_imported_module(page, url, ScriptFetch::default(), Box::new(done));
+            // CSP: the element's own check (its nonce and parser metadata, violations at the
+            // element) before it joins the document's module fetches, which then attach its
+            // guard instead of checking the request again.
+            let guard = match self.script_csp_check(page, &url, None, opts.element, opts.parser_inserted, None, None) {
+                Ok(guard) => guard,
+                Err(error) => {
+                    self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+                    return;
+                }
+            };
+            let shared_opts = ScriptFetch { csp_checked: guard, ..ScriptFetch::default() };
+            self.fetch_imported_module(page, url, shared_opts, Box::new(done));
         } else {
             self.fetch_script(page, url, kind, opts, done);
         }
+    }
+
+    /// The nonce an import of `page` is checked with (CSP): its referring script's (`options`,
+    /// registered under `referrer` when `registered`), else, for a referrer that is the
+    /// document's URL or base URL with no options of its own (an inline script's or a string
+    /// compilation's `import()`), the nonce of the document's inline scripts. `None`: none.
+    pub(crate) fn import_nonce(
+        &self,
+        page: FrameKey,
+        referrer: Option<&str>,
+        registered: bool,
+        options: &crate::preload::ModuleFetchOptions,
+    ) -> Option<String> {
+        let referrer = referrer?;
+        if registered {
+            return options.nonce.clone();
+        }
+        let doc = self.doc(page)?;
+        let document = doc.main_frame.url == referrer || doc.main_frame.base_url == referrer;
+        if !document {
+            return None;
+        }
+        doc.preloads.inline_nonce().map(str::to_owned)
+    }
+
+    /// An inline script of `page` runs (a classic one with no `src`, or an inline module): its
+    /// element's nonce, read from it now, becomes the document's inline nonce
+    /// ([`crate::preload::InlineNonce`]) for the `import()`s that name the document.
+    pub(crate) fn note_inline_script_nonce(&mut self, page: FrameKey, node: NodeId) {
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return };
+        let nonce = pyro_webapi::csp::element_nonce(&bindings, node);
+        if let Some(mut doc) = self.doc_mut(page) {
+            doc.preloads.note_inline_nonce(&nonce);
+        }
+    }
+
+    /// CSP's pre-request check of a script request of `page` (`module`: a module's type, which
+    /// picks the destination; `None`: a classic script). With `element` the request is that
+    /// element's: its nonce is read from it and its violations fire at it. Without one, an
+    /// import carries the nonce its referring script passed down (`descendant_nonce`); else it
+    /// is unattributed and no nonce-source matches it. `Ok`: the guard for the redirects
+    /// (`None`: no policy); `Err`: blocked, the network error to report.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn script_csp_check(
+        &self,
+        page: FrameKey,
+        url: &str,
+        module: Option<ModuleType>,
+        element: Option<NodeId>,
+        parser_inserted: bool,
+        descendant_nonce: Option<&str>,
+        integrity: Option<&str>,
+    ) -> Result<Option<std::sync::Arc<pyro_net::csp::RequestCsp>>, String> {
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return Ok(None) };
+        let Ok(parsed) = url::Url::parse(url) else { return Ok(None) };
+        let dest = module.map_or(pyro_net::csp::RequestDest::Script, pyro_webapi::csp::module_dest);
+        let mut check = pyro_net::csp::CspRequest::new(parsed, dest);
+        match (element, descendant_nonce) {
+            (Some(el), _) => check.initiator = pyro_webapi::csp::element_initiator(&bindings, el, parser_inserted),
+            (None, Some(nonce)) => check.initiator = pyro_net::csp::ScriptInitiator::Descendant { nonce: nonce.to_owned() },
+            (None, None) => {}
+        }
+        check.integrity = integrity.unwrap_or_default().to_owned();
+        pyro_webapi::csp::check_request(&bindings, check, element)
+            .map_err(|_| format!("{} {url}", pyro_webapi::csp::BLOCKED_BY_CSP))
     }
 
     /// Fetches `url` and decodes it as text (non-2xx statuses are errors),
@@ -2212,6 +2342,10 @@ impl Browser {
             parser_priority,
             charset,
             referrer,
+            element,
+            parser_inserted,
+            descendant_nonce,
+            csp_checked,
         } = opts;
         let referrer = referrer.or_else(|| self.doc(page).map(|p| p.main_frame.url.clone()));
         // A module response's `Referrer-Policy` is its imports' (by its request URL).
@@ -2229,9 +2363,33 @@ impl Browser {
         let charset = charset.filter(|_| kind == ResourceKind::Script);
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
+        // CSP: the pre-request check of the script's request (`script-src-elem`; a JSON module:
+        // connect-src, a CSS one: style-src-elem), its violations at the element (else the
+        // document). Blocked, it fails as a network error. The guard checks its redirects. A
+        // request its initiator checked already carries that guard.
+        let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        let csp_guard = match csp_checked {
+            Some(guard) => Some(guard),
+            None => match self.script_csp_check(
+                page,
+                &url,
+                module,
+                element,
+                parser_inserted,
+                descendant_nonce.as_deref(),
+                integrity.as_deref(),
+            ) {
+                Ok(guard) => guard,
+                Err(error) => {
+                    self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+                    return;
+                }
+            },
+        };
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
         let request_url = url.clone();
         let req = FetchRequest {
+            csp: csp_guard.clone(),
             parser_priority,
             post: None,
             url,
@@ -2252,6 +2410,9 @@ impl Browser {
             &loader,
             req,
             Box::new(move |b, res| {
+                if let Some(bindings) = &page_dom {
+                    pyro_webapi::csp::report_guard(bindings, csp_guard.as_ref(), element);
+                }
                 if let (Some(key), Ok(r)) = (module_key, &res) {
                     if let (Some(policy), Some(mut doc)) = (r.referrer_policy, b.doc_mut(page)) {
                         doc.preloads.note_module_referrer_policy(key, policy);
@@ -2619,6 +2780,7 @@ impl Browser {
             // it ran, so `document.write` has that insertion point; otherwise
             // there is none.
             (ScriptType::Classic, None) => {
+                self.note_inline_script_nonce(page, node);
                 let parsing = self.load_mut(page).is_some_and(|l| l.parser.is_some() && !l.blocked);
                 if parsing {
                     self.execute_at_insertion_point(page, &info.inline_text, &base, &element);
@@ -2724,6 +2886,7 @@ impl Browser {
                 let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
                 let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
                 let req = FetchRequest {
+                    csp: None,
                     parser_priority: false,
                     credentials: None,
                     post: None,
@@ -3223,11 +3386,19 @@ impl Browser {
     ) -> bool {
         // The module script's `crossorigin` and `referrerpolicy` go to the modules it imports, by
         // its registry key (`url`: its URL, or an inline module script's identity).
+        // Its element's nonce too (CSP), read from the element.
+        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
         let options = element.as_ref().and_then(|e| {
-            e.dom.try_borrow().ok()?.script_info(e.node).ok().map(|info| ScriptFetch::of(&info).module_options())
+            let info = e.dom.try_borrow().ok()?.script_info(e.node).ok()?;
+            Some(ScriptFetch::of(&info).module_options(bindings.as_deref()))
         });
         if let (Some(options), Some(mut doc)) = (options, self.doc_mut(page)) {
             doc.preloads.set_module_options(url.to_owned(), options);
+        }
+        // An inline module's `import()` names the document: its nonce is the document's
+        // inline nonce too.
+        if let Some(e) = element.as_ref().filter(|_| !external) {
+            self.note_inline_script_nonce(page, e.node);
         }
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
