@@ -5904,7 +5904,7 @@ diff -ruN a/queries/feature.rs b/queries/feature.rs
  
 diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
 --- a/queries/feature_expression.rs	2026-11-11 19:55:57
-+++ b/queries/feature_expression.rs	2026-11-22 21:11:03
++++ b/queries/feature_expression.rs	2026-11-22 21:34:27
 @@ -9,7 +9,7 @@
  use super::feature::{FeatureFlags, KeywordDiscriminant};
  use crate::context::QuirksMode;
@@ -5946,7 +5946,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
 +        dest.write_char(')')
 +    }
 +}
- 
++
 +impl QueryFeatureExpression {
 +    /// pyro: the expression without its parentheses, as a bare `<scroll-state-feature>` in
 +    /// `scroll-state()` serializes (`scroll-state(scrollable: left)`).
@@ -5956,7 +5956,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
 +    {
 +        self.write_body(dest)
 +    }
-+
+ 
 +    fn write_body<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
 +    where
 +        W: fmt::Write,
@@ -5973,7 +5973,28 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
      }
  }
  
-@@ -923,7 +944,36 @@
+@@ -733,6 +754,20 @@
+     ) -> Result<QueryExpressionValue, ParseError> {
+         Ok(match for_feature.evaluator {
+             Evaluator::OptionalLength(..) | Evaluator::Length(..) => {
++                // pyro: a math function that resolves to the number 0
++                // (`calc(0)`) is a zero length here, as in Blink (WPT
++                // parse-a-sizes-attribute: `(min-width:calc(0))`).
++                let zero = input.try_parse(|i| {
++                    let number = Number::parse(context, i)?;
++                    if number.get().is_none() && number.resolve() == Some(0.0) {
++                        Ok(Length::zero())
++                    } else {
++                        Err(i.new_custom_error(StyleParseErrorKind::UnspecifiedError))
++                    }
++                });
++                if let Ok(zero) = zero {
++                    return Ok(QueryExpressionValue::Length(zero));
++                }
+                 let length = Length::parse(context, input)?;
+                 QueryExpressionValue::Length(length)
+             },
+@@ -923,7 +958,36 @@
          context: &computed::Context,
          attribute_tracker: &mut AttributeTracker,
      ) -> KleeneValue {
@@ -6010,7 +6031,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
              QueryStyleRange::StyleRange2 {
                  value1,
                  op1,
-@@ -933,6 +983,8 @@
+@@ -933,6 +997,8 @@
                      value1,
                      context,
                      attribute_tracker,
@@ -6019,7 +6040,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
                      &mut PrecomputedHashSet::default(),
                  )
                  .as_ref(),
-@@ -940,6 +992,8 @@
+@@ -940,6 +1006,8 @@
                      value2,
                      context,
                      attribute_tracker,
@@ -6028,7 +6049,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
                      &mut PrecomputedHashSet::default(),
                  )
                  .as_ref(),
-@@ -958,12 +1012,16 @@
+@@ -958,12 +1026,16 @@
                      value1,
                      context,
                      attribute_tracker,
@@ -6045,7 +6066,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
                      &mut PrecomputedHashSet::default(),
                  );
                  Self::compare_values(v1.as_ref(), v2.as_ref())
-@@ -975,6 +1033,8 @@
+@@ -975,6 +1047,8 @@
                                      value3,
                                      context,
                                      attribute_tracker,
@@ -6054,7 +6075,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
                                      &mut PrecomputedHashSet::default(),
                                  )
                                  .as_ref(),
-@@ -991,6 +1051,8 @@
+@@ -991,6 +1065,8 @@
          value: &QueryExpressionValue,
          context: &computed::Context,
          attribute_tracker: &mut AttributeTracker,
@@ -6063,7 +6084,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
          visited_set: &mut PrecomputedHashSet<DashedIdent>,
      ) -> Option<Component> {
          match value {
-@@ -1003,9 +1065,8 @@
+@@ -1003,9 +1079,8 @@
                      .stylist
                      .expect("container queries should have a stylist around");
                  let registration = stylist.get_custom_property_registration(&name);
@@ -6075,7 +6096,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
                  match &current_value.v {
                      ValueInner::Component(component) => Some(component.clone()),
                      ValueInner::Universal(v) => {
-@@ -1018,21 +1079,20 @@
+@@ -1018,21 +1093,20 @@
                                  &v.url_data,
                                  context,
                                  attribute_tracker,
@@ -6101,7 +6122,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
                      None,
                  );
                  let stylist = context
-@@ -1048,11 +1108,14 @@
+@@ -1048,11 +1122,14 @@
                      attribute_tracker,
                  )
                  .ok()?;
@@ -6116,7 +6137,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
                      visited_set,
                  )
              },
-@@ -1089,6 +1152,8 @@
+@@ -1089,6 +1166,8 @@
          url_data: &UrlExtraData,
          context: &computed::Context,
          attribute_tracker: &mut AttributeTracker,
@@ -6125,7 +6146,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
          visited_set: &mut PrecomputedHashSet<DashedIdent>,
      ) -> Option<Component> {
          let parser_context = ParserContext::new(
-@@ -1105,7 +1170,7 @@
+@@ -1105,7 +1184,7 @@
          QueryExpressionValue::parse_for_style_range(&parser_context, &mut Parser::new(css_text))
              .ok()
              .and_then(|parsed| {

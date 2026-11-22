@@ -754,6 +754,20 @@ impl QueryExpressionValue {
     ) -> Result<QueryExpressionValue, ParseError> {
         Ok(match for_feature.evaluator {
             Evaluator::OptionalLength(..) | Evaluator::Length(..) => {
+                // pyro: a math function that resolves to the number 0
+                // (`calc(0)`) is a zero length here, as in Blink (WPT
+                // parse-a-sizes-attribute: `(min-width:calc(0))`).
+                let zero = input.try_parse(|i| {
+                    let number = Number::parse(context, i)?;
+                    if number.get().is_none() && number.resolve() == Some(0.0) {
+                        Ok(Length::zero())
+                    } else {
+                        Err(i.new_custom_error(StyleParseErrorKind::UnspecifiedError))
+                    }
+                });
+                if let Ok(zero) = zero {
+                    return Ok(QueryExpressionValue::Length(zero));
+                }
                 let length = Length::parse(context, input)?;
                 QueryExpressionValue::Length(length)
             },

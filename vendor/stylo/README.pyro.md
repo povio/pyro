@@ -509,3 +509,6 @@ without a style context (custom properties left as they are): pyro serializes a 
   blitz-dom records them per container after layout. `scrolled`, `snapped` and `stuck` stay
   `<general-enclosed>`. `queries/feature_expression.rs` `to_css_unparenthesized`. WPT css-conditional
   `container-queries/scroll-state/*scrollable*`, `container-type-scroll-state-*`.
+- Round 7 (R-HTML-16r): `queries/feature_expression.rs` `QueryExpressionValue::parse`: a length media feature takes a
+  math function that resolves to the number 0 (`calc(0)`) as a zero length, as Blink does. WPT html
+  `the-img-element/sizes/parse-a-sizes-attribute-*` (`(min-width:calc(0)) 1px`).
