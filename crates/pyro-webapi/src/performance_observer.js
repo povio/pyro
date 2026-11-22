@@ -24,6 +24,16 @@
   const getEntriesByType = performance.getEntriesByType;
   const SUPPORTED = freeze(supported);
   const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
+  // Web IDL operations: enumerable prototype methods whose length counts the
+  // required arguments only.
+  const operations = (C, lengths) => {
+    const p = C.prototype;
+    for (const k of O.getOwnPropertyNames(p)) {
+      if (k === 'constructor') continue;
+      defineProperty(p, k, { enumerable: true });
+      if (k in lengths) defineProperty(p[k], 'length', { value: lengths[k] });
+    }
+  };
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
   const observeError = (rest) => new TypeErrorC(`Failed to execute 'observe' on 'PerformanceObserver': ${rest}`);
 
@@ -31,31 +41,42 @@
   const sorted = (entries) => entries.map((e, i) => [e, i]).sort((a, b) => (a[0].startTime - b[0].startTime) || (a[1] - b[1])).map((p) => p[0]);
 
   const listData = new WeakMap();
+  // A list's entries; a TypeError for any other `this`.
+  const entriesOf = (list) => {
+    const entries = listData.get(list);
+    if (entries === undefined) throw new TypeErrorC('Illegal invocation');
+    return entries;
+  };
   class PerformanceObserverEntryList {
     constructor(t, entries) {
       if (t !== token) throw illegal('PerformanceObserverEntryList');
       listData.set(this, sorted(entries));
     }
     getEntries() {
-      return listData.get(this).slice();
+      return entriesOf(this).slice();
     }
     getEntriesByType(type) {
+      const entries = entriesOf(this);
       if (arguments.length === 0) {
         throw new TypeErrorC("Failed to execute 'getEntriesByType' on 'PerformanceObserverEntryList': 1 argument required, but only 0 present.");
       }
       type = String(type);
-      return listData.get(this).filter((e) => e.entryType === type);
+      return entries.filter((e) => e.entryType === type);
     }
     getEntriesByName(name, type) {
+      const entries = entriesOf(this);
       if (arguments.length === 0) {
         throw new TypeErrorC("Failed to execute 'getEntriesByName' on 'PerformanceObserverEntryList': 1 argument required, but only 0 present.");
       }
       name = String(name);
       const t = type === undefined ? undefined : String(type);
-      return listData.get(this).filter((e) => e.name === name && (t === undefined || e.entryType === t));
+      return entries.filter((e) => e.name === name && (t === undefined || e.entryType === t));
     }
   }
   tag(PerformanceObserverEntryList, 'PerformanceObserverEntryList');
+  operations(PerformanceObserverEntryList, { getEntriesByName: 1 });
+  // No constructor in its IDL: length 0.
+  defineProperty(PerformanceObserverEntryList, 'length', { value: 0 });
 
   // Observers with at least one observed type, in registration order.
   const registered = new Set();
@@ -177,6 +198,8 @@
     }
   }
   tag(PerformanceObserver, 'PerformanceObserver');
+  // observe(optional PerformanceObserverInit options = {}).
+  operations(PerformanceObserver, { observe: 0 });
 
   return { PerformanceObserver, PerformanceObserverEntryList };
 })

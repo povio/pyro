@@ -330,19 +330,25 @@ impl JsClass for Window {
             |s, w| Ok(performance_object(s, w)?.value()),
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "performance", v),
         );
-        // Performance Timeline observers, made on the realm's first use.
-        def.accessor(
-            "PerformanceObserver",
-            |s, w| crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserver"),
-            |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserver", v),
-        );
-        def.accessor(
-            "PerformanceObserverEntryList",
-            |s, w| {
-                crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserverEntryList")
-            },
-            |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserverEntryList", v),
-        );
+        // Performance Timeline observers, made on the realm's first use. Interface objects: a
+        // custom value on the window itself, which reads as an own non-enumerable data property
+        // before the first read (JSC patch 0034) and settles into a plain one on it. Only the
+        // name read settles: an assignment to a custom value bypasses the setter, so settling
+        // the other name here could overwrite a value the page assigned.
+        macro_rules! observer_interfaces {
+            ($($name:literal),*) => {$(
+                def.global_value_accessor(
+                    $name,
+                    |s, w| {
+                        let value = crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get($name)?;
+                        pyro_webapi::window::replace_window_interface(s, &w.target.page, $name, value)?;
+                        Ok(value)
+                    },
+                    |s, w, v| pyro_webapi::window::replace_window_interface(s, &w.target.page, $name, v),
+                );
+            )*};
+        }
+        observer_interfaces!("PerformanceObserver", "PerformanceObserverEntryList");
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.relation(s, key, true),
             _ => Ok(s.global().value()),

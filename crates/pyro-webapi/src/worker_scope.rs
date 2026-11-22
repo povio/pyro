@@ -1009,18 +1009,17 @@ impl JsClass for WorkerGlobalScope {
         def.getter("crypto", |s, _g| crate::crypto::crypto_value(s));
         def.getter("performance", |s, g| Ok(performance_of(s, g)?.value()));
         // Performance Timeline observers, made on the realm's first use.
+        // The first read of either settles both into own data properties of the
+        // global: the accessors sit on the global's prototype here.
         def.global_value_accessor(
             "PerformanceObserver",
-            |s, g| crate::performance::worker_observer_module(s, performance_of(s, g)?)?.get("PerformanceObserver"),
-            |s, g, v| crate::lazy_module::replace(s, &g.target.page, "PerformanceObserver", v),
+            |s, g| observer_interface(s, g, "PerformanceObserver"),
+            |s, g, v| set_observer_interface(s, g, "PerformanceObserver", v),
         );
         def.global_value_accessor(
             "PerformanceObserverEntryList",
-            |s, g| {
-                crate::performance::worker_observer_module(s, performance_of(s, g)?)?
-                    .get("PerformanceObserverEntryList")
-            },
-            |s, g, v| crate::lazy_module::replace(s, &g.target.page, "PerformanceObserverEntryList", v),
+            |s, g| observer_interface(s, g, "PerformanceObserverEntryList"),
+            |s, g, v| set_observer_interface(s, g, "PerformanceObserverEntryList", v),
         );
         crate::crypto::define_globals(def);
         crate::streams::define_globals(def);
@@ -1283,6 +1282,28 @@ impl JsClass for WorkerNavigator {
 
 fn performance_of<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<pyro_js::Object<'s>> {
     crate::performance::worker_performance(s, &g.target.page, &g.performance, g.started, g.origin_wall_ms)
+}
+
+/// `PerformanceObserver` or `PerformanceObserverEntryList`, both settled as
+/// own data properties of the global (WebIDL interface objects).
+fn observer_interface<'s>(s: &Scope<'s>, g: &ScopeData, name: &str) -> JsResult<Value<'s>> {
+    let module = crate::performance::worker_observer_module(s, performance_of(s, g)?)?;
+    for n in ["PerformanceObserver", "PerformanceObserverEntryList"] {
+        crate::lazy_module::replace(s, &g.target.page, n, module.get(n)?)?;
+    }
+    module.get(name)
+}
+
+/// Assignment to one of them: the other settles first (its own value), so a
+/// later read of that one cannot overwrite the assigned value.
+fn set_observer_interface<'s>(s: &Scope<'s>, g: &ScopeData, name: &str, value: Value<'s>) -> JsResult<()> {
+    let module = crate::performance::worker_observer_module(s, performance_of(s, g)?)?;
+    for n in ["PerformanceObserver", "PerformanceObserverEntryList"] {
+        if n != name {
+            crate::lazy_module::replace(s, &g.target.page, n, module.get(n)?)?;
+        }
+    }
+    crate::lazy_module::replace(s, &g.target.page, name, value)
 }
 
 /// The worker realm's `performance`.

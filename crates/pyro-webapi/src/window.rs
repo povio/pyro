@@ -110,6 +110,29 @@ pub fn replace_window_attribute<'s>(
     Ok(())
 }
 
+/// A lazily made interface object settling on the window: an own data
+/// property, writable and configurable but not enumerable, as Web IDL
+/// interface objects are (the getter of a `global_value_accessor` and its
+/// assignment both end here).
+pub fn replace_window_interface<'s>(
+    s: &pyro_js::Scope<'s>,
+    page: &crate::page::PageDom,
+    name: &str,
+    value: pyro_js::Value<'s>,
+) -> pyro_js::JsResult<()> {
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let define = define
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| pyro_js::JsError::Type(format!("window.{name} cannot be replaced in this realm").into()))?;
+    let desc = s.object();
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
+    define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
+    Ok(())
+}
+
 /// Makes `name` the global's own interface-object property (writable,
 /// configurable, not enumerable) with `value`: what a lazily made
 /// interface's accessor turns into on its first read or an assignment.
