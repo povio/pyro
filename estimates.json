@@ -3,22 +3,22 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 498,
+    "macbook_in_scope": 504,
     "studio_in_scope": 29,
     "other_dirs_out_of_scope": 16,
     "macbook_worker_variants_if_enabled": 183,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 708,
+   "distinct_census_pages": 714,
    "owner_reported_unlisted": 5,
-   "selector_union": 758,
+   "selector_union": 764,
    "owner_estimate_reduction": 55,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 29,
    "by_dir": {
     "html/canvas": 342,
-    "html/semantics": 115,
+    "html/semantics": 121,
     "html/interaction": 100,
     "fetch/api": 54,
     "fetch/fetch-later": 29,
@@ -29,41 +29,41 @@
     "fetch/cross-origin-resource-policy": 10,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
-    "html/browsers": 4,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/http-cache": 3,
+    "html/browsers": 4,
     "fetch/nosniff": 3,
+    "fetch/http-cache": 3,
     "xhr": 2,
+    "html/rendering": 1,
     "IndexedDB": 1,
     "svg/styling": 1,
-    "quirks": 1,
-    "html/rendering": 1
+    "quirks": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 299,
+    "macbook_in_scope": 293,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 39,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 322,
+   "distinct_census_pages": 316,
    "owner_reported_unlisted": 0,
-   "selector_union": 517,
+   "selector_union": 511,
    "owner_estimate_reduction": 195,
    "of_which_tentative": 198,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 220,
-    "html/semantics": 133,
+    "html/semantics": 127,
     "html/browsers": 85,
     "html/syntax": 30,
-    "html/webappapis": 23,
     "fetch/api": 23,
+    "html/webappapis": 23,
     "html/infrastructure": 3
    }
   },
@@ -1407,7 +1407,7 @@
    "tentative": 0
   },
   "R-HTML-6": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "in_scope_pages": 6,
    "out_of_scope_pages": 0,
    "pages": 6,
@@ -1575,16 +1575,17 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 737,
+ "implemented_total_estimate": 743,
  "milestones_reached": [
   250,
   500
  ],
- "macbook_in_scope_implemented": 498,
+ "macbook_in_scope_implemented": 504,
  "macbook_in_scope_milestones": [
   100,
   200,
   300,
-  400
+  400,
+  500
  ]
 }
