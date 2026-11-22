@@ -1520,6 +1520,147 @@ fn input_mouse_wheel_scrolls_container_then_viewport_unless_canceled() {
     assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, wheels.length]"), json!([400, 50, 4]));
 }
 
+/// A left click at (`x`, `y`): press and release.
+fn click_at(h: &mut Harness, x: f64, y: f64) {
+    for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":x,"y":y,"button":"left","buttons":buttons,"clickCount":1}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+    }
+}
+
+#[test]
+fn a_click_on_a_scroll_button_scrolls_its_scroller_by_a_page() {
+    // WPT css-overflow scroll-markers/scroll-buttons-activation and scroll-buttons-scroll-distance:
+    // a click on an enabled ::scroll-button() scrolls its originating element by a page in its
+    // direction (Chromium's page step, 87.5% of the scrollport), up to its scroll range; a
+    // canceled click does not.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<style>body{margin:0}#sc{width:400px;height:200px;overflow:auto;white-space:nowrap}#sc>div{display:inline-block;width:400px;height:150px}#sc::scroll-button(inline-end){content:"";position:absolute;top:0;left:0;width:20px;height:20px}#sc::scroll-button(up){content:"";position:absolute;top:0;left:40px;width:20px;height:20px}</style><div id="sc"><div></div><div></div></div>';
+      globalThis.sc=document.getElementById('sc'); globalThis.clicks=[];
+      sc.addEventListener('click', e => clicks.push(e.target.id)); 1
+    "#,
+    );
+    // The click goes to the originating element.
+    assert_eq!(eval_value(&mut h, "document.elementFromPoint(5, 5) === sc"), json!(true));
+    click_at(&mut h, 5.0, 5.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "[sc.scrollLeft, clicks.join()]"), json!([350, "sc"]));
+    // The second page stops at the end of the scroll range (404: the space between the blocks).
+    click_at(&mut h, 5.0, 5.0);
+    h.run_for(200);
+    let end = eval_value(&mut h, "sc.scrollWidth - sc.clientWidth");
+    assert_eq!(eval_value(&mut h, "sc.scrollLeft"), end);
+    // Up is disabled (no vertical overflow): nothing scrolls.
+    click_at(&mut h, 45.0, 5.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "[sc.scrollLeft, sc.scrollTop]"), json!([end, 0]));
+    // A canceled click does not scroll.
+    eval_value(&mut h, "sc.scrollLeft = 0; sc.addEventListener('click', e => e.preventDefault()); 1");
+    click_at(&mut h, 5.0, 5.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "sc.scrollLeft"), json!(0));
+}
+
+#[test]
+fn a_click_on_the_root_scroll_button_scrolls_the_viewport() {
+    // WPT css-overflow scroll-markers/root-scroll-button-activation.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<style>body{margin:0}:root::scroll-button(block-end){content:"down";position:absolute;top:0;width:30px;height:30px}</style><div style="height:5000px"></div>'; 1
+    "#,
+    );
+    let height = eval_value(&mut h, "innerHeight").as_f64().unwrap();
+    click_at(&mut h, 10.0, 10.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "scrollY"), json!((height * 0.875).round() as i64));
+}
+
+#[test]
+fn a_scroll_button_on_a_snapping_scroller_advances_to_the_next_snap_position() {
+    // A page (350px of a 400px scrollport) lands nearer the current snap position (0) than the
+    // next (1000): the button's scroll is directional, so it lands on the next one ahead, both
+    // ways, as Chromium's directional snapping for scroll buttons.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<style>body{margin:0}#sc{width:400px;height:200px;overflow:auto;white-space:nowrap;font-size:0;scroll-snap-type:x mandatory}#sc>div{display:inline-block;width:1000px;height:150px;scroll-snap-align:start}#sc::scroll-button(inline-end){content:"";position:absolute;top:0;left:0;width:20px;height:20px}#sc::scroll-button(inline-start){content:"";position:absolute;top:0;left:40px;width:20px;height:20px}</style><div id="sc"><div></div><div></div><div></div></div>';
+      globalThis.sc=document.getElementById('sc'); 1
+    "#,
+    );
+    click_at(&mut h, 5.0, 5.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "sc.scrollLeft"), json!(1000));
+    click_at(&mut h, 5.0, 5.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "sc.scrollLeft"), json!(2000));
+    click_at(&mut h, 45.0, 5.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "sc.scrollLeft"), json!(1000));
+}
+
+#[test]
+fn a_scroll_button_under_another_element_is_not_activated() {
+    // The painted hit decides: an element painted over the button takes the click, and the
+    // scroller does not scroll; a `pointer-events: none` button lets the click through to the
+    // link under it, which is followed.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r##"
+      document.body.innerHTML='<style>body{margin:0}#sc{width:400px;height:200px;overflow:auto;white-space:nowrap}#sc>div{display:inline-block;width:400px;height:150px}#sc::scroll-button(inline-end){content:"";position:absolute;top:0;left:0;width:20px;height:20px}#cover{position:absolute;top:0;left:0;width:20px;height:20px;z-index:1}#pe{display:block;margin-top:50px;width:400px;height:30px;overflow:auto;white-space:nowrap}#pe span{display:inline-block;width:900px;height:10px}#pe::scroll-button(inline-end){content:"";position:absolute;top:250px;left:0;width:20px;height:20px;pointer-events:none}</style><div id="sc"><div></div><div></div></div><div id="cover"></div><a id="pe" href="#through"><span></span></a>';
+      globalThis.sc=document.getElementById('sc'); globalThis.pe=document.getElementById('pe'); 1
+    "##,
+    );
+    assert_eq!(eval_value(&mut h, "document.elementFromPoint(5, 5).id"), json!("cover"));
+    click_at(&mut h, 5.0, 5.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "sc.scrollLeft"), json!(0));
+    // The pointer-events: none button over the link at (5, 255): the link's box is at 250..280.
+    click_at(&mut h, 5.0, 255.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "[pe.scrollLeft, location.hash]"), json!([0, "#through"]));
+}
+
+#[test]
+fn a_scroll_button_that_scrolls_handles_the_click_and_a_link_is_not_followed() {
+    // WPT css-overflow scroll-markers/scroll-button-link-activation: the ::scroll-button() of an
+    // element that is no scroll container does nothing, so the link it is in is followed; the
+    // ::scroll-button() of a scroll container scrolls it instead.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<style>body{margin:0}#c{margin-top:100px}a{display:block}.o{width:100px;height:50px}.s{overflow:auto;white-space:nowrap}.s span{display:inline-block;width:300px;height:10px}.o::scroll-button(inline-end){content:"";position:absolute;top:0;left:0;width:20px;height:20px}</style><div id="c"></div>'; 1
+    "#,
+    );
+    for (markup, hash) in [
+        (r##"<a href="#nav" class="o"></a>"##, "#nav"),
+        (r##"<a href="#nav"><div class="o"></div></a>"##, "#nav"),
+        (r##"<a href="#nav" class="o s"><span></span></a>"##, "#start"),
+        (r##"<a href="#nav"><div class="o s"><span></span></div></a>"##, "#start"),
+    ] {
+        let set = format!("location.hash = '#start'; document.getElementById('c').innerHTML = {}; 1", json!(markup));
+        eval_value(&mut h, &set);
+        h.run_for(200);
+        let hit = "document.elementFromPoint(10, 10) === document.querySelector('#c .o')";
+        assert_eq!(eval_value(&mut h, hit), json!(true), "{markup}");
+        click_at(&mut h, 10.0, 10.0);
+        h.run_for(200);
+        assert_eq!(eval_value(&mut h, "location.hash"), json!(hash), "{markup}");
+        let scrolled = eval_value(&mut h, "document.querySelector('#c .o').scrollLeft > 0");
+        assert_eq!(scrolled, json!(hash == "#start"), "{markup}");
+    }
+}
+
 #[test]
 fn input_mouse_wheel_over_empty_viewport_space_scrolls_the_viewport() {
     let mut h = Harness::new();

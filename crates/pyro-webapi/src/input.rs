@@ -654,6 +654,13 @@ fn legacy_canceled_activation(page: &Rc<PageDom>, el: NodeId, legacy: LegacyPreA
 /// behavior" + legacy pre-activation for checkboxes/radios). Used for both
 /// trusted input and `dispatchEvent`/`click()`.
 pub fn dispatch_with_activation(page: &Rc<PageDom>, target: NodeId, ev: &EventData) -> bool {
+    dispatch_click(page, target, ev, false)
+}
+
+/// [`dispatch_with_activation`], without any activation behavior when `handled` (pyro: a click on
+/// an enabled `::scroll-button()` is handled by the button, so a link it is in is not followed:
+/// WPT css-overflow `scroll-button-link-activation`).
+fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: bool) -> bool {
     let is_click = &*ev.state.borrow().ty == "click"
         && matches!(ev.iface, EventInterface::MouseEvent | EventInterface::PointerEvent);
     let Some(key) = key_of(page, target) else { return true };
@@ -671,6 +678,9 @@ pub fn dispatch_with_activation(page: &Rc<PageDom>, target: NodeId, ev: &EventDa
     // runs before the first listener.
     let mut activation: Option<ActivationTarget> = None;
     let not_canceled = crate::target::fire_with(page, key, ev, &mut |path| {
+        if handled {
+            return;
+        }
         let el = {
             let dom = page.dom.borrow();
             path.iter().filter(|item| bubbles || item.at_target()).find_map(|item| {
@@ -2722,11 +2732,20 @@ fn dispatch_mouse_inner(
         _ => None,
     };
     let target = captured.unwrap_or(hit);
-    let pseudo = if captured.is_none() {
+    // pyro: and, for a left release, the `::scroll-button()` of the target under the pointer (from
+    // the same synced geometry: the click's default action needs no other).
+    let release = matches!(kind, MouseKind::Released) && m.button == MouseButton::Left && touch.is_none();
+    let (pseudo, scroll_button) = if captured.is_none() {
         let dom = page.dom.borrow();
-        page.layout().synced_geometry_source(&dom).and_then(|geometry|
-            geometry.generated_hit(pyro_dom::snapshot::render_key(target), m.x, m.y))
-    } else { None };
+        let key = pyro_dom::snapshot::render_key(target);
+        match page.layout().synced_geometry_source(&dom) {
+            Some(geometry) => (
+                geometry.generated_hit(key, m.x, m.y),
+                release.then(|| geometry.scroll_button_hit(key, m.x, m.y)).flatten(),
+            ),
+            None => (None, None),
+        }
+    } else { (None, None) };
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     // A press handler may open an overlay beneath a stationary pointer.
     // Reconcile boundaries before the next pointer event, including release:
@@ -2889,10 +2908,22 @@ fn dispatch_mouse_inner(
                     f.pointer_type = "touch".into();
                     f.is_primary = false;
                 }
-                let proceed = dispatch_with_activation(page, ct, &ev);
+                // pyro: a click on an enabled `::scroll-button()` (hit on release, on the element
+                // the click targets) scrolls that element by a page in the button's direction,
+                // unless canceled, instead of any other activation behavior (CSS Overflow 5 § 2.2).
+                // A disabled one does nothing: the click activates what it would without it.
+                let button = scroll_button
+                    .filter(|&(_, enabled)| enabled && name == "click" && ct == target)
+                    .map(|(delta, _)| (target, delta));
+                let proceed = dispatch_click(page, ct, &ev, button.is_some());
                 // pyro: an uncanceled click on a `::scroll-marker` scrolls to its target.
                 if proceed && name == "click" && !page.is_disposed() {
-                    let moved = page.layout.borrow_mut().activate_scroll_marker_at(&page.dom.borrow(), (m.x, m.y));
+                    let moved = match button {
+                        Some((origin, delta)) => {
+                            page.layout.borrow_mut().activate_scroll_button(&page.dom.borrow(), origin, delta)
+                        }
+                        None => page.layout.borrow_mut().activate_scroll_marker_at(&page.dom.borrow(), (m.x, m.y)),
+                    };
                     for scrolled in moved {
                         let node = match scrolled {
                             pyro_dom::layout::ScrollTarget::Viewport => None,

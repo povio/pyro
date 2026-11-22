@@ -255,6 +255,10 @@ pub struct Layout {
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<SnapBox>; 2]>,
+    /// pyro: while a `::scroll-button()` scrolls (`activate_scroll_button`), the direction it
+    /// scrolls on each axis (x, y; -1, 0 or 1): the snap positions it may land on are the ones
+    /// past the current offset that way (CSS Scroll Snap 1 § 6.2: a directional scroll).
+    snap_forward: Option<[i8; 2]>,
     /// pyro: the mandatory snap containers whose initial scroll position snapped
     /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
     initially_snapped: rustc_hash::FxHashSet<NodeId>,
@@ -552,6 +556,7 @@ impl Layout {
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
+            snap_forward: None,
             initially_snapped: Default::default(),
             pseudo_scroll: FxHashMap::default(),
             viewport_initially_snapped: false,
@@ -3067,6 +3072,15 @@ impl Layout {
         // Every box's snap position on each axis, to break ties (below).
         let mut all: Vec<(NodeId, [Option<f64>; 2])> = Vec::new();
         let target = [tx.map(|v| v as f64), ty.map(|v| v as f64)];
+        // A directional scroll (`snap_forward`) lands only past the current offset its way.
+        let forward = self.snap_forward.unwrap_or([0, 0]);
+        let ahead = |axis: usize, c: f64| {
+            let now = if axis == 0 { current.0 } else { current.1 } as f64;
+            match forward[axis] {
+                0 => true,
+                sign => (c - now) * sign as f64 >= 0.5,
+            }
+        };
         let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return unchanged };
         for id in nodes {
             if dom.element(id).is_err() || Some(id) == scroller {
@@ -3139,6 +3153,9 @@ impl Layout {
                 let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
                 let c = if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 { t } else { c };
                 let c = c.max(0.0);
+                if !ahead(axis, c) {
+                    continue;
+                }
                 mine[axis] = Some(c);
                 if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
                     best[axis] = Some((c, (id, None)));
@@ -3180,6 +3197,9 @@ impl Layout {
                         }
                         let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
                         let c = c.max(0.0);
+                        if !ahead(axis, c) {
+                            continue;
+                        }
                         if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
                             best[axis] = Some((c, (container, Some(index))));
                         }
@@ -3897,6 +3917,31 @@ impl Layout {
         } else {
             Vec::new()
         }
+    }
+
+    /// pyro: the default action of a click on a `::scroll-button()` of `origin` scrolling in the
+    /// physical direction `delta`: `origin` (the viewport for the root element) scrolls by a page,
+    /// 87.5% of its scrollport on that axis (Chromium's minimum page step fraction), landing on a
+    /// snap position past the current offset in that direction when it snaps (a directional
+    /// scroll: an enabled button never snaps back to where it is). CSS Overflow 5 § 2.2; WPT
+    /// css-overflow `scroll-buttons-activation`, `scroll-buttons-scroll-distance`,
+    /// `root-scroll-button-activation`. Returns the scrollers that moved.
+    pub fn activate_scroll_button(&mut self, dom: &Dom, origin: NodeId, delta: (i8, i8)) -> Vec<ScrollTarget> {
+        const PAGE_FRACTION: f64 = 0.875;
+        let root = dom.document_element(self.document()).ok().flatten();
+        let step = |size: f64, sign: i8| (size * PAGE_FRACTION).round().max(1.0) as i32 * sign as i32;
+        self.snap_forward = Some([delta.0, delta.1]);
+        let moved = if Some(origin) == root {
+            let left = (delta.0 != 0).then(|| step(self.inner_width() as f64, delta.0));
+            let top = (delta.1 != 0).then(|| step(self.inner_height() as f64, delta.1));
+            self.window_scroll_by(dom, left, top).then_some(ScrollTarget::Viewport)
+        } else {
+            let left = (delta.0 != 0).then(|| step(self.client_width(dom, origin), delta.0));
+            let top = (delta.1 != 0).then(|| step(self.client_height(dom, origin), delta.1));
+            self.element_scroll_by(dom, origin, left, top).then_some(ScrollTarget::Container(origin))
+        };
+        self.snap_forward = None;
+        moved.into_iter().collect()
     }
 
     pub fn scroll_into_view(&mut self, dom: &Dom, el: NodeId) -> bool {
