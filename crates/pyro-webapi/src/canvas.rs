@@ -197,6 +197,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         if let Some(c) = s.unwrap::<OffscreenCanvasRenderingContext2D>(a.get(0)) {
             let (w, h) = (size_u32(a.get(1).to_number()?), size_u32(a.get(2).to_number()?));
             c.reset();
+            c.clean.set(true);
             c.surface.borrow_mut().resize(w, h);
         }
         Ok(s.undefined())
@@ -467,6 +468,7 @@ impl ContextData {
             surface.resize(w, h);
             drop(surface);
             self.reset();
+            self.clean.set(true);
         }
     }
 }
@@ -672,6 +674,8 @@ fn element_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId) -> JsR
 pub(crate) fn canvas_resized(s: &Scope<'_>, page: &Rc<PageDom>, canvas: NodeId) -> JsResult<()> {
     if let Some(c) = element_context(s, page, canvas)?.and_then(|v| s.unwrap::<CanvasRenderingContext2D>(v)) {
         c.reset();
+        // HTML: setting the bitmap's dimensions resets origin-clean.
+        c.clean.set(true);
         let (w, h) = canvas_size(page, canvas);
         c.surface.borrow_mut().resize(w, h);
     }
@@ -1764,7 +1768,13 @@ fn set_style(s: &Scope<'_>, c: &ContextData, v: Value<'_>, fill: bool) -> JsResu
                 None => return Ok(()),
             }
         } else {
-            Style::Object(Persistent::new(s, v), Rc::default())
+            let style = Style::Object(Persistent::new(s, v), Rc::default());
+            // HTML: setting a style to a pattern that is not origin-clean
+            // makes the canvas origin-unclean at once (not when it paints).
+            if let Some((_, false)) = paint_of(s, c, &style)? {
+                c.clean.set(false);
+            }
+            style
         }
     } else {
         match color(dom_string(v)?) {
