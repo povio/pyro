@@ -2076,11 +2076,39 @@ impl Dom {
         Ok(())
     }
 
+    /// HTML: a `readonly` attribute that applies to the element (a textarea, or an input in a
+    /// text, search, URL, telephone, email, password, date/time or number state) is set; it is
+    /// what bars such a control from constraint validation. Elsewhere `readonly` means nothing.
+    fn readonly_applies_and_set_idx(&self, i: u32) -> bool {
+        let Some(e) = self.n(i).element() else { return false };
+        if e.attr_local(&local_name!("readonly")).is_none() {
+            return false;
+        }
+        match self.html_local(i).map(|l| &**l) {
+            Some("textarea") => true,
+            Some("input") => matches!(
+                self.input_type_idx(i),
+                InputType::Text
+                    | InputType::Search
+                    | InputType::Url
+                    | InputType::Tel
+                    | InputType::Email
+                    | InputType::Password
+                    | InputType::Date
+                    | InputType::Month
+                    | InputType::Week
+                    | InputType::Time
+                    | InputType::DateTimeLocal
+                    | InputType::Number
+            ),
+            _ => false,
+        }
+    }
+
     /// Whether the element is a candidate for constraint validation.
     pub fn will_validate(&self, id: NodeId) -> DomResult<bool> {
         let i = self.check(id)?;
         let Some(local) = self.html_local(i) else { return Ok(false) };
-        let e = self.n(i).element().unwrap();
         let listed = match &**local {
             "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
             "select" | "textarea" => true,
@@ -2088,10 +2116,7 @@ impl Dom {
             _ if self.is_face_idx(i) => return Ok(self.face_will_validate_idx(i)),
             _ => false,
         };
-        if !listed
-            || self.is_disabled_idx(i)
-            || (e.attr_local(&local_name!("readonly")).is_some() && &**local != "select")
-        {
+        if !listed || self.is_disabled_idx(i) || self.readonly_applies_and_set_idx(i) {
             return Ok(false);
         }
         // Not inside a <datalist>.
@@ -2187,20 +2212,30 @@ impl Dom {
         if !listed {
             return Ok(v);
         }
-        let mutable = !self.is_disabled_idx(i) && !(e.attr_local(&local_name!("readonly")).is_some() && &**local != "select");
+        let mutable = !self.is_disabled_idx(i) && !self.readonly_applies_and_set_idx(i);
         let local = self.html_local(i).map(|l| l.to_string()).unwrap_or_default();
-        let required = mutable && e.attr_local(&local_name!("required")).is_some();
+        // HTML: a text-like control or textarea is suffering from being missing only when it is
+        // mutable; a checkbox, radio group, file input or select also when disabled.
+        let required_attr = e.attr_local(&local_name!("required")).is_some();
+        let required = mutable && required_attr;
         let value = self.value(id)?;
         match local.as_str() {
             "input" => {
                 let ty = self.input_type_idx(i);
                 match ty {
-                    InputType::Checkbox => v.value_missing = required && !self.checkedness_idx(i),
+                    InputType::Checkbox => v.value_missing = required_attr && !self.checkedness_idx(i),
                     InputType::Radio => {
-                        v.value_missing = required && !self.radio_group(i).into_iter().any(|r| self.checkedness_idx(r))
+                        // Any required member makes an unchecked group missing (as Chrome, a radio
+                        // without a name is in no group and never missing).
+                        let named = e.attr_local(&local_name!("name")).is_some_and(|n| !n.is_empty());
+                        let group = self.radio_group(i);
+                        let group_required = group.iter().any(|&r| {
+                            self.n(r).element().is_some_and(|m| m.attr_local(&local_name!("required")).is_some())
+                        });
+                        v.value_missing = named && group_required && !group.iter().any(|&r| self.checkedness_idx(r));
                     }
                     InputType::File => {
-                        v.value_missing = required && e.control.as_ref().and_then(|c| c.value.as_ref()).is_none()
+                        v.value_missing = required_attr && e.control.as_ref().and_then(|c| c.value.as_ref()).is_none()
                     }
                     _ => v.value_missing = required && value.is_empty(),
                 }
@@ -2248,7 +2283,7 @@ impl Dom {
             }
             "textarea" => v.value_missing = required && value.is_empty(),
             "select" => {
-                v.value_missing = required && {
+                v.value_missing = required_attr && {
                     let sel = self.selected_options_idx(i);
                     sel.is_empty() || sel.first().is_some_and(|&o| self.select_placeholder_idx(i) == o)
                 };
