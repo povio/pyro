@@ -1880,6 +1880,7 @@
       }, () => resolved(), 1, () => 1, 0, () => 1));
     }
     get encoding() {
+      if (!TextEncoderStream$t.has(this)) throw new TypeErrorC('Illegal invocation');
       return 'utf-8';
     }
     get readable() {
