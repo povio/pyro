@@ -397,3 +397,23 @@ fn cookie_change_listener_registered_after_mutation_in_the_same_turn_receives_th
     e.until("changes.length === 1");
     assert_eq!(e.eval("changes.join()"), "true|true|early|before-first-getter");
 }
+
+#[test]
+fn cookie_changes_to_one_name_in_a_turn_dispatch_separate_ordered_events() {
+    let e = crate::support::network::Env::new("https://cookie.test/app");
+    assert_eq!(
+        e.eval(r#"
+            document.cookie = 'style=blue; path=/; secure';
+            const records = [];
+            cookieStore.addEventListener('change', event => {
+                records.push(event.changed.map(cookie => cookie.value).join(','));
+            });
+            document.cookie = 'style=blue; path=/';
+            document.cookie = 'style=green; path=/';
+            records.length
+        "#),
+        "0"
+    );
+    e.until("records.length === 3");
+    assert_eq!(e.eval("records.join('|')"), "blue|blue|green");
+}

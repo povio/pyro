@@ -223,14 +223,15 @@
     const d = registrationData.get(registration);
     if (r.seq > d.seq) {
       d.seq = r.seq;
-      const before = d.installing;
       d.installing = workerOf(r.installing);
       d.waiting = workerOf(r.waiting);
       d.active = workerOf(r.active);
-      if (updateFound && d.installing !== null && d.installing !== before) {
-        dispatchEvent.call(registration, new EventC('updatefound'));
-      }
       if (r.matches && d.active !== null) resolveReady(registration);
+    }
+    // The job promise can already have applied this snapshot. Its event
+    // is a separate task, delivered after the promise reaction.
+    if (updateFound && d.seq === r.seq && d.installing !== null) {
+      dispatchEvent.call(registration, new EventC('updatefound'));
     }
     return registration;
   }

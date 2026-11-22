@@ -447,8 +447,12 @@ impl Registration {
     }
 
     /// Tells each client page that touched the API about the new state.
-    fn notify(self: &Rc<Self>, update_found: bool) {
+    fn notify(self: &Rc<Self>) {
         self.bump();
+        self.notify_clients(false);
+    }
+
+    fn notify_clients(self: &Rc<Self>, update_found: bool) {
         let Some(context) = self.context.upgrade() else { return };
         for client in context.service_workers.live_clients() {
             let Some(page) = client.page.upgrade() else { continue };
@@ -843,7 +847,7 @@ fn lifecycle_done(version: &Rc<Version>, kind: Lifecycle, ok: bool) {
             registration.installing.take();
             if !ok {
                 version.redundant();
-                registration.notify(false);
+                registration.notify();
                 end_update(&registration);
                 return;
             }
@@ -851,7 +855,7 @@ fn lifecycle_done(version: &Rc<Version>, kind: Lifecycle, ok: bool) {
                 old.redundant();
             }
             version.set_state(State::Installed);
-            registration.notify(false);
+            registration.notify();
             try_activate(&registration);
             end_update(&registration);
         }
@@ -861,7 +865,7 @@ fn lifecycle_done(version: &Rc<Version>, kind: Lifecycle, ok: bool) {
             }
             version.set_state(State::Activated);
             registration.cookies.activated();
-            registration.notify(false);
+            registration.notify();
         }
     }
 }
@@ -896,7 +900,7 @@ fn try_activate(registration: &Rc<Registration>) {
         }
         old.redundant();
     }
-    registration.notify(false);
+    registration.notify();
     waiting.run(|s, _| crate::service_worker_scope::lifecycle(s, Lifecycle::Activate));
 }
 
@@ -939,7 +943,7 @@ fn unregister(registration: &Rc<Registration>) -> bool {
         .any(|slot| slot.borrow().as_ref().is_some_and(|v| v.controls_any()));
     if !controls {
         registration.clear();
-        registration.notify(false);
+        registration.notify();
     }
     true
 }
@@ -1473,8 +1477,11 @@ fn install(registration: &Rc<Registration>, version: &Rc<Version>, settle: Settl
         old.redundant();
     }
     version.state.set(State::Installing);
-    registration.notify(true);
+    // Service Workers "Install": update the installing state, resolve the
+    // register/update job, then queue updatefound on the client event loops.
+    registration.bump();
     settle.registration(registration);
+    registration.notify_clients(true);
     version.run(|s, _| crate::service_worker_scope::lifecycle(s, Lifecycle::Install));
 }
 

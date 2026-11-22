@@ -145,6 +145,7 @@ impl Subscriptions {
         let mut observer = lock(&self.observer);
         {
             let mut state = lock(&self.state);
+            if state.removed { return; }
             *state = State { removed: true, ..State::default() };
         }
         if let (Some(id), Some(jar)) = (observer.take(), self.jar.as_ref().and_then(Weak::upgrade)) {
@@ -154,9 +155,8 @@ impl Subscriptions {
 
     fn modify(self: &Arc<Self>, add: bool, base: &Url, input: Vec<(Option<String>, Option<String>)>) -> JsResult<()> {
         let mut state = lock(&self.state);
-        if state.removed {
-            return Err(JsError::dom("InvalidStateError", "The registration has been removed."));
-        }
+        // Methods operate on their manager's associated list. After
+        // unregistration it is detached: watch() cannot restart delivery.
         for (name, input) in input {
             let url = match input {
                 Some(text) => {
@@ -275,6 +275,10 @@ mod tests {
         assert_eq!(lock(&list.state).list.len(), 1);
         list.clear();
         assert!(lock(&list.state).list.is_empty());
-        assert!(list.modify(true, &base, vec![(None, None)]).is_err());
+        list.modify(false, &base, vec![(Some("id".into()), None)]).unwrap();
+        list.modify(true, &base, vec![(None, None)]).unwrap();
+        assert!(lock(&list.state).removed);
+        assert_eq!(lock(&list.state).list.len(), 1);
+        assert!(lock(&list.observer).is_none());
     }
 }

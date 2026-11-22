@@ -1207,8 +1207,11 @@ impl JsClass for ServiceWorkerGlobalScope {
                 );
             )+};
         }
-        def.getter("cookieStore", |s, g| crate::cookie_store::member(s, &g.target.page, "cookieStore"));
-        handlers!("oncookiechange" => "cookiechange", "oninstall" => "install", "onactivate" => "activate", "onfetch" => "fetch",
+        def.global_getter("cookieStore", |s, g| crate::cookie_store::member(s, &g.target.page, "cookieStore"));
+        def.global_accessor("oncookiechange",
+            |s, g| crate::target::event_handler(s, &g.target, "cookiechange"),
+            |s, g, value| crate::target::set_event_handler(s, &g.target, "cookiechange", value));
+        handlers!("oninstall" => "install", "onactivate" => "activate", "onfetch" => "fetch",
             "onmessage" => "message", "onmessageerror" => "messageerror");
     }
 }

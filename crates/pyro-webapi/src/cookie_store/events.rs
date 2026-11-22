@@ -126,20 +126,13 @@ pub(crate) fn install_window(s: &Scope<'_>, page: &Rc<PageDom>) {
         if !cookie.visible_in(&url, partition.as_deref(), site) {
             return;
         }
-        let first = {
-            let mut changes = queue.lock().unwrap_or_else(|e| e.into_inner());
-            let first = changes.is_empty();
-            changes.push(change);
-            first
-        };
-        if first {
-            if let Some(post) = &poster {
-                let queue = queue.clone();
-                post(Box::new(move || {
-                    let changes = std::mem::take(&mut *queue.lock().unwrap_or_else(|e| e.into_inner()));
-                    deliver(page_id, realm, &queue, changes);
-                }));
-            }
+        // Each committed change gets its own delivery task. A later change
+        // to the same cookie must not join the earlier event's changed list.
+        if let Some(post) = &poster {
+            let queue = queue.clone();
+            post(Box::new(move || deliver(page_id, realm, &queue, change)));
+        } else {
+            queue.lock().unwrap_or_else(|e| e.into_inner()).push(change);
         }
     });
     let subscription = jar.lock().unwrap_or_else(|e| e.into_inner()).observe(callback);
@@ -163,7 +156,7 @@ pub(crate) fn bind_target(s: &Scope<'_>, page: &Rc<PageDom>, store: Object<'_>) 
     Ok(())
 }
 
-fn deliver(page_id: u64, realm_id: RealmId, inbox: &Inbox, changes: Vec<CookieChange>) {
+fn deliver(page_id: u64, realm_id: RealmId, inbox: &Inbox, change: CookieChange) {
     let Some(realm) = Realm::by_id(realm_id) else { return };
     let Ok(s) = realm.scope() else { return };
     let Ok(page) = target::page_of(&s) else { return };
@@ -180,7 +173,8 @@ fn deliver(page_id: u64, realm_id: RealmId, inbox: &Inbox, changes: Vec<CookieCh
     if !page.dom.borrow().has_listener_for(key, "change") {
         return;
     }
-    let result = cookie_event(&s, &page, false, &changes).and_then(|event| dispatch_at(&s, &page, key, event));
+    let result = cookie_event(&s, &page, false, std::slice::from_ref(&change))
+        .and_then(|event| dispatch_at(&s, &page, key, event));
     if let Err(error) = result {
         s.report_exception(&error);
     }
@@ -205,7 +199,10 @@ pub(crate) fn after_task(page: &PageDom) {
     };
     let id = page.id();
     for (realm, inbox, changes) in fallback {
-        page.post_task(Box::new(move || deliver(id, realm, &inbox, changes)));
+        for change in changes {
+            let inbox = inbox.clone();
+            page.post_task(Box::new(move || deliver(id, realm, &inbox, change)));
+        }
     }
 }
 
