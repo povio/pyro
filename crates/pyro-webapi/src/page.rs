@@ -2969,9 +2969,6 @@ impl PageDom {
         }
         Some((bitmap, entry.clean))
     }
-    /// HTMLImageElement.complete: no `src`, or the current `src` has
-    /// finished loading (successfully or not). A `src` set since the last
-    /// load started is not complete yet, as in Chromium.
     /// Records the committed document response's `Last-Modified` time (Unix milliseconds;
     /// `None`: no valid header).
     pub fn set_last_modified(&self, ms: Option<f64>) {
@@ -2981,6 +2978,9 @@ impl PageDom {
     pub(crate) fn last_modified(&self) -> Option<f64> {
         self.last_modified.get()
     }
+    /// HTMLImageElement.complete: no `src`, or the current `src` has
+    /// finished loading (successfully or not). A `src` set since the last
+    /// load started is not complete yet, as in Chromium.
     pub(crate) fn image_complete(&self, el: NodeId) -> bool {
         let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
         let Some(src) = src else { return true };
