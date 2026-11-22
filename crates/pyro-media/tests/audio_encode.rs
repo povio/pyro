@@ -86,3 +86,33 @@ fn opus_packet_durations_and_input_validation() {
     }
     assert!(!PacketEncoder::supports(&config(48000, 16)));
 }
+
+#[test]
+fn cbr_capabilities_match_per_stream_packet_capacity() {
+    let mut cfg = config(8000, 1);
+    cfg.constant_bitrate = true;
+    cfg.frame_duration = 120000;
+    for (rate, supported) in [(160000, true), (164000, true), (165000, false), (256000, false)] {
+        cfg.bitrate = Some(rate);
+        assert_eq!(PacketEncoder::supports(&cfg), supported);
+        if supported {
+            let mut encoder = PacketEncoder::new(&cfg).unwrap();
+            let tone: Vec<_> =
+                (0..2880).map(|i| 0.25 * (i as f32 * std::f32::consts::TAU * 440.0 / 8000.0).sin()).collect();
+            let packets = encoder.encode(0, 8000, 1, &tone).unwrap();
+            assert_eq!(packets.len(), 3);
+            for packet in packets {
+                assert_eq!(packet.data.len(), (rate * 120 / 8000) as usize);
+            }
+        }
+    }
+    cfg.frame_duration = 117500;
+    cfg.bitrate = Some(256000);
+    assert!(PacketEncoder::supports(&cfg));
+    cfg.bitrate = Some(300001);
+    assert!(!PacketEncoder::supports(&cfg));
+    cfg.channels = 2;
+    cfg.frame_duration = 120000;
+    cfg.bitrate = Some(256000);
+    assert!(!PacketEncoder::supports(&cfg));
+}

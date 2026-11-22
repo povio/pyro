@@ -31,6 +31,48 @@ fn native_duration(us: u32) -> bool {
     matches!(us, 2500 | 5000 | 10000 | 20000 | 40000 | 60000 | 80000 | 100000 | 120000)
 }
 
+fn coding_rate(rate: u32) -> u32 {
+    match rate {
+        8000 | 12000 | 16000 | 24000 | 48000 => rate,
+        _ => 48000,
+    }
+}
+
+fn elementary_duration(duration: u32) -> u32 {
+    if native_duration(duration) {
+        duration
+    } else if duration % 5000 == 0 {
+        5000
+    } else {
+        2500
+    }
+}
+
+fn packet_bytes(bitrate: u32, duration: u32) -> u64 {
+    (u64::from(bitrate) * u64::from(duration) + 4_000_000) / 8_000_000
+}
+
+fn supports_bitrate(config: &EncoderConfig) -> bool {
+    // opus-pure clamps each underlying encoder to 500..=300000 bps/channel.
+    // Family 0/1 allocates one bitrate unit per channel, two per coupled stream.
+    let bitrate = config.bitrate.unwrap_or(64000 * config.channels);
+    if !(500..=300000 * config.channels).contains(&bitrate) || (config.channels > 2 && bitrate / config.channels < 500)
+    {
+        return false;
+    }
+    if !config.constant_bitrate {
+        return true;
+    }
+    let largest_stream = bitrate / config.channels * config.channels.min(2);
+    let duration = elementary_duration(config.frame_duration);
+    let frames = u64::from(coding_rate(config.sample_rate)) * u64::from(duration) / 1_000_000;
+    // OpusMSEncoder's internal per-stream buffer is independent of the public
+    // output buffer. An undersized buffer silently clips a CBR target.
+    let capacity = (1500 + frames).min(opus_pure::MAX_PACKET_BYTES as u64);
+    let smallest_stream = if config.channels > 2 { bitrate / config.channels } else { largest_stream };
+    packet_bytes(largest_stream, duration) <= capacity && packet_bytes(smallest_stream, duration) >= 1
+}
+
 pub struct PacketEncoder {
     encoder: OpusMSEncoder,
     description: Vec<u8>,
@@ -68,17 +110,14 @@ impl PacketEncoder {
             // packets can use the elementary repacketizer below.
             && (config.channels <= 2 || native_duration(config.frame_duration))
             && (!config.dtx || config.channels <= 2)
-            && config.bitrate.is_none_or(|rate| (500..=512000 * config.channels).contains(&rate))
+            && supports_bitrate(config)
     }
 
     pub fn new(config: &EncoderConfig) -> Result<Self, String> {
         if !Self::supports(config) {
             return Err("unsupported audio encoder configuration".into());
         }
-        let rate = match config.sample_rate {
-            8000 | 12000 | 16000 | 24000 | 48000 => config.sample_rate,
-            _ => 48000,
-        };
+        let rate = coding_rate(config.sample_rate);
         let channels = config.channels as usize;
         let family = u8::from(channels > 2);
         let application = match config.application.as_str() {
@@ -90,13 +129,7 @@ impl PacketEncoder {
         if let Some(bitrate) = config.bitrate {
             encoder.set_bitrate(bitrate as i32);
         }
-        let sub_duration = if native_duration(config.frame_duration) {
-            config.frame_duration
-        } else if config.frame_duration % 5000 == 0 {
-            5000
-        } else {
-            2500
-        };
+        let sub_duration = elementary_duration(config.frame_duration);
         for stream in encoder.streams_mut() {
             stream.rate_control = if config.constant_bitrate { RateControl::Cbr } else { RateControl::Vbr };
             stream.complexity = i32::from(config.complexity);
