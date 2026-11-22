@@ -3267,6 +3267,8 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
         let c = n.page().dom.borrow().template_contents(n.id).js()?;
         node_value(s, n.page(), c)
     });
+    // Declarative partial updates: `htmlFor` reflects `for`.
+    reflect_str!(def, "htmlFor", "for");
     def.accessor(
         "shadowRootMode",
         |s, n| {
