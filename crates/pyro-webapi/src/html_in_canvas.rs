@@ -495,7 +495,6 @@ pub(crate) fn update_geometry(s: &Scope<'_>, page: &Rc<PageDom>, canvas: NodeId,
         Some(o) => o.get_atom("canvasTransform")?,
         None => s.undefined(),
     };
-    note_drawn(page, canvas, element);
     let ctor = dom_matrix(s)?;
     let from = ctor.get_atom("fromMatrix")?.as_object().ok_or_else(|| JsError::Type("DOMMatrix.fromMatrix is not available.".into()))?;
     let matrix = from.call(Some(ctor), &[init])?;
@@ -507,6 +506,8 @@ pub(crate) fn update_geometry(s: &Scope<'_>, page: &Rc<PageDom>, canvas: NodeId,
     let all: Vec<f64> = (0..16).map(|i| array.get_index(i).and_then(|v| v.to_number())).collect::<pyro_js::JsResult<_>>()?;
     // A 2D matrix as its six values (a, b, c, d, e, f): read back as 2D.
     let values = if is_2d { vec![all[0], all[1], all[4], all[5], all[12], all[13]] } else { all };
+    // Hittable only once the geometry is accepted (a throwing call above records nothing).
+    note_drawn(page, canvas, element);
     let mut state = page.html_in_canvas.borrow_mut();
     state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
     state.transforms.push((canvas, element, values));
