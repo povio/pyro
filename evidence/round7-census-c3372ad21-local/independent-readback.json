@@ -1,0 +1,3255 @@
+{
+ "historicalDemonstration": false,
+ "exportSnapshot": "cb1115b22046fdc871a163a94e6fa5528d95f1e05a1bac525049753d1d4ece88",
+ "head": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+ "shards": 40,
+ "urls": 3637,
+ "occurrenceRows": 237331,
+ "verified": true,
+ "areasChecked": [
+  "frozen original names and occurrences for both comparators",
+  "new raw names and statuses for every measured URL",
+  "all directional gains/losses and diagnostics",
+  "per-page outcomes, setup diagnostics and strict flags",
+  "coverage, historical and added holds",
+  "canonical archived server ports",
+  "independently recomputed directional and gross counts"
+ ],
+ "counts": {
+  "coverageByEnvironment:window": {
+   "outsideRequestedShardSet": 22878,
+   "newlyWithheld": 150,
+   "historicallyWithheld": 1227
+  },
+  "coverageByEnvironment:dedicatedworker": {
+   "outsideRequestedShardSet": 2464,
+   "newlyWithheld": 14,
+   "historicallyWithheld": 114
+  },
+  "coverageByEnvironment:sharedworker": {
+   "outsideRequestedShardSet": 604,
+   "historicallyWithheld": 23,
+   "newlyWithheld": 8
+  },
+  "coverageByEnvironment:serviceworker": {
+   "outsideRequestedShardSet": 567,
+   "historicallyWithheld": 21,
+   "newlyWithheld": 7
+  },
+  "coverageByEnvironment:serviceworker-module": {
+   "outsideRequestedShardSet": 8
+  },
+  "coverageByEnvironment:sharedworker-module": {
+   "outsideRequestedShardSet": 12
+  },
+  "coverageByEnvironment:dedicatedworker-module": {
+   "outsideRequestedShardSet": 7
+  },
+  "coverageByEnvironment:window-module": {
+   "outsideRequestedShardSet": 2
+  },
+  "coverageByEnvironment:jsshell": {
+   "historicallyWithheld": 78
+  },
+  "coverageByEnvironment:extension": {
+   "historicallyWithheld": 6
+  },
+  "currentChrome": {
+   "firstPass": 221825,
+   "secondPass": 226914,
+   "firstOnly": 3711,
+   "secondOnly": 8800,
+   "commonPass": 218114,
+   "missingFirstName": 1687,
+   "missingSecondName": 828,
+   "firstOnlyPreviouslyObserved": 3078,
+   "firstOnlyNewlyObserved": 633,
+   "secondOnlyNowObserved": 7236,
+   "secondOnlyNowMissing": 1564,
+   "matchedPages": 3637,
+   "firstOnlyPage": 118,
+   "secondOnlyPage": 1089
+  },
+  "currentPrevious": {
+   "firstPass": 221825,
+   "secondPass": 220536,
+   "firstOnly": 1313,
+   "secondOnly": 24,
+   "commonPass": 220512,
+   "missingFirstName": 50,
+   "missingSecondName": 270,
+   "firstOnlyPreviouslyObserved": 1121,
+   "firstOnlyNewlyObserved": 192,
+   "secondOnlyNowObserved": 21,
+   "secondOnlyNowMissing": 3,
+   "matchedPages": 3637,
+   "firstOnlyPage": 66,
+   "secondOnlyPage": 0
+  },
+  "current": {
+   "pages": 3637,
+   "strictPages": 1949,
+   "passingNames": 221825,
+   "observedNames": 235594
+  },
+  "currentByEnvironment:window": {
+   "pages": 3201,
+   "strictPages": 1642,
+   "passingNames": 206660,
+   "observedNames": 218552
+  },
+  "currentByArea:html": {
+   "pages": 793,
+   "strictPages": 489,
+   "passingNames": 23565,
+   "observedNames": 24331
+  },
+  "currentPageOutcomes": {
+   "timeout": 184,
+   "complete": 3326,
+   "error": 127
+  },
+  "currentHarnessOutcomes": {
+   "None": 30,
+   "OK": 3326,
+   "Timeout": 156,
+   "Error": 125
+  },
+  "chrome": {
+   "pages": 3637,
+   "strictPages": 2920,
+   "passingNames": 226914,
+   "observedNames": 236453
+  },
+  "chromeByEnvironment:window": {
+   "pages": 3201,
+   "strictPages": 2569,
+   "passingNames": 211979,
+   "observedNames": 219411
+  },
+  "chromeByArea:html": {
+   "pages": 793,
+   "strictPages": 705,
+   "passingNames": 24142,
+   "observedNames": 24363
+  },
+  "chromePageOutcomes": {
+   "complete": 3519,
+   "timeout": 90,
+   "error": 28
+  },
+  "chromeHarnessOutcomes": {
+   "OK": 3519,
+   "None": 54,
+   "Error": 28,
+   "Timeout": 36
+  },
+  "previous": {
+   "pages": 3637,
+   "strictPages": 1883,
+   "passingNames": 220536,
+   "observedNames": 235374
+  },
+  "previousByEnvironment:window": {
+   "pages": 3201,
+   "strictPages": 1583,
+   "passingNames": 205418,
+   "observedNames": 218332
+  },
+  "previousByArea:html": {
+   "pages": 793,
+   "strictPages": 487,
+   "passingNames": 23525,
+   "observedNames": 24307
+  },
+  "previousPageOutcomes": {
+   "timeout": 184,
+   "complete": 3318,
+   "error": 135
+  },
+  "previousHarnessOutcomes": {
+   "None": 33,
+   "OK": 3318,
+   "Timeout": 156,
+   "Error": 130
+  },
+  "currentByArea:webnn": {
+   "pages": 51,
+   "strictPages": 1,
+   "passingNames": 20,
+   "observedNames": 365
+  },
+  "chromeByArea:webnn": {
+   "pages": 51,
+   "strictPages": 47,
+   "passingNames": 1077,
+   "observedNames": 1095
+  },
+  "previousByArea:webnn": {
+   "pages": 51,
+   "strictPages": 1,
+   "passingNames": 20,
+   "observedNames": 347
+  },
+  "currentByArea:editing": {
+   "pages": 331,
+   "strictPages": 138,
+   "passingNames": 42107,
+   "observedNames": 45857
+  },
+  "chromeByArea:editing": {
+   "pages": 331,
+   "strictPages": 196,
+   "passingNames": 42472,
+   "observedNames": 45920
+  },
+  "previousByArea:editing": {
+   "pages": 331,
+   "strictPages": 101,
+   "passingNames": 41199,
+   "observedNames": 45857
+  },
+  "currentByArea:fetch": {
+   "pages": 85,
+   "strictPages": 46,
+   "passingNames": 912,
+   "observedNames": 1165
+  },
+  "chromeByArea:fetch": {
+   "pages": 85,
+   "strictPages": 66,
+   "passingNames": 1110,
+   "observedNames": 1189
+  },
+  "previousByArea:fetch": {
+   "pages": 85,
+   "strictPages": 46,
+   "passingNames": 912,
+   "observedNames": 1165
+  },
+  "currentByArea:mixed-content": {
+   "pages": 36,
+   "strictPages": 4,
+   "passingNames": 138,
+   "observedNames": 208
+  },
+  "chromeByArea:mixed-content": {
+   "pages": 36,
+   "strictPages": 28,
+   "passingNames": 195,
+   "observedNames": 208
+  },
+  "previousByArea:mixed-content": {
+   "pages": 36,
+   "strictPages": 4,
+   "passingNames": 138,
+   "observedNames": 208
+  },
+  "currentByArea:referrer-policy": {
+   "pages": 259,
+   "strictPages": 246,
+   "passingNames": 1328,
+   "observedNames": 1355
+  },
+  "chromeByArea:referrer-policy": {
+   "pages": 259,
+   "strictPages": 257,
+   "passingNames": 1355,
+   "observedNames": 1355
+  },
+  "previousByArea:referrer-policy": {
+   "pages": 259,
+   "strictPages": 246,
+   "passingNames": 1328,
+   "observedNames": 1355
+  },
+  "currentByArea:sanitizer-api": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 32,
+   "observedNames": 221
+  },
+  "chromeByArea:sanitizer-api": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 221,
+   "observedNames": 221
+  },
+  "previousByArea:sanitizer-api": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 31,
+   "observedNames": 221
+  },
+  "currentByArea:service-workers": {
+   "pages": 27,
+   "strictPages": 11,
+   "passingNames": 162,
+   "observedNames": 230
+  },
+  "chromeByArea:service-workers": {
+   "pages": 27,
+   "strictPages": 19,
+   "passingNames": 214,
+   "observedNames": 228
+  },
+  "previousByArea:service-workers": {
+   "pages": 27,
+   "strictPages": 11,
+   "passingNames": 162,
+   "observedNames": 230
+  },
+  "currentByArea:uievents": {
+   "pages": 8,
+   "strictPages": 4,
+   "passingNames": 15,
+   "observedNames": 36
+  },
+  "chromeByArea:uievents": {
+   "pages": 8,
+   "strictPages": 5,
+   "passingNames": 21,
+   "observedNames": 36
+  },
+  "previousByArea:uievents": {
+   "pages": 8,
+   "strictPages": 4,
+   "passingNames": 15,
+   "observedNames": 36
+  },
+  "currentByArea:xhr": {
+   "pages": 39,
+   "strictPages": 34,
+   "passingNames": 191,
+   "observedNames": 206
+  },
+  "chromeByArea:xhr": {
+   "pages": 39,
+   "strictPages": 35,
+   "passingNames": 201,
+   "observedNames": 206
+  },
+  "previousByArea:xhr": {
+   "pages": 39,
+   "strictPages": 34,
+   "passingNames": 191,
+   "observedNames": 206
+  },
+  "currentByArea:FileAPI": {
+   "pages": 48,
+   "strictPages": 33,
+   "passingNames": 558,
+   "observedNames": 600
+  },
+  "chromeByArea:FileAPI": {
+   "pages": 48,
+   "strictPages": 44,
+   "passingNames": 596,
+   "observedNames": 607
+  },
+  "previousByArea:FileAPI": {
+   "pages": 48,
+   "strictPages": 32,
+   "passingNames": 556,
+   "observedNames": 600
+  },
+  "currentByEnvironment:dedicatedworker": {
+   "pages": 292,
+   "strictPages": 211,
+   "passingNames": 11851,
+   "observedNames": 13408
+  },
+  "chromeByEnvironment:dedicatedworker": {
+   "pages": 292,
+   "strictPages": 244,
+   "passingNames": 11622,
+   "observedNames": 13408
+  },
+  "previousByEnvironment:dedicatedworker": {
+   "pages": 292,
+   "strictPages": 208,
+   "passingNames": 11846,
+   "observedNames": 13408
+  },
+  "currentByArea:compression": {
+   "pages": 36,
+   "strictPages": 26,
+   "passingNames": 617,
+   "observedNames": 681
+  },
+  "chromeByArea:compression": {
+   "pages": 36,
+   "strictPages": 7,
+   "passingNames": 523,
+   "observedNames": 681
+  },
+  "previousByArea:compression": {
+   "pages": 36,
+   "strictPages": 26,
+   "passingNames": 617,
+   "observedNames": 681
+  },
+  "currentByArea:dom": {
+   "pages": 100,
+   "strictPages": 92,
+   "passingNames": 13822,
+   "observedNames": 13862
+  },
+  "chromeByArea:dom": {
+   "pages": 100,
+   "strictPages": 95,
+   "passingNames": 13848,
+   "observedNames": 13865
+  },
+  "previousByArea:dom": {
+   "pages": 100,
+   "strictPages": 92,
+   "passingNames": 13821,
+   "observedNames": 13861
+  },
+  "currentByArea:domparsing": {
+   "pages": 39,
+   "strictPages": 20,
+   "passingNames": 652,
+   "observedNames": 960
+  },
+  "chromeByArea:domparsing": {
+   "pages": 39,
+   "strictPages": 36,
+   "passingNames": 945,
+   "observedNames": 960
+  },
+  "previousByArea:domparsing": {
+   "pages": 39,
+   "strictPages": 20,
+   "passingNames": 632,
+   "observedNames": 880
+  },
+  "currentByArea:encoding": {
+   "pages": 146,
+   "strictPages": 144,
+   "passingNames": 108724,
+   "observedNames": 108726
+  },
+  "chromeByArea:encoding": {
+   "pages": 146,
+   "strictPages": 137,
+   "passingNames": 108493,
+   "observedNames": 108726
+  },
+  "previousByArea:encoding": {
+   "pages": 146,
+   "strictPages": 144,
+   "passingNames": 108724,
+   "observedNames": 108726
+  },
+  "currentByEnvironment:sharedworker": {
+   "pages": 64,
+   "strictPages": 41,
+   "passingNames": 1684,
+   "observedNames": 1844
+  },
+  "chromeByEnvironment:sharedworker": {
+   "pages": 64,
+   "strictPages": 44,
+   "passingNames": 1690,
+   "observedNames": 1844
+  },
+  "previousByEnvironment:sharedworker": {
+   "pages": 64,
+   "strictPages": 39,
+   "passingNames": 1682,
+   "observedNames": 1844
+  },
+  "currentByArea:svg": {
+   "pages": 420,
+   "strictPages": 174,
+   "passingNames": 1881,
+   "observedNames": 2767
+  },
+  "chromeByArea:svg": {
+   "pages": 420,
+   "strictPages": 351,
+   "passingNames": 2474,
+   "observedNames": 2783
+  },
+  "previousByArea:svg": {
+   "pages": 420,
+   "strictPages": 168,
+   "passingNames": 1859,
+   "observedNames": 2767
+  },
+  "currentByArea:webaudio": {
+   "pages": 165,
+   "strictPages": 73,
+   "passingNames": 2321,
+   "observedNames": 2958
+  },
+  "chromeByArea:webaudio": {
+   "pages": 165,
+   "strictPages": 150,
+   "passingNames": 3068,
+   "observedNames": 3127
+  },
+  "previousByArea:webaudio": {
+   "pages": 165,
+   "strictPages": 69,
+   "passingNames": 2131,
+   "observedNames": 2879
+  },
+  "currentByArea:shadow-dom": {
+   "pages": 40,
+   "strictPages": 28,
+   "passingNames": 4178,
+   "observedNames": 4220
+  },
+  "chromeByArea:shadow-dom": {
+   "pages": 40,
+   "strictPages": 32,
+   "passingNames": 3852,
+   "observedNames": 3860
+  },
+  "previousByArea:shadow-dom": {
+   "pages": 40,
+   "strictPages": 25,
+   "passingNames": 4174,
+   "observedNames": 4220
+  },
+  "currentByArea:streams": {
+   "pages": 33,
+   "strictPages": 21,
+   "passingNames": 737,
+   "observedNames": 838
+  },
+  "chromeByArea:streams": {
+   "pages": 33,
+   "strictPages": 31,
+   "passingNames": 832,
+   "observedNames": 838
+  },
+  "previousByArea:streams": {
+   "pages": 33,
+   "strictPages": 21,
+   "passingNames": 737,
+   "observedNames": 838
+  },
+  "currentByArea:urlpattern": {
+   "pages": 20,
+   "strictPages": 12,
+   "passingNames": 2257,
+   "observedNames": 2425
+  },
+  "chromeByArea:urlpattern": {
+   "pages": 20,
+   "strictPages": 12,
+   "passingNames": 2257,
+   "observedNames": 2425
+  },
+  "previousByArea:urlpattern": {
+   "pages": 20,
+   "strictPages": 12,
+   "passingNames": 2257,
+   "observedNames": 2425
+  },
+  "currentByEnvironment:serviceworker": {
+   "pages": 77,
+   "strictPages": 53,
+   "passingNames": 1628,
+   "observedNames": 1782
+  },
+  "chromeByEnvironment:serviceworker": {
+   "pages": 77,
+   "strictPages": 61,
+   "passingNames": 1621,
+   "observedNames": 1782
+  },
+  "previousByEnvironment:serviceworker": {
+   "pages": 77,
+   "strictPages": 51,
+   "passingNames": 1588,
+   "observedNames": 1782
+  },
+  "currentByArea:resource-timing": {
+   "pages": 18,
+   "strictPages": 9,
+   "passingNames": 133,
+   "observedNames": 216
+  },
+  "chromeByArea:resource-timing": {
+   "pages": 18,
+   "strictPages": 14,
+   "passingNames": 206,
+   "observedNames": 216
+  },
+  "previousByArea:resource-timing": {
+   "pages": 18,
+   "strictPages": 9,
+   "passingNames": 133,
+   "observedNames": 216
+  },
+  "currentByArea:input-events": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 592,
+   "observedNames": 905
+  },
+  "chromeByArea:input-events": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 683,
+   "observedNames": 939
+  },
+  "previousByArea:input-events": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 578,
+   "observedNames": 905
+  },
+  "currentByArea:mathml": {
+   "pages": 14,
+   "strictPages": 4,
+   "passingNames": 120,
+   "observedNames": 215
+  },
+  "chromeByArea:mathml": {
+   "pages": 14,
+   "strictPages": 10,
+   "passingNames": 210,
+   "observedNames": 215
+  },
+  "previousByArea:mathml": {
+   "pages": 14,
+   "strictPages": 4,
+   "passingNames": 120,
+   "observedNames": 215
+  },
+  "currentByArea:mimesniff": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 2633,
+   "observedNames": 3842
+  },
+  "chromeByArea:mimesniff": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 1469,
+   "observedNames": 3842
+  },
+  "previousByArea:mimesniff": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 2633,
+   "observedNames": 3842
+  },
+  "currentByArea:server-timing": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 88,
+   "observedNames": 99
+  },
+  "chromeByArea:server-timing": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 99,
+   "observedNames": 99
+  },
+  "previousByArea:server-timing": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 88,
+   "observedNames": 99
+  },
+  "currentByArea:IndexedDB": {
+   "pages": 61,
+   "strictPages": 58,
+   "passingNames": 304,
+   "observedNames": 308
+  },
+  "chromeByArea:IndexedDB": {
+   "pages": 61,
+   "strictPages": 61,
+   "passingNames": 308,
+   "observedNames": 308
+  },
+  "previousByArea:IndexedDB": {
+   "pages": 61,
+   "strictPages": 53,
+   "passingNames": 298,
+   "observedNames": 308
+  },
+  "currentByArea:WebCryptoAPI": {
+   "pages": 39,
+   "strictPages": 29,
+   "passingNames": 7397,
+   "observedNames": 9024
+  },
+  "chromeByArea:WebCryptoAPI": {
+   "pages": 39,
+   "strictPages": 20,
+   "passingNames": 8008,
+   "observedNames": 9024
+  },
+  "previousByArea:WebCryptoAPI": {
+   "pages": 39,
+   "strictPages": 29,
+   "passingNames": 7397,
+   "observedNames": 9024
+  },
+  "currentByArea:accname": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 7,
+   "observedNames": 8
+  },
+  "chromeByArea:accname": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 7,
+   "observedNames": 8
+  },
+  "previousByArea:accname": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 7,
+   "observedNames": 8
+  },
+  "currentByArea:compute-pressure": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "chromeByArea:compute-pressure": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 3,
+   "observedNames": 4
+  },
+  "previousByArea:compute-pressure": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "currentByArea:content-index": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 8,
+   "observedNames": 26
+  },
+  "chromeByArea:content-index": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 8,
+   "observedNames": 26
+  },
+  "previousByArea:content-index": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 8,
+   "observedNames": 26
+  },
+  "currentByArea:content-security-policy": {
+   "pages": 54,
+   "strictPages": 22,
+   "passingNames": 147,
+   "observedNames": 267
+  },
+  "chromeByArea:content-security-policy": {
+   "pages": 54,
+   "strictPages": 45,
+   "passingNames": 242,
+   "observedNames": 267
+  },
+  "previousByArea:content-security-policy": {
+   "pages": 54,
+   "strictPages": 22,
+   "passingNames": 147,
+   "observedNames": 267
+  },
+  "currentByArea:credential-management": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 9
+  },
+  "chromeByArea:credential-management": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 3,
+   "observedNames": 9
+  },
+  "previousByArea:credential-management": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 9
+  },
+  "currentByArea:forced-colors-mode": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "chromeByArea:forced-colors-mode": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "previousByArea:forced-colors-mode": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "currentByArea:js": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "chromeByArea:js": {
+   "pages": 2,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 2
+  },
+  "previousByArea:js": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "currentByArea:mediacapture-record": {
+   "pages": 8,
+   "strictPages": 0,
+   "passingNames": 2,
+   "observedNames": 73
+  },
+  "chromeByArea:mediacapture-record": {
+   "pages": 8,
+   "strictPages": 1,
+   "passingNames": 60,
+   "observedNames": 71
+  },
+  "previousByArea:mediacapture-record": {
+   "pages": 8,
+   "strictPages": 0,
+   "passingNames": 2,
+   "observedNames": 73
+  },
+  "currentByArea:navigation-api": {
+   "pages": 44,
+   "strictPages": 25,
+   "passingNames": 30,
+   "observedNames": 53
+  },
+  "chromeByArea:navigation-api": {
+   "pages": 44,
+   "strictPages": 42,
+   "passingNames": 51,
+   "observedNames": 53
+  },
+  "previousByArea:navigation-api": {
+   "pages": 44,
+   "strictPages": 25,
+   "passingNames": 30,
+   "observedNames": 53
+  },
+  "currentByArea:pointerevents": {
+   "pages": 22,
+   "strictPages": 10,
+   "passingNames": 139,
+   "observedNames": 174
+  },
+  "chromeByArea:pointerevents": {
+   "pages": 22,
+   "strictPages": 17,
+   "passingNames": 199,
+   "observedNames": 205
+  },
+  "previousByArea:pointerevents": {
+   "pages": 22,
+   "strictPages": 10,
+   "passingNames": 139,
+   "observedNames": 174
+  },
+  "currentByArea:preload": {
+   "pages": 10,
+   "strictPages": 3,
+   "passingNames": 12,
+   "observedNames": 23
+  },
+  "chromeByArea:preload": {
+   "pages": 10,
+   "strictPages": 8,
+   "passingNames": 21,
+   "observedNames": 23
+  },
+  "previousByArea:preload": {
+   "pages": 10,
+   "strictPages": 3,
+   "passingNames": 12,
+   "observedNames": 23
+  },
+  "currentByArea:scroll-to-text-fragment": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 15,
+   "observedNames": 30
+  },
+  "chromeByArea:scroll-to-text-fragment": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 30,
+   "observedNames": 30
+  },
+  "previousByArea:scroll-to-text-fragment": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 15,
+   "observedNames": 30
+  },
+  "currentByArea:selection": {
+   "pages": 15,
+   "strictPages": 7,
+   "passingNames": 3677,
+   "observedNames": 3717
+  },
+  "chromeByArea:selection": {
+   "pages": 15,
+   "strictPages": 12,
+   "passingNames": 3706,
+   "observedNames": 3717
+  },
+  "previousByArea:selection": {
+   "pages": 15,
+   "strictPages": 7,
+   "passingNames": 3677,
+   "observedNames": 3717
+  },
+  "currentByArea:signed-exchange": {
+   "pages": 8,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 21
+  },
+  "chromeByArea:signed-exchange": {
+   "pages": 8,
+   "strictPages": 3,
+   "passingNames": 3,
+   "observedNames": 21
+  },
+  "previousByArea:signed-exchange": {
+   "pages": 8,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 21
+  },
+  "currentByArea:soft-navigation-heuristics": {
+   "pages": 8,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 15
+  },
+  "chromeByArea:soft-navigation-heuristics": {
+   "pages": 8,
+   "strictPages": 8,
+   "passingNames": 15,
+   "observedNames": 15
+  },
+  "previousByArea:soft-navigation-heuristics": {
+   "pages": 8,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 15
+  },
+  "currentByArea:speculation-rules": {
+   "pages": 46,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "chromeByArea:speculation-rules": {
+   "pages": 46,
+   "strictPages": 19,
+   "passingNames": 37,
+   "observedNames": 42
+  },
+  "previousByArea:speculation-rules": {
+   "pages": 46,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "currentByArea:storage-access-api": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 11
+  },
+  "chromeByArea:storage-access-api": {
+   "pages": 4,
+   "strictPages": 3,
+   "passingNames": 19,
+   "observedNames": 20
+  },
+  "previousByArea:storage-access-api": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 11
+  },
+  "currentByArea:trusted-types": {
+   "pages": 12,
+   "strictPages": 4,
+   "passingNames": 23,
+   "observedNames": 62
+  },
+  "chromeByArea:trusted-types": {
+   "pages": 12,
+   "strictPages": 11,
+   "passingNames": 54,
+   "observedNames": 62
+  },
+  "previousByArea:trusted-types": {
+   "pages": 12,
+   "strictPages": 4,
+   "passingNames": 23,
+   "observedNames": 62
+  },
+  "currentByArea:vibration": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 14,
+   "observedNames": 16
+  },
+  "chromeByArea:vibration": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 16,
+   "observedNames": 16
+  },
+  "previousByArea:vibration": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 14,
+   "observedNames": 16
+  },
+  "currentByArea:web-animations": {
+   "pages": 8,
+   "strictPages": 5,
+   "passingNames": 187,
+   "observedNames": 282
+  },
+  "chromeByArea:web-animations": {
+   "pages": 8,
+   "strictPages": 6,
+   "passingNames": 229,
+   "observedNames": 282
+  },
+  "previousByArea:web-animations": {
+   "pages": 8,
+   "strictPages": 5,
+   "passingNames": 187,
+   "observedNames": 282
+  },
+  "currentByArea:webcodecs": {
+   "pages": 25,
+   "strictPages": 0,
+   "passingNames": 13,
+   "observedNames": 132
+  },
+  "chromeByArea:webcodecs": {
+   "pages": 25,
+   "strictPages": 25,
+   "passingNames": 133,
+   "observedNames": 133
+  },
+  "previousByArea:webcodecs": {
+   "pages": 25,
+   "strictPages": 0,
+   "passingNames": 13,
+   "observedNames": 132
+  },
+  "currentByArea:webmcp": {
+   "pages": 9,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 26
+  },
+  "chromeByArea:webmcp": {
+   "pages": 9,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 26
+  },
+  "previousByArea:webmcp": {
+   "pages": 9,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 26
+  },
+  "currentByArea:websockets": {
+   "pages": 63,
+   "strictPages": 43,
+   "passingNames": 212,
+   "observedNames": 269
+  },
+  "chromeByArea:websockets": {
+   "pages": 63,
+   "strictPages": 46,
+   "passingNames": 239,
+   "observedNames": 276
+  },
+  "previousByArea:websockets": {
+   "pages": 63,
+   "strictPages": 42,
+   "passingNames": 211,
+   "observedNames": 268
+  },
+  "currentByArea:webvtt": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 33
+  },
+  "chromeByArea:webvtt": {
+   "pages": 6,
+   "strictPages": 4,
+   "passingNames": 33,
+   "observedNames": 35
+  },
+  "previousByArea:webvtt": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 33
+  },
+  "currentByArea:workers": {
+   "pages": 28,
+   "strictPages": 19,
+   "passingNames": 210,
+   "observedNames": 227
+  },
+  "chromeByArea:workers": {
+   "pages": 28,
+   "strictPages": 26,
+   "passingNames": 225,
+   "observedNames": 227
+  },
+  "previousByArea:workers": {
+   "pages": 28,
+   "strictPages": 18,
+   "passingNames": 203,
+   "observedNames": 227
+  },
+  "currentByArea:ai": {
+   "pages": 14,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 34
+  },
+  "chromeByArea:ai": {
+   "pages": 14,
+   "strictPages": 0,
+   "passingNames": 2,
+   "observedNames": 4
+  },
+  "previousByArea:ai": {
+   "pages": 14,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 34
+  },
+  "currentByArea:client-hints": {
+   "pages": 11,
+   "strictPages": 5,
+   "passingNames": 12,
+   "observedNames": 16
+  },
+  "chromeByArea:client-hints": {
+   "pages": 11,
+   "strictPages": 11,
+   "passingNames": 16,
+   "observedNames": 16
+  },
+  "previousByArea:client-hints": {
+   "pages": 11,
+   "strictPages": 5,
+   "passingNames": 12,
+   "observedNames": 16
+  },
+  "currentByArea:domxpath": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 8,
+   "observedNames": 8
+  },
+  "chromeByArea:domxpath": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 8,
+   "observedNames": 8
+  },
+  "previousByArea:domxpath": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 8,
+   "observedNames": 8
+  },
+  "currentByArea:element-timing": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 3,
+   "observedNames": 8
+  },
+  "chromeByArea:element-timing": {
+   "pages": 5,
+   "strictPages": 3,
+   "passingNames": 6,
+   "observedNames": 8
+  },
+  "previousByArea:element-timing": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 3,
+   "observedNames": 8
+  },
+  "currentByArea:encrypted-media": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 10
+  },
+  "chromeByArea:encrypted-media": {
+   "pages": 6,
+   "strictPages": 5,
+   "passingNames": 11,
+   "observedNames": 12
+  },
+  "previousByArea:encrypted-media": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 10
+  },
+  "currentByArea:hr-time": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 7,
+   "observedNames": 8
+  },
+  "chromeByArea:hr-time": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 8,
+   "observedNames": 8
+  },
+  "previousByArea:hr-time": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 7,
+   "observedNames": 8
+  },
+  "currentByArea:private-click-measurement": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 15,
+   "observedNames": 17
+  },
+  "chromeByArea:private-click-measurement": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 15,
+   "observedNames": 17
+  },
+  "previousByArea:private-click-measurement": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 15,
+   "observedNames": 17
+  },
+  "currentByArea:scheduler": {
+   "pages": 8,
+   "strictPages": 6,
+   "passingNames": 35,
+   "observedNames": 37
+  },
+  "chromeByArea:scheduler": {
+   "pages": 8,
+   "strictPages": 8,
+   "passingNames": 37,
+   "observedNames": 37
+  },
+  "previousByArea:scheduler": {
+   "pages": 8,
+   "strictPages": 6,
+   "passingNames": 35,
+   "observedNames": 37
+  },
+  "currentByArea:scroll-animations": {
+   "pages": 16,
+   "strictPages": 8,
+   "passingNames": 62,
+   "observedNames": 261
+  },
+  "chromeByArea:scroll-animations": {
+   "pages": 16,
+   "strictPages": 15,
+   "passingNames": 255,
+   "observedNames": 261
+  },
+  "previousByArea:scroll-animations": {
+   "pages": 16,
+   "strictPages": 8,
+   "passingNames": 62,
+   "observedNames": 261
+  },
+  "currentByArea:upgrade-insecure-requests": {
+   "pages": 12,
+   "strictPages": 4,
+   "passingNames": 24,
+   "observedNames": 62
+  },
+  "chromeByArea:upgrade-insecure-requests": {
+   "pages": 12,
+   "strictPages": 8,
+   "passingNames": 46,
+   "observedNames": 62
+  },
+  "previousByArea:upgrade-insecure-requests": {
+   "pages": 12,
+   "strictPages": 4,
+   "passingNames": 24,
+   "observedNames": 62
+  },
+  "currentByArea:wai-aria": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 11
+  },
+  "chromeByArea:wai-aria": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 11
+  },
+  "previousByArea:wai-aria": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 11
+  },
+  "currentByArea:web-bundle": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "chromeByArea:web-bundle": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "previousByArea:web-bundle": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "currentByArea:web-nfc": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "chromeByArea:web-nfc": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "previousByArea:web-nfc": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "currentByArea:clipboard-apis": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 8,
+   "observedNames": 8
+  },
+  "chromeByArea:clipboard-apis": {
+   "pages": 3,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 8
+  },
+  "previousByArea:clipboard-apis": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 8,
+   "observedNames": 8
+  },
+  "currentByArea:connection-allowlist": {
+   "pages": 8,
+   "strictPages": 0,
+   "passingNames": 11,
+   "observedNames": 23
+  },
+  "chromeByArea:connection-allowlist": {
+   "pages": 8,
+   "strictPages": 3,
+   "passingNames": 19,
+   "observedNames": 23
+  },
+  "previousByArea:connection-allowlist": {
+   "pages": 8,
+   "strictPages": 0,
+   "passingNames": 11,
+   "observedNames": 23
+  },
+  "currentByArea:cookies": {
+   "pages": 8,
+   "strictPages": 5,
+   "passingNames": 32,
+   "observedNames": 35
+  },
+  "chromeByArea:cookies": {
+   "pages": 8,
+   "strictPages": 7,
+   "passingNames": 90,
+   "observedNames": 91
+  },
+  "previousByArea:cookies": {
+   "pages": 8,
+   "strictPages": 5,
+   "passingNames": 32,
+   "observedNames": 35
+  },
+  "currentByArea:cors": {
+   "pages": 8,
+   "strictPages": 3,
+   "passingNames": 199,
+   "observedNames": 220
+  },
+  "chromeByArea:cors": {
+   "pages": 8,
+   "strictPages": 7,
+   "passingNames": 219,
+   "observedNames": 220
+  },
+  "previousByArea:cors": {
+   "pages": 8,
+   "strictPages": 3,
+   "passingNames": 199,
+   "observedNames": 220
+  },
+  "currentByArea:infrastructure": {
+   "pages": 7,
+   "strictPages": 5,
+   "passingNames": 6,
+   "observedNames": 8
+  },
+  "chromeByArea:infrastructure": {
+   "pages": 7,
+   "strictPages": 5,
+   "passingNames": 6,
+   "observedNames": 8
+  },
+  "previousByArea:infrastructure": {
+   "pages": 7,
+   "strictPages": 5,
+   "passingNames": 6,
+   "observedNames": 8
+  },
+  "currentByArea:loading": {
+   "pages": 3,
+   "strictPages": 1,
+   "passingNames": 2,
+   "observedNames": 4
+  },
+  "chromeByArea:loading": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 4,
+   "observedNames": 4
+  },
+  "previousByArea:loading": {
+   "pages": 3,
+   "strictPages": 1,
+   "passingNames": 2,
+   "observedNames": 4
+  },
+  "currentByArea:media-capabilities": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 68
+  },
+  "chromeByArea:media-capabilities": {
+   "pages": 3,
+   "strictPages": 1,
+   "passingNames": 58,
+   "observedNames": 68
+  },
+  "previousByArea:media-capabilities": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 68
+  },
+  "currentByArea:push-api": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "chromeByArea:push-api": {
+   "pages": 2,
+   "strictPages": 1,
+   "passingNames": 2,
+   "observedNames": 8
+  },
+  "previousByArea:push-api": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "currentByArea:webtransport": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "chromeByArea:webtransport": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "previousByArea:webtransport": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "currentByArea:audio-output": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:audio-output": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "previousByArea:audio-output": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:custom-elements": {
+   "pages": 16,
+   "strictPages": 11,
+   "passingNames": 128,
+   "observedNames": 150
+  },
+  "chromeByArea:custom-elements": {
+   "pages": 16,
+   "strictPages": 14,
+   "passingNames": 147,
+   "observedNames": 150
+  },
+  "previousByArea:custom-elements": {
+   "pages": 16,
+   "strictPages": 10,
+   "passingNames": 127,
+   "observedNames": 150
+  },
+  "currentByArea:digital-credentials": {
+   "pages": 2,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 13
+  },
+  "chromeByArea:digital-credentials": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 13,
+   "observedNames": 13
+  },
+  "previousByArea:digital-credentials": {
+   "pages": 2,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 13
+  },
+  "currentByArea:direct-sockets": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:direct-sockets": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "previousByArea:direct-sockets": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:eventsource": {
+   "pages": 9,
+   "strictPages": 8,
+   "passingNames": 17,
+   "observedNames": 20
+  },
+  "chromeByArea:eventsource": {
+   "pages": 9,
+   "strictPages": 9,
+   "passingNames": 20,
+   "observedNames": 20
+  },
+  "previousByArea:eventsource": {
+   "pages": 9,
+   "strictPages": 8,
+   "passingNames": 17,
+   "observedNames": 20
+  },
+  "currentByArea:focus": {
+   "pages": 4,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 6
+  },
+  "chromeByArea:focus": {
+   "pages": 4,
+   "strictPages": 3,
+   "passingNames": 5,
+   "observedNames": 6
+  },
+  "previousByArea:focus": {
+   "pages": 4,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 6
+  },
+  "currentByArea:import-maps": {
+   "pages": 6,
+   "strictPages": 2,
+   "passingNames": 18,
+   "observedNames": 33
+  },
+  "chromeByArea:import-maps": {
+   "pages": 6,
+   "strictPages": 6,
+   "passingNames": 33,
+   "observedNames": 33
+  },
+  "previousByArea:import-maps": {
+   "pages": 6,
+   "strictPages": 2,
+   "passingNames": 18,
+   "observedNames": 33
+  },
+  "currentByArea:intersection-observer": {
+   "pages": 14,
+   "strictPages": 2,
+   "passingNames": 10,
+   "observedNames": 27
+  },
+  "chromeByArea:intersection-observer": {
+   "pages": 14,
+   "strictPages": 14,
+   "passingNames": 31,
+   "observedNames": 31
+  },
+  "previousByArea:intersection-observer": {
+   "pages": 14,
+   "strictPages": 2,
+   "passingNames": 10,
+   "observedNames": 27
+  },
+  "currentByArea:layout-instability": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "chromeByArea:layout-instability": {
+   "pages": 5,
+   "strictPages": 5,
+   "passingNames": 5,
+   "observedNames": 5
+  },
+  "previousByArea:layout-instability": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "currentByArea:media-source": {
+   "pages": 8,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 12
+  },
+  "chromeByArea:media-source": {
+   "pages": 8,
+   "strictPages": 6,
+   "passingNames": 13,
+   "observedNames": 15
+  },
+  "previousByArea:media-source": {
+   "pages": 8,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 12
+  },
+  "currentByArea:mediacapture-extensions": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "chromeByArea:mediacapture-extensions": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "previousByArea:mediacapture-extensions": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "currentByArea:mediacapture-streams": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "chromeByArea:mediacapture-streams": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "previousByArea:mediacapture-streams": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "currentByArea:navigation-timing": {
+   "pages": 5,
+   "strictPages": 3,
+   "passingNames": 3,
+   "observedNames": 5
+  },
+  "chromeByArea:navigation-timing": {
+   "pages": 5,
+   "strictPages": 4,
+   "passingNames": 4,
+   "observedNames": 5
+  },
+  "previousByArea:navigation-timing": {
+   "pages": 5,
+   "strictPages": 3,
+   "passingNames": 3,
+   "observedNames": 5
+  },
+  "currentByArea:orientation-sensor": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "chromeByArea:orientation-sensor": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 3,
+   "observedNames": 3
+  },
+  "previousByArea:orientation-sensor": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "currentByArea:url": {
+   "pages": 5,
+   "strictPages": 5,
+   "passingNames": 694,
+   "observedNames": 694
+  },
+  "chromeByArea:url": {
+   "pages": 5,
+   "strictPages": 2,
+   "passingNames": 658,
+   "observedNames": 694
+  },
+  "previousByArea:url": {
+   "pages": 5,
+   "strictPages": 5,
+   "passingNames": 694,
+   "observedNames": 694
+  },
+  "currentByArea:webrtc-svc": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "chromeByArea:webrtc-svc": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 6,
+   "observedNames": 6
+  },
+  "previousByArea:webrtc-svc": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "currentByArea:webrtc": {
+   "pages": 11,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 62
+  },
+  "chromeByArea:webrtc": {
+   "pages": 11,
+   "strictPages": 10,
+   "passingNames": 61,
+   "observedNames": 62
+  },
+  "previousByArea:webrtc": {
+   "pages": 11,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 62
+  },
+  "currentByArea:webstorage": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 10,
+   "observedNames": 11
+  },
+  "chromeByArea:webstorage": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 11,
+   "observedNames": 11
+  },
+  "previousByArea:webstorage": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 10,
+   "observedNames": 11
+  },
+  "currentByArea:webusb": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 23,
+   "observedNames": 282
+  },
+  "chromeByArea:webusb": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 197,
+   "observedNames": 282
+  },
+  "previousByArea:webusb": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 23,
+   "observedNames": 282
+  },
+  "currentByArea:webxr": {
+   "pages": 18,
+   "strictPages": 0,
+   "passingNames": 8,
+   "observedNames": 169
+  },
+  "chromeByArea:webxr": {
+   "pages": 18,
+   "strictPages": 0,
+   "passingNames": 119,
+   "observedNames": 181
+  },
+  "previousByArea:webxr": {
+   "pages": 18,
+   "strictPages": 0,
+   "passingNames": 8,
+   "observedNames": 169
+  },
+  "currentByArea:close-watcher": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "chromeByArea:close-watcher": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 4
+  },
+  "previousByArea:close-watcher": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "currentByArea:cookiestore": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 15
+  },
+  "chromeByArea:cookiestore": {
+   "pages": 3,
+   "strictPages": 1,
+   "passingNames": 13,
+   "observedNames": 15
+  },
+  "previousByArea:cookiestore": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 15
+  },
+  "currentByArea:device-bound-session-credentials": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "chromeByArea:device-bound-session-credentials": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "previousByArea:device-bound-session-credentials": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "currentByArea:document-picture-in-picture": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "chromeByArea:document-picture-in-picture": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 3,
+   "observedNames": 8
+  },
+  "previousByArea:document-picture-in-picture": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "currentByArea:dpub-aam": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 39
+  },
+  "chromeByArea:dpub-aam": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 39
+  },
+  "previousByArea:dpub-aam": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 39
+  },
+  "currentByArea:fullscreen": {
+   "pages": 6,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 7
+  },
+  "chromeByArea:fullscreen": {
+   "pages": 6,
+   "strictPages": 4,
+   "passingNames": 5,
+   "observedNames": 7
+  },
+  "previousByArea:fullscreen": {
+   "pages": 6,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 7
+  },
+  "currentByArea:largest-contentful-paint": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "chromeByArea:largest-contentful-paint": {
+   "pages": 4,
+   "strictPages": 4,
+   "passingNames": 4,
+   "observedNames": 4
+  },
+  "previousByArea:largest-contentful-paint": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "currentByArea:performance-timeline": {
+   "pages": 9,
+   "strictPages": 5,
+   "passingNames": 5,
+   "observedNames": 9
+  },
+  "chromeByArea:performance-timeline": {
+   "pages": 9,
+   "strictPages": 6,
+   "passingNames": 6,
+   "observedNames": 9
+  },
+  "previousByArea:performance-timeline": {
+   "pages": 9,
+   "strictPages": 5,
+   "passingNames": 5,
+   "observedNames": 9
+  },
+  "currentByArea:picture-in-picture": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 26,
+   "observedNames": 72
+  },
+  "chromeByArea:picture-in-picture": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 72,
+   "observedNames": 72
+  },
+  "previousByArea:picture-in-picture": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 26,
+   "observedNames": 72
+  },
+  "currentByArea:reporting": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 10
+  },
+  "chromeByArea:reporting": {
+   "pages": 4,
+   "strictPages": 2,
+   "passingNames": 6,
+   "observedNames": 10
+  },
+  "previousByArea:reporting": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 10
+  },
+  "currentByArea:webmessaging": {
+   "pages": 6,
+   "strictPages": 5,
+   "passingNames": 17,
+   "observedNames": 18
+  },
+  "chromeByArea:webmessaging": {
+   "pages": 6,
+   "strictPages": 6,
+   "passingNames": 18,
+   "observedNames": 18
+  },
+  "previousByArea:webmessaging": {
+   "pages": 6,
+   "strictPages": 5,
+   "passingNames": 17,
+   "observedNames": 18
+  },
+  "currentByArea:longtask-timing": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "chromeByArea:longtask-timing": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 3
+  },
+  "previousByArea:longtask-timing": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "currentByArea:measure-memory": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "chromeByArea:measure-memory": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 3,
+   "observedNames": 3
+  },
+  "previousByArea:measure-memory": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "currentByArea:screen-orientation": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 3
+  },
+  "chromeByArea:screen-orientation": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "previousByArea:screen-orientation": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 3
+  },
+  "currentByArea:subresource-integrity": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 17,
+   "observedNames": 43
+  },
+  "chromeByArea:subresource-integrity": {
+   "pages": 4,
+   "strictPages": 4,
+   "passingNames": 43,
+   "observedNames": 43
+  },
+  "previousByArea:subresource-integrity": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 17,
+   "observedNames": 43
+  },
+  "currentByArea:web-locks": {
+   "pages": 9,
+   "strictPages": 4,
+   "passingNames": 4,
+   "observedNames": 25
+  },
+  "chromeByArea:web-locks": {
+   "pages": 9,
+   "strictPages": 7,
+   "passingNames": 24,
+   "observedNames": 26
+  },
+  "previousByArea:web-locks": {
+   "pages": 9,
+   "strictPages": 4,
+   "passingNames": 4,
+   "observedNames": 25
+  },
+  "currentByArea:worklets": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 18
+  },
+  "chromeByArea:worklets": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 18,
+   "observedNames": 18
+  },
+  "previousByArea:worklets": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 18
+  },
+  "currentByArea:fs": {
+   "pages": 5,
+   "strictPages": 3,
+   "passingNames": 56,
+   "observedNames": 75
+  },
+  "chromeByArea:fs": {
+   "pages": 5,
+   "strictPages": 4,
+   "passingNames": 73,
+   "observedNames": 75
+  },
+  "previousByArea:fs": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 5,
+   "observedNames": 75
+  },
+  "currentByArea:orientation-event": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "chromeByArea:orientation-event": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "previousByArea:orientation-event": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "currentByArea:permissions-policy": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 83
+  },
+  "chromeByArea:permissions-policy": {
+   "pages": 6,
+   "strictPages": 4,
+   "passingNames": 7,
+   "observedNames": 84
+  },
+  "previousByArea:permissions-policy": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 83
+  },
+  "currentByEnvironment:window-module": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "chromeByEnvironment:window-module": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "previousByEnvironment:window-module": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "currentByArea:resize-observer": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 4
+  },
+  "chromeByArea:resize-observer": {
+   "pages": 4,
+   "strictPages": 4,
+   "passingNames": 4,
+   "observedNames": 4
+  },
+  "previousByArea:resize-observer": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 4
+  },
+  "currentByArea:webauthn": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "chromeByArea:webauthn": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "previousByArea:webauthn": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "currentByArea:event-timing": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "chromeByArea:event-timing": {
+   "pages": 6,
+   "strictPages": 6,
+   "passingNames": 6,
+   "observedNames": 6
+  },
+  "previousByArea:event-timing": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "currentByArea:imagebitmap-renderingcontext": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "chromeByArea:imagebitmap-renderingcontext": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 3,
+   "observedNames": 3
+  },
+  "previousByArea:imagebitmap-renderingcontext": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "currentByArea:serial": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 10
+  },
+  "chromeByArea:serial": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 10,
+   "observedNames": 10
+  },
+  "previousByArea:serial": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 10
+  },
+  "currentByArea:user-timing": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 17,
+   "observedNames": 17
+  },
+  "chromeByArea:user-timing": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 17,
+   "observedNames": 17
+  },
+  "previousByArea:user-timing": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "currentByArea:document-policy": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 6
+  },
+  "chromeByArea:document-policy": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 6
+  },
+  "previousByArea:document-policy": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 6
+  },
+  "currentByArea:encoding-detection": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "chromeByArea:encoding-detection": {
+   "pages": 6,
+   "strictPages": 4,
+   "passingNames": 4,
+   "observedNames": 6
+  },
+  "previousByArea:encoding-detection": {
+   "pages": 6,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "currentByArea:html-aam": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 33,
+   "observedNames": 144
+  },
+  "chromeByArea:html-aam": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 19,
+   "observedNames": 144
+  },
+  "previousByArea:html-aam": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 33,
+   "observedNames": 144
+  },
+  "currentByArea:jpegxl": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "chromeByArea:jpegxl": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "previousByArea:jpegxl": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "currentByArea:xml": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 177
+  },
+  "chromeByArea:xml": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 177
+  },
+  "previousByArea:xml": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 177
+  },
+  "currentByArea:ambient-light": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 2,
+   "observedNames": 15
+  },
+  "chromeByArea:ambient-light": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 2,
+   "observedNames": 15
+  },
+  "previousByArea:ambient-light": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 2,
+   "observedNames": 15
+  },
+  "currentByArea:animation-worklet": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 9,
+   "observedNames": 23
+  },
+  "chromeByArea:animation-worklet": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 9,
+   "observedNames": 23
+  },
+  "previousByArea:animation-worklet": {
+   "pages": 5,
+   "strictPages": 0,
+   "passingNames": 9,
+   "observedNames": 23
+  },
+  "currentByEnvironment:dedicatedworker-module": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "chromeByEnvironment:dedicatedworker-module": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "previousByEnvironment:dedicatedworker-module": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "currentByArea:payment-method-manifest": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "chromeByArea:payment-method-manifest": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "previousByArea:payment-method-manifest": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "currentByArea:webidl": {
+   "pages": 3,
+   "strictPages": 1,
+   "passingNames": 3,
+   "observedNames": 9
+  },
+  "chromeByArea:webidl": {
+   "pages": 3,
+   "strictPages": 2,
+   "passingNames": 4,
+   "observedNames": 9
+  },
+  "previousByArea:webidl": {
+   "pages": 3,
+   "strictPages": 1,
+   "passingNames": 3,
+   "observedNames": 9
+  },
+  "currentByArea:file-system-access": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 18,
+   "observedNames": 18
+  },
+  "chromeByArea:file-system-access": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 18,
+   "observedNames": 18
+  },
+  "previousByArea:file-system-access": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 16,
+   "observedNames": 18
+  },
+  "currentByArea:managed": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "chromeByArea:managed": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 3,
+   "observedNames": 3
+  },
+  "previousByArea:managed": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 3
+  },
+  "currentByArea:presentation-api": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "chromeByArea:presentation-api": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "previousByArea:presentation-api": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "currentByArea:speech-api": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 3
+  },
+  "chromeByArea:speech-api": {
+   "pages": 2,
+   "strictPages": 1,
+   "passingNames": 2,
+   "observedNames": 3
+  },
+  "previousByArea:speech-api": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 3
+  },
+  "currentByArea:webrtc-encoded-transform": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 12
+  },
+  "chromeByArea:webrtc-encoded-transform": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 12
+  },
+  "previousByArea:webrtc-encoded-transform": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 12
+  },
+  "currentByArea:long-animation-frame": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "chromeByArea:long-animation-frame": {
+   "pages": 3,
+   "strictPages": 3,
+   "passingNames": 3,
+   "observedNames": 3
+  },
+  "previousByArea:long-animation-frame": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "currentByArea:contenteditable": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 4,
+   "observedNames": 4
+  },
+  "chromeByArea:contenteditable": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 2,
+   "observedNames": 4
+  },
+  "previousByArea:contenteditable": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 4,
+   "observedNames": 4
+  },
+  "currentByArea:paint-timing": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "chromeByArea:paint-timing": {
+   "pages": 4,
+   "strictPages": 4,
+   "passingNames": 4,
+   "observedNames": 4
+  },
+  "previousByArea:paint-timing": {
+   "pages": 4,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "currentByArea:cpu-performance": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:cpu-performance": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "previousByArea:cpu-performance": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:old-tests": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:old-tests": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "previousByArea:old-tests": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:page-lifecycle": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:page-lifecycle": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "previousByArea:page-lifecycle": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:screen-capture": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:screen-capture": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "previousByArea:screen-capture": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:beacon": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "chromeByArea:beacon": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "previousByArea:beacon": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "currentByArea:https-upgrades": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:https-upgrades": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "previousByArea:https-upgrades": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:notifications": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 55,
+   "observedNames": 102
+  },
+  "chromeByArea:notifications": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 77,
+   "observedNames": 102
+  },
+  "previousByArea:notifications": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 55,
+   "observedNames": 102
+  },
+  "currentByArea:png": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "chromeByArea:png": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "previousByArea:png": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "currentByArea:storage": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "chromeByArea:storage": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 4,
+   "observedNames": 4
+  },
+  "previousByArea:storage": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "currentByArea:wasm": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "chromeByArea:wasm": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "previousByArea:wasm": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 2,
+   "observedNames": 2
+  },
+  "currentByArea:container-timing": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "chromeByArea:container-timing": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "previousByArea:container-timing": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 2
+  },
+  "currentByArea:payment-method-basic-card": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "chromeByArea:payment-method-basic-card": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "previousByArea:payment-method-basic-card": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 0
+  },
+  "currentByArea:svg-aam": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 3,
+   "observedNames": 11
+  },
+  "chromeByArea:svg-aam": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 3,
+   "observedNames": 11
+  },
+  "previousByArea:svg-aam": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 3,
+   "observedNames": 11
+  },
+  "currentByArea:ua-client-hints": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "chromeByArea:ua-client-hints": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 8,
+   "observedNames": 8
+  },
+  "previousByArea:ua-client-hints": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 8
+  },
+  "currentByArea:gyroscope": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:gyroscope": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "previousByArea:gyroscope": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:shape-detection": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "chromeByArea:shape-detection": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 6
+  },
+  "previousByArea:shape-detection": {
+   "pages": 3,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 6
+  },
+  "currentByArea:web-share": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 7
+  },
+  "chromeByArea:web-share": {
+   "pages": 2,
+   "strictPages": 2,
+   "passingNames": 7,
+   "observedNames": 7
+  },
+  "previousByArea:web-share": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 1,
+   "observedNames": 7
+  },
+  "currentByArea:mediacapture-image": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 2,
+   "observedNames": 4
+  },
+  "chromeByArea:mediacapture-image": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 2,
+   "observedNames": 4
+  },
+  "previousByArea:mediacapture-image": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 2,
+   "observedNames": 4
+  },
+  "currentByArea:font-access": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "chromeByArea:font-access": {
+   "pages": 2,
+   "strictPages": 1,
+   "passingNames": 4,
+   "observedNames": 5
+  },
+  "previousByArea:font-access": {
+   "pages": 2,
+   "strictPages": 0,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "currentByArea:inert": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 6
+  },
+  "chromeByArea:inert": {
+   "pages": 4,
+   "strictPages": 3,
+   "passingNames": 5,
+   "observedNames": 6
+  },
+  "previousByArea:inert": {
+   "pages": 4,
+   "strictPages": 1,
+   "passingNames": 1,
+   "observedNames": 6
+  },
+  "currentByArea:touch-events": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "chromeByArea:touch-events": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "previousByArea:touch-events": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 4
+  },
+  "currentByArea:webrtc-extensions": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "chromeByArea:webrtc-extensions": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 4,
+   "observedNames": 5
+  },
+  "previousByArea:webrtc-extensions": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 5
+  },
+  "currentByArea:background-sync": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 8,
+   "observedNames": 17
+  },
+  "chromeByArea:background-sync": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 17,
+   "observedNames": 17
+  },
+  "previousByArea:background-sync": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 8,
+   "observedNames": 17
+  },
+  "currentByArea:keyboard-map": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:keyboard-map": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "previousByArea:keyboard-map": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:network-error-logging": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:network-error-logging": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "previousByArea:network-error-logging": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:secure-contexts": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 6,
+   "observedNames": 7
+  },
+  "chromeByArea:secure-contexts": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 7,
+   "observedNames": 7
+  },
+  "previousByArea:secure-contexts": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 4,
+   "observedNames": 7
+  },
+  "currentByArea:geolocation-sensor": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "chromeByArea:geolocation-sensor": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "previousByArea:geolocation-sensor": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "currentByArea:savedata": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 3,
+   "observedNames": 5
+  },
+  "chromeByArea:savedata": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 5,
+   "observedNames": 5
+  },
+  "previousByArea:savedata": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 3,
+   "observedNames": 5
+  },
+  "currentByArea:trust-tokens": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:trust-tokens": {
+   "pages": 1,
+   "strictPages": true,
+   "passingNames": 1,
+   "observedNames": 1
+  },
+  "previousByArea:trust-tokens": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "currentByArea:device-posture": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "chromeByArea:device-posture": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  },
+  "previousByArea:device-posture": {
+   "pages": 1,
+   "strictPages": false,
+   "passingNames": 0,
+   "observedNames": 1
+  }
+ }
+}
