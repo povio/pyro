@@ -232,6 +232,7 @@ impl Dom {
                             t.eq_ignore_ascii_case("modulepreload")
                                 || t.eq_ignore_ascii_case("preload")
                                 || t.eq_ignore_ascii_case("prefetch")
+                            || t.eq_ignore_ascii_case("compression-dictionary")
                         })
                 }) =>
             {
@@ -436,7 +437,11 @@ impl Dom {
             // pyro: an SVG `<image>`'s CORS settings are its request's mode too (a change is a new
             // request, with its own tainting).
             || (local == "crossorigin"
-                && self.n(idx).element().is_some_and(|e| e.name.ns == ns!(svg) && &*e.name.local == "image"));
+                && self.n(idx).element().is_some_and(|e| e.name.ns == ns!(svg) && &*e.name.local == "image"))
+            // A link's CORS settings and image source set are its fetch's (a preload, prefetch or
+            // compression dictionary fetches again).
+            || (matches!(local, "crossorigin" | "imagesrcset")
+                && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("link")));
         if !relevant {
             return;
         }

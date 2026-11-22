@@ -433,7 +433,9 @@ impl Prescan {
             if enabled {
                 emit(Prescanned::Stylesheet { href: href.to_owned(), crossorigin });
             }
-        } else if has("preload") && !has("modulepreload") {
+        } else if has("preload") && !has("modulepreload") && attr(attrs, "imagesrcset").is_none() {
+            // An image preload with a source set fetches a candidate of it, not `href`: the
+            // element's own fetch decides.
             emit(Prescanned::Preload { href: href.to_owned(), as_: attr(attrs, "as").map(str::to_owned), crossorigin });
         }
     }

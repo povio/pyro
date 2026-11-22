@@ -302,9 +302,15 @@ impl Browser {
             let module = rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("modulepreload"));
             let preload = rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("preload"));
             let prefetch = rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("prefetch"));
-            (connected && (module || preload || prefetch))
+            let dictionary = rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("compression-dictionary"));
+            (connected && (module || preload || prefetch || dictionary))
                 .then(|| {
-                    let href = attr("href").filter(|v| !v.trim().is_empty())?;
+                    // An image preload's source set chooses its URL (the first candidate here: one
+                    // density); no other link fetches from `imagesrcset`.
+                    let image_preload =
+                        preload && !module && attr("as").is_some_and(|a| a.eq_ignore_ascii_case("image"));
+                    let srcset = attr("imagesrcset").filter(|_| image_preload).and_then(|s| first_srcset_url(&s));
+                    let href = srcset.or_else(|| attr("href")).filter(|v| !v.trim().is_empty())?;
                     let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| frame.base_url.clone());
                     let url = url::Url::parse(&base).ok()?.join(href.trim()).ok()?.to_string();
                     let kind = if module {
@@ -324,19 +330,24 @@ impl Browser {
                     };
                     let integrity = attr("integrity").filter(|v| !pyro_webapi::sri::is_empty(v));
                     let referrer_policy = crate::loader::element_referrer_policy(&dom, node);
-                    Some((url, kind, attr("crossorigin"), integrity, referrer_policy))
+                    // A compression dictionary alone (not also a preload or prefetch).
+                    let dictionary = dictionary && kind == ResourceKind::Prefetch && !prefetch;
+                    Some((url, kind, attr("crossorigin"), integrity, referrer_policy, dictionary))
                 })
                 .flatten()
         };
         let current = state.preloads.entries.get(&node).cloned();
         drop(state);
-        let Some((url, kind, crossorigin, integrity, referrer_policy)) = config else {
+        let Some((url, kind, crossorigin, integrity, referrer_policy, dictionary)) = config else {
             if let Some(mut doc) = self.doc_mut(page) {
                 doc.preloads.entries.remove(&node);
             }
             return;
         };
-        if current.as_deref() == Some(url.as_str()) {
+        // What the link fetched: a dictionary's CORS settings are part of it (another one
+        // fetches again).
+        let fetched = if dictionary { format!("{url} {crossorigin:?}") } else { url.clone() };
+        if current.as_deref() == Some(fetched.as_str()) {
             return;
         }
         {
@@ -344,7 +355,7 @@ impl Browser {
             if doc.preloads.entries.len() >= MAX_PRELOADS {
                 return;
             }
-            doc.preloads.entries.insert(node, url.clone());
+            doc.preloads.entries.insert(node, fetched);
         }
         if bindings.dom.borrow_mut().add_ref(node).is_err() {
             return;
@@ -354,7 +365,11 @@ impl Browser {
         if kind == ResourceKind::Prefetch {
             let referrer = frame.navigation_referrer();
             let target = PrefetchTarget { node, hold, bindings, crossorigin, referrer_policy, referrer };
-            self.prefetch_link(page, &frame, url, target);
+            if dictionary {
+                self.dictionary_link(page, &frame, url, target);
+            } else {
+                self.prefetch_link(page, &frame, url, target);
+            }
             return;
         }
         let module = kind == ResourceKind::ModuleScript;
@@ -459,7 +474,55 @@ struct PrefetchTarget {
     referrer: Option<String>,
 }
 
+/// The URL of an `imagesrcset`'s first image candidate.
+fn first_srcset_url(srcset: &str) -> Option<String> {
+    let first = srcset.split(',').map(str::trim).find(|c| !c.is_empty())?;
+    first.split_ascii_whitespace().next().map(str::to_owned)
+}
+
 impl Browser {
+    /// `<link rel=compression-dictionary>`: fetches the dictionary at `url`, a low-priority fetch
+    /// of its own each time the link's URL or CORS settings change (no fetch is shared between
+    /// links), and the link gets `load` for any response or `error` for a network error, as a
+    /// prefetch. (The dictionary itself is not kept: no request advertises it.)
+    fn dictionary_link(&mut self, page: FrameKey, frame: &crate::Frame, url: String, target: PrefetchTarget) {
+        let PrefetchTarget { node, hold, bindings, crossorigin, referrer_policy, referrer } = target;
+        let doc_id = bindings.document();
+        let finish = move |_: &mut Browser, result: Result<crate::Resource, String>| {
+            let _hold = hold;
+            if bindings.is_disposed() || bindings.document() != doc_id {
+                return;
+            }
+            pyro_webapi::lifecycle::resource_loaded(&bindings, node, result.is_ok());
+        };
+        let Some(resource_loader) = self.loader_for(page) else {
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
+            return;
+        };
+        let mut request = FetchRequest {
+            csp: None,
+            required_csp: None,
+            parser_priority: false,
+            credentials: None,
+            post: None,
+            url,
+            kind: ResourceKind::Prefetch,
+            page: page.page,
+            referrer,
+            referrer_policy,
+            frame_id: Some(frame.id.0.clone()),
+            loader_id: Some(frame.loader_id.0.clone()),
+            crossorigin,
+            initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
+            module: None,
+            part: None,
+        };
+        let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
+        if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, finish) {
+            cancel.disarm();
+        }
+    }
+
     /// Prefetches `url` for the link (`<link rel=prefetch>`), or joins the document's fetch of
     /// the URL: the link gets `load` or `error` in a later task either way.
     fn prefetch_link(&mut self, page: FrameKey, frame: &crate::Frame, url: String, target: PrefetchTarget) {
