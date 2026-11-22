@@ -3011,6 +3011,39 @@ unsafe extern "C" fn set_property_hook(
     }
 }
 
+/// Whether WebIDL's [[Delete]] of a legacy platform object fails for `name`:
+/// a supported index, or a named property the visibility algorithm shows
+/// (supported, no own property of that name, and no prototype member unless
+/// `[LegacyOverrideBuiltIns]`) when the class has no named property deleter.
+unsafe fn refused_delete(
+    scope: &Scope<'_>,
+    hc: &HookCtx,
+    object: sys::JSObjectRef,
+    name: sys::JSStringRef,
+    units: &[u16],
+) -> JsResult<bool> {
+    unsafe {
+        let supported = |scope: &Scope<'_>| -> JsResult<bool> {
+            if let (Some(idx), Some(f)) = (array_index(units), hc.indexed) {
+                return Ok(f(scope, hc.header, idx)?.is_some());
+            }
+            let Some(f) = hc.named else { return Ok(false) };
+            if hc.named_delete.is_some() || (!hc.override_builtins && on_prototype_chain(scope.ctx, object, name)) {
+                return Ok(false);
+            }
+            Ok(f(scope, hc.header, units)?.is_some())
+        };
+        let supported = match hc.foreign_realm(scope) {
+            Some(realm) => in_receiver_realm(realm, supported)?,
+            None => supported(scope)?,
+        };
+        // An own property (an expando set before the name became supported)
+        // shadows a named property: the ordinary [[Delete]] decides.
+        let index = array_index(units).is_some() && hc.indexed.is_some();
+        Ok(supported && (index || !has_ordinary_property(scope, object, name)))
+    }
+}
+
 unsafe extern "C" fn delete_property_hook(
     ctx: sys::JSContextRef,
     object: sys::JSObjectRef,
@@ -3023,6 +3056,24 @@ unsafe extern "C" fn delete_property_hook(
     unsafe {
         guard_in(ctx, wrapper_realm(object), exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
+            let units = utf16_of(name);
+
+            // WebIDL [[Delete]] of a legacy platform object: false for a
+            // supported index, and for a visible named property when there is
+            // no deleter (a TypeError in strict mode code, as for a
+            // non-configurable property). Needs patch 0039; without it the
+            // ordinary [[Delete]] runs and succeeds.
+            if hc.legacy {
+                if let Some(refuse) = sys::spi::get().refuse_delete_property {
+                    if refused_delete(scope, &hc, object, name, units)? {
+                        refuse(ctx);
+                        return Ok(false);
+                    }
+                    if hc.indexed.is_some() && array_index(units).is_some() {
+                        return Ok(false);
+                    }
+                }
+            }
             let Some(f) = hc.named_delete else { return Ok(false) };
 
             // The named property visibility algorithm: a name the prototype
@@ -3030,7 +3081,6 @@ unsafe extern "C" fn delete_property_hook(
             if !hc.override_builtins && on_prototype_chain(ctx, object, name) {
                 return Ok(false);
             }
-            let units = utf16_of(name);
             if let Some(realm) = hc.foreign_realm(scope) {
                 return in_receiver_realm(realm, |s| f(s, hc.header, units));
             }

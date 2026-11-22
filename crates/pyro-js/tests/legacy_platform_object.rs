@@ -145,6 +145,47 @@ fn a_write_to_a_supported_property_fails_like_a_read_only_one() {
 }
 
 #[test]
+fn deleting_a_supported_property_fails_like_a_non_configurable_one() {
+    let (_e, r) = setup();
+    check(
+        &r,
+        &[
+            // Sloppy mode code: false, and the members stay.
+            (
+                "[delete coll[0], delete coll['1'], delete coll.id, coll[0], coll[1], coll.id].join('|')",
+                "false|false|false|10|20|7",
+            ),
+            // Strict mode code: a TypeError, for a present index and a visible name.
+            ("kind(() => { 'use strict'; delete coll[0]; })", "TypeError"),
+            ("kind(() => { 'use strict'; delete coll.id; })", "TypeError"),
+            ("[Reflect.deleteProperty(coll, 0), Reflect.deleteProperty(coll, 'id')].join('|')", "false|false"),
+            ("[coll[0], coll.id, own(coll)].join('|')", "10|7|0,1,id"),
+            // An index past the end, an unsupported name and a prototype member: the ordinary [[Delete]].
+            ("[delete coll[5], kind(() => { 'use strict'; delete coll[5]; })].join('|')", "true|no throw"),
+            ("kind(() => { 'use strict'; delete coll.nope; })", "no throw"),
+            ("kind(() => { 'use strict'; delete coll.item; }) + '|' + typeof coll.item", "no throw|function"),
+            // Expandos stay ordinary: deletable, and one over a later named property uncovers it.
+            ("coll.free = 1; [delete coll.free, 'free' in coll].join('|')", "true|false"),
+            (
+                "coll.later = 'x'; coll.name('later', 3); [kind(() => { 'use strict'; delete coll.later; }), coll.later].join('|')",
+                "no throw|3",
+            ),
+            ("kind(() => { 'use strict'; delete coll.later; })", "TypeError"),
+            // An index that became unsupported deletes again.
+            (
+                "[kind(() => { 'use strict'; delete coll[2]; }), (coll.push(30), kind(() => { 'use strict'; delete coll[2]; }))].join('|')",
+                "no throw|TypeError",
+            ),
+            // Without the opt-in, deletes keep the ordinary result.
+            (
+                "[delete plain[0], delete plain.id, kind(() => { 'use strict'; delete plain[0]; })].join('|')",
+                "true|true|no throw",
+            ),
+        ],
+    );
+}
+
+#[test]
 fn unenumerable_names_are_own_keys_that_enumeration_skips() {
     let (_e, r) = setup();
     check(
