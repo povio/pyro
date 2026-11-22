@@ -1,0 +1,59 @@
+{
+  "scores": {
+    "baseFull": 17,
+    "candidateFull": 28,
+    "chrome158Full": 38,
+    "baseNamed": 10281,
+    "candidateNamed": 10406,
+    "chrome158Named": 10495,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 95,
+    "lpOnly": 6,
+    "gained": 125
+  },
+  "gainsByPage": {
+    "dom/ranges/tentative/OpaqueRange-auto-disconnect.html": 17,
+    "dom/ranges/tentative/OpaqueRange-basic.html": 3,
+    "dom/ranges/tentative/OpaqueRange-disconnect.html": 4,
+    "dom/ranges/tentative/OpaqueRange-display-none.html": 16,
+    "dom/ranges/tentative/OpaqueRange-geometry-mutations.html": 2,
+    "dom/ranges/tentative/OpaqueRange-interactive-basic.html": 16,
+    "dom/ranges/tentative/OpaqueRange-interactive-overlap-and-selection.html": 10,
+    "dom/ranges/tentative/OpaqueRange-offset.html": 11,
+    "dom/ranges/tentative/OpaqueRange-programmatic-updates.html": 28,
+    "dom/ranges/tentative/OpaqueRange-range-updates.html": 4,
+    "dom/ranges/tentative/OpaqueRange-supported-elements.html": 6,
+    "dom/ranges/tentative/OpaqueRange-unsupported-elements.html": 1,
+    "dom/ranges/tentative/OpaqueRange-update-event-order.html": 4,
+    "dom/ranges/tentative/OpaqueRange-validation.html": 2,
+    "html/semantics/forms/textfieldselection/select-event.html": 1
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 39
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "dca67ce5970e3c51c7cc5428dca68c439024701119e56b14ddbad334d77c8dda"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 39
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "6e81e8ff84d75d6a90c91a0d233644f97317c0573da9f038df3f4388a115788f"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 39
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "21cc5415980d74a38c6020965b7bf9283322906145c6fb377612cdedd45d75b7"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "neighboring guards": {
+    "matchedGain": 1,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 30,
+    "lpOnly": 6
+  },
+  "creation offsets and lifecycle": {
+    "matchedGain": 76,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 1,
+    "lpOnly": 0
+  },
+  "geometry and highlights": {
+    "matchedGain": 18,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 64,
+    "lpOnly": 0
+  },
+  "user edits and timing": {
+    "matchedGain": 30,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  }
+}

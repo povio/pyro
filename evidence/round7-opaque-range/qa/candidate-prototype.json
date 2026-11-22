@@ -1,0 +1,29 @@
+{
+  "OpaqueRange": {
+    "parent": "AbstractRange",
+    "own": []
+  },
+  "AbstractRange": {
+    "parent": "Object",
+    "own": [
+      "startOffset",
+      "endOffset",
+      "collapsed"
+    ]
+  },
+  "NodeRange": {
+    "parent": "AbstractRange",
+    "own": [
+      "startContainer",
+      "endContainer"
+    ]
+  },
+  "Range": {
+    "parent": "NodeRange",
+    "own": []
+  },
+  "StaticRange": {
+    "parent": "NodeRange",
+    "own": []
+  }
+}

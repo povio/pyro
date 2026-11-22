@@ -1,0 +1,43 @@
+{
+  "surface": "function",
+  "input": {
+    "sameDefault": [
+      1,
+      2
+    ],
+    "childReplacement": [
+      true,
+      0
+    ],
+    "dirtyDefault": [
+      "abc",
+      1,
+      2
+    ]
+  },
+  "textarea": {
+    "sameDefault": [
+      1,
+      2
+    ],
+    "childReplacement": [
+      true,
+      0
+    ],
+    "sameData": [
+      1,
+      2
+    ],
+    "dirtyDefault": [
+      "abc",
+      1,
+      2
+    ]
+  },
+  "empty": [
+    true,
+    "",
+    0,
+    0
+  ]
+}

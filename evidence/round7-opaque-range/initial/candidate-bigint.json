@@ -1,0 +1,11 @@
+{
+  "surface": "function",
+  "coercions": [
+    1,
+    1,
+    1,
+    1,
+    "TypeError",
+    1
+  ]
+}
