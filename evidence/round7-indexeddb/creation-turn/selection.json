@@ -1,0 +1,6 @@
+[
+  "IndexedDB/transaction-deactivation-timing.any.serviceworker.html",
+  "IndexedDB/transaction-deactivation-timing.any.sharedworker.html",
+  "IndexedDB/transaction-deactivation-timing.any.worker.html",
+  "IndexedDB/transaction-deactivation-timing.any.html"
+]

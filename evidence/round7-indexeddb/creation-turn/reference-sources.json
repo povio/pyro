@@ -1,0 +1,22 @@
+[
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.serviceworker.html",
+    "source": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-011.json",
+    "sha256": "42100606ba96a2eeb950f3b3408540e4f689fd449263dcd53e635fa701fc0a08"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.sharedworker.html",
+    "source": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-111.json",
+    "sha256": "725f06821c1c331aa805db993c2206be71e811bb05d71dfad8a90947f6991757"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.worker.html",
+    "source": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-149.json",
+    "sha256": "37c377d939399140284ecd1e81aea376e0227a41deac37c1b47aa3185ab8334c"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.html",
+    "source": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/raw/ordinary-236.json",
+    "sha256": "9f5d59b7ca6c5b43a479802661a04ec0c157d5fc567a0ec12ef84fdfd8982e09"
+  }
+]
