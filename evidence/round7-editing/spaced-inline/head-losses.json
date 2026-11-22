@@ -1,0 +1,592 @@
+[
+  {
+    "fixture": {
+      "css": false,
+      "cmd": "createlink",
+      "shape": "full",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "anchor",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "cmd": "createlink",
+      "shape": "nbsp",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "anchor",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "cmd": "createlink",
+      "shape": "pre",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "anchor",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "cmd": "createlink",
+      "shape": "styled",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "anchor",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "cmd": "createlink",
+      "shape": "full",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "focus",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "cmd": "createlink",
+      "shape": "nbsp",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "focus",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "cmd": "createlink",
+      "shape": "pre",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "focus",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "cmd": "createlink",
+      "shape": "styled",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "focus",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "createlink",
+      "shape": "full",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "anchor",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "createlink",
+      "shape": "nbsp",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "anchor",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "createlink",
+      "shape": "pre",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "anchor",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "createlink",
+      "shape": "styled",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "anchor",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "fontsize",
+      "shape": "styled",
+      "reverse": false
+    },
+    "stage": "twice",
+    "field": "html",
+    "values": {
+      "parent": "<span style=\"font-size: large;\"><span style=\"color: brown;\">foo</span> bar</span>",
+      "candidate": "<span style=\"font-size: large;\"><span style=\"color:brown\">foo</span> bar</span>",
+      "signed": "<span style=\"font-size: large;\"><span style=\"color: brown;\">foo</span> bar</span>"
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "createlink",
+      "shape": "full",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "focus",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "createlink",
+      "shape": "nbsp",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "focus",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "createlink",
+      "shape": "pre",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "focus",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "createlink",
+      "shape": "styled",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "focus",
+    "values": {
+      "parent": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ],
+      "candidate": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "signed": [
+        [
+          0,
+          0,
+          0
+        ],
+        0
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "fontsize",
+      "shape": "styled",
+      "reverse": true
+    },
+    "stage": "twice",
+    "field": "html",
+    "values": {
+      "parent": "<span style=\"font-size: large;\"><span style=\"color: brown;\">foo</span> bar</span>",
+      "candidate": "<span style=\"font-size: large;\"><span style=\"color:brown\">foo</span> bar</span>",
+      "signed": "<span style=\"font-size: large;\"><span style=\"color: brown;\">foo</span> bar</span>"
+    }
+  }
+]
