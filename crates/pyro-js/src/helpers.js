@@ -562,11 +562,13 @@
           configurable: true,
         });
       }
-      // The global is not an instance of its interface prototype object, so
-      // `constructor` (found on that prototype in a browser) is copied too:
-      // `window.constructor === Window`.
-      defineProperty(global, 'constructor', { value: ctors[ctors.length - 1], writable: true, enumerable: false, configurable: true });
-      defineProperty(global, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
+      // A global that inherits from its interface prototype object (the window, with JSC patch
+      // 0041) finds `constructor` and the tag there. Otherwise it is no instance of it, so they
+      // are copied too: `window.constructor === Window`.
+      if (getPrototypeOf(global) !== protos[protos.length - 1]) {
+        defineProperty(global, 'constructor', { value: ctors[ctors.length - 1], writable: true, enumerable: false, configurable: true });
+        defineProperty(global, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
+      }
       installNamedPropertiesObject(global, protos, name);
     },
     describe,

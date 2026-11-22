@@ -1,0 +1,60 @@
+Pyro patch 0041: the window's prototype chain as WebIDL has it.
+
+Patch 0004 put the named properties object right under the global: window -> WindowProperties ->
+Object.prototype, with Window.prototype off to the side, and the global proxy fixed to that. WebIDL's
+chain is window -> Window.prototype -> WindowProperties -> EventTarget.prototype -> Object.prototype,
+which JavaScript cannot build (the global and the named properties object are immutable prototype
+exotic objects). JSGlobalContextSetNamedPropertiesChain (JSForkPrivate.h) re-links it once the
+embedder has made the interface prototype objects, keeping the global proxy: the global gets the new
+prototype directly, and its proxy, retargeted to the same global, takes it into its structure
+(resetPrototype would make a new proxy, which code already holding globalThis would not see).
+
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -873,3 +873,26 @@ void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedProper
+     JSNamedPropertiesObject::s_getter = getter;
+     globalObject->resetPrototype(vm, JSNamedPropertiesObject::create(vm, globalObject));
+ }
++
++bool JSGlobalContextSetNamedPropertiesChain(JSGlobalContextRef ctx, JSObjectRef interfacePrototype, JSObjectRef parentPrototype)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    JSObject* prototype = globalObject->getPrototypeDirect().getObject();
++    auto* named = prototype ? dynamicDowncast<JSNamedPropertiesObject>(prototype) : nullptr;
++    JSObject* interfaceObject = interfacePrototype ? toJS(interfacePrototype) : nullptr;
++    JSObject* parentObject = parentPrototype ? toJS(parentPrototype) : nullptr;
++    if (!named || !interfaceObject || !parentObject || interfaceObject == globalObject || interfaceObject == named || parentObject == named)
++        return false;
++    // window -> Window.prototype -> WindowProperties -> EventTarget.prototype -> Object.prototype.
++    named->setPrototypeDirect(vm, parentObject);
++    interfaceObject->setPrototypeDirect(vm, named);
++    globalObject->setPrototypeDirect(vm, interfaceObject);
++    // The global proxy keeps the global's prototype in its own structure: the same proxy, retargeted
++    // to the same global, takes the new one (resetPrototype would make a new proxy, which code
++    // holding globalThis would not see).
++    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(globalObject->globalThis()); proxy && proxy->target() == globalObject)
++        proxy->setTarget(vm, globalObject);
++    return true;
++}
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -78,6 +78,15 @@ typedef bool (*JSNamedPropertyFilter)(JSContextRef ctx, const void* characters,
+    anything holds `globalThis`; JSContextGetGlobalObject returns the new proxy. */
+ JS_EXPORT void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedPropertyFilter filter, JSObjectGetPropertyCallback getter);
+ 
++/* Pyro patch 0041: WebIDL's prototype chain for a [Global] interface with named properties. With the
++   named properties object JSGlobalContextInstallNamedProperties installed as the prototype of the global
++   object of `ctx`, makes the global inherit from `interfacePrototype`, it from the named properties
++   object, and that from `parentPrototype` (window -> Window.prototype -> WindowProperties ->
++   EventTarget.prototype), which JavaScript cannot do (immutable prototype exotic objects). The global
++   proxy stays the same object. Returns false, changing nothing, when the global's prototype is not a
++   named properties object or an argument is missing or one of those objects. */
++JS_EXPORT bool JSGlobalContextSetNamedPropertiesChain(JSGlobalContextRef ctx, JSObjectRef interfacePrototype, JSObjectRef parentPrototype);
++
+ /* Makes the global object of `ctx` the target of `proxy`, the global proxy of another
+    context of the same group (what JSContextGetGlobalObject returned there): a WindowProxy
+    that follows its browsing context to the next document. From then on `proxy` is the

@@ -611,6 +611,14 @@ pub mod spi {
         filter: JSNamedPropertyFilter,
         getter: JSObjectGetPropertyCallback,
     );
+    /// Patch 0041: re-links the global of `ctx` (whose prototype is its named properties object)
+    /// as global -> `interface_prototype` -> named properties object -> `parent_prototype`,
+    /// keeping its global proxy. False, changing nothing, when it cannot.
+    pub type JSGlobalContextSetNamedPropertiesChainFn = unsafe extern "C" fn(
+        ctx: JSGlobalContextRef,
+        interface_prototype: JSObjectRef,
+        parent_prototype: JSObjectRef,
+    ) -> bool;
 
     /// Patch 0035: an object passed to eval as code (a TrustedScript), as a new
     /// string the caller releases, or null to leave it unevaluated.
@@ -1024,6 +1032,8 @@ pub mod spi {
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
+        /// Patch 0041: WebIDL's chain for a window with a named properties object.
+        pub set_named_properties_chain: Option<JSGlobalContextSetNamedPropertiesChainFn>,
         pub adopt_global_proxy: Option<JSGlobalContextAdoptGlobalProxyFn>,
         pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
@@ -1223,6 +1233,10 @@ pub mod spi {
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
+            #[cfg(any(pyro_jsc_named_properties_chain, not(pyro_jsc_static)))]
+            set_named_properties_chain: resolve!("JSGlobalContextSetNamedPropertiesChain"),
+            #[cfg(not(any(pyro_jsc_named_properties_chain, not(pyro_jsc_static))))]
+            set_named_properties_chain: None,
             #[cfg(any(pyro_jsc_adopt_global_proxy, not(pyro_jsc_static)))]
             adopt_global_proxy: resolve!("JSGlobalContextAdoptGlobalProxy"),
             #[cfg(not(any(pyro_jsc_adopt_global_proxy, not(pyro_jsc_static))))]

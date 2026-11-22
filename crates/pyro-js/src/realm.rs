@@ -3158,6 +3158,20 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         } else {
             populate_class(scope, gid)?;
         }
+        // Patch 0041: the window inherits from Window.prototype, which inherits from the named
+        // properties object, which inherits from EventTarget.prototype, as in WebIDL. Without it
+        // the chain stays global -> named properties object -> Object.prototype, and
+        // `installGlobal` emulates the rest.
+        if name == "Window" && chain.len() >= 2 {
+            if let Some(set) = sys::spi::get().set_named_properties_chain {
+                let interface = realm.interface_object(scope, 0, gid)?.as_object();
+                let parent = realm.interface_object(scope, 0, chain[chain.len() - 2])?.as_object();
+                if let (Some(interface), Some(parent)) = (interface, parent) {
+                    // SAFETY: the realm's live context and two of its prototype objects.
+                    unsafe { set(realm.global_ctx()?, interface.raw, parent.raw) };
+                }
+            }
+        }
         // Chain root-first: copy members onto the global, brand instanceof.
         let install_global = realm.helper(scope, "installGlobal")?;
         let mut ps = crate::RootedVec::new();
