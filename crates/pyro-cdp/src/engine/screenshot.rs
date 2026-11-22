@@ -80,6 +80,18 @@ struct PdfWait {
     deadline: Instant,
 }
 
+/// A `captureScreenshot` waiting for the lazy content it started (images, iframes).
+struct ShotWait {
+    id: u64,
+    session: String,
+    pid: PageId,
+    area: Area,
+    format: ImageFormat,
+    out: Option<std::path::PathBuf>,
+    started: Instant,
+    deadline: Instant,
+}
+
 /// Longest a `printToPDF` waits for layout sub-resources.
 const PDF_FETCH_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -114,6 +126,8 @@ pub(crate) struct Renders {
     /// `IO` streams by handle: bytes and the read offset.
     streams: HashMap<String, (Vec<u8>, usize)>,
     pdf_waits: Vec<PdfWait>,
+    /// Screenshots waiting for the lazy content they started.
+    shot_waits: Vec<ShotWait>,
     /// pyro: how many times a PDF wait was parked ([`EngineHost::pdf_parks`]).
     pdf_parks: u64,
 }
@@ -721,9 +735,59 @@ impl EngineHost {
             (None, false) => self.viewport_area(pid),
         };
         // Lazy images and iframes the lazy load check has not let go yet: all of them for a
-        // full-page capture, those near the viewport otherwise.
-        self.thread.browser.approve_lazy_content(pid, matches!(area, Area::FullPage));
+        // full-page capture (a clip beyond the viewport too, as a full-page tool sends one),
+        // those near the viewport otherwise. The capture waits for them, as a print does.
+        let whole = matches!(area, Area::FullPage | Area::Clip { beyond_viewport: true, .. });
         let started = Instant::now();
+        let (id, session) = (cmd.command.id, cmd.session_id.to_owned());
+        if self.thread.browser.approve_lazy_content(pid, whole) && self.thread.browser.content_loading(pid) {
+            let deadline = started + PDF_FETCH_WAIT;
+            self.renders.shot_waits.push(ShotWait { id, session, pid, area, format, out, started, deadline });
+            self.poll_waits();
+            return Ok(None);
+        }
+        self.start_capture(id, session, pid, area, format, out, started).map(|()| None)
+    }
+
+    /// Checks the waiting captures again shortly (the page's own loads end without a waker).
+    fn poll_waits(&self) {
+        let poll = self.renders.deliver(self.thread.handle());
+        let _ = std::thread::Builder::new().name("pyro-capture-poll".into()).spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            poll(Finished::Fetched);
+        });
+    }
+
+    /// Captures the waiting screenshots whose lazy content is in or whose deadline passed.
+    fn resume_shots(&mut self) {
+        let now = Instant::now();
+        let waits = std::mem::take(&mut self.renders.shot_waits);
+        for w in waits {
+            if now < w.deadline && self.thread.browser.content_loading(w.pid) {
+                self.renders.shot_waits.push(w);
+                continue;
+            }
+            let (id, session) = (w.id, w.session.clone());
+            if let Err(e) = self.start_capture(w.id, w.session, w.pid, w.area, w.format, w.out, w.started) {
+                self.out.push(msg::error_frame(Some(id), &e, Some(&session)));
+            }
+        }
+        if !self.renders.shot_waits.is_empty() {
+            self.poll_waits();
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_capture(
+        &mut self,
+        id: u64,
+        session: String,
+        pid: PageId,
+        area: Area,
+        format: ImageFormat,
+        out: Option<std::path::PathBuf>,
+        started: Instant,
+    ) -> CdpResult<()> {
         let snapshot = self.snapshot(pid, None)?;
         let snapshot_ms = ms(started.elapsed());
         let fetcher = self.fetcher(pid);
@@ -739,10 +803,9 @@ impl EngineHost {
             done: Box::new(move |r| deliver(Finished::Capture(token, r))),
         };
         self.renders.worker()?.submit(job).map_err(|_| CdpError::server("the render thread is gone"))?;
-        let wait =
-            CaptureWait { id: cmd.command.id, session: cmd.session_id.to_owned(), started, snapshot_ms, stream: false };
+        let wait = CaptureWait { id, session, started, snapshot_ms, stream: false };
         self.renders.captures.insert(token, wait);
-        Ok(None)
+        Ok(())
     }
 
     /// Starts a screencast frame of `pid` (`screencast.rs`): the viewport,
@@ -1204,6 +1267,9 @@ impl EngineHost {
         }
         if fetched && !self.renders.pdf_waits.is_empty() {
             self.resume_pdfs();
+        }
+        if fetched && !self.renders.shot_waits.is_empty() {
+            self.resume_shots();
         }
     }
 }
