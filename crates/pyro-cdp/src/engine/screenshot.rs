@@ -128,6 +128,8 @@ pub(crate) struct Renders {
     pdf_waits: Vec<PdfWait>,
     /// Screenshots waiting for the lazy content they started.
     shot_waits: Vec<ShotWait>,
+    /// The poll thread for waits on the page's own loads (lazy content) runs: one at a time.
+    polling: Arc<AtomicBool>,
     /// pyro: how many times a PDF wait was parked ([`EngineHost::pdf_parks`]).
     pdf_parks: u64,
 }
@@ -749,13 +751,30 @@ impl EngineHost {
         self.start_capture(id, session, pid, area, format, out, started).map(|()| None)
     }
 
-    /// Checks the waiting captures again shortly (the page's own loads end without a waker).
+    /// Checks the waiting captures and prints again every 50 ms (the page's own loads end
+    /// without a waker): one poll thread, which stops once nothing waits on such loads.
     fn poll_waits(&self) {
+        if self.renders.polling.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let poll = self.renders.deliver(self.thread.handle());
-        let _ = std::thread::Builder::new().name("pyro-capture-poll".into()).spawn(move || {
+        let running = self.renders.polling.clone();
+        let _ = std::thread::Builder::new().name("pyro-capture-poll".into()).spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_millis(50));
+            if !running.load(Ordering::Acquire) {
+                break;
+            }
             poll(Finished::Fetched);
         });
+    }
+
+    /// Stops the poll thread when no capture or print waits on the page's own loads.
+    fn stop_polling_if_idle(&self) {
+        let waiting = !self.renders.shot_waits.is_empty()
+            || self.renders.pdf_waits.iter().any(|w| self.thread.browser.content_loading(w.pid));
+        if !waiting {
+            self.renders.polling.store(false, Ordering::Release);
+        }
     }
 
     /// Captures the waiting screenshots whose lazy content is in or whose deadline passed.
@@ -771,9 +790,6 @@ impl EngineHost {
             if let Err(e) = self.start_capture(w.id, w.session, w.pid, w.area, w.format, w.out, w.started) {
                 self.out.push(msg::error_frame(Some(id), &e, Some(&session)));
             }
-        }
-        if !self.renders.shot_waits.is_empty() {
-            self.poll_waits();
         }
     }
 
@@ -996,12 +1012,8 @@ impl EngineHost {
             super::blitz_geometry::wake_parked(&document);
         } else if self.thread.browser.content_loading(pid) {
             // The page's own loads (lazy content the print started) end without waking the
-            // geometry: checked again shortly.
-            let poll = self.renders.deliver(self.thread.handle());
-            let _ = std::thread::Builder::new().name("pyro-pdf-poll".into()).spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                poll(Finished::Fetched);
-            });
+            // geometry: the poll thread checks again.
+            self.poll_waits();
         }
         if first {
             // The deadline of the first parked wait; later ones get theirs
@@ -1270,6 +1282,9 @@ impl EngineHost {
         }
         if fetched && !self.renders.shot_waits.is_empty() {
             self.resume_shots();
+        }
+        if fetched {
+            self.stop_polling_if_idle();
         }
     }
 }

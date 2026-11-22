@@ -1979,9 +1979,6 @@ impl Browser {
         if self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref(), lazy_cancelled) {
             return;
         }
-        // This processing navigates: a cancel marker left from an earlier navigation (whose
-        // processing never reached the lazy check) must not skip a later lazy load.
-        host.lazy_cancelled.borrow_mut().retain(|k| *k != key);
         host.attribute_navigation.borrow_mut().push(key);
         let (srcdoc, src, src_base, encoded_src) = {
             let dom = host.dom.borrow();
