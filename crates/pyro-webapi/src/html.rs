@@ -2586,8 +2586,13 @@ simple_class!(HtmlTextAreaElement, "HTMLTextAreaElement", HtmlElement, |def| {
         "defaultValue",
         |s, n| Ok(s.string(&n.page().dom.borrow().child_text_content(n.id))),
         |_s, n, v| {
-            let arg0 = dom_string(v)?;
-            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+            let value = dom_string(v)?;
+            let mut dom = n.page().dom.borrow_mut();
+            // HTML specifies string replace all, including for an equal value:
+            // the old Text child is replaced and children-changed steps run.
+            let doc = dom.node_document(n.id).js()?;
+            let child = if value.is_empty() { None } else { Some(dom.create_text(doc, &value).js()?) };
+            dom.replace_all(n.id, child).js()
         },
     );
     def.getter("textLength", |s, n| {
