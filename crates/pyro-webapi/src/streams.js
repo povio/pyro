@@ -2068,6 +2068,8 @@
       Object.setPrototypeOf(streaming, null);
       TextDecoderStream$t.set(this, makeTransform(undefined, (chunk) => {
         try {
+          // decode() treats a missing input as empty; a stream chunk must be a BufferSource.
+          if (chunk === undefined) throw new TypeErrorC('chunk is not an ArrayBuffer or ArrayBufferView');
           out(apply(decode, decoder, [chunk, streaming]));
           return resolved();
         } catch (e) {
