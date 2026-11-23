@@ -1573,8 +1573,7 @@ impl FrameHost {
             return Ok(value.get(s));
         }
         let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target, foreign: false };
-        Ok(s.wrap::<CrossWindow>(data, Some(pyro_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
-            .value())
+        cross_window(s, data, pyro_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0)))
     }
     /// `window.opener` of frame `key`: the window of the opener page's frame that opened it (its
     /// top-level window unless `window.open` ran in a child frame) for the top-level frame of a
@@ -1679,9 +1678,6 @@ impl FrameHost {
             0x464f_5245_4947_4e00 ^ u64::from(self.page.0),
             target.child.unwrap_or(u64::MAX),
         );
-        if let Some(o) = s.lookup_identity(key) {
-            return Ok(o.value());
-        }
         let data = CrossWindowData {
             host: Rc::downgrade(self),
             source: None,
@@ -1689,7 +1685,7 @@ impl FrameHost {
             target,
             foreign: true,
         };
-        Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+        cross_window(s, data, key)
     }
 
     /// The child window of frame `parent` with index `key` (`"0"`) or with
@@ -1747,11 +1743,28 @@ fn opener_proxy<'s>(
         None => pyro_js::IdentityKey(0x4f50454e45525758, u64::from(opener.page.0)),
         Some(child) => pyro_js::IdentityKey(0x4f50454e45524658, child),
     };
-    if let Some(o) = s.lookup_identity(key) {
-        return Ok(o.value());
-    }
     let data = CrossWindowData { host: Rc::downgrade(opener), source: None, from, target, foreign: false };
-    Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+    cross_window(s, data, key)
+}
+
+/// The WindowProxy this realm sees for a cross-origin window: HTML's cross-origin object
+/// (`Scope::cross_origin_window`) over a `CrossWindow` stand-in, one per identity `key` while
+/// either lives (the stand-in keeps the proxy, the proxy's handler the stand-in).
+fn cross_window<'s>(
+    s: &pyro_js::Scope<'s>,
+    data: CrossWindowData,
+    key: pyro_js::IdentityKey,
+) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+    const PROXY: &str = "crossOriginWindowProxy";
+    if let Some(stand_in) = s.lookup_identity(key) {
+        if let Some(proxy) = s.get_hidden(stand_in, PROXY)?.filter(|p| p.is_object()) {
+            return Ok(proxy);
+        }
+    }
+    let stand_in = s.wrap::<CrossWindow>(data, Some(key))?;
+    let proxy = s.cross_origin_window(stand_in)?;
+    s.set_hidden(stand_in, PROXY, proxy.value())?;
+    Ok(proxy.value())
 }
 
 /// The window whose script is running (HTML's incumbent global, as
@@ -1965,6 +1978,8 @@ impl pyro_js::JsClass for CrossWindow {
                 ("top", Some(source)) => host.window_value(s, source, host.page.into())?,
                 ("length", _) => s.number(host.child_keys(w.target).len() as f64),
                 ("closed", _) => s.boolean(host.frame(w.target).is_none()),
+                // Not tracked across origins: a frame's window has none.
+                ("opener", _) => s.null(),
                 ("focus", _) => {
                     let weak = w.host.clone();
                     let target = w.target;

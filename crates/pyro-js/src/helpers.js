@@ -870,6 +870,122 @@
       apply(wmSet, popupWindowTargets, [proxy, window]);
       return proxy;
     },
+    // HTML's WindowProxy for a Window of another origin reached through a frame (an iframe's
+    // window, its parent or top, a popup's opener): `standIn` is the native object answering
+    // CrossOriginProperties (`closed`, `close()`, `location`, `parent`, `postMessage()` ...) and
+    // the child windows by index. CrossOriginGetOwnPropertyHelper: the methods and accessors are
+    // functions of this realm made once per proxy (crossOriginPropertyDescriptorMap), with their
+    // `length` and `name` ("get parent", "set location"); `location` is a cross-origin Location
+    // with only `href` (set) and `replace()`; `then` and the well-known symbols are undefined and
+    // anything else throws a SecurityError. [[GetPrototypeOf]] is null, [[SetPrototypeOf]] fails
+    // for anything but null and [[PreventExtensions]] fails. `standIn` is never handed out.
+    crossOriginWindow(standIn) {
+      const GETTERS = { __proto__: null, window: 1, self: 1, location: 1, closed: 1, frames: 1, length: 1, top: 1, opener: 1, parent: 1 };
+      const METHODS = { __proto__: null, close: 0, focus: 0, blur: 0, postMessage: 1 };
+      const NAMES = ['window', 'self', 'location', 'close', 'closed', 'focus', 'blur', 'frames', 'length', 'top', 'opener', 'parent', 'postMessage', 'then'];
+      const undefinedNames = (k) => k === 'then' || k === toStringTag || k === symbolHasInstance || k === symbolIsConcatSpreadable;
+      const isIndex = (k) => typeof k === 'string' && k !== '' && StringC(k >>> 0) === k && (k >>> 0) !== 4294967295;
+      const deny = (k) => {
+        const name = typeof k === 'symbol' ? apply(symbolToString, k, []) : k;
+        throw new DOMException(`Blocked a frame from accessing property "${name}" of a cross-origin window.`, 'SecurityError');
+      };
+      const fn = (f, name, length) => {
+        try { defineProperty(f, 'name', { __proto__: null, value: name }); } catch (_) {}
+        try { defineProperty(f, 'length', { __proto__: null, value: length }); } catch (_) {}
+        return f;
+      };
+      const data = (value, enumerable) => ({ __proto__: null, value, writable: false, enumerable, configurable: true });
+      const append = (list, value) => { reflectDefine(list, list.length, data(value, true)); };
+      const kept = objectCreate(null);
+      const keep = (key, make) => {
+        let v = kept[key];
+        if (v === undefined) kept[key] = v = make();
+        return v;
+      };
+      let proxy;
+      const nativeLocation = () => reflectGet(standIn, 'location', standIn);
+      const setHref = (v) => { const l = nativeLocation(); reflectSet(l, 'href', v, l); };
+      // The cross-origin Location: `href` to set, `replace()`, nothing else.
+      const location = () => keep('location', () => {
+        const replace = fn((url) => { const l = nativeLocation(); apply(reflectGet(l, 'replace', l), l, [url]); }, 'replace', 1);
+        const hrefSetter = fn((v) => { setHref(v); }, 'set href', 1);
+        const describe = (k) => {
+          if (k === 'replace') return data(replace, false);
+          if (k === 'href') return { __proto__: null, get: undefined, set: hrefSetter, enumerable: false, configurable: true };
+          if (undefinedNames(k)) return data(undefined, false);
+          return deny(k);
+        };
+        return new ProxyC(objectCreate(null), {
+          __proto__: null,
+          get(t, k, receiver) { const d = describe(k); if ('value' in d) return d.value; return deny(k); },
+          set(t, k, v, receiver) { const d = describe(k); if (d.set === undefined) return deny(k); apply(d.set, receiver, [v]); return true; },
+          has(t, k) { describe(k); return true; },
+          deleteProperty(t, k) { return deny(k); },
+          defineProperty(t, k) { return deny(k); },
+          getOwnPropertyDescriptor(t, k) { return describe(k); },
+          ownKeys() { return ['href', 'replace', 'then', toStringTag, symbolHasInstance, symbolIsConcatSpreadable]; },
+          getPrototypeOf() { return null; },
+          setPrototypeOf(t, v) { return v === null; },
+          isExtensible() { return true; },
+          preventExtensions() { return false; },
+        });
+      });
+      const describe = (k) => {
+        if (isIndex(k)) {
+          const w = reflectGet(standIn, k, standIn);
+          return w !== undefined && w !== null ? data(w, false) : deny(k);
+        }
+        if (typeof k === 'string' && METHODS[k] !== undefined) {
+          return data(keep('method ' + k, () => {
+            const method = reflectGet(standIn, k, standIn);
+            return fn(function (...args) { return apply(method, standIn, args); }, k, METHODS[k]);
+          }), false);
+        }
+        if (typeof k === 'string' && GETTERS[k]) {
+          const pair = keep('get ' + k, () => {
+            const get = fn(k === 'location' ? function () { return location(); } : function () { return reflectGet(standIn, k, standIn); }, 'get ' + k, 0);
+            const set = k === 'location' ? fn(function (v) { setHref(v); }, 'set location', 1) : undefined;
+            return { __proto__: null, get, set };
+          });
+          return { __proto__: null, get: pair.get, set: pair.set, enumerable: false, configurable: true };
+        }
+        if (undefinedNames(k)) return data(undefined, false);
+        return deny(k);
+      };
+      proxy = new ProxyC(objectCreate(null), {
+        __proto__: null,
+        get(t, k, receiver) {
+          const d = describe(k);
+          if ('value' in d) return d.value;
+          return d.get === undefined ? deny(k) : apply(d.get, receiver, []);
+        },
+        set(t, k, v, receiver) {
+          const d = describe(k);
+          if ('value' in d || d.set === undefined) return deny(k);
+          apply(d.set, receiver, [v]);
+          return true;
+        },
+        has(t, k) { describe(k); return true; },
+        deleteProperty(t, k) { return deny(k); },
+        defineProperty(t, k) { return deny(k); },
+        getOwnPropertyDescriptor(t, k) { return describe(k); },
+        ownKeys() {
+          const keys = [];
+          const length = reflectGet(standIn, 'length', standIn);
+          for (let i = 0; i < length; i++) append(keys, StringC(i));
+          for (let i = 0; i < NAMES.length; i++) append(keys, NAMES[i]);
+          append(keys, toStringTag);
+          append(keys, symbolHasInstance);
+          append(keys, symbolIsConcatSpreadable);
+          return keys;
+        },
+        getPrototypeOf() { return null; },
+        setPrototypeOf(t, v) { return v === null; },
+        isExtensible() { return true; },
+        preventExtensions() { return false; },
+      });
+      return proxy;
+    },
     noteModuleEvaluationError(value) {
       if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return;
       if (!moduleEvaluationErrors) moduleEvaluationErrors = new WM();

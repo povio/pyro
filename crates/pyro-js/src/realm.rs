@@ -1698,6 +1698,18 @@ impl<'s> Scope<'s> {
             .ok_or_else(|| JsError::Type("windowProxy made no object".into()))
     }
 
+    /// A WindowProxy of this realm for a Window of another origin it reaches through a frame
+    /// (helpers.js `crossOriginWindow`): `stand_in` answers HTML's CrossOriginProperties by name
+    /// and the child windows by index; the proxy hands out functions of this realm made once per
+    /// proxy, a cross-origin Location, null as its prototype, and throws a SecurityError for
+    /// anything else. `stand_in` is never handed to page code through it.
+    pub fn cross_origin_window(&self, stand_in: Object<'_>) -> JsResult<Object<'s>> {
+        let make = self.realm.cached_helper(self, "crossOriginWindow")?;
+        make.call(None, &[stand_in.value()])?
+            .as_object()
+            .ok_or_else(|| JsError::Type("crossOriginWindow made no object".into()))
+    }
+
     /// The accessible global behind a popup WindowProxy created by this
     /// realm. Uses the same live target check as property access. An
     /// ordinary object, an author-created proxy, a cross-origin popup or a
