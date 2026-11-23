@@ -3057,7 +3057,9 @@ fn form_data_from_form_and_submitter() {
     let r = &e.main;
     assert_eq!(
         eval(r, "const f=document.getElementById('f'); [...new FormData(f)].map(p=>p.join('=')).join('&')"),
-        "q=1&c=on&s=y&t=a\r\nb"
+        // The textarea's entry keeps LF; serializers make it CRLF
+        // (WPT forms/form-submission-0/newline-normalization.html).
+        "q=1&c=on&s=y&t=a\nb"
     );
     assert_eq!(eval(r, "new FormData(f, document.getElementById('b')).get('go')"), "yes");
     assert_eq!(eval(r, "try{new FormData(f, document.getElementById('other'))}catch(e){e.name}"), "NotFoundError");
