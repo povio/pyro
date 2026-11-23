@@ -677,6 +677,29 @@ fn a_navigated_away_document_stays_usable_while_held() {
     assert_eq!(engine.lingering_realms(), 0, "nothing reaches the old document: its realm is disposed");
 }
 
+/// A removed frame's window that script still holds lingers with its realm, and a Location made
+/// for it then still gets its [LegacyUnforgeable] own members: the function installing them is a
+/// root of the realm's own, handed to its global when it lingers, not one of the window's that
+/// kept every lingering global alive.
+#[test]
+fn a_lingering_windows_location_keeps_its_own_members() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<p>x</p>'; document.body.appendChild(f)");
+    settle(&mut t);
+    eval(&root, "globalThis.w = f.contentWindow; f.remove()");
+    settle(&mut t);
+    for _ in 0..3 {
+        t.browser.engine.collect_garbage_now();
+        t.browser.engine.drain_finalized();
+    }
+    assert_eq!(
+        eval(&root, "[typeof w.location.replace, typeof w.location.href, Object.hasOwn(w.location, 'assign')].join()"),
+        "function,string,true"
+    );
+}
+
 /// The documents an iframe navigates through linger only while something
 /// reaches them: after 50 navigations nobody holds, none is left (fork mode
 /// and long e2e runs keep one engine for many pages).

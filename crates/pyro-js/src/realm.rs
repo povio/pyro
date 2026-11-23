@@ -2660,6 +2660,23 @@ impl<'s> Scope<'s> {
         self.get_hidden_raw(object, crate::string::atom_raw(key))
     }
 
+    /// pyro: keeps `value`, of this realm, for the embedder under `name` (one per name): a root of
+    /// the realm's own, like its cached helpers, so a lingering realm hands it to its global
+    /// ([`Realm::linger`]) and it never keeps the realm alive by itself. A lingering realm adds
+    /// no root (the value would keep its global): nothing is kept then. `name` shares a map with
+    /// the cached install.js helpers: give it a space (no helper name has one).
+    pub fn keep_value(&self, name: &'static str, value: Value<'_>) {
+        if self.realm.is_lingering() {
+            return;
+        }
+        self.realm.helper_cache.borrow_mut().insert(name, Persistent::new(self, value));
+    }
+
+    /// The value [`Scope::keep_value`] kept under `name`.
+    pub fn kept_value(&self, name: &'static str) -> Option<Value<'s>> {
+        self.realm.helper_cache.borrow().get(name).map(|p| p.get(self))
+    }
+
     /// [`Scope::set_hidden`] for a key computed at run time (a string is
     /// made for each call).
     pub fn set_hidden_str(&self, object: Object<'_>, key: &str, value: Value<'_>) -> JsResult<()> {

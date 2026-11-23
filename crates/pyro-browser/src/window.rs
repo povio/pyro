@@ -113,10 +113,14 @@ pub struct WindowData {
     /// Calls a timer callback whose nesting resets for microtasks, made on
     /// the first deeply nested timer ([`call_nested_timer`]).
     nested_timer_call: RefCell<Option<Persistent>>,
-    /// Defines a new Location object's [LegacyUnforgeable] members, whose
-    /// prototype gave them up (install.js `locationUnforgeables`).
-    location_install: RefCell<Option<Persistent>>,
 }
+
+/// The name the realm keeps ([`pyro_js::Scope::keep_value`]) the function that defines a new
+/// Location object's [LegacyUnforgeable] members under, whose prototype gave them up (install.js
+/// `locationUnforgeables`): a root of the realm's own, so a lingering window keeps it, and it
+/// does not keep the window (WindowData held it as a Persistent of its own, which rooted every
+/// navigated-away or removed frame's global).
+const LOCATION_INSTALL: &str = "pyro location install";
 
 impl WindowData {
     /// The page's session history shared with `window.history`.
@@ -160,7 +164,6 @@ impl WindowData {
             idle_module: RefCell::new(None),
             idle_period_end: Cell::new(None),
             nested_timer_call: RefCell::new(None),
-            location_install: RefCell::new(None),
         }
     }
 
@@ -173,7 +176,6 @@ impl WindowData {
         to.frame_index_count.set(self.frame_index_count.get());
         *to.idle_module.borrow_mut() = self.idle_module.take();
         *to.nested_timer_call.borrow_mut() = self.nested_timer_call.take();
-        *to.location_install.borrow_mut() = self.location_install.take();
         to.next_handle.set(self.next_handle.get());
         to.next_frame_handle.set(self.next_frame_handle.get());
     }
@@ -247,7 +249,7 @@ fn location_object<'s>(s: &Scope<'s>, w: &WindowData) -> JsResult<Object<'s>> {
         return Ok(o);
     }
     let location = s.wrap::<Location>(w.nav.clone(), Some(key))?;
-    let install = w.location_install.borrow().as_ref().map(|p| p.get(s));
+    let install = s.kept_value(LOCATION_INSTALL);
     if let Some(install) = install.and_then(|v| v.as_object()) {
         install.call(None, &[location.value()])?;
     }
@@ -259,11 +261,13 @@ fn location_object<'s>(s: &Scope<'s>, w: &WindowData) -> JsResult<Object<'s>> {
 /// gives its members up once populated, and each new Location object gets
 /// them (`location_object`).
 pub(crate) fn init_location_unforgeables(s: &Scope<'_>, helpers: Object<'_>) -> JsResult<()> {
-    let Some(w) = s.global_data::<Window>() else { return Ok(()) };
+    if s.global_data::<Window>().is_none() {
+        return Ok(());
+    }
     let Some(make) = helpers.get_atom("locationUnforgeables")?.as_object() else { return Ok(()) };
     let Some(pair) = make.call(None, &[])?.as_object() else { return Ok(()) };
     let (Some(hook), install) = (pair.get_index(0)?.as_object(), pair.get_index(1)?) else { return Ok(()) };
-    *w.location_install.borrow_mut() = Some(Persistent::new(s, install));
+    s.keep_value(LOCATION_INSTALL, install);
     s.after_populate::<Location>(hook)
 }
 
